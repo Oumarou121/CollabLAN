@@ -1,40 +1,40 @@
-# Guide de contribution et organisation Git
+# Contribution Guide and Git Organization
 
-## Objectif
+## Purpose
 
-Ce document décrit les règles de travail de l'équipe afin de garantir un développement organisé, limiter les conflits de fusion (merge conflicts) et assurer la qualité du code.
+This document describes the team's working rules to ensure organized development, limit merge conflicts, and maintain code quality.
 
-Pour la répartition des rôles entre les trois développeurs, voir [docs/TEAM.md](docs/TEAM.md).
+For the breakdown of roles among the three developers, see [docs/TEAM.md](docs/TEAM.md).
 
 ---
 
-## Organisation des branches
+## Branch Organization
 
-Le dépôt Git est organisé autour de cinq types de branches `feature/*`, toutes fusionnées dans `develop` :
+The Git repository is organized around five `feature/*` branch types, all merged into `develop`:
 
 ```
 main
 │
 develop
 │
-├── feature/ui         → Développeur 1
-├── feature/network    → Développeur 2
-├── feature/core       → Développeur 3
-├── feature/database   → Développeur 3
-└── feature/docs       → équipe entière
+├── feature/ui         → Developer 1
+├── feature/network    → Developer 2
+├── feature/database   → Developer 2
+├── feature/core       → Developer 3
+└── feature/docs       → whole team
 ```
 
 ### main
 
-Contient uniquement les versions stables du projet. Aucun développement direct n'est autorisé sur cette branche.
+Contains only stable versions of the project. No direct development is allowed on this branch.
 
 ### develop
 
-Sert à intégrer les nouvelles fonctionnalités. Toutes les branches `feature/*` y sont fusionnées après validation. Une fois plusieurs fonctionnalités validées, `develop` est fusionnée dans `main` pour publier une nouvelle version (voir [docs/ROADMAP.md](docs/ROADMAP.md)).
+Used to integrate new features. All `feature/*` branches are merged into it after validation. Once several features have been validated, `develop` is merged into `main` to publish a new version (see [docs/ROADMAP.md](docs/ROADMAP.md)).
 
 ### feature/ui
 
-QML, composants graphiques, navigation, thèmes, animations.
+QML, graphical components, navigation, themes, animations.
 
 ### feature/network
 
@@ -42,31 +42,31 @@ UDP, TCP, WebSocket, WebRTC, OpenSSL.
 
 ### feature/core
 
-Gestion des utilisateurs, services, notifications, audit, paramètres.
+User management, services, notifications, audit, settings.
 
 ### feature/database
 
-Tables SQLite, requêtes SQL, repositories, sauvegarde, migration.
+SQLite tables, SQL queries, repositories, backup, migration.
 
 ### feature/docs
 
-README, cahier des charges, UML, documentation technique.
+README, requirements specification, UML, technical documentation.
 
 ---
 
-## Workflow de développement
+## Development Workflow
 
-Chaque nouvelle fonctionnalité suit le processus suivant :
+Each new feature follows this process:
 
-1. Mettre à jour la branche `develop`
-2. Créer une nouvelle branche `feature`
-3. Développer la fonctionnalité
-4. Tester les modifications
-5. Effectuer un commit
-6. Pousser la branche sur GitHub
-7. Créer une Pull Request
-8. Faire relire le code par au moins un autre membre de l'équipe
-9. Fusionner dans `develop`
+1. Update the `develop` branch
+2. Create a new `feature` branch
+3. Develop the feature
+4. Test the changes
+5. Make a commit
+6. Push the branch to GitHub
+7. Create a Pull Request
+8. Have the code reviewed by at least one other team member
+9. Merge into `develop`
 
 ```
           main
@@ -80,17 +80,17 @@ feature/ui  feature/network  feature/core
 
 ---
 
-## Convention de nommage des branches
+## Branch Naming Convention
 
 ```
-feature/nom-fonctionnalite
-bugfix/nom-correctif
-hotfix/nom-correctif
+feature/feature-name
+bugfix/fix-name
+hotfix/fix-name
 release/v1.0
 docs/documentation
 ```
 
-Exemples :
+Examples:
 
 ```
 feature/chat
@@ -103,42 +103,42 @@ release/v1.0
 
 ---
 
-## Convention des messages de commit
+## Commit Message Convention
 
 ```
-feat: nouvelle fonctionnalité
-fix: correction d'un bug
-docs: modification de la documentation
-refactor: amélioration du code
-style: mise en forme
-test: ajout ou modification de tests
-chore: tâches techniques
+feat: new feature
+fix: bug fix
+docs: documentation change
+refactor: code improvement
+style: formatting
+test: adding or modifying tests
+chore: technical tasks
 ```
 
-Exemples :
+Examples:
 
 ```
-feat(chat): ajout de la messagerie privée
-feat(network): découverte automatique des machines
-fix(database): correction de la sauvegarde SQLite
-docs: mise à jour du README
-refactor(core): amélioration de la gestion des utilisateurs
+feat(chat): add private messaging
+feat(network): automatic machine discovery
+fix(database): fix SQLite backup
+docs: update README
+refactor(core): improve user management
 ```
 
 ---
 
-## Règles de développement
+## Development Rules
 
-- Une seule fonctionnalité par branche.
-- Ne jamais développer directement sur `main`.
-- Toujours synchroniser sa branche avec `develop` avant de commencer.
-- Tester les modifications avant chaque push.
-- Les Pull Requests doivent être revues par au moins un autre membre de l'équipe.
-- Respecter les conventions de codage C++ et Qt.
-- Documenter les nouvelles fonctionnalités.
+- One feature per branch only.
+- Never develop directly on `main`.
+- Always sync your branch with `develop` before starting.
+- Test your changes before every push.
+- Pull Requests must be reviewed by at least one other team member.
+- Follow C++ and Qt coding conventions.
+- Document new features.
 
 ---
 
-## Outils utilisés
+## Tools Used
 
 Git · GitHub · CMake · Qt Creator · Visual Studio Code · Qt 6 · C++23
