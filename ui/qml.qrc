@@ -1,0 +1,14 @@
+<RCC>
+    <qresource prefix="/ui">
+        <file>Login/LoginView.qml</file>
+        <file>Home/HomeView.qml</file>
+        <file>Chat/ChatView.qml</file>
+        <file>Users/UsersView.qml</file>
+        <file>FileTransfer/FileTransferView.qml</file>
+        <file>Call/CallView.qml</file>
+        <file>Settings/SettingsView.qml</file>
+        <file>Admin/AdminView.qml</file>
+        <file>Themes/Light.qml</file>
+        <file>Themes/Dark.qml</file>
+    </qresource>
+</RCC>
