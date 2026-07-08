@@ -5,38 +5,38 @@
 <h1 align="center">CollabLAN</h1>
 
 <p align="center">
-Collaboration software running entirely on a local area network (LAN), with no dependency on the Internet.
+Logiciel de collaboration fonctionnant entièrement sur réseau local (LAN), sans dépendance à Internet.
 </p>
 
 ---
 
-## Overview
+## Présentation
 
-**CollabLAN** lets users on the same local network automatically discover one another, exchange messages, share files, receive notifications, and make voice calls — all without an Internet connection.
+**CollabLAN** permet aux utilisateurs d'un même réseau local de se découvrir automatiquement, d'échanger des messages, de partager des fichiers, de recevoir des notifications et de passer des appels vocaux — le tout sans connexion Internet.
 
-The software is aimed at businesses, schools, administrations, and laboratories looking for a local, secure, and high-performance communication solution.
+Le logiciel s'adresse aux entreprises, établissements scolaires, administrations et laboratoires souhaitant une solution de communication locale, sécurisée et performante.
 
-For the full requirements and constraints, see the [Requirements Specification](docs/Cahier_des_charges.pdf).
+Pour le détail des besoins et contraintes, voir le [Cahier des charges](docs/Cahier_des_charges.pdf).
 
-## Features (v1.0)
+## Fonctionnalités (v1.0)
 
-- Automatic user discovery
-- Individual and group messaging
-- File and folder sharing
-- Real-time notifications
-- Voice calls
-- Audit log
-- Administration and user management
+- Découverte automatique des utilisateurs
+- Messagerie individuelle et de groupe
+- Partage de fichiers et dossiers
+- Notifications en temps réel
+- Appels vocaux
+- Journal d'audit
+- Administration et gestion des utilisateurs
 
-Planned future developments (v1.1, v2.0...) are detailed in the [Roadmap](docs/ROADMAP.md).
+La suite des évolutions prévues (v1.1, v2.0...) est détaillée dans la [Roadmap](docs/ROADMAP.md).
 
 ## Technologies
 
 C++23 · Qt 6 (Qt Quick/QML) · SQLite · UDP/TCP/WebSocket · WebRTC · OpenSSL · CMake
 
-The architecture details (layers, folder structure, role of each module) are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Le détail de l'architecture (couches, structure des dossiers, rôle de chaque module) est décrit dans [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Build
+## Compilation
 
 ```bash
 mkdir build
@@ -45,26 +45,26 @@ cmake ..
 cmake --build .
 ```
 
-Requirements: Qt 6, CMake, OpenSSL. Build tested on Linux, Windows (Qt Creator / Visual Studio 2022), and macOS.
+Prérequis : Qt 6, CMake, OpenSSL. Compilation testée sous Linux, Windows (Qt Creator / Visual Studio 2022) et macOS.
 
-## Team
+## Équipe
 
-Project developed by a team of three developers. Role and responsibility breakdown: see [docs/TEAM.md](docs/TEAM.md).
+Projet développé par une équipe de trois développeurs. Répartition des rôles et responsabilités : voir [docs/TEAM.md](docs/TEAM.md).
 
-## Contributing
+## Contribuer
 
-The Git workflow and branch/commit conventions are described in [CONTRIBUTING.md](CONTRIBUTING.md).
+Le workflow Git, les conventions de branches et de commits sont décrits dans [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
-| Document | Content |
+| Document | Contenu |
 |---|---|
-| [docs/Cahier_des_charges.pdf](docs/Cahier_des_charges.pdf) | Requirements, constraints, functional specifications |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Logical architecture, folder structure, technical stack |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Versions and planned developments |
-| [docs/TEAM.md](docs/TEAM.md) | Team organization and responsibilities |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Git workflow, branch and commit conventions |
+| [docs/Cahier_des_charges.pdf](docs/Cahier_des_charges.pdf) | Besoins, contraintes, spécifications fonctionnelles |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture logique, structure des dossiers, stack technique |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Versions et évolutions prévues |
+| [docs/TEAM.md](docs/TEAM.md) | Organisation de l'équipe et responsabilités |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow Git, conventions de branches et de commits |
 
-## License
+## Licence
 
 MIT
