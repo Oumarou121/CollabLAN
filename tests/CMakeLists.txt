@@ -40,3 +40,7 @@ add_test(NAME test_groupmanager COMMAND test_groupmanager)
 add_executable(test_messagerepository UnitTests/test_messagerepository.cpp)
 target_link_libraries(test_messagerepository PRIVATE Qt6::Test database models)
 add_test(NAME test_messagerepository COMMAND test_messagerepository)
+
+add_executable(test_grouprepository UnitTests/test_grouprepository.cpp)
+target_link_libraries(test_grouprepository PRIVATE Qt6::Test database models)
+add_test(NAME test_grouprepository COMMAND test_grouprepository)
