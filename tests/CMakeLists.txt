@@ -28,3 +28,7 @@ add_test(NAME test_userrepository COMMAND test_userrepository)
 add_executable(test_messagingservice UnitTests/test_messagingservice.cpp)
 target_link_libraries(test_messagingservice PRIVATE Qt6::Test Qt6::WebSockets network)
 add_test(NAME test_messagingservice COMMAND test_messagingservice)
+
+add_executable(test_messagingmanager UnitTests/test_messagingmanager.cpp)
+target_link_libraries(test_messagingmanager PRIVATE Qt6::Test core database models)
+add_test(NAME test_messagingmanager COMMAND test_messagingmanager)
