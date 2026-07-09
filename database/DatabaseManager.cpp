@@ -1,90 +1,23 @@
 #include "DatabaseManager.h"
 
-#include <QSqlDatabase>
-#include <QSqlError>
-#include <QSqlQuery>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSqlError>
+#include <QSqlQuery>
 #include <QStandardPaths>
 #include <QTextStream>
 
 namespace database {
 
 namespace {
-
-// Contenu de la migration initiale (miroir de
-// database/Migrations/001_initial_schema.sql). Embarque en dur pour que
-// l'ouverture de la base ne depende pas du repertoire de travail courant
-// au runtime ; le fichier .sql reste la reference documentee.
-const char *kInitialSchema = R"SQL(
-CREATE TABLE IF NOT EXISTS Users (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    name           TEXT NOT NULL UNIQUE,
-    ip_address     TEXT NOT NULL DEFAULT '',
-    status         TEXT NOT NULL DEFAULT 'offline',
-    is_admin       INTEGER NOT NULL DEFAULT 0,
-    password_hash  TEXT NOT NULL DEFAULT '',
-    password_salt  TEXT NOT NULL DEFAULT '',
-    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS Groups (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    name          TEXT NOT NULL,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS Messages (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    sender_id     INTEGER NOT NULL REFERENCES Users(id),
-    group_id      INTEGER REFERENCES Groups(id),
-    recipient_id  INTEGER REFERENCES Users(id),
-    content       TEXT NOT NULL,
-    sent_at       TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS Transfers (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    sender_id     INTEGER NOT NULL REFERENCES Users(id),
-    recipient_id  INTEGER NOT NULL REFERENCES Users(id),
-    file_name     TEXT NOT NULL,
-    file_size     INTEGER NOT NULL,
-    status        TEXT NOT NULL DEFAULT 'pending',
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS AuditLogs (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_type    TEXT NOT NULL,
-    description   TEXT,
-    user_id       INTEGER REFERENCES Users(id),
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS Settings (
-    key           TEXT PRIMARY KEY,
-    value         TEXT
-);
-)SQL";
-
-QString defaultDatabasePath()
-{
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QDir().mkpath(dir);
-    return QDir(dir).filePath(QStringLiteral("collablan.sqlite"));
+constexpr const char *kSqliteDriver = "QSQLITE";
+constexpr const char *kMigrationsDirName = "Migrations";
 }
 
-} // namespace
-
-DatabaseManager::DatabaseManager()
-    : DatabaseManager(defaultDatabasePath())
-{
-}
-
-DatabaseManager::DatabaseManager(QString databasePath, QString connectionName)
-    : m_databasePath(std::move(databasePath))
-    , m_connectionName(std::move(connectionName))
+DatabaseManager::DatabaseManager(const QString &connectionName)
+    : m_connectionName(connectionName)
 {
 }
 
@@ -93,30 +26,59 @@ DatabaseManager::~DatabaseManager()
     close();
 }
 
-bool DatabaseManager::open()
+QString DatabaseManager::defaultDatabaseFilePath()
+{
+    const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return QDir(dataDir).filePath(QStringLiteral("collablan.db"));
+}
+
+bool DatabaseManager::open(const QString &dbFilePath)
 {
     if (isOpen()) {
         return true;
     }
 
-    QDir().mkpath(QFileInfo(m_databasePath).absolutePath());
+    m_dbFilePath = dbFilePath.isEmpty() ? defaultDatabaseFilePath() : dbFilePath;
 
-    QSqlDatabase db = QSqlDatabase::contains(m_connectionName)
-                           ? QSqlDatabase::database(m_connectionName)
-                           : QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_connectionName);
-    db.setDatabaseName(m_databasePath);
+    if (m_dbFilePath != QStringLiteral(":memory:")) {
+        const QFileInfo dbFileInfo(m_dbFilePath);
+        const QDir dbDir = dbFileInfo.dir();
+        if (!dbDir.exists() && !dbDir.mkpath(QStringLiteral("."))) {
+            m_lastError = QStringLiteral("Impossible de creer le repertoire de la base de donnees : %1")
+                               .arg(dbDir.absolutePath());
+            return false;
+        }
+    }
+
+    if (QSqlDatabase::contains(m_connectionName)) {
+        QSqlDatabase::removeDatabase(m_connectionName);
+    }
+
+    QSqlDatabase db = QSqlDatabase::addDatabase(kSqliteDriver, m_connectionName);
+    db.setDatabaseName(m_dbFilePath);
 
     if (!db.open()) {
         m_lastError = db.lastError().text();
+        QSqlDatabase::removeDatabase(m_connectionName);
         return false;
     }
 
-    // Active les contraintes de cle etrangere pour SQLite.
     QSqlQuery pragma(db);
-    pragma.exec(QStringLiteral("PRAGMA foreign_keys = ON;"));
+    if (!pragma.exec(QStringLiteral("PRAGMA foreign_keys = ON;"))) {
+        m_lastError = pragma.lastError().text();
+    }
 
-    if (!runMigrations()) {
+    if (!ensureMigrationsTable()) {
+        close();
         return false;
+    }
+
+    const QStringList migrations = pendingMigrationFiles();
+    for (const QString &migrationPath : migrations) {
+        if (!applyMigrationFile(migrationPath)) {
+            close();
+            return false;
+        }
     }
 
     return true;
@@ -138,12 +100,17 @@ void DatabaseManager::close()
 bool DatabaseManager::isOpen() const
 {
     return QSqlDatabase::contains(m_connectionName)
-           && QSqlDatabase::database(m_connectionName, false).isOpen();
+        && QSqlDatabase::database(m_connectionName, false).isOpen();
 }
 
-QString DatabaseManager::databasePath() const
+QString DatabaseManager::databaseFilePath() const
 {
-    return m_databasePath;
+    return m_dbFilePath;
+}
+
+QSqlDatabase DatabaseManager::database() const
+{
+    return QSqlDatabase::database(m_connectionName, false);
 }
 
 QString DatabaseManager::lastError() const
@@ -151,59 +118,149 @@ QString DatabaseManager::lastError() const
     return m_lastError;
 }
 
-QSqlDatabase DatabaseManager::database() const
+int DatabaseManager::schemaVersion() const
 {
-    return QSqlDatabase::database(m_connectionName);
+    if (!isOpen()) {
+        return 0;
+    }
+
+    QSqlQuery query(database());
+    if (!query.exec(QStringLiteral("SELECT COUNT(*) FROM schema_migrations;"))) {
+        return 0;
+    }
+    if (query.next()) {
+        return query.value(0).toInt();
+    }
+    return 0;
 }
 
-bool DatabaseManager::runMigrations()
+bool DatabaseManager::ensureMigrationsTable()
 {
-    QSqlDatabase db = database();
+    QSqlQuery query(database());
+    const bool ok = query.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS schema_migrations ("
+        "  name TEXT PRIMARY KEY,"
+        "  applied_at TEXT NOT NULL DEFAULT (datetime('now'))"
+        ");"));
+    if (!ok) {
+        m_lastError = query.lastError().text();
+    }
+    return ok;
+}
 
-    const QStringList statements = QString::fromUtf8(kInitialSchema)
-                                        .split(QChar(';'), Qt::SkipEmptyParts);
+QStringList DatabaseManager::pendingMigrationFiles() const
+{
+    QStringList candidateDirs = {
+        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("database/%1").arg(kMigrationsDirName)),
+        QDir(QStringLiteral(__FILE__)).filePath(QStringLiteral("../%1").arg(kMigrationsDirName)),
+    };
 
-    for (const QString &rawStatement : statements) {
-        const QString statement = rawStatement.trimmed();
-        if (statement.isEmpty()) {
-            continue;
-        }
-        QSqlQuery query(db);
-        if (!query.exec(statement)) {
-            m_lastError = query.lastError().text();
-            return false;
+    QDir migrationsDir;
+    for (const QString &candidate : candidateDirs) {
+        QDir dir(candidate);
+        if (dir.exists()) {
+            migrationsDir = dir;
+            break;
         }
     }
 
-    return true;
+    if (!migrationsDir.exists()) {
+        return {};
+    }
+
+    QStringList alreadyApplied;
+    {
+        QSqlQuery query(database());
+        if (query.exec(QStringLiteral("SELECT name FROM schema_migrations;"))) {
+            while (query.next()) {
+                alreadyApplied << query.value(0).toString();
+            }
+        }
+    }
+
+    const QStringList sqlFiles = migrationsDir.entryList(
+        QStringList() << QStringLiteral("*.sql"), QDir::Files, QDir::Name);
+
+    QStringList pending;
+    for (const QString &fileName : sqlFiles) {
+        if (!alreadyApplied.contains(fileName)) {
+            pending << migrationsDir.filePath(fileName);
+        }
+    }
+    return pending;
 }
 
-bool DatabaseManager::executeSqlScript(const QString &sqlFilePath)
+bool DatabaseManager::applyMigrationFile(const QString &filePath)
 {
-    QFile file(sqlFilePath);
+    QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        m_lastError = QStringLiteral("Impossible d'ouvrir le script SQL: %1").arg(sqlFilePath);
+        m_lastError = QStringLiteral("Impossible d'ouvrir le fichier de migration : %1").arg(filePath);
         return false;
     }
 
     QTextStream stream(&file);
-    const QString content = stream.readAll();
-    const QStringList statements = content.split(QChar(';'), Qt::SkipEmptyParts);
+    const QString sqlScript = stream.readAll();
+    file.close();
 
     QSqlDatabase db = database();
-    for (const QString &rawStatement : statements) {
-        const QString statement = rawStatement.trimmed();
-        if (statement.isEmpty()) {
-            continue;
-        }
+    if (!db.transaction()) {
+        m_lastError = db.lastError().text();
+        return false;
+    }
+
+    for (const QString &statement : splitStatements(sqlScript)) {
         QSqlQuery query(db);
         if (!query.exec(statement)) {
-            m_lastError = query.lastError().text();
+            m_lastError = QStringLiteral("Echec de la migration %1 : %2")
+                               .arg(QFileInfo(filePath).fileName(), query.lastError().text());
+            db.rollback();
             return false;
         }
     }
 
+    const QString migrationName = QFileInfo(filePath).fileName();
+    if (!markMigrationApplied(migrationName)) {
+        db.rollback();
+        return false;
+    }
+
+    if (!db.commit()) {
+        m_lastError = db.lastError().text();
+        db.rollback();
+        return false;
+    }
+
     return true;
+}
+
+bool DatabaseManager::markMigrationApplied(const QString &migrationName)
+{
+    QSqlQuery query(database());
+    query.prepare(QStringLiteral("INSERT INTO schema_migrations (name) VALUES (:name);"));
+    query.bindValue(QStringLiteral(":name"), migrationName);
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+QStringList DatabaseManager::splitStatements(const QString &sqlScript) const
+{
+    QString cleaned;
+    for (const QString &line : sqlScript.split(QLatin1Char('\n'))) {
+        const int commentIndex = line.indexOf(QStringLiteral("--"));
+        cleaned += (commentIndex >= 0 ? line.left(commentIndex) : line) + QLatin1Char('\n');
+    }
+
+    QStringList statements;
+    for (const QString &part : cleaned.split(QLatin1Char(';'))) {
+        const QString trimmed = part.trimmed();
+        if (!trimmed.isEmpty()) {
+            statements << trimmed;
+        }
+    }
+    return statements;
 }
 
 } // namespace database

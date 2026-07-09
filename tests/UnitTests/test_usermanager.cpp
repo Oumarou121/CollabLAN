@@ -19,9 +19,9 @@ private slots:
         QVERIFY(m_tempDir.isValid());
         const QString dbPath = m_tempDir.filePath(
             QStringLiteral("test_%1.sqlite").arg(QRandomGenerator::global()->generate()));
-        m_dbManager = new database::DatabaseManager(dbPath, QStringLiteral("test_connection_%1")
-                                                                  .arg(QRandomGenerator::global()->generate()));
-        QVERIFY(m_dbManager->open());
+        m_dbManager = new database::DatabaseManager(
+            QStringLiteral("test_connection_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(m_dbManager->open(dbPath));
     }
 
     void cleanup()

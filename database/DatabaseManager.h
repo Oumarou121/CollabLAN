@@ -1,8 +1,9 @@
 #ifndef DATABASE_DATABASEMANAGER_H
 #define DATABASE_DATABASEMANAGER_H
 
-#include <QString>
 #include <QSqlDatabase>
+#include <QString>
+#include <QStringList>
 
 namespace database {
 
@@ -11,38 +12,33 @@ namespace database {
  */
 class DatabaseManager {
 public:
-    DatabaseManager();
-    explicit DatabaseManager(QString databasePath, QString connectionName = QStringLiteral("collablan"));
+    explicit DatabaseManager(const QString &connectionName = QStringLiteral("collablan_db"));
     ~DatabaseManager();
 
-    // Non copiable (une connexion SQL n'a pas vocation a etre dupliquee).
     DatabaseManager(const DatabaseManager &) = delete;
     DatabaseManager &operator=(const DatabaseManager &) = delete;
 
-    /**
-     * @brief Ouvre la base de donnees et execute les migrations si necessaire.
-     * @return true si la base est prete a l'emploi.
-     */
-    bool open();
-
-    /**
-     * @brief Ferme proprement la connexion a la base de donnees.
-     */
+    bool open(const QString &dbFilePath = QString());
     void close();
-
     bool isOpen() const;
 
-    QString databasePath() const;
-    QString lastError() const;
+    QString databaseFilePath() const;
+    static QString defaultDatabaseFilePath();
 
     QSqlDatabase database() const;
+    QString lastError() const;
+
+    int schemaVersion() const;
 
 private:
-    bool runMigrations();
-    bool executeSqlScript(const QString &sqlFilePath);
+    bool ensureMigrationsTable();
+    QStringList pendingMigrationFiles() const;
+    bool applyMigrationFile(const QString &filePath);
+    bool markMigrationApplied(const QString &migrationName);
+    QStringList splitStatements(const QString &sqlScript) const;
 
-    QString m_databasePath;
     QString m_connectionName;
+    QString m_dbFilePath;
     QString m_lastError;
 };
 
