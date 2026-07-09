@@ -53,7 +53,6 @@ int UserRepository::create(const models::User &user)
         m_lastError = query.lastError().text();
         return -1;
     }
-
     return query.lastInsertId().toInt();
 }
 
@@ -143,7 +142,6 @@ std::vector<models::User> UserRepository::findAll() const
         m_lastError = query.lastError().text();
         return users;
     }
-
     while (query.next()) {
         users.push_back(userFromQuery(query));
     }
