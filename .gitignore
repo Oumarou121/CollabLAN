@@ -32,3 +32,8 @@ Thumbs.db
 # SQLite
 *.db
 *.sqlite
+
+*.pdf
+*.log
+*.sh
+*.gitkeep
