@@ -2,12 +2,14 @@
 -- Voir docs/Cahier_des_charges.pdf et docs/ARCHITECTURE.md
 
 CREATE TABLE IF NOT EXISTS Users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    name          TEXT NOT NULL,
-    ip_address    TEXT NOT NULL,
-    status        TEXT NOT NULL DEFAULT 'offline',
-    is_admin      INTEGER NOT NULL DEFAULT 0,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    name           TEXT NOT NULL UNIQUE,
+    ip_address     TEXT NOT NULL DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'offline',
+    is_admin       INTEGER NOT NULL DEFAULT 0,
+    password_hash  TEXT NOT NULL DEFAULT '',
+    password_salt  TEXT NOT NULL DEFAULT '',
+    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS Groups (
