@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/database">
+        <file alias="migrations/001_initial_schema.sql">Migrations/001_initial_schema.sql</file>
+    </qresource>
+</RCC>
