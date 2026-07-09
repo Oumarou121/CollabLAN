@@ -12,6 +12,10 @@ find_package(OpenSSL REQUIRED)
 
 option(BUILD_TESTS "Build unit/integration tests" ON)
 
+if(BUILD_TESTS)
+    enable_testing()
+endif()
+
 add_subdirectory(models)
 add_subdirectory(services)
 add_subdirectory(database)

@@ -1,9 +1,16 @@
 #ifndef DATABASE_DATABASEMANAGER_H
 #define DATABASE_DATABASEMANAGER_H
 
-#include <QSqlDatabase>
-#include <QString>
-#include <QStringList>
+#include "DatabaseManager.h"
+
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QStandardPaths>
+#include <QTextStream>
 
 namespace database {
 
