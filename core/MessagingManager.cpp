@@ -2,6 +2,7 @@
 
 #include "DatabaseManager.h"
 #include "Messaging/MessagingService.h"
+#include "NotificationManager.h"
 
 #include <QSqlQuery>
 #include <QSqlError>
@@ -22,6 +23,17 @@ MessagingManager::~MessagingManager()
 void MessagingManager::setMessagingService(network::MessagingService *messagingService)
 {
     m_messagingService = messagingService;
+}
+
+void MessagingManager::setNotificationManager(NotificationManager *notificationManager)
+{
+    m_notificationManager = notificationManager;
+
+    // Connecter le signal messageReceived au slot du NotificationManager
+    if (m_notificationManager) {
+        connect(this, &MessagingManager::messageReceived,
+                m_notificationManager, &NotificationManager::onMessageReceived);
+    }
 }
 
 std::optional<models::Conversation> MessagingManager::getOrCreateConversation(qint64 userId1, qint64 userId2)

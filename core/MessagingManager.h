@@ -19,6 +19,8 @@ class MessagingService;
 
 namespace core {
 
+class NotificationManager;
+
 enum class MessagingManagerError {
     None,
     InvalidUser,
@@ -43,6 +45,9 @@ public:
 
     /// Configure le service de reseau pour l'envoi de messages.
     void setMessagingService(network::MessagingService *messagingService);
+
+    /// Configure le gestionnaire de notifications.
+    void setNotificationManager(NotificationManager *notificationManager);
 
     /// Cree ou recupere une conversation individuelle entre deux utilisateurs.
     std::optional<models::Conversation> getOrCreateConversation(qint64 userId1, qint64 userId2);
@@ -73,6 +78,7 @@ signals:
 private:
     database::DatabaseManager *m_dbManager = nullptr;
     network::MessagingService *m_messagingService = nullptr;
+    NotificationManager *m_notificationManager = nullptr;
     MessagingManagerError m_lastError = MessagingManagerError::None;
     QString m_lastErrorString;
 };

@@ -44,3 +44,7 @@ add_test(NAME test_messagerepository COMMAND test_messagerepository)
 add_executable(test_grouprepository UnitTests/test_grouprepository.cpp)
 target_link_libraries(test_grouprepository PRIVATE Qt6::Test database models)
 add_test(NAME test_grouprepository COMMAND test_grouprepository)
+
+add_executable(test_notification UnitTests/test_notification.cpp)
+target_link_libraries(test_notification PRIVATE Qt6::Test core services models)
+add_test(NAME test_notification COMMAND test_notification)
