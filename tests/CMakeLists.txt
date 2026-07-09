@@ -11,3 +11,7 @@ add_test(NAME test_databasemanager COMMAND test_databasemanager)
 add_executable(test_userrepository UnitTests/test_userrepository.cpp)
 target_link_libraries(test_userrepository PRIVATE Qt6::Test database models)
 add_test(NAME test_userrepository COMMAND test_userrepository)
+
+add_executable(test_settingsrepository UnitTests/test_settingsrepository.cpp)
+target_link_libraries(test_settingsrepository PRIVATE Qt6::Test database models)
+add_test(NAME test_settingsrepository COMMAND test_settingsrepository)

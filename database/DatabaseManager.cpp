@@ -1,6 +1,7 @@
 #include "DatabaseManager.h"
 
 #include <QCoreApplication>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -21,6 +22,12 @@ DatabaseManager::DatabaseManager(const QString &connectionName)
 {
 }
 
+DatabaseManager::DatabaseManager(const QString &dbFilePath, const QString &connectionName)
+    : m_connectionName(connectionName)
+    , m_dbFilePath(dbFilePath)
+{
+}
+
 DatabaseManager::~DatabaseManager()
 {
     close();
@@ -38,7 +45,14 @@ bool DatabaseManager::open(const QString &dbFilePath)
         return true;
     }
 
-    m_dbFilePath = dbFilePath.isEmpty() ? defaultDatabaseFilePath() : dbFilePath;
+    if (!dbFilePath.isEmpty()) {
+        m_dbFilePath = dbFilePath;
+    } else if (m_dbFilePath.isEmpty()) {
+        m_dbFilePath = defaultDatabaseFilePath();
+    }
+    // sinon : m_dbFilePath a deja ete fixe (ex: via le constructeur
+    // DatabaseManager(dbFilePath, connectionName)) et open() est appele
+    // sans argument -> on le conserve tel quel.
 
     // Cree le repertoire parent du fichier de base si necessaire
     // (ex: ~/.local/share/CollabLAN sous Linux), sauf pour les bases
@@ -62,18 +76,25 @@ bool DatabaseManager::open(const QString &dbFilePath)
 
     if (!db.open()) {
         m_lastError = db.lastError().text();
+        qWarning() << "DatabaseManager::open() a echoue pour" << m_dbFilePath << ":" << m_lastError;
+        db = QSqlDatabase(); // libere le handle avant removeDatabase() (sinon Qt
+                              // emet "connection ... still in use")
         QSqlDatabase::removeDatabase(m_connectionName);
         return false;
     }
 
     // SQLite desactive les contraintes de cles etrangeres par defaut :
     // on les active explicitement pour chaque connexion ouverte.
-    QSqlQuery pragma(db);
-    if (!pragma.exec(QStringLiteral("PRAGMA foreign_keys = ON;"))) {
-        m_lastError = pragma.lastError().text();
+    {
+        QSqlQuery pragma(db);
+        if (!pragma.exec(QStringLiteral("PRAGMA foreign_keys = ON;"))) {
+            m_lastError = pragma.lastError().text();
+        }
     }
 
     if (!ensureMigrationsTable()) {
+        qWarning() << "DatabaseManager::open() : ensureMigrationsTable() a echoue :" << m_lastError;
+        db = QSqlDatabase(); // libere le handle local avant close()/removeDatabase()
         close();
         return false;
     }
@@ -81,6 +102,9 @@ bool DatabaseManager::open(const QString &dbFilePath)
     const QStringList migrations = pendingMigrationFiles();
     for (const QString &migrationPath : migrations) {
         if (!applyMigrationFile(migrationPath)) {
+            qWarning() << "DatabaseManager::open() : migration" << migrationPath
+                       << "a echoue :" << m_lastError;
+            db = QSqlDatabase(); // libere le handle local avant close()/removeDatabase()
             close();
             return false;
         }
