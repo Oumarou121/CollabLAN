@@ -1,6 +1,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <QRandomGenerator>
 
 #include "DatabaseManager.h"
 #include "PasswordHasher.h"
@@ -25,8 +26,9 @@ private:
         Q_ASSERT(m_dir->isValid());
 
         m_dbManager = std::make_unique<database::DatabaseManager>(
-            QStringLiteral("test-usermanager-%1").arg(reinterpret_cast<quintptr>(QTest::currentTestFunction())));
-        const bool opened = m_dbManager->open(m_dir->filePath(QStringLiteral("test.db")));
+            m_dir->filePath(QStringLiteral("test.db")),
+            QStringLiteral("test-usermanager-%1").arg(QRandomGenerator::global()->generate()));
+        const bool opened = m_dbManager->open();
         Q_ASSERT(opened);
         return m_dbManager.get();
     }
@@ -40,6 +42,8 @@ private slots:
         m_dbManager.reset();
         m_dir.reset();
     }
+
+    // --- Parcours QML (login/logout) ------------------------------------
 
     void loginWithSeededAdminSucceeds()
     {
@@ -92,22 +96,6 @@ private slots:
         QVERIFY(!manager.isAuthenticated());
     }
 
-    void newlyCreatedUserCanLogIn()
-    {
-        database::DatabaseManager *db = freshDatabase();
-
-        database::UserRepository repository(db->database());
-        models::User newUser(-1, QStringLiteral("bilal"), QStringLiteral("192.168.1.11"),
-                              QStringLiteral("offline"), false, core::PasswordHasher::hash(QStringLiteral("s3cret!")));
-        QVERIFY(repository.create(newUser));
-        QVERIFY(newUser.id() > 0);
-
-        core::UserManager manager(db);
-        QVERIFY(manager.login(QStringLiteral("bilal"), QStringLiteral("s3cret!")));
-        QVERIFY(manager.isAuthenticated());
-        QVERIFY(!manager.isCurrentUserAdmin());
-    }
-
     void logoutClearsAuthenticationState()
     {
         core::UserManager manager(freshDatabase());
@@ -120,6 +108,72 @@ private slots:
         QVERIFY(!manager.isAuthenticated());
         QVERIFY(manager.currentUsername().isEmpty());
         QCOMPARE(authChangedSpy.count(), 1);
+    }
+
+    // --- API C++ (creation, authenticate direct, statut) -----------------
+
+    void createUserThenLoginSucceeds()
+    {
+        database::DatabaseManager *db = freshDatabase();
+        core::UserManager manager(db);
+
+        const auto created = manager.createUser(QStringLiteral("bilal"), QStringLiteral("s3cret!"));
+        QVERIFY(created.has_value());
+        QVERIFY(created->id() > 0);
+        QVERIFY(created->passwordHash() != QStringLiteral("s3cret!"));
+        QVERIFY(!created->passwordSalt().isEmpty());
+
+        QVERIFY(manager.login(QStringLiteral("bilal"), QStringLiteral("s3cret!")));
+        QVERIFY(manager.isAuthenticated());
+        QVERIFY(!manager.isCurrentUserAdmin());
+    }
+
+    void createUserRejectsDuplicateName()
+    {
+        core::UserManager manager(freshDatabase());
+
+        QVERIFY(manager.createUser(QStringLiteral("bob"), QStringLiteral("password1")).has_value());
+        const auto duplicate = manager.createUser(QStringLiteral("bob"), QStringLiteral("otherpass"));
+
+        QVERIFY(!duplicate.has_value());
+        QCOMPARE(manager.lastError(), core::UserManagerError::UserAlreadyExists);
+    }
+
+    void createUserRejectsEmptyNameOrShortPassword()
+    {
+        core::UserManager manager(freshDatabase());
+
+        QVERIFY(!manager.createUser(QStringLiteral("   "), QStringLiteral("password1")).has_value());
+        QCOMPARE(manager.lastError(), core::UserManagerError::InvalidName);
+
+        QVERIFY(!manager.createUser(QStringLiteral("carol"), QStringLiteral("ab")).has_value());
+        QCOMPARE(manager.lastError(), core::UserManagerError::InvalidPassword);
+    }
+
+    void authenticateFailsWithWrongPassword()
+    {
+        core::UserManager manager(freshDatabase());
+        QVERIFY(manager.createUser(QStringLiteral("erin"), QStringLiteral("rightpassword")).has_value());
+
+        const auto authenticated = manager.authenticate(QStringLiteral("erin"), QStringLiteral("wrongpassword"));
+        QVERIFY(!authenticated.has_value());
+        QCOMPARE(manager.lastError(), core::UserManagerError::WrongPassword);
+    }
+
+    void statusManagementRoundTrips()
+    {
+        core::UserManager manager(freshDatabase());
+        const auto user = manager.createUser(QStringLiteral("frank"), QStringLiteral("password1"));
+        QVERIFY(user.has_value());
+
+        auto initialStatus = manager.status(user->id());
+        QVERIFY(initialStatus.has_value());
+        QCOMPARE(*initialStatus, models::UserStatus::Offline);
+
+        QVERIFY(manager.setStatus(user->id(), models::UserStatus::Online));
+        auto onlineStatus = manager.status(user->id());
+        QVERIFY(onlineStatus.has_value());
+        QCOMPARE(*onlineStatus, models::UserStatus::Online);
     }
 };
 

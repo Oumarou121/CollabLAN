@@ -1,19 +1,31 @@
 #ifndef MODELS_USER_H
 #define MODELS_USER_H
 
-#include <QDateTime>
 #include <QString>
+#include <QDateTime>
 
 namespace models {
 
 /**
+ * @brief Statut de connexion d'un utilisateur/poste.
+ */
+enum class UserStatus {
+    Offline,
+    Online,
+    Away
+};
+
+QString userStatusToString(UserStatus status);
+UserStatus userStatusFromString(const QString &value);
+
+/**
  * @brief Represente un utilisateur/poste sur le reseau.
  *
- * Correspond a une ligne de la table `Users` (voir
- * database/Migrations). Le hash de mot de passe est transporte par ce
- * modele pour permettre a UserRepository de le lire/ecrire, mais ne
- * doit jamais etre expose tel quel a l'interface (cf. core::UserManager,
- * qui ne remonte a la QML que le nom d'utilisateur et le role admin).
+ * Correspond a une ligne de la table `Users`. Le hash + le sel de mot
+ * de passe sont transportes par ce modele pour permettre a
+ * UserRepository de les lire/ecrire, mais ne doivent jamais etre
+ * exposes tels quels a l'interface (cf. core::UserManager, qui ne
+ * remonte a la QML que le nom d'utilisateur et le role admin).
  */
 class User {
 public:
@@ -21,10 +33,11 @@ public:
     User(int id,
          QString name,
          QString ipAddress,
-         QString status,
+         UserStatus status,
          bool isAdmin,
          QString passwordHash,
-         QDateTime createdAt = QDateTime());
+         QString passwordSalt,
+         QDateTime createdAt = QDateTime::currentDateTimeUtc());
     ~User();
 
     int id() const;
@@ -36,25 +49,31 @@ public:
     QString ipAddress() const;
     void setIpAddress(const QString &ipAddress);
 
-    QString status() const;
-    void setStatus(const QString &status);
+    UserStatus status() const;
+    void setStatus(UserStatus status);
 
     bool isAdmin() const;
     void setIsAdmin(bool isAdmin);
 
     QString passwordHash() const;
-    void setPasswordHash(const QString &passwordHash);
+    void setPasswordHash(const QString &hash);
+
+    QString passwordSalt() const;
+    void setPasswordSalt(const QString &salt);
 
     QDateTime createdAt() const;
     void setCreatedAt(const QDateTime &createdAt);
 
+    bool isValid() const;
+
 private:
     int m_id = -1;
     QString m_name;
-    QString m_ipAddress;
-    QString m_status = QStringLiteral("offline");
+    QString m_ipAddress = QStringLiteral("");
+    UserStatus m_status = UserStatus::Offline;
     bool m_isAdmin = false;
-    QString m_passwordHash;
+    QString m_passwordHash = QStringLiteral("");
+    QString m_passwordSalt = QStringLiteral("");
     QDateTime m_createdAt;
 };
 
