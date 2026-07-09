@@ -7,10 +7,11 @@ import "../Components"
 /*
  * LoginView - ecran "Login" (issue #6 : navigation de base Login -> Home)
  *
- * Emet loginSucceeded(username) lorsque l'utilisateur valide le formulaire.
- * L'authentification reelle (UserManager / SecurityService) sera branchee
- * dans une issue ulterieure ; pour l'instant, un nom d'utilisateur et un
- * mot de passe non vides suffisent a valider le formulaire.
+ * Emet loginSucceeded(username) lorsque l'authentification reussit.
+ * Le formulaire delegue la verification a core::UserManager (issue #16),
+ * expose depuis app/main.cpp comme propriete de contexte "userManager" :
+ * il n'y a plus de validation "mock" locale, seule une authentification
+ * reelle contre la base Users permet d'acceder a l'ecran Home.
  */
 Item {
     id: root
@@ -160,7 +161,8 @@ Item {
 
                     Button {
                         id: loginButton
-                        text: qsTr("Se connecter")
+                        text: userManager.busy ? qsTr("Connexion...") : qsTr("Se connecter")
+                        enabled: !userManager.busy
                         Layout.fillWidth: true
                         Layout.topMargin: Theme.spacingSmall
                         Layout.preferredHeight: 44
@@ -168,6 +170,7 @@ Item {
                         background: Rectangle {
                             radius: Theme.radiusSmall
                             color: loginButton.pressed ? Theme.primaryHover : Theme.primary
+                            opacity: loginButton.enabled ? 1.0 : 0.6
                         }
 
                         contentItem: Text {
@@ -189,11 +192,28 @@ Item {
                             }
 
                             errorLabel.text = ""
-                            root.loginSucceeded(username)
+                            userManager.login(username, password)
                         }
                     }
                 }
             }
+        }
+    }
+
+    // Reagit au resultat de l'authentification reelle emis par UserManager
+    // (core/UserManager.h) : succes -> navigation vers Home, echec ->
+    // affichage du message d'erreur dans errorLabel.
+    Connections {
+        target: userManager
+
+        function onLoginSucceeded(username) {
+            errorLabel.text = ""
+            passwordField.text = ""
+            root.loginSucceeded(username)
+        }
+
+        function onLoginFailed(reason) {
+            errorLabel.text = reason
         }
     }
 }
