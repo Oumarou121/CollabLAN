@@ -1,5 +1,6 @@
 #include <QtTest>
 #include <QSignalSpy>
+#include <QElapsedTimer>
 #include "Discovery/DiscoveryService.h"
 
 using network::DiscoveryService;
@@ -77,6 +78,8 @@ private slots:
         serviceA.setPeerTimeoutMs(600);
         serviceB.setPeerTimeoutMs(600);
 
+        serviceB.setLocalName("MachineB");
+
         QSignalSpy discoveredByA(&serviceA, &DiscoveryService::peerDiscovered);
         QSignalSpy lostByA(&serviceA, &DiscoveryService::peerLost);
 
@@ -92,6 +95,68 @@ private slots:
 
         QVERIFY(lostByA.wait(5000));
         QCOMPARE(serviceA.peers().size(), 0);
+
+        // Le signal doit transporter les infos completes du poste perdu
+        // (necessaire pour formuler une vraie notification de deconnexion),
+        // pas seulement son identifiant.
+        QCOMPARE(lostByA.count(), 1);
+        const DiscoveredPeer lostPeer = qvariant_cast<DiscoveredPeer>(lostByA.first().at(0));
+        QCOMPARE(lostPeer.id, serviceB.localId());
+        QCOMPARE(lostPeer.name, QStringLiteral("MachineB"));
+        QVERIFY(lostPeer.lastSeenMs > 0);
+
+        serviceA.stop();
+    }
+
+    /*
+     * Verifie le critere d'acceptation de l'issue #10 :
+     * "Un poste ferme est retire de la liste des autres postes en moins de
+     * 30 secondes", avec les valeurs par defaut de DiscoveryService (aucun
+     * reglage de peerTimeoutMs()/announceIntervalMs() ne vient accelerer le
+     * test). Ce test est volontairement plus lent (~10-12s) car il exerce
+     * le comportement reel tel qu'il sera utilise en production.
+     */
+    void peerIsLostWithinThirtySecondsUsingDefaultTimings()
+    {
+        DiscoveryService serviceA;
+        DiscoveryService serviceB;
+
+        const quint16 testPort = 46001;
+        serviceA.setPort(testPort);
+        serviceB.setPort(testPort);
+
+        // Aucun appel a setAnnounceIntervalMs()/setPeerTimeoutMs() : on
+        // conserve les valeurs par defaut (2000 ms / 8000 ms).
+        QCOMPARE(serviceA.peerTimeoutMs(), 8000);
+        QCOMPARE(serviceA.announceIntervalMs(), 2000);
+
+        serviceB.setLocalName("MachineB-Default");
+
+        QSignalSpy discoveredByA(&serviceA, &DiscoveryService::peerDiscovered);
+        QSignalSpy lostByA(&serviceA, &DiscoveryService::peerLost);
+
+        QVERIFY(serviceA.start());
+        QVERIFY(serviceB.start());
+
+        QVERIFY(discoveredByA.wait(5000));
+        QCOMPARE(serviceA.peers().size(), 1);
+
+        QElapsedTimer timer;
+        timer.start();
+
+        serviceB.stop();
+
+        // Doit etre detecte et retire en moins de 30s, conformement au
+        // critere d'acceptation de l'issue #10.
+        QVERIFY(lostByA.wait(30000));
+        const qint64 elapsedMs = timer.elapsed();
+
+        QCOMPARE(serviceA.peers().size(), 0);
+        QVERIFY2(elapsedMs < 30000,
+                  qPrintable(QStringLiteral("Detection en %1 ms, attendu < 30000 ms").arg(elapsedMs)));
+
+        const DiscoveredPeer lostPeer = qvariant_cast<DiscoveredPeer>(lostByA.first().at(0));
+        QCOMPARE(lostPeer.name, QStringLiteral("MachineB-Default"));
 
         serviceA.stop();
     }

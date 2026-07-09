@@ -9,3 +9,7 @@ add_test(NAME test_databasemanager COMMAND test_databasemanager)
 add_executable(test_discoveryservice UnitTests/test_discoveryservice.cpp)
 target_link_libraries(test_discoveryservice PRIVATE Qt6::Test network)
 add_test(NAME test_discoveryservice COMMAND test_discoveryservice)
+
+add_executable(test_securityservice UnitTests/test_securityservice.cpp)
+target_link_libraries(test_securityservice PRIVATE Qt6::Test network)
+add_test(NAME test_securityservice COMMAND test_securityservice)

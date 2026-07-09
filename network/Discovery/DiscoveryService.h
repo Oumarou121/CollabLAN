@@ -36,7 +36,7 @@ struct DiscoveredPeer {
  *    des autres postes et met a jour sa liste de postes detectes (peers())
  *    en consequence.
  *  - Un poste qui n'a plus donne signe de vie depuis peerTimeoutMs() est
- *    considere comme perdu (signal peerLost).
+ *    considere comme perdu (signal peerLost, avec ses dernieres infos connues).
  *
  * Avec les valeurs par defaut (annonce toutes les 2s), deux instances sur le
  * meme reseau se detectent en quelques secondes, conformement au critere
@@ -95,7 +95,10 @@ signals:
     void peerUpdated(const network::DiscoveredPeer &peer);
 
     /// Emis lorsqu'un poste n'a plus donne signe de vie depuis peerTimeoutMs().
-    void peerLost(const QString &peerId);
+    /// Transporte les dernieres informations connues du poste perdu (nom, IP,
+    /// port, dernier statut...), necessaires pour formuler une notification
+    /// de deconnexion exploitable par l'UI (ex. "MachineB est deconnectee").
+    void peerLost(const network::DiscoveredPeer &peer);
 
 private slots:
     void sendAnnounce();
