@@ -4,15 +4,19 @@
 #include <QObject>
 #include <QString>
 #include <QHostAddress>
+#include <QSslError>
 
 class QWebSocket;
 
 namespace network {
 
+class SecurityService;
+
 /**
- * @brief Transport des messages en temps reel via WebSocket.
+ * @brief Transport des messages en temps reel via WebSocket chiffré.
  *
- * Gere la connexion WebSocket entre deux postes pour l'echange de messages.
+ * Gere la connexion WebSocket sécurisée (TLS) entre deux postes pour l'echange de messages.
+ * Utilise SecurityService pour fournir les certificats/chés privés TLS.
  * Emet des signaux lors de la reception de messages pour que MessagingManager
  * puisse les diffuser aux abonnes (UI, base de donnees...).
  */
@@ -21,7 +25,7 @@ class MessagingService : public QObject
     Q_OBJECT
 
 public:
-    explicit MessagingService(QObject *parent = nullptr);
+    explicit MessagingService(SecurityService *securityService, QObject *parent = nullptr);
     ~MessagingService() override;
 
     /// Connecte au poste distant specifie. Retourne true si la connexion reussit.
@@ -58,9 +62,13 @@ private slots:
     void onDisconnected();
     void onTextMessageReceived(const QString &message);
     void onError();
+    void onSslErrors(const QList<QSslError> &errors);
 
 private:
+    void configureSsl();
+
     QWebSocket *m_socket = nullptr;
+    SecurityService *m_securityService = nullptr;
     bool m_connected = false;
 };
 

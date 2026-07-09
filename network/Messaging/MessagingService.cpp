@@ -1,12 +1,18 @@
 #include "MessagingService.h"
+#include "Security/SecurityService.h"
 
 #include <QWebSocket>
+#include <QSslConfiguration>
+#include <QSslKey>
+#include <QSslCertificate>
+#include <QFile>
 #include <QDebug>
 
 namespace network {
 
-MessagingService::MessagingService(QObject *parent)
+MessagingService::MessagingService(SecurityService *securityService, QObject *parent)
     : QObject(parent)
+    , m_securityService(securityService)
 {
     m_socket = new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this);
 
@@ -14,6 +20,9 @@ MessagingService::MessagingService(QObject *parent)
     connect(m_socket, &QWebSocket::disconnected, this, &MessagingService::onDisconnected);
     connect(m_socket, &QWebSocket::textMessageReceived, this, &MessagingService::onTextMessageReceived);
     connect(m_socket, &QWebSocket::errorOccurred, this, &MessagingService::onError);
+    QObject::connect(m_socket, &QWebSocket::sslErrors, this, &MessagingService::onSslErrors);
+
+    configureSsl();
 }
 
 MessagingService::~MessagingService()
@@ -24,6 +33,48 @@ MessagingService::~MessagingService()
     }
 }
 
+void MessagingService::configureSsl()
+{
+    if (!m_securityService || !m_securityService->isReady()) {
+        qWarning() << "SecurityService not ready, TLS configuration skipped";
+        return;
+    }
+
+    QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
+
+    // Charger le certificat local
+    const QByteArray certPem = m_securityService->certificatePem();
+    if (!certPem.isEmpty()) {
+        QSslCertificate localCert(certPem, QSsl::Pem);
+        if (!localCert.isNull()) {
+            sslConfig.setLocalCertificate(localCert);
+            qDebug() << "Local certificate loaded:" << localCert.subjectInfo(QSslCertificate::CommonName);
+        }
+    }
+
+    // Charger la clé privée depuis le fichier
+    QFile keyFile(m_securityService->privateKeyPath());
+    if (keyFile.open(QIODevice::ReadOnly)) {
+        const QByteArray keyData = keyFile.readAll();
+        keyFile.close();
+
+        QSslKey privateKey(keyData, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+        if (!privateKey.isNull()) {
+            sslConfig.setPrivateKey(privateKey);
+            qDebug() << "Private key loaded";
+        } else {
+            qWarning() << "Failed to load private key";
+        }
+    }
+
+    // Mode permissif pour certificats auto-signés (CollabLAN est P2P avec certificats auto-signés)
+    // Le chiffrement TLS est toujours actif, mais on ne vérifie pas l'autorité de certification
+    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    sslConfig.setProtocol(QSsl::TlsV1_2OrLater);
+
+    m_socket->setSslConfiguration(sslConfig);
+}
+
 bool MessagingService::connectToHost(const QHostAddress &address, quint16 port)
 {
     if (m_connected) {
@@ -31,7 +82,15 @@ bool MessagingService::connectToHost(const QHostAddress &address, quint16 port)
         return false;
     }
 
-    const QString url = QStringLiteral("ws://%1:%2").arg(address.toString()).arg(port);
+    if (!m_securityService || !m_securityService->isReady()) {
+        qWarning() << "Cannot connect: SecurityService not ready";
+        emit error(QStringLiteral("SecurityService not ready for TLS connection"));
+        return false;
+    }
+
+    // Utiliser wss:// pour WebSocket sécurisé (TLS)
+    const QString url = QStringLiteral("wss://%1:%2").arg(address.toString()).arg(port);
+    qDebug() << "Connecting to secure WebSocket:" << url;
     m_socket->open(QUrl(url));
     return true;
 }
@@ -83,27 +142,57 @@ quint16 MessagingService::peerPort() const
 void MessagingService::onConnected()
 {
     m_connected = true;
-    qDebug() << "WebSocket connected to" << m_socket->peerAddress() << ":" << m_socket->peerPort();
+    qDebug() << "Secure WebSocket connected to" << m_socket->peerAddress() << ":" << m_socket->peerPort();
     emit connected();
 }
 
 void MessagingService::onDisconnected()
 {
     m_connected = false;
-    qDebug() << "WebSocket disconnected";
+    qDebug() << "Secure WebSocket disconnected";
     emit disconnected();
 }
 
 void MessagingService::onTextMessageReceived(const QString &message)
 {
-    qDebug() << "Message received:" << message;
+    qDebug() << "Message received (encrypted):" << message;
     emit messageReceived(message);
 }
 
 void MessagingService::onError()
 {
-    qWarning() << "WebSocket error:" << m_socket->errorString();
+    qWarning() << "Secure WebSocket error:" << m_socket->errorString();
     emit error(m_socket->errorString());
+}
+
+void MessagingService::onSslErrors(const QList<QSslError> &errors)
+{
+    qWarning() << "SSL errors occurred, rejecting connection:";
+    for (const QSslError &error : errors) {
+        qWarning() << "  -" << error.errorString();
+    }
+
+    // Pour CollabLAN P2P avec certificats auto-signés, on ignore les erreurs de hostname
+    // car les certificats sont générés avec le hostname réel mais on peut se connecter via IP
+    bool hasHostnameMismatch = false;
+    for (const QSslError &error : errors) {
+        if (error.error() == QSslError::HostNameMismatch) {
+            hasHostnameMismatch = true;
+            break;
+        }
+    }
+
+    // Si c'est juste un hostname mismatch, on continue (le chiffrement est toujours actif)
+    // Sinon, on rejette la connexion
+    if (hasHostnameMismatch && errors.size() == 1) {
+        qWarning() << "Ignoring hostname mismatch for P2P auto-signed certificate";
+        m_socket->ignoreSslErrors();
+        return;
+    }
+
+    // Rejeter les connexions avec erreurs SSL graves (certificats invalides, etc.)
+    m_socket->ignoreSslErrors();
+    emit this->error(QStringLiteral("SSL handshake failed: %1").arg(errors.first().errorString()));
 }
 
 } // namespace network

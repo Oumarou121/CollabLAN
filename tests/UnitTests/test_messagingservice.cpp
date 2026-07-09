@@ -2,9 +2,16 @@
 #include <QSignalSpy>
 #include <QWebSocketServer>
 #include <QWebSocket>
+#include <QTemporaryDir>
+#include <QSslConfiguration>
+#include <QSslCertificate>
+#include <QSslKey>
+#include <QFile>
 #include "Messaging/MessagingService.h"
+#include "Security/SecurityService.h"
 
 using network::MessagingService;
+using network::SecurityService;
 
 /*
  * Verifie le critere d'acceptation de l'issue #43 :
@@ -18,18 +25,40 @@ class TestMessagingService : public QObject
 {
     Q_OBJECT
 
+private:
+    std::unique_ptr<SecurityService> m_securityService;
+
+    void configureSslServer(QWebSocketServer &server)
+    {
+        QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
+        sslConfig.setLocalCertificate(QSslCertificate(m_securityService->certificatePem(), QSsl::Pem));
+
+        QFile keyFile(m_securityService->privateKeyPath());
+        QVERIFY(keyFile.open(QIODevice::ReadOnly));
+        const QByteArray keyData = keyFile.readAll();
+        keyFile.close();
+
+        QSslKey privateKey(keyData, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+        sslConfig.setPrivateKey(privateKey);
+        sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+        server.setSslConfiguration(sslConfig);
+    }
+
 private slots:
     void initTestCase()
     {
         // Initialisation Qt WebSockets
+        m_securityService = std::make_unique<SecurityService>(QTemporaryDir().path());
+        QVERIFY(m_securityService->initialize());
     }
 
     void connectToHostSucceeds()
     {
-        QWebSocketServer server(QStringLiteral("TestServer"), QWebSocketServer::NonSecureMode);
+        QWebSocketServer server(QStringLiteral("TestServer"), QWebSocketServer::SecureMode);
+        configureSslServer(server);
         QVERIFY(server.listen(QHostAddress::LocalHost, 12345));
 
-        MessagingService client;
+        MessagingService client(m_securityService.get());
         QSignalSpy connectedSpy(&client, &MessagingService::connected);
         QSignalSpy errorSpy(&client, &MessagingService::error);
 
@@ -44,7 +73,8 @@ private slots:
 
     void sendMessageDeliveredToServer()
     {
-        QWebSocketServer server(QStringLiteral("TestServer"), QWebSocketServer::NonSecureMode);
+        QWebSocketServer server(QStringLiteral("TestServer"), QWebSocketServer::SecureMode);
+        configureSslServer(server);
         QVERIFY(server.listen(QHostAddress::LocalHost, 12346));
 
         QWebSocket *serverSocket = nullptr;
@@ -52,7 +82,7 @@ private slots:
             serverSocket = server.nextPendingConnection();
         });
 
-        MessagingService client;
+        MessagingService client(m_securityService.get());
         QSignalSpy connectedSpy(&client, &MessagingService::connected);
 
         QVERIFY(client.connectToHost(QHostAddress::LocalHost, 12346));
@@ -74,7 +104,8 @@ private slots:
 
     void messageReceivedFromServer()
     {
-        QWebSocketServer server(QStringLiteral("TestServer"), QWebSocketServer::NonSecureMode);
+        QWebSocketServer server(QStringLiteral("TestServer"), QWebSocketServer::SecureMode);
+        configureSslServer(server);
         QVERIFY(server.listen(QHostAddress::LocalHost, 12347));
 
         QWebSocket *serverSocket = nullptr;
@@ -82,7 +113,7 @@ private slots:
             serverSocket = server.nextPendingConnection();
         });
 
-        MessagingService client;
+        MessagingService client(m_securityService.get());
         QSignalSpy connectedSpy(&client, &MessagingService::connected);
         QSignalSpy messageReceivedSpy(&client, &MessagingService::messageReceived);
 
@@ -103,7 +134,8 @@ private slots:
 
     void messageRoundTripUnderOneSecond()
     {
-        QWebSocketServer server(QStringLiteral("TestServer"), QWebSocketServer::NonSecureMode);
+        QWebSocketServer server(QStringLiteral("TestServer"), QWebSocketServer::SecureMode);
+        configureSslServer(server);
         QVERIFY(server.listen(QHostAddress::LocalHost, 12348));
 
         QWebSocket *serverSocket = nullptr;
@@ -111,7 +143,7 @@ private slots:
             serverSocket = server.nextPendingConnection();
         });
 
-        MessagingService client;
+        MessagingService client(m_securityService.get());
         QSignalSpy connectedSpy(&client, &MessagingService::connected);
         QSignalSpy messageReceivedSpy(&client, &MessagingService::messageReceived);
 
@@ -143,10 +175,11 @@ private slots:
 
     void disconnectEmitsSignal()
     {
-        QWebSocketServer server(QStringLiteral("TestServer"), QWebSocketServer::NonSecureMode);
+        QWebSocketServer server(QStringLiteral("TestServer"), QWebSocketServer::SecureMode);
+        configureSslServer(server);
         QVERIFY(server.listen(QHostAddress::LocalHost, 12349));
 
-        MessagingService client;
+        MessagingService client(m_securityService.get());
         QSignalSpy connectedSpy(&client, &MessagingService::connected);
         QSignalSpy disconnectedSpy(&client, &MessagingService::disconnected);
 
@@ -162,7 +195,7 @@ private slots:
 
     void sendMessageWhenNotConnectedFails()
     {
-        MessagingService client;
+        MessagingService client(m_securityService.get());
         QVERIFY(!client.isConnected());
 
         const QString testMessage = QStringLiteral("Test");
