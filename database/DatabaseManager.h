@@ -1,48 +1,67 @@
 #ifndef DATABASE_DATABASEMANAGER_H
 #define DATABASE_DATABASEMANAGER_H
 
-#include <QString>
-#include <QSqlDatabase>
+#include "DatabaseManager.h"
+
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QStandardPaths>
+#include <QTextStream>
 
 namespace database {
 
 /**
  * @brief Ouverture/fermeture de la base SQLite, execution des migrations.
+ *
+ * Le DatabaseManager est responsable de :
+ *  - ouvrir (ou creer) le fichier SQLite dans le repertoire de donnees
+ *    applicatif (ou un chemin explicite, utile pour les tests) ;
+ *  - activer les "foreign keys" SQLite (desactivees par defaut) ;
+ *  - executer au demarrage les scripts SQL du dossier Migrations/,
+ *    dans l'ordre lexicographique de leur nom de fichier, en ne
+ *    rejouant jamais une migration deja appliquee (table de suivi
+ *    schema_migrations) ;
+ *  - exposer la connexion QSqlDatabase aux repositories.
+ *
+ * Chaque instance utilise un nom de connexion Qt unique afin de
+ * pouvoir coexister avec d'autres connexions (utile notamment dans
+ * les tests unitaires qui ouvrent plusieurs bases en memoire).
  */
 class DatabaseManager {
 public:
-    DatabaseManager();
-    explicit DatabaseManager(QString databasePath, QString connectionName = QStringLiteral("collablan"));
+    explicit DatabaseManager(const QString &connectionName = QStringLiteral("collablan_db"));
     ~DatabaseManager();
 
-    // Non copiable (une connexion SQL n'a pas vocation a etre dupliquee).
     DatabaseManager(const DatabaseManager &) = delete;
     DatabaseManager &operator=(const DatabaseManager &) = delete;
 
-    /**
-     * @brief Ouvre la base de donnees et execute les migrations si necessaire.
-     * @return true si la base est prete a l'emploi.
-     */
-    bool open();
-
-    /**
-     * @brief Ferme proprement la connexion a la base de donnees.
-     */
+    bool open(const QString &dbFilePath = QString());
     void close();
-
     bool isOpen() const;
 
-    QString databasePath() const;
-    QString lastError() const;
+    QString databaseFilePath() const;
+    static QString defaultDatabaseFilePath();
 
     QSqlDatabase database() const;
+    QString lastError() const;
+
+    // Nombre de migrations appliquees avec succes sur cette base
+    // (0 si jamais ouverte ou si aucune migration n'a encore ete jouee).
+    int schemaVersion() const;
 
 private:
-    bool runMigrations();
-    bool executeSqlScript(const QString &sqlFilePath);
+    bool ensureMigrationsTable();
+    QStringList pendingMigrationFiles() const;
+    bool applyMigrationFile(const QString &filePath);
+    bool markMigrationApplied(const QString &migrationName);
+    QStringList splitStatements(const QString &sqlScript) const;
 
-    QString m_databasePath;
     QString m_connectionName;
+    QString m_dbFilePath;
     QString m_lastError;
 };
 
