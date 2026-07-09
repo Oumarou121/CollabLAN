@@ -244,16 +244,16 @@ void DiscoveryService::handleAnnouncePacket(const QByteArray &data, const QHostA
 void DiscoveryService::checkStalePeers()
 {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    QStringList staleIds;
+    QList<DiscoveredPeer> stalePeers;
 
     for (auto it = m_peers.constBegin(); it != m_peers.constEnd(); ++it) {
         if (now - it.value().lastSeenMs > m_peerTimeoutMs)
-            staleIds.append(it.key());
+            stalePeers.append(it.value());
     }
 
-    for (const QString &id : staleIds) {
-        m_peers.remove(id);
-        emit peerLost(id);
+    for (const DiscoveredPeer &peer : stalePeers) {
+        m_peers.remove(peer.id);
+        emit peerLost(peer);
     }
 }
 
