@@ -3,6 +3,7 @@ import QtQuick.Controls
 import Themes
 import "Login"
 import "Home"
+import "Users"
 
 /*
  * Main - fenetre racine de CollabLAN.
@@ -58,6 +59,19 @@ ApplicationWindow {
         HomeView {
             onLogoutRequested: {
                 stackView.pop(null) // revient a l'ecran Login (racine de la pile)
+            }
+            onUsersRequested: {
+                stackView.push(usersViewComponent)
+            }
+        }
+    }
+
+    Component {
+        id: usersViewComponent
+
+        UsersView {
+            onBackRequested: {
+                stackView.pop()
             }
         }
     }

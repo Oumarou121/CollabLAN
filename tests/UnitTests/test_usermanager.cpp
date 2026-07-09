@@ -17,19 +17,24 @@ private:
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<database::DatabaseManager> m_dbManager;
 
-    // Chaque test ouvre sa propre base SQLite temporaire (migrations
-    // rejouees, y compris le seed du compte "admin" / "admin123" -
-    // voir database/Migrations/002_add_user_password.sql).
+// Chaque test ouvre sa propre base SQLite temporaire, puis seede
+    // manuellement le compte "admin"/"admin123" : ce seed est fait par
+    // Application::initialize() en production (via UserManager::createUser,
+    // hash+salt corrects), plus par une migration SQL.
     database::DatabaseManager *freshDatabase()
     {
         m_dir = std::make_unique<QTemporaryDir>();
         Q_ASSERT(m_dir->isValid());
 
         m_dbManager = std::make_unique<database::DatabaseManager>(
-            m_dir->filePath(QStringLiteral("test.db")),
             QStringLiteral("test-usermanager-%1").arg(QRandomGenerator::global()->generate()));
-        const bool opened = m_dbManager->open();
+        const bool opened = m_dbManager->open(m_dir->filePath(QStringLiteral("test.db")));
         Q_ASSERT(opened);
+
+        core::UserManager seeder(m_dbManager.get());
+        const auto admin = seeder.createUser(QStringLiteral("admin"), QStringLiteral("admin123"), /*isAdmin=*/true);
+        Q_ASSERT(admin.has_value());
+
         return m_dbManager.get();
     }
 

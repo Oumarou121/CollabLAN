@@ -10,6 +10,10 @@ add_executable(test_discoveryservice UnitTests/test_discoveryservice.cpp)
 target_link_libraries(test_discoveryservice PRIVATE Qt6::Test network)
 add_test(NAME test_discoveryservice COMMAND test_discoveryservice)
 
+add_executable(test_peersmodel UnitTests/test_peersmodel.cpp)
+target_link_libraries(test_peersmodel PRIVATE Qt6::Test Qt6::Core network)
+add_test(NAME test_peersmodel COMMAND test_peersmodel)
+
 add_executable(test_securityservice UnitTests/test_securityservice.cpp)
 target_link_libraries(test_securityservice PRIVATE Qt6::Test network)
 add_test(NAME test_securityservice COMMAND test_securityservice)

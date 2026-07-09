@@ -12,6 +12,11 @@ namespace core {
 class UserManager;
 }
 
+namespace network {
+class DiscoveryService;
+class PeersModel;
+}
+
 /**
  * @brief Point d'entree logique de CollabLAN : initialise les services
  * (reseau, base de donnees, parametres) au demarrage de l'application.
@@ -30,10 +35,17 @@ public:
     // LoginView.qml via setContextProperty("userManager", ...).
     core::UserManager *userManager() const;
 
+    // Expose au bootstrap QML (app/main.cpp) le modele des postes detectes,
+    // a brancher sur UsersView.qml via setContextProperty("peersModel", ...)
+    // (issue #17).
+    network::PeersModel *peersModel() const;
+
 private:
-    // TODO: instancier ici les autres services (Discovery, Security, Settings...)
+    // TODO: instancier ici les autres services (Security, Settings...)
     std::unique_ptr<database::DatabaseManager> m_databaseManager;
-    core::UserManager *m_userManager = nullptr; // parente = this (QObject)
+    core::UserManager *m_userManager = nullptr;               // parente = this (QObject)
+    network::DiscoveryService *m_discoveryService = nullptr;  // parente = this (QObject)
+    network::PeersModel *m_peersModel = nullptr;               // parente = this (QObject)
 };
 
 #endif // APP_APPLICATION_H

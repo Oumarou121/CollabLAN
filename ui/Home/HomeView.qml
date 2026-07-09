@@ -19,6 +19,7 @@ Item {
     property string username: ""
 
     signal logoutRequested()
+    signal usersRequested()
 
     Rectangle {
         anchors.fill: parent
@@ -91,6 +92,29 @@ Item {
                         color: Theme.text
                         font.pixelSize: Theme.fontSizeBody
                     }
+                }
+
+                Button {
+                    text: qsTr("Postes connectes")
+                    Layout.leftMargin: Theme.spacingSmall
+                    Layout.preferredHeight: 36
+
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
+                        border.width: 1
+                        border.color: Theme.border
+                    }
+
+                    contentItem: Text {
+                        text: qsTr("Postes connectes")
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    onClicked: root.usersRequested()
                 }
 
                 ThemeToggleButton {

@@ -56,7 +56,7 @@ private slots:
         database::DatabaseManager manager2(QStringLiteral("test-reopen-b-%1").arg(reinterpret_cast<quintptr>(this)));
         QVERIFY(manager2.open(path));
         QVERIFY(manager2.lastError().isEmpty());
-        QCOMPARE(manager2.schemaVersion(), 1);
+        QCOMPARE(manager2.schemaVersion(), 2);
     }
 
     void foreignKeysAreEnabled()
@@ -117,7 +117,7 @@ private slots:
         QVERIFY(manager.open(path));
         QVERIFY(manager.isOpen());
         QVERIFY(manager.lastError().isEmpty());
-        QCOMPARE(manager.schemaVersion(), 1);
+        QCOMPARE(manager.schemaVersion(), 2);
 
         manager.close();
     }
