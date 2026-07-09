@@ -34,6 +34,14 @@ namespace database {
 class DatabaseManager {
 public:
     explicit DatabaseManager(const QString &connectionName = QStringLiteral("collablan_db"));
+
+    /**
+     * @brief Variante pratique pour les tests : fixe d'emblee le chemin
+     * du fichier SQLite, ce qui permet ensuite d'appeler open() sans
+     * argument.
+     */
+    DatabaseManager(const QString &dbFilePath, const QString &connectionName);
+
     ~DatabaseManager();
 
     DatabaseManager(const DatabaseManager &) = delete;
