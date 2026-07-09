@@ -20,6 +20,12 @@ UserStatus userStatusFromString(const QString &value);
 
 /**
  * @brief Represente un utilisateur/poste sur le reseau.
+ *
+ * Correspond a une ligne de la table `Users`. Le hash + le sel de mot
+ * de passe sont transportes par ce modele pour permettre a
+ * UserRepository de les lire/ecrire, mais ne doivent jamais etre
+ * exposes tels quels a l'interface (cf. core::UserManager, qui ne
+ * remonte a la QML que le nom d'utilisateur et le role admin).
  */
 class User {
 public:

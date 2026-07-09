@@ -16,7 +16,9 @@ namespace database {
  * @brief Acces aux donnees de la table Users (CRUD complet).
  *
  * Toutes les requetes sont preparees (QSqlQuery::prepare) afin d'eviter
- * toute injection SQL.
+ * toute injection SQL. Reste une couche fine au-dessus de QSqlDatabase :
+ * aucune logique metier (verification de mot de passe, regles
+ * d'autorisation...) n'y est presente, celle-ci vit dans core::UserManager.
  */
 class UserRepository {
 public:
@@ -46,6 +48,8 @@ public:
 
     // Alias explicites pour lisibilite (Create/Read/Update/Delete).
     std::optional<models::User> findById(int id) const;
+    // Recherche par nom d'utilisateur (identifiant de connexion), qui
+    // est contraint unique par la migration 002_add_user_password.sql.
     std::optional<models::User> findByName(const QString &name) const;
     bool existsByName(const QString &name) const;
     std::vector<models::User> findAll() const;
