@@ -7,8 +7,8 @@
 namespace database {
 
 namespace {
-// QString() (null) est lie comme SQL NULL par le driver Qt, ce qui viole les
-// contraintes NOT NULL des colonnes texte. On normalise donc en chaine vide.
+// QString() (null) est liee comme SQL NULL par le driver Qt, ce qui viole
+// les contraintes NOT NULL des colonnes texte. On normalise en chaine vide.
 QString notNull(const QString &value)
 {
     return value.isNull() ? QStringLiteral("") : value;
@@ -42,7 +42,7 @@ int UserRepository::create(const models::User &user)
     query.prepare(QStringLiteral(
         "INSERT INTO Users (name, ip_address, status, is_admin, password_hash, password_salt) "
         "VALUES (:name, :ip_address, :status, :is_admin, :password_hash, :password_salt)"));
-    query.bindValue(QStringLiteral(":name"), user.name());
+    query.bindValue(QStringLiteral(":name"), notNull(user.name()));
     query.bindValue(QStringLiteral(":ip_address"), notNull(user.ipAddress()));
     query.bindValue(QStringLiteral(":status"), models::userStatusToString(user.status()));
     query.bindValue(QStringLiteral(":is_admin"), user.isAdmin() ? 1 : 0);
@@ -57,6 +57,11 @@ int UserRepository::create(const models::User &user)
     return query.lastInsertId().toInt();
 }
 
+std::optional<models::User> UserRepository::read(int id) const
+{
+    return findById(id);
+}
+
 bool UserRepository::update(const models::User &user)
 {
     QSqlQuery query(m_db);
@@ -64,7 +69,7 @@ bool UserRepository::update(const models::User &user)
         "UPDATE Users SET name = :name, ip_address = :ip_address, status = :status, "
         "is_admin = :is_admin, password_hash = :password_hash, password_salt = :password_salt "
         "WHERE id = :id"));
-    query.bindValue(QStringLiteral(":name"), user.name());
+    query.bindValue(QStringLiteral(":name"), notNull(user.name()));
     query.bindValue(QStringLiteral(":ip_address"), notNull(user.ipAddress()));
     query.bindValue(QStringLiteral(":status"), models::userStatusToString(user.status()));
     query.bindValue(QStringLiteral(":is_admin"), user.isAdmin() ? 1 : 0);

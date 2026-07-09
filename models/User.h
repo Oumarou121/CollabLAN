@@ -66,8 +66,8 @@ private:
     QString m_ipAddress = QStringLiteral("");
     UserStatus m_status = UserStatus::Offline;
     bool m_isAdmin = false;
-    QString m_passwordHash;
-    QString m_passwordSalt;
+    QString m_passwordHash = QStringLiteral("");
+    QString m_passwordSalt = QStringLiteral("");
     QDateTime m_createdAt;
 };
 
