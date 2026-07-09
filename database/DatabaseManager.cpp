@@ -38,24 +38,12 @@ bool DatabaseManager::open(const QString &dbFilePath)
         return true;
     }
 
-    m_dbFilePath = dbFilePath.isEmpty() ? defaultDatabaseFilePath() : dbFilePath;
+    QDir().mkpath(QFileInfo(m_databasePath).absolutePath());
 
-    if (m_dbFilePath != QStringLiteral(":memory:")) {
-        const QFileInfo dbFileInfo(m_dbFilePath);
-        const QDir dbDir = dbFileInfo.dir();
-        if (!dbDir.exists() && !dbDir.mkpath(QStringLiteral("."))) {
-            m_lastError = QStringLiteral("Impossible de creer le repertoire de la base de donnees : %1")
-                               .arg(dbDir.absolutePath());
-            return false;
-        }
-    }
-
-    if (QSqlDatabase::contains(m_connectionName)) {
-        QSqlDatabase::removeDatabase(m_connectionName);
-    }
-
-    QSqlDatabase db = QSqlDatabase::addDatabase(kSqliteDriver, m_connectionName);
-    db.setDatabaseName(m_dbFilePath);
+    QSqlDatabase db = QSqlDatabase::contains(m_connectionName)
+                           ? QSqlDatabase::database(m_connectionName)
+                           : QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_connectionName);
+    db.setDatabaseName(m_databasePath);
 
     if (!db.open()) {
         m_lastError = db.lastError().text();
@@ -63,6 +51,7 @@ bool DatabaseManager::open(const QString &dbFilePath)
         return false;
     }
 
+    // Active les contraintes de cle etrangere pour SQLite.
     QSqlQuery pragma(db);
     if (!pragma.exec(QStringLiteral("PRAGMA foreign_keys = ON;"))) {
         m_lastError = pragma.lastError().text();
@@ -136,55 +125,20 @@ int DatabaseManager::schemaVersion() const
 
 bool DatabaseManager::ensureMigrationsTable()
 {
-    QSqlQuery query(database());
-    const bool ok = query.exec(QStringLiteral(
-        "CREATE TABLE IF NOT EXISTS schema_migrations ("
-        "  name TEXT PRIMARY KEY,"
-        "  applied_at TEXT NOT NULL DEFAULT (datetime('now'))"
-        ");"));
-    if (!ok) {
-        m_lastError = query.lastError().text();
-    }
-    return ok;
-}
+    QSqlDatabase db = database();
 
-QStringList DatabaseManager::pendingMigrationFiles() const
-{
-    QStringList candidateDirs = {
-        QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("database/%1").arg(kMigrationsDirName)),
-        QDir(QStringLiteral(__FILE__)).filePath(QStringLiteral("../%1").arg(kMigrationsDirName)),
-    };
+    const QStringList statements = QString::fromUtf8(kInitialSchema)
+                                        .split(QChar(';'), Qt::SkipEmptyParts);
 
-    QDir migrationsDir;
-    for (const QString &candidate : candidateDirs) {
-        QDir dir(candidate);
-        if (dir.exists()) {
-            migrationsDir = dir;
-            break;
+    for (const QString &rawStatement : statements) {
+        const QString statement = rawStatement.trimmed();
+        if (statement.isEmpty()) {
+            continue;
         }
-    }
-
-    if (!migrationsDir.exists()) {
-        return {};
-    }
-
-    QStringList alreadyApplied;
-    {
-        QSqlQuery query(database());
-        if (query.exec(QStringLiteral("SELECT name FROM schema_migrations;"))) {
-            while (query.next()) {
-                alreadyApplied << query.value(0).toString();
-            }
-        }
-    }
-
-    const QStringList sqlFiles = migrationsDir.entryList(
-        QStringList() << QStringLiteral("*.sql"), QDir::Files, QDir::Name);
-
-    QStringList pending;
-    for (const QString &fileName : sqlFiles) {
-        if (!alreadyApplied.contains(fileName)) {
-            pending << migrationsDir.filePath(fileName);
+        QSqlQuery query(db);
+        if (!query.exec(statement)) {
+            m_lastError = query.lastError().text();
+            return false;
         }
     }
     return pending;
@@ -243,24 +197,6 @@ bool DatabaseManager::markMigrationApplied(const QString &migrationName)
         return false;
     }
     return true;
-}
-
-QStringList DatabaseManager::splitStatements(const QString &sqlScript) const
-{
-    QString cleaned;
-    for (const QString &line : sqlScript.split(QLatin1Char('\n'))) {
-        const int commentIndex = line.indexOf(QStringLiteral("--"));
-        cleaned += (commentIndex >= 0 ? line.left(commentIndex) : line) + QLatin1Char('\n');
-    }
-
-    QStringList statements;
-    for (const QString &part : cleaned.split(QLatin1Char(';'))) {
-        const QString trimmed = part.trimmed();
-        if (!trimmed.isEmpty()) {
-            statements << trimmed;
-        }
-    }
-    return statements;
 }
 
 } // namespace database

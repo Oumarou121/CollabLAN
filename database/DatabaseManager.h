@@ -1,14 +1,35 @@
 #ifndef DATABASE_DATABASEMANAGER_H
 #define DATABASE_DATABASEMANAGER_H
 
-#include <QSqlDatabase>
-#include <QString>
-#include <QStringList>
+#include "DatabaseManager.h"
+
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QStandardPaths>
+#include <QTextStream>
 
 namespace database {
 
 /**
  * @brief Ouverture/fermeture de la base SQLite, execution des migrations.
+ *
+ * Le DatabaseManager est responsable de :
+ *  - ouvrir (ou creer) le fichier SQLite dans le repertoire de donnees
+ *    applicatif (ou un chemin explicite, utile pour les tests) ;
+ *  - activer les "foreign keys" SQLite (desactivees par defaut) ;
+ *  - executer au demarrage les scripts SQL du dossier Migrations/,
+ *    dans l'ordre lexicographique de leur nom de fichier, en ne
+ *    rejouant jamais une migration deja appliquee (table de suivi
+ *    schema_migrations) ;
+ *  - exposer la connexion QSqlDatabase aux repositories.
+ *
+ * Chaque instance utilise un nom de connexion Qt unique afin de
+ * pouvoir coexister avec d'autres connexions (utile notamment dans
+ * les tests unitaires qui ouvrent plusieurs bases en memoire).
  */
 class DatabaseManager {
 public:
@@ -28,6 +49,8 @@ public:
     QSqlDatabase database() const;
     QString lastError() const;
 
+    // Nombre de migrations appliquees avec succes sur cette base
+    // (0 si jamais ouverte ou si aucune migration n'a encore ete jouee).
     int schemaVersion() const;
 
 private:
