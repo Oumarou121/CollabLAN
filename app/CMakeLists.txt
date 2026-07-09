@@ -2,6 +2,7 @@ add_executable(CollabLAN
     main.cpp
     Application.cpp
     Application.h
+    ../ui/qml.qrc
 )
 
 target_link_libraries(CollabLAN PRIVATE
