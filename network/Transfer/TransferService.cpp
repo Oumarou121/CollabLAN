@@ -154,6 +154,11 @@ qint64 TransferService::blockSize()
     return kBlockSize;
 }
 
+quint16 TransferService::defaultPort()
+{
+    return kDefaultPort;
+}
+
 void TransferService::setReceiveDirectory(const QString &dir)
 {
     m_receiveDirOverride = dir;

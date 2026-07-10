@@ -11,9 +11,18 @@
 #include "MessagingContext.h"
 #include "MessageModel.h"
 #include "GroupModel.h"
+#include "TransferContext.h"
 
 int main(int argc, char *argv[])
 {
+    // Le .qrc "sounds" est compile dans la bibliotheque STATIQUE "services".
+    // Sans reference explicite, l'editeur de liens elague l'objet genere par
+    // AUTORCC (rien dans l'executable ne l'appelle), et les ressources
+    // ":/sounds/*.wav" restent introuvables au runtime. Q_INIT_RESOURCE force
+    // l'enregistrement de la ressource embarquee (le nom correspond au nom
+    // du fichier .qrc, ici "sounds", sans le prefixe /sounds/ du <qresource>).
+    Q_INIT_RESOURCE(sounds);
+
     // Toutes les vues QML personnalisent "background" et "contentItem" sur
     // des controles Qt Quick Controls (Button, Label...). Cette personnalisation
     // n'est possible qu'avec un style non-natif (Basic/Fusion/Material) : le
@@ -107,6 +116,17 @@ int main(int argc, char *argv[])
     messagingContext->setGroupManager(application.groupManager());
     messagingContext->setUserManager(application.userManager());
     engine.rootContext()->setContextProperty("messagingContext", messagingContext);
+
+    // Créer et exposer le contexte de transfert de fichiers (issue #57) :
+    // relie network::TransferService/core::TransferManager a
+    // FileTransferView.qml (selection de fichier, choix du destinataire,
+    // progression en temps reel).
+    core::TransferContext *transferContext = new core::TransferContext(&engine);
+    transferContext->setTransferManager(application.transferManager());
+    transferContext->setTransferService(application.transferService());
+    transferContext->setPeersModel(application.peersModel());
+    transferContext->setUserManager(application.userManager());
+    engine.rootContext()->setContextProperty("transferContext", transferContext);
 
     engine.load(QUrl(QStringLiteral("qrc:/ui/Main.qml")));
 

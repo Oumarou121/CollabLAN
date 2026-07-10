@@ -53,7 +53,7 @@ public:
     ~TransferService() override;
 
     /// Demarre l'ecoute des transferts entrants sur le port specifie.
-    bool start(quint16 port = 12346);
+    bool start(quint16 port = kDefaultPort);
 
     /// Arrete l'ecoute et annule les transferts en cours.
     void stop();
@@ -65,6 +65,11 @@ public:
 
     /// Taille maximale d'un bloc, en octets (voir kBlockSize).
     static qint64 blockSize();
+
+    /// Port TCP par defaut utilise par start() lorsqu'aucun port n'est
+    /// precise. Utile pour les couches superieures (UI...) qui ont besoin
+    /// de deviner le port d'un pair distant sans le connaitre explicitement.
+    static quint16 defaultPort();
 
     /**
      * @brief Envoie le fichier local filePath vers host:port, pour le
@@ -120,6 +125,7 @@ private slots:
 
 private:
     static constexpr quint32 kBlockSize = 64 * 1024;      ///< Taille max d'un bloc (64 Ko).
+    static constexpr quint16 kDefaultPort = 12346;        ///< Port TCP par defaut (voir defaultPort()).
     static constexpr char kAckByte = 0x01;                ///< Octet d'accuse de reception.
     static const QByteArray kMagic;                       ///< Signature d'en-tete du protocole.
 

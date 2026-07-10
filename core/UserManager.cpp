@@ -80,6 +80,11 @@ bool UserManager::isCurrentUserAdmin() const
     return m_currentUserIsAdmin;
 }
 
+std::optional<int> UserManager::currentUserId() const
+{
+    return m_currentUserId;
+}
+
 bool UserManager::isBusy() const
 {
     return m_busy;

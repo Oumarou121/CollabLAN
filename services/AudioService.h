@@ -53,6 +53,11 @@ public slots:
 private:
     void loadSound(EventType type, const QString &resourcePath);
 
+    /// Copie une ressource embarquee (qrc) vers un fichier local (cache
+    /// applicatif) et retourne son chemin, ou une chaine vide en cas
+    /// d'echec. Voir le commentaire dans loadSound() / le .cpp.
+    static QString extractToLocalFile(const QString &resourcePath);
+
     QHash<EventType, QSoundEffect *> m_sounds;
     bool m_soundEnabled = true;
     qreal m_volume = 1.0;

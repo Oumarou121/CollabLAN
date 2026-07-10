@@ -5,6 +5,7 @@ import "Login"
 import "Home"
 import "Users"
 import "Chat"
+import "FileTransfer"
 
 /*
  * Main - fenetre racine de CollabLAN.
@@ -66,6 +67,19 @@ ApplicationWindow {
             }
             onChatRequested: {
                 stackView.push(conversationsViewComponent)
+            }
+            onFileTransferRequested: {
+                stackView.push(fileTransferViewComponent)
+            }
+        }
+    }
+
+    Component {
+        id: fileTransferViewComponent
+
+        FileTransferView {
+            onBackRequested: {
+                stackView.pop()
             }
         }
     }

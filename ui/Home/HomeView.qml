@@ -21,6 +21,7 @@ Item {
     signal logoutRequested()
     signal usersRequested()
     signal chatRequested()
+    signal fileTransferRequested()
 
     Rectangle {
         anchors.fill: parent
@@ -139,6 +140,29 @@ Item {
                     }
 
                     onClicked: root.chatRequested()
+                }
+
+                Button {
+                    text: qsTr("Transfert fichiers")
+                    Layout.leftMargin: Theme.spacingSmall
+                    Layout.preferredHeight: 36
+
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
+                        border.width: 1
+                        border.color: Theme.border
+                    }
+
+                    contentItem: Text {
+                        text: qsTr("Transfert fichiers")
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    onClicked: root.fileTransferRequested()
                 }
 
                 ThemeToggleButton {
