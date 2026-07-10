@@ -15,6 +15,8 @@ class MessagingManager;
 class GroupManager;
 class TransferManager;
 class NotificationManager;
+class AuditManager;
+class PermissionManager;
 }
 
 namespace network {
@@ -89,6 +91,12 @@ public:
     // Expose au bootstrap QML l'AudioService pour les sons de notification (issue #56).
     services::AudioService *audioService() const;
 
+    // Expose au bootstrap QML le AuditManager pour le journal d'audit (issue #65).
+    core::AuditManager *auditManager() const;
+
+    // Expose au bootstrap QML le PermissionManager pour la gestion des rôles (issue #67).
+    core::PermissionManager *permissionManager() const;
+
 private:
     // TODO: instancier ici les autres services (Security, Settings...)
     std::unique_ptr<database::DatabaseManager> m_databaseManager;
@@ -104,6 +112,8 @@ private:
     network::TransferService *m_transferService = nullptr;    // parente = this (QObject)
     core::TransferManager *m_transferManager = nullptr;       // parente = this (QObject)
     services::AudioService *m_audioService = nullptr;         // parente = this (QObject)
+    core::AuditManager *m_auditManager = nullptr;             // parente = this (QObject)
+    core::PermissionManager *m_permissionManager = nullptr; // parente = this (QObject)
 };
 
 #endif // APP_APPLICATION_H

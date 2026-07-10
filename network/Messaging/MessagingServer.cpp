@@ -8,6 +8,7 @@
 #include <QSslConfiguration>
 #include <QSslKey>
 #include <QDebug>
+#include <QMetaObject>
 
 namespace network {
 
@@ -97,6 +98,11 @@ int MessagingServer::broadcastMessage(const QString &message)
     return sentCount;
 }
 
+void MessagingServer::setPermissionManager(QObject *manager)
+{
+    m_permissionManager = manager;
+}
+
 void MessagingServer::onNewConnection()
 {
     QWebSocket *client = m_server->nextPendingConnection();
@@ -104,13 +110,30 @@ void MessagingServer::onNewConnection()
         return;
     }
 
-    qDebug() << "New client connected:" << client->peerAddress();
+    const QHostAddress clientAddress = client->peerAddress();
+    qDebug() << "New client connected:" << clientAddress;
+
+    // Vérifier si la machine est autorisée (issue #70)
+    if (m_permissionManager) {
+        bool authorized = true;
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorized",
+                                   Qt::DirectConnection,
+                                   Q_RETURN_ARG(bool, authorized),
+                                   Q_ARG(QString, clientAddress.toString()));
+        if (!authorized) {
+            qWarning() << "Connection refused: machine" << clientAddress.toString() << "is not authorized";
+            client->close();
+            client->deleteLater();
+            emit connectionRefused(clientAddress, QStringLiteral("Machine not authorized"));
+            return;
+        }
+    }
 
     connect(client, &QWebSocket::textMessageReceived, this, &MessagingServer::onTextMessageReceived);
     connect(client, &QWebSocket::disconnected, this, &MessagingServer::onSocketDisconnected);
 
     m_clients.append(client);
-    emit clientConnected(client->peerAddress());
+    emit clientConnected(clientAddress);
 }
 
 void MessagingServer::onTextMessageReceived(const QString &message)

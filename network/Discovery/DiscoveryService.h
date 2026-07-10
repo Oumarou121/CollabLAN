@@ -84,6 +84,9 @@ public:
     /// Liste courante des postes detectes (hors soi-meme).
     QList<DiscoveredPeer> peers() const;
 
+    /// Définit le PermissionManager pour vérifier les machines autorisées (issue #68).
+    void setPermissionManager(QObject *manager);
+
 signals:
     void started();
     void stopped();
@@ -123,6 +126,7 @@ private:
     bool m_running = false;
 
     QHash<QString, DiscoveredPeer> m_peers; // cle = id du poste distant
+    QObject *m_permissionManager = nullptr;
 };
 
 } // namespace network

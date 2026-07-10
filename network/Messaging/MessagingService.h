@@ -44,6 +44,9 @@ public:
     QHostAddress peerAddress() const;
     quint16 peerPort() const;
 
+    /// Définit le PermissionManager pour vérifier les machines autorisées (issue #68).
+    void setPermissionManager(QObject *manager);
+
 signals:
     /// Emis lors de la connexion reussie.
     void connected();
@@ -69,6 +72,7 @@ private:
 
     QWebSocket *m_socket = nullptr;
     SecurityService *m_securityService = nullptr;
+    QObject *m_permissionManager = nullptr;
     bool m_connected = false;
 };
 

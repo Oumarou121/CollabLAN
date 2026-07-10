@@ -13,6 +13,12 @@
 #include "GroupModel.h"
 #include "TransferContext.h"
 #include "NotificationManager.h"
+#include "AuditLogModel.h"
+#include "AuditManager.h"
+#include "PermissionManager.h"
+#include "AuthorizedMachineModel.h"
+#include "UserManagementModel.h"
+#include "SettingsModel.h"
 
 int main(int argc, char *argv[])
 {
@@ -131,6 +137,31 @@ int main(int argc, char *argv[])
     transferContext->setPeersModel(application.peersModel());
     transferContext->setUserManager(application.userManager());
     engine.rootContext()->setContextProperty("transferContext", transferContext);
+
+    // Créer et exposer le modèle du journal d'audit (issues #62/#63,
+    // UI #65) : consultation filtrable et export CSV depuis AdminView.qml.
+    core::AuditLogModel *auditLogModel = new core::AuditLogModel(&engine);
+    auditLogModel->setAuditManager(static_cast<QObject*>(application.auditManager()));
+    engine.rootContext()->setContextProperty("auditLogModel", auditLogModel);
+
+    // Exposer le PermissionManager pour la vérification des droits (issue #67).
+    engine.rootContext()->setContextProperty("permissionManager", application.permissionManager());
+
+    // Créer et exposer le modèle de machines autorisées (issue #68, #69).
+    core::AuthorizedMachineModel *authorizedMachineModel = new core::AuthorizedMachineModel(&engine);
+    authorizedMachineModel->setPermissionManager(application.permissionManager());
+    authorizedMachineModel->refresh();
+    engine.rootContext()->setContextProperty("authorizedMachineModel", authorizedMachineModel);
+
+    // Créer et exposer le modèle de gestion des utilisateurs (issue #69).
+    core::UserManagementModel *userManagementModel = new core::UserManagementModel(&engine);
+    userManagementModel->setUserManager(application.userManager());
+    userManagementModel->refresh();
+    engine.rootContext()->setContextProperty("userManagementModel", userManagementModel);
+
+    // Créer et exposer le modèle de paramètres globaux (issue #69).
+    core::SettingsModel *settingsModel = new core::SettingsModel(&engine);
+    engine.rootContext()->setContextProperty("settingsModel", settingsModel);
 
     engine.load(QUrl(QStringLiteral("qrc:/ui/Main.qml")));
 

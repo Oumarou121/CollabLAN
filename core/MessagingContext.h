@@ -70,6 +70,9 @@ public:
     /// "Utilisateur <id>" si l'utilisateur est inconnu.
     Q_INVOKABLE QString userName(qint64 userId) const;
 
+    /// Id de l'utilisateur actuellement authentifie (depuis UserManager).
+    Q_INVOKABLE qint64 currentUserId() const;
+
 signals:
     void messagingManagerChanged();
     void groupManagerChanged();
@@ -85,7 +88,6 @@ private:
     GroupManager *m_groupManager = nullptr;
     models::GroupModel *m_groupModel;
     UserManager *m_userManager = nullptr;
-    qint64 m_currentUserId = 1;  // TODO: Récupérer depuis UserManager
 };
 
 } // namespace core

@@ -13,6 +13,7 @@ Item {
 
     property var messagingContext: null
     property var conversationId: 0
+    property int currentUserId: messagingContext ? messagingContext.currentUserId() : 0
 
     signal backRequested()
 

@@ -45,6 +45,9 @@ public:
     /// Port d'écoute.
     quint16 port() const;
 
+    /// Définit le PermissionManager pour vérifier les machines autorisées (issue #70).
+    void setPermissionManager(QObject *manager);
+
 signals:
     /// Émis lorsqu'un message texte est reçu d'un client.
     void messageReceived(const QString &message, const QHostAddress &senderAddress);
@@ -58,6 +61,9 @@ signals:
     /// Émis en cas d'erreur.
     void error(const QString &errorString);
 
+    /// Émis lorsqu'une connexion est refusée (machine non autorisée, issue #70).
+    void connectionRefused(const QHostAddress &clientAddress, const QString &reason);
+
 private slots:
     void onNewConnection();
     void onTextMessageReceived(const QString &message);
@@ -66,6 +72,7 @@ private slots:
 private:
     QWebSocketServer *m_server = nullptr;
     SecurityService *m_securityService = nullptr;
+    QObject *m_permissionManager = nullptr;
     QList<QWebSocket*> m_clients;
 };
 

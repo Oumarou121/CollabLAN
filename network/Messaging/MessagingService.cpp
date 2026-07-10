@@ -7,6 +7,7 @@
 #include <QSslCertificate>
 #include <QFile>
 #include <QDebug>
+#include <QMetaObject>
 
 namespace network {
 
@@ -83,6 +84,20 @@ bool MessagingService::connectToHost(const QHostAddress &address, quint16 port)
         return false;
     }
 
+    // Vérifier si la machine est autorisée (issue #70)
+    if (m_permissionManager) {
+        bool authorized = true;
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorized",
+                                   Qt::DirectConnection,
+                                   Q_RETURN_ARG(bool, authorized),
+                                   Q_ARG(QString, address.toString()));
+        if (!authorized) {
+            qWarning() << "Connection refused: machine" << address.toString() << "is not authorized";
+            emit error(QStringLiteral("Connection refused: machine not authorized"));
+            return false;
+        }
+    }
+
     if (!m_securityService || !m_securityService->isReady()) {
         qWarning() << "Cannot connect: SecurityService not ready";
         emit error(QStringLiteral("SecurityService not ready for TLS connection"));
@@ -138,6 +153,11 @@ quint16 MessagingService::peerPort() const
         return 0;
     }
     return m_socket->peerPort();
+}
+
+void MessagingService::setPermissionManager(QObject *manager)
+{
+    m_permissionManager = manager;
 }
 
 void MessagingService::onConnected()

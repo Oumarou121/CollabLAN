@@ -42,6 +42,7 @@ bool UserManager::login(const QString &username, const QString &password)
 
     m_currentUsername = user->name();
     m_currentUserIsAdmin = user->isAdmin();
+    m_currentUserId = user->id();
     m_authenticated = true;
     setBusy(false);
     emit authenticationChanged();
@@ -125,7 +126,7 @@ std::optional<models::User> UserManager::createUser(const QString &name,
     models::User user;
     user.setName(trimmedName);
     user.setStatus(models::UserStatus::Offline);
-    user.setIsAdmin(isAdmin);
+    user.setRole(isAdmin ? models::UserRole::Admin : models::UserRole::User);
     user.setPasswordHash(hash);
     user.setPasswordSalt(salt);
 

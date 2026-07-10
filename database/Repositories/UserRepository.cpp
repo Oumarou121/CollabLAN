@@ -29,7 +29,11 @@ models::User UserRepository::userFromQuery(const QSqlQuery &query) const
     user.setName(query.value(QStringLiteral("name")).toString());
     user.setIpAddress(query.value(QStringLiteral("ip_address")).toString());
     user.setStatus(models::userStatusFromString(query.value(QStringLiteral("status")).toString()));
-    user.setIsAdmin(query.value(QStringLiteral("is_admin")).toInt() != 0);
+    
+    const QString roleStr = query.value(QStringLiteral("role")).toString();
+    const auto role = models::stringToUserRole(roleStr);
+    user.setRole(role.value_or(models::UserRole::User));
+    
     user.setPasswordHash(query.value(QStringLiteral("password_hash")).toString());
     user.setPasswordSalt(query.value(QStringLiteral("password_salt")).toString());
     user.setCreatedAt(query.value(QStringLiteral("created_at")).toDateTime());
@@ -40,12 +44,12 @@ int UserRepository::create(const models::User &user)
 {
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
-        "INSERT INTO Users (name, ip_address, status, is_admin, password_hash, password_salt) "
-        "VALUES (:name, :ip_address, :status, :is_admin, :password_hash, :password_salt)"));
+        "INSERT INTO Users (name, ip_address, status, role, password_hash, password_salt) "
+        "VALUES (:name, :ip_address, :status, :role, :password_hash, :password_salt)"));
     query.bindValue(QStringLiteral(":name"), notNull(user.name()));
     query.bindValue(QStringLiteral(":ip_address"), notNull(user.ipAddress()));
     query.bindValue(QStringLiteral(":status"), models::userStatusToString(user.status()));
-    query.bindValue(QStringLiteral(":is_admin"), user.isAdmin() ? 1 : 0);
+    query.bindValue(QStringLiteral(":role"), models::userRoleToString(user.role()));
     query.bindValue(QStringLiteral(":password_hash"), notNull(user.passwordHash()));
     query.bindValue(QStringLiteral(":password_salt"), notNull(user.passwordSalt()));
 
@@ -66,12 +70,12 @@ bool UserRepository::update(const models::User &user)
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
         "UPDATE Users SET name = :name, ip_address = :ip_address, status = :status, "
-        "is_admin = :is_admin, password_hash = :password_hash, password_salt = :password_salt "
+        "role = :role, password_hash = :password_hash, password_salt = :password_salt "
         "WHERE id = :id"));
     query.bindValue(QStringLiteral(":name"), notNull(user.name()));
     query.bindValue(QStringLiteral(":ip_address"), notNull(user.ipAddress()));
     query.bindValue(QStringLiteral(":status"), models::userStatusToString(user.status()));
-    query.bindValue(QStringLiteral(":is_admin"), user.isAdmin() ? 1 : 0);
+    query.bindValue(QStringLiteral(":role"), models::userRoleToString(user.role()));
     query.bindValue(QStringLiteral(":password_hash"), notNull(user.passwordHash()));
     query.bindValue(QStringLiteral(":password_salt"), notNull(user.passwordSalt()));
     query.bindValue(QStringLiteral(":id"), user.id());

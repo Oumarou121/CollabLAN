@@ -9,6 +9,8 @@
 #include "GroupManager.h"
 #include "TransferManager.h"
 #include "NotificationManager.h"
+#include "AuditManager.h"
+#include "PermissionManager.h"
 #include "Discovery/DiscoveryService.h"
 #include "Discovery/PeersModel.h"
 #include "Messaging/MessagingService.h"
@@ -124,10 +126,22 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // brancher AudioService::playCallSound() sur son signal d'appel
     // entrant des que ce service existera.
 
+    // Initialiser l'AuditManager pour le journal d'audit (issues #62/#63),
+    // consulte/exporte depuis AdminView.qml (issue #65).
+    m_auditManager = new core::AuditManager(m_databaseManager.get(), this);
+
+    // Initialiser le PermissionManager pour la gestion des rôles (issue #67)
+    // et des machines autorisées (issue #68).
+    m_permissionManager = new core::PermissionManager(m_databaseManager.get(), this);
+
     // Connecter les services au MessagingManager
     m_messagingManager->setMessagingService(m_messagingService);
     m_messagingManager->setMessagingServer(m_messagingServer);
     m_messagingManager->setNotificationManager(m_notificationManager);
+
+    // Connecter PermissionManager aux services réseau pour vérifier les machines autorisées
+    m_messagingService->setPermissionManager(m_permissionManager);
+    m_messagingServer->setPermissionManager(m_permissionManager);
 
     // Connecter MessagingServer à MessagingManager pour traiter les messages reçus
     connect(m_messagingServer, &network::MessagingServer::messageReceived,
@@ -135,6 +149,23 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 Q_UNUSED(senderAddress)
                 if (!m_messagingManager->receiveMessage(message)) {
                     qWarning() << "Message reseau ignore (payload invalide) :" << message;
+                }
+            });
+
+    // Connecter les connexions refusées à l'audit (issue #70)
+    connect(m_messagingServer, &network::MessagingServer::connectionRefused,
+            m_auditManager, [this](const QHostAddress &clientAddress, const QString &reason) {
+                m_auditManager->logRefusedAttempt(
+                    QStringLiteral("Machine %1 non autorisée : %2").arg(clientAddress.toString(), reason),
+                    clientAddress
+                );
+            });
+
+    // Connecter les erreurs de connexion de MessagingService à l'audit (issue #70)
+    connect(m_messagingService, &network::MessagingService::error,
+            m_auditManager, [this](const QString &errorString) {
+                if (errorString.contains(QStringLiteral("not authorized"))) {
+                    m_auditManager->logRefusedAttempt(errorString);
                 }
             });
 
@@ -153,6 +184,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // Demarre la decouverte reseau (issue #9) et branche le modele QML
     // (PeersModel) qui alimentera UsersView.qml en temps reel (issue #17).
     m_discoveryService = new network::DiscoveryService(this);
+    m_discoveryService->setPermissionManager(m_permissionManager);
     m_peersModel = new network::PeersModel(m_discoveryService, this);
 
     // Un poste qui apparait/disparait du reseau local declenche une
@@ -240,4 +272,14 @@ core::TransferManager *Application::transferManager() const
 services::AudioService *Application::audioService() const
 {
     return m_audioService;
+}
+
+core::AuditManager *Application::auditManager() const
+{
+    return m_auditManager;
+}
+
+core::PermissionManager *Application::permissionManager() const
+{
+    return m_permissionManager;
 }

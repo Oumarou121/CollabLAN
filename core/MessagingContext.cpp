@@ -71,8 +71,9 @@ QVariantList MessagingContext::availableUsers() const
         return list;
     }
 
+    const qint64 currentId = currentUserId();
     for (const auto &user : m_userManager->allUsers()) {
-        if (user.id() == m_currentUserId) {
+        if (user.id() == currentId) {
             continue;  // On ne se propose pas soi-meme comme membre.
         }
         QVariantMap entry;
@@ -96,6 +97,15 @@ QString MessagingContext::userName(qint64 userId) const
     return QStringLiteral("Utilisateur %1").arg(userId);
 }
 
+qint64 MessagingContext::currentUserId() const
+{
+    if (m_userManager) {
+        const auto id = m_userManager->currentUserId();
+        return id.value_or(0);
+    }
+    return 0;
+}
+
 QVariantList MessagingContext::conversationsList()
 {
     QVariantList list;
@@ -104,12 +114,14 @@ QVariantList MessagingContext::conversationsList()
         return list;
     }
 
+    const qint64 currentId = currentUserId();
+
     // Conversations individuelles.
-    const auto conversations = m_messagingManager->getUserConversations(m_currentUserId);
+    const auto conversations = m_messagingManager->getUserConversations(currentId);
     for (const auto &conv : conversations) {
         QVariantMap entry;
         entry[QStringLiteral("conversationId")] = conv.id();
-        const qint64 otherId = conv.participant1Id() == m_currentUserId ? conv.participant2Id() : conv.participant1Id();
+        const qint64 otherId = conv.participant1Id() == currentId ? conv.participant2Id() : conv.participant1Id();
         entry[QStringLiteral("name")] = userName(otherId);
 
         const auto messages = m_messagingManager->getMessages(conv.id(), 1);
@@ -121,7 +133,7 @@ QVariantList MessagingContext::conversationsList()
     // Conversations de groupe (chaque groupe est lie a une Conversation,
     // voir GroupManager::createGroup()).
     if (m_groupManager) {
-        const auto groups = m_groupManager->getUserGroups(m_currentUserId);
+        const auto groups = m_groupManager->getUserGroups(currentId);
         for (const auto &group : groups) {
             if (group.conversationId() <= 0) {
                 continue;  // Groupe cree avant la migration 004, sans conversation liee.
@@ -143,7 +155,7 @@ QVariantList MessagingContext::conversationsList()
 void MessagingContext::loadUserGroups()
 {
     if (m_groupManager) {
-        const QVector<models::Group> groups = m_groupManager->getUserGroups(m_currentUserId);
+        const QVector<models::Group> groups = m_groupManager->getUserGroups(currentUserId());
         m_groupModel->setGroups(groups);
     }
 }
@@ -159,7 +171,8 @@ qint64 MessagingContext::createGroup(const QString &name, const QVariantList &me
         members.append(var.toLongLong());
     }
 
-    const auto group = m_groupManager->createGroup(name, m_currentUserId, members);
+    const qint64 currentId = currentUserId();
+    const auto group = m_groupManager->createGroup(name, currentId, members);
     if (!group.has_value()) {
         return 0;
     }
@@ -200,7 +213,7 @@ void MessagingContext::sendMessage(const QString &content)
         return;
     }
 
-    m_messagingManager->sendMessage(conversationId, m_currentUserId, content);
+    m_messagingManager->sendMessage(conversationId, currentUserId(), content);
 }
 
 void MessagingContext::onMessageReceived(const models::Message &message)

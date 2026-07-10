@@ -9,6 +9,7 @@
 #include <QUuid>
 #include <QDateTime>
 #include <QNetworkInterface>
+#include <QMetaObject>
 
 namespace network {
 
@@ -155,6 +156,11 @@ void DiscoveryService::setPeerTimeoutMs(int ms)
 QList<DiscoveredPeer> DiscoveryService::peers() const
 {
     return m_peers.values();
+}
+
+void DiscoveryService::setPermissionManager(QObject *manager)
+{
+    m_permissionManager = manager;
 }
 
 void DiscoveryService::sendAnnounce()

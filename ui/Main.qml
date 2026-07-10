@@ -6,6 +6,8 @@ import "Home"
 import "Users"
 import "Chat"
 import "FileTransfer"
+import "Call"
+import "Admin"
 import "Components"
 
 /*
@@ -52,6 +54,24 @@ ApplicationWindow {
         anchors.fill: parent
     }
 
+    // TODO: Réactiver quand callContext sera disponible (après correction de l'erreur de threading)
+    /*
+    // Navigation automatique vers CallView pour un appel entrant (issue #64bis) :
+    // callContext est global et ecoute meme quand l'utilisateur est sur un
+    // autre ecran (Home/Chat/...). Sans ce hook, "ringing" ne se voit que si
+    // CallView est deja ouvert, d'ou les tentatives ignorees cote appelant.
+    Connections {
+        target: callContext
+        function onCallStateChanged() {
+            if (callContext.callState === "ringing"
+                    && stackView.currentItem
+                    && stackView.currentItem.objectName !== "callView") {
+                stackView.push(callViewComponent)
+            }
+        }
+    }
+    */
+
     Component {
         id: loginViewComponent
 
@@ -77,6 +97,33 @@ ApplicationWindow {
             }
             onFileTransferRequested: {
                 stackView.push(fileTransferViewComponent)
+            }
+            onCallRequested: {
+                stackView.push(callViewComponent)
+            }
+            onAdminRequested: {
+                stackView.push(adminViewComponent)
+            }
+        }
+    }
+
+    Component {
+        id: callViewComponent
+
+        CallView {
+            objectName: "callView"
+            onBackRequested: {
+                stackView.pop()
+            }
+        }
+    }
+
+    Component {
+        id: adminViewComponent
+
+        AdminView {
+            onBackRequested: {
+                stackView.pop()
             }
         }
     }
