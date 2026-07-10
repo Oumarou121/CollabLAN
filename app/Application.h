@@ -22,6 +22,7 @@ class PeersModel;
 class MessagingService;
 class MessagingServer;
 class SecurityService;
+class TransferService;
 }
 
 /**
@@ -74,6 +75,9 @@ public:
     // Expose au bootstrap QML le NotificationManager pour les notifications.
     core::NotificationManager *notificationManager() const;
 
+    // Expose au bootstrap QML le TransferService pour le transfert de fichiers (issue #53).
+    network::TransferService *transferService() const;
+
 private:
     // TODO: instancier ici les autres services (Security, Settings...)
     std::unique_ptr<database::DatabaseManager> m_databaseManager;
@@ -86,6 +90,7 @@ private:
     network::SecurityService *m_securityService = nullptr;    // parente = this (QObject)
     network::MessagingService *m_messagingService = nullptr;  // parente = this (QObject)
     network::MessagingServer *m_messagingServer = nullptr;    // parente = this (QObject)
+    network::TransferService *m_transferService = nullptr;    // parente = this (QObject)
 };
 
 #endif // APP_APPLICATION_H

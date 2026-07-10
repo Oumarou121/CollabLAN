@@ -56,7 +56,10 @@ private slots:
         database::DatabaseManager manager2(QStringLiteral("test-reopen-b-%1").arg(reinterpret_cast<quintptr>(this)));
         QVERIFY(manager2.open(path));
         QVERIFY(manager2.lastError().isEmpty());
-        QCOMPARE(manager2.schemaVersion(), 4);
+        // 5 fichiers de migration presents dans database/Migrations/ :
+        // 001_initial_schema, 002_add_user_password, 002_add_conversations_table,
+        // 003_update_messages_table, 004_link_groups_to_conversations.
+        QCOMPARE(manager2.schemaVersion(), 5);
     }
 
     void foreignKeysAreEnabled()
@@ -117,7 +120,8 @@ private slots:
         QVERIFY(manager.open(path));
         QVERIFY(manager.isOpen());
         QVERIFY(manager.lastError().isEmpty());
-        QCOMPARE(manager.schemaVersion(), 4);
+        // Voir reopenIsIdempotent() : 5 migrations presentes sur le disque.
+        QCOMPARE(manager.schemaVersion(), 5);
 
         manager.close();
     }

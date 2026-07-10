@@ -48,3 +48,11 @@ add_test(NAME test_grouprepository COMMAND test_grouprepository)
 add_executable(test_notification UnitTests/test_notification.cpp)
 target_link_libraries(test_notification PRIVATE Qt6::Test core services models)
 add_test(NAME test_notification COMMAND test_notification)
+
+add_executable(test_transferrepository UnitTests/test_transferrepository.cpp)
+target_link_libraries(test_transferrepository PRIVATE Qt6::Test database models)
+add_test(NAME test_transferrepository COMMAND test_transferrepository)
+
+add_executable(test_transferservice UnitTests/test_transferservice.cpp)
+target_link_libraries(test_transferservice PRIVATE Qt6::Test Qt6::Network network)
+add_test(NAME test_transferservice COMMAND test_transferservice)

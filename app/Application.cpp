@@ -13,6 +13,7 @@
 #include "Messaging/MessagingService.h"
 #include "Messaging/MessagingServer.h"
 #include "Security/SecurityService.h"
+#include "Transfer/TransferService.h"
 
 Application::Application(QObject *parent)
     : QObject(parent)
@@ -71,6 +72,15 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
 
     // Initialiser le NotificationManager pour les notifications
     m_notificationManager = new core::NotificationManager(this);
+
+    // Initialiser le TransferService pour le transfert de fichiers par
+    // blocs (issue #53). Ecoute sur le port de messagerie + 1 par
+    // defaut, afin que plusieurs instances lancees localement (tests)
+    // n'entrent pas en conflit entre elles.
+    m_transferService = new network::TransferService(this);
+    if (!m_transferService->start(static_cast<quint16>(messagingServerPort + 1))) {
+        qWarning() << "Impossible de demarrer TransferService";
+    }
 
     // Connecter les services au MessagingManager
     m_messagingManager->setMessagingService(m_messagingService);
@@ -158,4 +168,9 @@ network::MessagingServer *Application::messagingServer() const
 core::NotificationManager *Application::notificationManager() const
 {
     return m_notificationManager;
+}
+
+network::TransferService *Application::transferService() const
+{
+    return m_transferService;
 }
