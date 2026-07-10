@@ -57,6 +57,13 @@ add_executable(test_transferservice UnitTests/test_transferservice.cpp)
 target_link_libraries(test_transferservice PRIVATE Qt6::Test Qt6::Network network)
 add_test(NAME test_transferservice COMMAND test_transferservice)
 
+# Issue #59 : test d'integration simulant une veritable coupure reseau en
+# plein transfert (destruction de la connexion en cours), puis verifiant
+# la reprise automatique et l'integrite (checksum) du fichier final.
+add_executable(test_transferresumeintegration UnitTests/test_transferresumeintegration.cpp)
+target_link_libraries(test_transferresumeintegration PRIVATE Qt6::Test Qt6::Network network)
+add_test(NAME test_transferresumeintegration COMMAND test_transferresumeintegration)
+
 add_executable(test_transfermanager UnitTests/test_transfermanager.cpp)
 target_link_libraries(test_transfermanager PRIVATE Qt6::Test Qt6::Network core database models network)
 add_test(NAME test_transfermanager COMMAND test_transfermanager)
