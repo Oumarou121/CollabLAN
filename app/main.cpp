@@ -12,6 +12,7 @@
 #include "MessageModel.h"
 #include "GroupModel.h"
 #include "TransferContext.h"
+#include "NotificationManager.h"
 
 int main(int argc, char *argv[])
 {
@@ -104,6 +105,9 @@ int main(int argc, char *argv[])
     // Brancher UsersView.qml sur la liste des postes decouverts en temps
     // reel par DiscoveryService (issue #17).
     engine.rootContext()->setContextProperty("peersModel", static_cast<QObject*>(application.peersModel()));
+    // Brancher ToastHost.qml (Main.qml) sur les evenements notifiables
+    // (message, transfert, connexion/deconnexion - issue #58).
+    engine.rootContext()->setContextProperty("notificationManager", static_cast<QObject*>(application.notificationManager()));
 
     // Enregistrer les types QML pour la messagerie
     qmlRegisterType<core::MessagingContext>("Core", 1, 0, "MessagingContext");

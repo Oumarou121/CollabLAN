@@ -16,5 +16,7 @@
         <file>Themes/Theme.qml</file>
         <file>Themes/qmldir</file>
         <file>Components/ThemeToggleButton.qml</file>
+        <file>Components/Toast.qml</file>
+        <file>Components/ToastHost.qml</file>
     </qresource>
 </RCC>

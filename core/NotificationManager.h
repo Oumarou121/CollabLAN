@@ -29,9 +29,24 @@ public slots:
     /// Appelé lorsqu'un nouveau message est reçu.
     void onMessageReceived(const models::Message &message);
 
+    /// Appelé lorsqu'un transfert de fichier se termine avec succes.
+    void onTransferCompleted(const QString &transferKey, const QString &filePath);
+
+    /// Appelé lorsqu'un transfert de fichier echoue.
+    void onTransferFailed(const QString &transferKey, const QString &errorString);
+
+    /// Appelé lorsqu'un poste du reseau local est detecte (connexion).
+    void onPeerConnected(const QString &peerName);
+
+    /// Appelé lorsqu'un poste du reseau local n'est plus joignable (deconnexion).
+    void onPeerDisconnected(const QString &peerName);
+
 signals:
-    /// Emis lorsqu'une notification doit être affichée.
-    void notificationRequested(const QString &title, const QString &message);
+    /// Emis lorsqu'une notification doit être affichée (toast) et/ou
+    /// sonorisee par l'UI. category identifie le type d'evenement
+    /// ("message", "transfer", "connection", "disconnection") afin que
+    /// le son joue coherent avec l'evenement (issue #58).
+    void notificationRequested(const QString &title, const QString &message, const QString &category);
 
 private:
     bool m_notificationsEnabled = true;

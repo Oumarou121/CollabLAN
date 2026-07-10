@@ -6,6 +6,7 @@ import "Home"
 import "Users"
 import "Chat"
 import "FileTransfer"
+import "Components"
 
 /*
  * Main - fenetre racine de CollabLAN.
@@ -43,6 +44,12 @@ ApplicationWindow {
         popExit: Transition {
             NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 150 }
         }
+    }
+
+    // Superposition globale des toasts (issue #58) : place en dernier
+    // pour rester au-dessus du StackView quelle que soit la vue active.
+    ToastHost {
+        anchors.fill: parent
     }
 
     Component {

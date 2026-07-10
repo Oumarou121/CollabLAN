@@ -95,14 +95,30 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // (message, transfert, appel - issue #56).
     m_audioService = new services::AudioService(this);
 
-    // Un nouveau message declenche le son "message" des que la
-    // notification correspondante est demandee.
+    // Point d'entree unique pour toast + son (issue #58) : chaque
+    // evenement notifiable (message, transfert, connexion/deconnexion)
+    // passe par NotificationManager::notificationRequested, qui pilote
+    // ici le son coherent avec la categorie de l'evenement ; l'UI QML
+    // (ToastHost.qml) ecoute le meme signal pour afficher le toast.
     connect(m_notificationManager, &core::NotificationManager::notificationRequested,
-            m_audioService, &services::AudioService::playMessageSound);
+            m_audioService, [this](const QString &title, const QString &message, const QString &category) {
+                Q_UNUSED(title);
+                Q_UNUSED(message);
+                if (category == QStringLiteral("message")) {
+                    m_audioService->playMessageSound();
+                } else if (category == QStringLiteral("transfer")) {
+                    m_audioService->playTransferSound();
+                }
+                // "connection"/"disconnection" : toast silencieux (pas de son
+                // dedie ; playCallSound() est reserve aux appels entrants).
+            });
 
-    // Un transfert termine declenche le son "transfert".
+    // Un transfert termine ou en echec declenche une notification
+    // (toast + son "transfert").
     connect(m_transferService, &network::TransferService::transferCompleted,
-            m_audioService, &services::AudioService::playTransferSound);
+            m_notificationManager, &core::NotificationManager::onTransferCompleted);
+    connect(m_transferService, &network::TransferService::transferFailed,
+            m_notificationManager, &core::NotificationManager::onTransferFailed);
 
     // NOTE: VoiceService (appels vocaux) n'est pas encore implemente ;
     // brancher AudioService::playCallSound() sur son signal d'appel
@@ -138,6 +154,21 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // (PeersModel) qui alimentera UsersView.qml en temps reel (issue #17).
     m_discoveryService = new network::DiscoveryService(this);
     m_peersModel = new network::PeersModel(m_discoveryService, this);
+
+    // Un poste qui apparait/disparait du reseau local declenche une
+    // notification "connexion"/"deconnexion" (issue #58). peerDiscovered
+    // n'est emis qu'une fois par poste (premiere detection) et peerLost
+    // apres expiration du timeout d'annonce (cf. DiscoveryService.h) :
+    // pas de spam a chaque annonce UDP periodique (peerUpdated n'est pas
+    // utilise ici).
+    connect(m_discoveryService, &network::DiscoveryService::peerDiscovered,
+            m_notificationManager, [this](const network::DiscoveredPeer &peer) {
+                m_notificationManager->onPeerConnected(peer.name);
+            });
+    connect(m_discoveryService, &network::DiscoveryService::peerLost,
+            m_notificationManager, [this](const network::DiscoveredPeer &peer) {
+                m_notificationManager->onPeerDisconnected(peer.name);
+            });
 
     // Renomme l'annonce avec le nom d'utilisateur connecte des qu'une
     // authentification reussit (avant cela, le hostname sert de nom par
