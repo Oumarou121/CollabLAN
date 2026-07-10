@@ -4,6 +4,8 @@
         <file>Login/LoginView.qml</file>
         <file>Home/HomeView.qml</file>
         <file>Chat/ChatView.qml</file>
+        <file>Chat/ConversationsView.qml</file>
+        <file>Chat/CreateGroupView.qml</file>
         <file>Users/UsersView.qml</file>
         <file>FileTransfer/FileTransferView.qml</file>
         <file>Call/CallView.qml</file>

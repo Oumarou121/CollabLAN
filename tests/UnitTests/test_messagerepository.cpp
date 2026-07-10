@@ -72,6 +72,25 @@ private slots:
         QCOMPARE(inserted->content(), QStringLiteral("Hello World"));
     }
 
+    void insert_survivesApostropheInContent()
+    {
+        // Regression : l'ancienne implementation construisait le SQL par
+        // concatenation de chaines ('%3'), ce qui cassait des qu'une
+        // apostrophe apparaissait dans le contenu.
+        freshDatabase();
+
+        models::Message message(0, 1, 100, QStringLiteral("C'est l'ami d'Alice"));
+        message.setTimestamp(QDateTime::currentDateTime());
+
+        const auto inserted = m_repository->insert(message);
+        QVERIFY(inserted.has_value());
+        QCOMPARE(inserted->content(), QStringLiteral("C'est l'ami d'Alice"));
+
+        const auto messages = m_repository->getMessages(1);
+        QCOMPARE(messages.size(), 1);
+        QCOMPARE(messages[0].content(), QStringLiteral("C'est l'ami d'Alice"));
+    }
+
     void getMessages_returnsMessages()
     {
         freshDatabase();

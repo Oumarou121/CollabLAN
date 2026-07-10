@@ -23,9 +23,12 @@ QtObject {
     readonly property color background: darkMode ? "#14161A" : "#F6F7FB"
     readonly property color surface: darkMode ? "#1E2126" : "#FFFFFF"
     readonly property color surfaceAlt: darkMode ? "#262A31" : "#EEF1F6"
+    readonly property color secondaryBackground: darkMode ? "#1E2126" : "#EEF1F6"
 
     readonly property color primary: darkMode ? "#5B8DEF" : "#2D6CDF"
     readonly property color primaryHover: darkMode ? "#75A2FF" : "#1E58C4"
+    readonly property color accent: darkMode ? "#5B8DEF" : "#2D6CDF"
+    readonly property color accentDark: darkMode ? "#4A7AD9" : "#1E58C4"
     readonly property color primaryText: "#FFFFFF"
 
     readonly property color text: darkMode ? "#F2F3F5" : "#1A1D21"

@@ -52,6 +52,37 @@ std::optional<models::Group> GroupManager::createGroup(const QString &name, qint
     models::Group group(groupId, name);
     group.setOwnerId(ownerId);
 
+    // Creer la Conversation (type='group') associee, pour reutiliser telle
+    // quelle la messagerie existante (Messages.conversationId) : envoyer/
+    // recevoir un message dans un groupe ne differe alors en rien d'une
+    // conversation individuelle du point de vue de MessagingManager.
+    QSqlQuery convQuery(db);
+    const QString convQueryString = QStringLiteral(
+        "INSERT INTO Conversations (type, name) VALUES ('group', '%1')"
+    ).arg(name);
+
+    if (!convQuery.exec(convQueryString)) {
+        qWarning() << "Failed to create conversation for group:" << convQuery.lastError().text();
+        m_lastError = GroupManagerError::DatabaseError;
+        m_lastErrorString = convQuery.lastError().text();
+        return std::nullopt;
+    }
+
+    const qint64 conversationId = convQuery.lastInsertId().toLongLong();
+    group.setConversationId(conversationId);
+
+    QSqlQuery linkQuery(db);
+    const QString linkQueryString = QStringLiteral(
+        "UPDATE Groups SET conversation_id = %1 WHERE id = %2"
+    ).arg(conversationId).arg(groupId);
+
+    if (!linkQuery.exec(linkQueryString)) {
+        qWarning() << "Failed to link group to conversation:" << linkQuery.lastError().text();
+        m_lastError = GroupManagerError::DatabaseError;
+        m_lastErrorString = linkQuery.lastError().text();
+        return std::nullopt;
+    }
+
     // Ajouter le propriétaire comme membre
     group.addMember(ownerId);
 
@@ -185,7 +216,7 @@ QVector<models::Group> GroupManager::getUserGroups(qint64 userId)
     QSqlQuery query(db);
 
     const QString queryString = QStringLiteral(
-        "SELECT g.id, g.name, g.owner_id "
+        "SELECT g.id, g.name, g.owner_id, g.conversation_id "
         "FROM Groups g "
         "INNER JOIN GroupMembers gm ON g.id = gm.group_id "
         "WHERE gm.user_id = %1"
@@ -198,6 +229,7 @@ QVector<models::Group> GroupManager::getUserGroups(qint64 userId)
                 query.value(1).toString()
             );
             group.setOwnerId(query.value(2).toLongLong());
+            group.setConversationId(query.value(3).toLongLong());
 
             // Charger les membres
             QSqlQuery memberQuery(db);
@@ -228,7 +260,7 @@ std::optional<models::Group> GroupManager::getGroup(qint64 groupId)
     QSqlQuery query(db);
 
     const QString queryString = QStringLiteral(
-        "SELECT id, name, owner_id FROM Groups WHERE id = %1"
+        "SELECT id, name, owner_id, conversation_id FROM Groups WHERE id = %1"
     ).arg(groupId);
 
     if (query.exec(queryString) && query.next()) {
@@ -237,6 +269,7 @@ std::optional<models::Group> GroupManager::getGroup(qint64 groupId)
             query.value(1).toString()
         );
         group.setOwnerId(query.value(2).toLongLong());
+        group.setConversationId(query.value(3).toLongLong());
 
         // Charger les membres
         QSqlQuery memberQuery(db);

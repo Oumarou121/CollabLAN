@@ -28,11 +28,16 @@ public:
     qint64 ownerId() const { return m_ownerId; }
     void setOwnerId(qint64 ownerId) { m_ownerId = ownerId; }
 
+    /// Id de la Conversation (type='group') associee, 0 si non definie.
+    qint64 conversationId() const { return m_conversationId; }
+    void setConversationId(qint64 conversationId) { m_conversationId = conversationId; }
+
 private:
     qint64 m_id = 0;
     QString m_name;
     QVector<qint64> m_memberIds;
     qint64 m_ownerId = 0;  // Créateur du groupe
+    qint64 m_conversationId = 0;  // Conversation liee (messagerie de groupe)
 };
 
 } // namespace models

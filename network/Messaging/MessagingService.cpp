@@ -19,7 +19,8 @@ MessagingService::MessagingService(SecurityService *securityService, QObject *pa
     connect(m_socket, &QWebSocket::connected, this, &MessagingService::onConnected);
     connect(m_socket, &QWebSocket::disconnected, this, &MessagingService::onDisconnected);
     connect(m_socket, &QWebSocket::textMessageReceived, this, &MessagingService::onTextMessageReceived);
-    connect(m_socket, &QWebSocket::errorOccurred, this, &MessagingService::onError);
+    connect(m_socket, QOverload<QAbstractSocket::SocketError>::of(&QWebSocket::error),
+            this, &MessagingService::onError);
     QObject::connect(m_socket, &QWebSocket::sslErrors, this, &MessagingService::onSslErrors);
 
     configureSsl();

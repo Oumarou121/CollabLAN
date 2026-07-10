@@ -36,7 +36,8 @@ private:
             "CREATE TABLE Groups ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "name TEXT NOT NULL, "
-            "owner_id INTEGER NOT NULL)"
+            "owner_id INTEGER NOT NULL, "
+            "conversation_id INTEGER)"
         )));
         QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS GroupMembers")));
         QVERIFY(query.exec(QStringLiteral(
@@ -44,6 +45,18 @@ private:
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "group_id INTEGER NOT NULL, "
             "user_id INTEGER NOT NULL)"
+        )));
+        // GroupManager::createGroup() cree desormais une Conversation liee
+        // (type='group') pour chaque groupe : la table doit exister ici
+        // aussi (elle vient normalement de la migration 002).
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS Conversations")));
+        QVERIFY(query.exec(QStringLiteral(
+            "CREATE TABLE Conversations ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "type TEXT NOT NULL DEFAULT 'individual', "
+            "name TEXT NOT NULL, "
+            "participant1_id INTEGER, "
+            "participant2_id INTEGER)"
         )));
 
         // Creer trois utilisateurs de test
@@ -219,6 +232,31 @@ private slots:
 
         const auto user2Groups = m_groupManager->getUserGroups(user2Id);
         QCOMPARE(user2Groups.size(), 1);
+    }
+
+    void createGroup_createsLinkedConversation()
+    {
+        freshDatabase();
+
+        const auto users = m_userManager->allUsers();
+        const qint64 ownerId = users[0].id();
+
+        const auto group = m_groupManager->createGroup(QStringLiteral("Test Group"), ownerId, {users[1].id()});
+        QVERIFY(group.has_value());
+        QVERIFY(group->conversationId() > 0);
+
+        // La conversation existe bien en base, avec le bon type.
+        QSqlQuery query(m_dbManager->database());
+        query.prepare(QStringLiteral("SELECT type FROM Conversations WHERE id = ?"));
+        query.addBindValue(group->conversationId());
+        QVERIFY(query.exec());
+        QVERIFY(query.next());
+        QCOMPARE(query.value(0).toString(), QStringLiteral("group"));
+
+        // getGroup() doit retrouver le meme conversationId.
+        const auto reloaded = m_groupManager->getGroup(group->id());
+        QVERIFY(reloaded.has_value());
+        QCOMPARE(reloaded->conversationId(), group->conversationId());
     }
 
     void getGroup_returnsGroup()

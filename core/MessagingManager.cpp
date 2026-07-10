@@ -2,10 +2,14 @@
 
 #include "DatabaseManager.h"
 #include "Messaging/MessagingService.h"
+#include "Messaging/MessagingServer.h"
 #include "NotificationManager.h"
 
 #include <QSqlQuery>
 #include <QSqlError>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QDebug>
 
 namespace core {
@@ -34,6 +38,11 @@ void MessagingManager::setNotificationManager(NotificationManager *notificationM
         connect(this, &MessagingManager::messageReceived,
                 m_notificationManager, &NotificationManager::onMessageReceived);
     }
+}
+
+void MessagingManager::setMessagingServer(network::MessagingServer *messagingServer)
+{
+    m_messagingServer = messagingServer;
 }
 
 std::optional<models::Conversation> MessagingManager::getOrCreateConversation(qint64 userId1, qint64 userId2)
@@ -117,14 +126,20 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
     QSqlDatabase db = m_dbManager->database();
     QSqlQuery query(db);
 
-    // Inserer le message en base de donnees
+    // Inserer le message en base de donnees (requete preparee : evite toute
+    // injection SQL et les erreurs de syntaxe si `content` contient une
+    // apostrophe, ex. "l'ami" ou "it's").
     const QString timestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
-    const QString queryString = QStringLiteral(
+    query.prepare(QStringLiteral(
         "INSERT INTO Messages (conversationId, senderId, content, timestamp, is_read) "
-        "VALUES (%1, %2, '%3', '%4', 0)"
-    ).arg(conversationId).arg(senderId).arg(content).arg(timestamp);
+        "VALUES (:conversationId, :senderId, :content, :timestamp, 0)"
+    ));
+    query.bindValue(QStringLiteral(":conversationId"), conversationId);
+    query.bindValue(QStringLiteral(":senderId"), senderId);
+    query.bindValue(QStringLiteral(":content"), content);
+    query.bindValue(QStringLiteral(":timestamp"), timestamp);
 
-    if (!query.exec(queryString)) {
+    if (!query.exec()) {
         qWarning() << "Failed to insert message:" << query.lastError().text();
         m_lastError = MessagingManagerError::DatabaseError;
         m_lastErrorString = query.lastError().text();
@@ -134,21 +149,100 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
     const qint64 messageId = query.lastInsertId().toLongLong();
     models::Message message(messageId, conversationId, senderId, content);
 
+    // Payload reseau, envoye via MessagingService (connexion sortante,
+    // point-a-point) et/ou diffuse via MessagingServer (connexions
+    // entrantes) ci-dessous.
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("message"));
+    payload.insert(QStringLiteral("conversationId"), conversationId);
+    payload.insert(QStringLiteral("senderId"), senderId);
+    payload.insert(QStringLiteral("content"), content);
+    const QString jsonMessage = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+
     // Envoyer le message via le reseau si le service est configure
     if (m_messagingService && m_messagingService->isConnected()) {
-        // Pour simplifier, on envoie le contenu en JSON
-        const QString jsonMessage = QStringLiteral("{\"type\":\"message\",\"conversationId\":%1,\"senderId\":%2,\"content\":\"%3\"}")
-            .arg(conversationId)
-            .arg(senderId)
-            .arg(content);
-
         if (!m_messagingService->sendMessage(jsonMessage)) {
             qWarning() << "Failed to send message via network";
             // On ne retourne pas d'erreur ici car le message est deja en base
         }
     }
 
+    // Diffuse egalement a tous les clients connectes a notre serveur : pour
+    // une conversation de groupe, chaque membre connecte a ce poste doit
+    // recevoir le message (MessagingService ne gere qu'une connexion
+    // sortante point-a-point, insuffisante des que le groupe compte plus
+    // de 2 membres).
+    if (m_messagingServer) {
+        m_messagingServer->broadcastMessage(jsonMessage);
+    }
+
     emit messageSent(message);
+    return message;
+}
+
+std::optional<models::Message> MessagingManager::receiveMessage(const QString &jsonPayload)
+{
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonPayload.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        qWarning() << "Message reseau invalide (JSON illisible) :" << parseError.errorString();
+        m_lastError = MessagingManagerError::InvalidContent;
+        m_lastErrorString = QStringLiteral("Invalid JSON payload");
+        return std::nullopt;
+    }
+
+    const QJsonObject obj = doc.object();
+    if (obj.value(QStringLiteral("type")).toString() != QStringLiteral("message")) {
+        // Autre type de message reseau (futur usage) : on ignore silencieusement ici.
+        return std::nullopt;
+    }
+    if (!obj.contains(QStringLiteral("conversationId")) || !obj.contains(QStringLiteral("senderId"))
+        || !obj.contains(QStringLiteral("content"))) {
+        m_lastError = MessagingManagerError::InvalidContent;
+        m_lastErrorString = QStringLiteral("Missing fields in message payload");
+        return std::nullopt;
+    }
+
+    const qint64 conversationId = static_cast<qint64>(obj.value(QStringLiteral("conversationId")).toDouble());
+    const qint64 senderId = static_cast<qint64>(obj.value(QStringLiteral("senderId")).toDouble());
+    const QString content = obj.value(QStringLiteral("content")).toString();
+
+    if (!m_dbManager) {
+        m_lastError = MessagingManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral("DatabaseManager not set");
+        return std::nullopt;
+    }
+    if (content.trimmed().isEmpty()) {
+        m_lastError = MessagingManagerError::InvalidContent;
+        m_lastErrorString = QStringLiteral("Message content cannot be empty");
+        return std::nullopt;
+    }
+
+    // Persiste le message recu du reseau (pas de renvoi reseau, contrairement
+    // a sendMessage : on ne fait qu'ecrire en base et notifier l'UI).
+    QSqlDatabase db = m_dbManager->database();
+    QSqlQuery query(db);
+    const QString timestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
+    query.prepare(QStringLiteral(
+        "INSERT INTO Messages (conversationId, senderId, content, timestamp, is_read) "
+        "VALUES (:conversationId, :senderId, :content, :timestamp, 0)"
+    ));
+    query.bindValue(QStringLiteral(":conversationId"), conversationId);
+    query.bindValue(QStringLiteral(":senderId"), senderId);
+    query.bindValue(QStringLiteral(":content"), content);
+    query.bindValue(QStringLiteral(":timestamp"), timestamp);
+
+    if (!query.exec()) {
+        qWarning() << "Failed to insert received message:" << query.lastError().text();
+        m_lastError = MessagingManagerError::DatabaseError;
+        m_lastErrorString = query.lastError().text();
+        return std::nullopt;
+    }
+
+    const qint64 messageId = query.lastInsertId().toLongLong();
+    models::Message message(messageId, conversationId, senderId, content);
+
+    emit messageReceived(message);
     return message;
 }
 

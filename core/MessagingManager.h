@@ -15,6 +15,7 @@ class DatabaseManager;
 
 namespace network {
 class MessagingService;
+class MessagingServer;
 }
 
 namespace core {
@@ -46,6 +47,13 @@ public:
     /// Configure le service de reseau pour l'envoi de messages.
     void setMessagingService(network::MessagingService *messagingService);
 
+    /// Configure le serveur de reseau (connexions entrantes). Pour un
+    /// message de groupe, le message est en plus diffuse a tous les
+    /// clients actuellement connectes a ce serveur (chacun etant un
+    /// membre potentiel du groupe), en complement de l'envoi point-a-
+    /// point via MessagingService.
+    void setMessagingServer(network::MessagingServer *messagingServer);
+
     /// Configure le gestionnaire de notifications.
     void setNotificationManager(NotificationManager *notificationManager);
 
@@ -54,6 +62,11 @@ public:
 
     /// Envoie un message dans une conversation.
     std::optional<models::Message> sendMessage(qint64 conversationId, qint64 senderId, const QString &content);
+
+    /// Traite un message recu du reseau (payload JSON envoye par sendMessage
+    /// sur le poste distant) : le persiste en base et emet messageReceived.
+    /// Retourne std::nullopt si le payload est invalide ou d'un type inconnu.
+    std::optional<models::Message> receiveMessage(const QString &jsonPayload);
 
     /// Recupere tous les messages d'une conversation.
     QVector<models::Message> getMessages(qint64 conversationId, int limit = 100);
@@ -78,6 +91,7 @@ signals:
 private:
     database::DatabaseManager *m_dbManager = nullptr;
     network::MessagingService *m_messagingService = nullptr;
+    network::MessagingServer *m_messagingServer = nullptr;
     NotificationManager *m_notificationManager = nullptr;
     MessagingManagerError m_lastError = MessagingManagerError::None;
     QString m_lastErrorString;

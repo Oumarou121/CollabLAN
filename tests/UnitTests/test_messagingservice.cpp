@@ -187,7 +187,13 @@ private slots:
         QVERIFY(connectedSpy.wait(5000));
 
         client.disconnectFromHost();
-        QVERIFY(disconnectedSpy.wait(1000));
+        // close() peut emettre disconnected() de facon synchrone selon la
+        // plateforme : ne pas attendre une NOUVELLE emission si le signal
+        // a deja ete recu au moment de l'appel a wait().
+        if (disconnectedSpy.isEmpty()) {
+            QVERIFY(disconnectedSpy.wait(1000));
+        }
+        QCOMPARE(disconnectedSpy.count(), 1);
         QVERIFY(!client.isConnected());
 
         server.close();

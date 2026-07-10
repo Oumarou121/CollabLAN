@@ -8,6 +8,7 @@ add_executable(CollabLAN
 target_link_libraries(CollabLAN PRIVATE
     Qt6::Quick
     Qt6::Qml
+    Qt6::QuickControls2
     core
     network
     database

@@ -1,6 +1,8 @@
 #include <QtTest>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include "MessagingManager.h"
 #include "DatabaseManager.h"
 #include "UserManager.h"
@@ -161,6 +163,33 @@ private slots:
         QCOMPARE(m_messagingManager->lastError(), MessagingManagerError::InvalidContent);
     }
 
+    void sendMessage_toGroupConversation_succeeds()
+    {
+        // sendMessage()/getMessages() ne discriminent que par conversationId :
+        // une conversation de type 'group' doit donc fonctionner exactement
+        // comme une conversation individuelle, sans aucun changement de code.
+        freshDatabase();
+
+        const auto users = m_userManager->allUsers();
+        const qint64 user1Id = users[0].id();
+        const qint64 user2Id = users[1].id();
+
+        QSqlQuery query(m_dbManager->database());
+        query.prepare(QStringLiteral(
+            "INSERT INTO Conversations (type, name) VALUES ('group', 'Groupe Test')"));
+        QVERIFY(query.exec());
+        const qint64 groupConversationId = query.lastInsertId().toLongLong();
+
+        const auto msg = m_messagingManager->sendMessage(groupConversationId, user1Id, QStringLiteral("Salut a tous"));
+        QVERIFY(msg.has_value());
+        QCOMPARE(msg->conversationId(), groupConversationId);
+
+        m_messagingManager->sendMessage(groupConversationId, user2Id, QStringLiteral("Salut !"));
+
+        const auto messages = m_messagingManager->getMessages(groupConversationId);
+        QCOMPARE(messages.size(), 2);
+    }
+
     void getMessages_returnsMessages()
     {
         freshDatabase();
@@ -201,6 +230,109 @@ private slots:
         const auto user2Convs = m_messagingManager->getUserConversations(user2Id);
         QCOMPARE(user2Convs.size(), 1);
         QCOMPARE(user2Convs[0].id(), conv->id());
+    }
+
+    void receiveMessage_persistsAndEmitsSignal()
+    {
+        freshDatabase();
+
+        const auto users = m_userManager->allUsers();
+        const qint64 user1Id = users[0].id();
+        const qint64 user2Id = users[1].id();
+
+        const auto conv = m_messagingManager->getOrCreateConversation(user1Id, user2Id);
+        QVERIFY(conv.has_value());
+
+        QSignalSpy messageReceivedSpy(m_messagingManager.get(), &MessagingManager::messageReceived);
+
+        const QString payload = QStringLiteral(
+            "{\"type\":\"message\",\"conversationId\":%1,\"senderId\":%2,\"content\":\"Salut Alice\"}")
+            .arg(conv->id()).arg(user2Id);
+
+        const auto msg = m_messagingManager->receiveMessage(payload);
+        QVERIFY(msg.has_value());
+        QCOMPARE(msg->conversationId(), conv->id());
+        QCOMPARE(msg->senderId(), user2Id);
+        QCOMPARE(msg->content(), QStringLiteral("Salut Alice"));
+        QCOMPARE(messageReceivedSpy.count(), 1);
+
+        const auto messages = m_messagingManager->getMessages(conv->id());
+        QCOMPARE(messages.size(), 1);
+    }
+
+    void receiveMessage_survivesApostropheInContent()
+    {
+        // Regression : l'ancienne implementation construisait le SQL par
+        // concatenation de chaines ('%3'), ce qui cassait (ou permettait une
+        // injection SQL) des qu'une apostrophe apparaissait dans le contenu.
+        freshDatabase();
+
+        const auto users = m_userManager->allUsers();
+        const qint64 user1Id = users[0].id();
+        const qint64 user2Id = users[1].id();
+
+        const auto conv = m_messagingManager->getOrCreateConversation(user1Id, user2Id);
+        QVERIFY(conv.has_value());
+
+        QJsonObject payloadObj;
+        payloadObj.insert(QStringLiteral("type"), QStringLiteral("message"));
+        payloadObj.insert(QStringLiteral("conversationId"), conv->id());
+        payloadObj.insert(QStringLiteral("senderId"), user2Id);
+        payloadObj.insert(QStringLiteral("content"), QStringLiteral("C'est l'ami d'Alice"));
+        const QString payload = QString::fromUtf8(QJsonDocument(payloadObj).toJson(QJsonDocument::Compact));
+
+        const auto msg = m_messagingManager->receiveMessage(payload);
+        QVERIFY(msg.has_value());
+        QCOMPARE(msg->content(), QStringLiteral("C'est l'ami d'Alice"));
+
+        const auto messages = m_messagingManager->getMessages(conv->id());
+        QCOMPARE(messages.size(), 1);
+        QCOMPARE(messages[0].content(), QStringLiteral("C'est l'ami d'Alice"));
+    }
+
+    void receiveMessage_forGroupConversation_persists()
+    {
+        freshDatabase();
+
+        const auto users = m_userManager->allUsers();
+        const qint64 user2Id = users[1].id();
+
+        QSqlQuery query(m_dbManager->database());
+        query.prepare(QStringLiteral(
+            "INSERT INTO Conversations (type, name) VALUES ('group', 'Groupe Test')"));
+        QVERIFY(query.exec());
+        const qint64 groupConversationId = query.lastInsertId().toLongLong();
+
+        QSignalSpy messageReceivedSpy(m_messagingManager.get(), &MessagingManager::messageReceived);
+
+        const QString payload = QStringLiteral(
+            "{\"type\":\"message\",\"conversationId\":%1,\"senderId\":%2,\"content\":\"Salut le groupe\"}")
+            .arg(groupConversationId).arg(user2Id);
+
+        const auto msg = m_messagingManager->receiveMessage(payload);
+        QVERIFY(msg.has_value());
+        QCOMPARE(msg->conversationId(), groupConversationId);
+        QCOMPARE(messageReceivedSpy.count(), 1);
+
+        const auto messages = m_messagingManager->getMessages(groupConversationId);
+        QCOMPARE(messages.size(), 1);
+    }
+
+    void receiveMessage_rejectsInvalidJson()
+    {
+        freshDatabase();
+
+        const auto msg = m_messagingManager->receiveMessage(QStringLiteral("not json"));
+        QVERIFY(!msg.has_value());
+    }
+
+    void receiveMessage_rejectsUnknownType()
+    {
+        freshDatabase();
+
+        const auto msg = m_messagingManager->receiveMessage(
+            QStringLiteral("{\"type\":\"ping\"}"));
+        QVERIFY(!msg.has_value());
     }
 };
 

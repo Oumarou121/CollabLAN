@@ -27,16 +27,17 @@ std::optional<models::Message> MessageRepository::insert(const models::Message &
     QSqlQuery query(db);
 
     const QString timestamp = message.timestamp().toString(Qt::ISODate);
-    const QString queryString = QStringLiteral(
+    query.prepare(QStringLiteral(
         "INSERT INTO Messages (conversationId, senderId, content, timestamp, is_read) "
-        "VALUES (%1, %2, '%3', '%4', %5)"
-    ).arg(message.conversationId())
-     .arg(message.senderId())
-     .arg(message.content())
-     .arg(timestamp)
-     .arg(message.isRead() ? 1 : 0);
+        "VALUES (:conversationId, :senderId, :content, :timestamp, :isRead)"
+    ));
+    query.bindValue(QStringLiteral(":conversationId"), message.conversationId());
+    query.bindValue(QStringLiteral(":senderId"), message.senderId());
+    query.bindValue(QStringLiteral(":content"), message.content());
+    query.bindValue(QStringLiteral(":timestamp"), timestamp);
+    query.bindValue(QStringLiteral(":isRead"), message.isRead() ? 1 : 0);
 
-    if (!query.exec(queryString)) {
+    if (!query.exec()) {
         qWarning() << "Failed to insert message:" << query.lastError().text();
         return std::nullopt;
     }

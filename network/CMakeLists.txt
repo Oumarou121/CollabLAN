@@ -1,7 +1,8 @@
 add_library(network STATIC)
 
 file(GLOB_RECURSE NETWORK_SOURCES CONFIGURE_DEPENDS "*.cpp")
-target_sources(network PRIVATE ${NETWORK_SOURCES})
+file(GLOB_RECURSE NETWORK_HEADERS CONFIGURE_DEPENDS "*.h")
+target_sources(network PRIVATE ${NETWORK_SOURCES} ${NETWORK_HEADERS})
 
 target_include_directories(network PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

@@ -161,7 +161,10 @@ QStringList DatabaseManager::pendingMigrationFiles() const
     // lances depuis le repertoire de build).
     QStringList candidateDirs = {
         QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("database/%1").arg(kMigrationsDirName)),
-        QDir(QStringLiteral(__FILE__)).filePath(QStringLiteral("../%1").arg(kMigrationsDirName)),
+        // QFileInfo(__FILE__).dir() donne le repertoire contenant CE fichier source
+        // (ex: .../database), independamment du repertoire de l'executable — utile
+        // en developpement/tests lances depuis le repertoire de build.
+        QFileInfo(QStringLiteral(__FILE__)).dir().filePath(kMigrationsDirName),
     };
 
     QDir migrationsDir;

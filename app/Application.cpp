@@ -1,11 +1,18 @@
 #include "Application.h"
 
 #include <QDebug>
+#include <QHostAddress>
 
 #include "DatabaseManager.h"
 #include "UserManager.h"
+#include "MessagingManager.h"
+#include "GroupManager.h"
+#include "NotificationManager.h"
 #include "Discovery/DiscoveryService.h"
 #include "Discovery/PeersModel.h"
+#include "Messaging/MessagingService.h"
+#include "Messaging/MessagingServer.h"
+#include "Security/SecurityService.h"
 
 Application::Application(QObject *parent)
     : QObject(parent)
@@ -16,12 +23,22 @@ Application::~Application() = default;
 
 void Application::initialize()
 {
+    initialize(12345); // Port par défaut
+}
+
+void Application::initialize(quint16 messagingServerPort)
+{
+    initialize(messagingServerPort, QString());
+}
+
+void Application::initialize(quint16 messagingServerPort, const QString &dbFilePath)
+{
     // TODO:
     // - charger les parametres (SettingsService)
     // - initialiser la securite (Security)
 
     m_databaseManager = std::make_unique<database::DatabaseManager>();
-    if (!m_databaseManager->open()) {
+    if (!m_databaseManager->open(dbFilePath)) {
         // On ne bloque pas le demarrage : UserManager signale proprement
         // l'indisponibilite de la base a la connexion (voir loginFailed).
         qWarning() << "Impossible d'ouvrir la base de donnees :" << m_databaseManager->lastError();
@@ -30,6 +47,44 @@ void Application::initialize()
     qDebug() << "Base de donnees utilisee :" << m_databaseManager->databaseFilePath();
 
     m_userManager = new core::UserManager(m_databaseManager.get(), this);
+
+    // Initialiser le MessagingManager pour la messagerie
+    m_messagingManager = new core::MessagingManager(m_databaseManager.get(), this);
+
+    // Initialiser le GroupManager pour les groupes
+    m_groupManager = new core::GroupManager(m_databaseManager.get(), this);
+
+    // Initialiser le SecurityService pour la sécurité TLS
+    m_securityService = new network::SecurityService();
+    if (!m_securityService->initialize()) {
+        qWarning() << "Impossible d'initialiser SecurityService";
+    }
+
+    // Initialiser le MessagingService pour la messagerie réseau
+    m_messagingService = new network::MessagingService(m_securityService, this);
+
+    // Initialiser le MessagingServer pour recevoir les messages
+    m_messagingServer = new network::MessagingServer(m_securityService, this);
+    if (!m_messagingServer->start(messagingServerPort)) {
+        qWarning() << "Impossible de démarrer MessagingServer";
+    }
+
+    // Initialiser le NotificationManager pour les notifications
+    m_notificationManager = new core::NotificationManager(this);
+
+    // Connecter les services au MessagingManager
+    m_messagingManager->setMessagingService(m_messagingService);
+    m_messagingManager->setMessagingServer(m_messagingServer);
+    m_messagingManager->setNotificationManager(m_notificationManager);
+
+    // Connecter MessagingServer à MessagingManager pour traiter les messages reçus
+    connect(m_messagingServer, &network::MessagingServer::messageReceived,
+            m_messagingManager, [this](const QString &message, const QHostAddress &senderAddress) {
+                Q_UNUSED(senderAddress)
+                if (!m_messagingManager->receiveMessage(message)) {
+                    qWarning() << "Message reseau ignore (payload invalide) :" << message;
+                }
+            });
 
     // Seed du compte admin par defaut (dev/demo), tant qu'aucun ecran
     // d'inscription n'existe. Le hash est toujours produit par
@@ -73,4 +128,34 @@ core::UserManager *Application::userManager() const
 network::PeersModel *Application::peersModel() const
 {
     return m_peersModel;
+}
+
+core::MessagingManager *Application::messagingManager() const
+{
+    return m_messagingManager;
+}
+
+core::GroupManager *Application::groupManager() const
+{
+    return m_groupManager;
+}
+
+network::SecurityService *Application::securityService() const
+{
+    return m_securityService;
+}
+
+network::MessagingService *Application::messagingService() const
+{
+    return m_messagingService;
+}
+
+network::MessagingServer *Application::messagingServer() const
+{
+    return m_messagingServer;
+}
+
+core::NotificationManager *Application::notificationManager() const
+{
+    return m_notificationManager;
 }

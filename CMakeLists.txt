@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Quick Qml Network Sql Test WebSockets)
+find_package(Qt6 REQUIRED COMPONENTS Core Quick Qml QuickControls2 Network Sql Test WebSockets)
 find_package(OpenSSL REQUIRED)
 
 option(BUILD_TESTS "Build unit/integration tests" ON)

@@ -4,6 +4,7 @@ import Themes
 import "Login"
 import "Home"
 import "Users"
+import "Chat"
 
 /*
  * Main - fenetre racine de CollabLAN.
@@ -63,6 +64,9 @@ ApplicationWindow {
             onUsersRequested: {
                 stackView.push(usersViewComponent)
             }
+            onChatRequested: {
+                stackView.push(conversationsViewComponent)
+            }
         }
     }
 
@@ -70,6 +74,54 @@ ApplicationWindow {
         id: usersViewComponent
 
         UsersView {
+            onBackRequested: {
+                stackView.pop()
+            }
+        }
+    }
+
+    Component {
+        id: conversationsViewComponent
+
+        ConversationsView {
+            messagingContext: messagingContext
+            onBackRequested: {
+                stackView.pop()
+            }
+            onConversationSelected: function(conversationId) {
+                stackView.push(chatViewComponent, { conversationId: conversationId })
+            }
+            onCreateGroupRequested: {
+                stackView.push(createGroupViewComponent)
+            }
+        }
+    }
+
+    Component {
+        id: createGroupViewComponent
+
+        CreateGroupView {
+            messagingContext: messagingContext
+            onBackRequested: {
+                stackView.pop()
+            }
+            onGroupCreated: function(groupId) {
+                stackView.pop()
+                // MessagingContext.createGroup() a deja appele setConversation()
+                // en interne : le messageModel pointe donc deja sur la bonne
+                // conversation de groupe.
+                if (messagingContext && messagingContext.messageModel.conversationId > 0) {
+                    stackView.push(chatViewComponent, { conversationId: messagingContext.messageModel.conversationId })
+                }
+            }
+        }
+    }
+
+    Component {
+        id: chatViewComponent
+
+        ChatView {
+            messagingContext: messagingContext
             onBackRequested: {
                 stackView.pop()
             }
