@@ -36,12 +36,13 @@ std::optional<models::Group> GroupManager::createGroup(const QString &name, qint
     QSqlQuery query(db);
 
     // Creer le groupe
-    const QString queryString = QStringLiteral(
+    query.prepare(QStringLiteral(
         "INSERT INTO Groups (name, owner_id) "
-        "VALUES ('%1', %2)"
-    ).arg(name).arg(ownerId);
+        "VALUES (:name, :owner_id)"));
+    query.bindValue(QStringLiteral(":name"), name);
+    query.bindValue(QStringLiteral(":owner_id"), ownerId);
 
-    if (!query.exec(queryString)) {
+    if (!query.exec()) {
         qWarning() << "Failed to create group:" << query.lastError().text();
         m_lastError = GroupManagerError::DatabaseError;
         m_lastErrorString = query.lastError().text();
@@ -57,11 +58,11 @@ std::optional<models::Group> GroupManager::createGroup(const QString &name, qint
     // recevoir un message dans un groupe ne differe alors en rien d'une
     // conversation individuelle du point de vue de MessagingManager.
     QSqlQuery convQuery(db);
-    const QString convQueryString = QStringLiteral(
-        "INSERT INTO Conversations (type, name) VALUES ('group', '%1')"
-    ).arg(name);
+    convQuery.prepare(QStringLiteral(
+        "INSERT INTO Conversations (type, name) VALUES ('group', :name)"));
+    convQuery.bindValue(QStringLiteral(":name"), name);
 
-    if (!convQuery.exec(convQueryString)) {
+    if (!convQuery.exec()) {
         qWarning() << "Failed to create conversation for group:" << convQuery.lastError().text();
         m_lastError = GroupManagerError::DatabaseError;
         m_lastErrorString = convQuery.lastError().text();

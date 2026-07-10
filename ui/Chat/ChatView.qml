@@ -80,11 +80,9 @@ Item {
             delegate: Rectangle {
                 width: messageListView.width
                 height: messageColumn.height + 20
-                color: senderId === currentUserId ? Theme.accent : Theme.surface
+                color: senderId === root.currentUserId ? Theme.accent : Theme.surface
                 radius: 10
-                anchors.horizontalCenter: senderId === currentUserId ? Qt.AlignRight : Qt.AlignLeft
-
-                property int currentUserId: 1  // TODO: Récupérer depuis UserManager
+                anchors.horizontalCenter: senderId === root.currentUserId ? Qt.AlignRight : Qt.AlignLeft
 
                 Column {
                     id: messageColumn
@@ -97,7 +95,7 @@ Item {
                     Label {
                         width: parent.width
                         text: messagingContext ? messagingContext.userName(senderId) : ""
-                        visible: senderId !== currentUserId
+                        visible: senderId !== root.currentUserId
                         font.pixelSize: 11
                         font.bold: true
                         color: Theme.textSecondary

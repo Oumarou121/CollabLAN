@@ -9,6 +9,8 @@ import Themes
 Item {
     id: root
 
+    signal backRequested()
+
     Rectangle {
         anchors.fill: parent
         color: Theme.background

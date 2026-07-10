@@ -26,12 +26,13 @@ std::optional<models::Group> GroupRepository::insert(const models::Group &group)
     QSqlDatabase db = m_dbManager->database();
     QSqlQuery query(db);
 
-    const QString queryString = QStringLiteral(
+    query.prepare(QStringLiteral(
         "INSERT INTO Groups (name, owner_id) "
-        "VALUES ('%1', %2)"
-    ).arg(group.name()).arg(group.ownerId());
+        "VALUES (:name, :owner_id)"));
+    query.bindValue(QStringLiteral(":name"), group.name());
+    query.bindValue(QStringLiteral(":owner_id"), group.ownerId());
 
-    if (!query.exec(queryString)) {
+    if (!query.exec()) {
         qWarning() << "Failed to insert group:" << query.lastError().text();
         return std::nullopt;
     }
@@ -57,11 +58,11 @@ bool GroupRepository::update(const models::Group &group)
     QSqlDatabase db = m_dbManager->database();
     QSqlQuery query(db);
 
-    const QString queryString = QStringLiteral(
-        "UPDATE Groups SET name = '%1' WHERE id = %2"
-    ).arg(group.name()).arg(group.id());
+    query.prepare(QStringLiteral("UPDATE Groups SET name = :name WHERE id = :id"));
+    query.bindValue(QStringLiteral(":name"), group.name());
+    query.bindValue(QStringLiteral(":id"), group.id());
 
-    if (!query.exec(queryString)) {
+    if (!query.exec()) {
         qWarning() << "Failed to update group:" << query.lastError().text();
         return false;
     }

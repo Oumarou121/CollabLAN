@@ -60,7 +60,7 @@ bool PermissionManager::canManageAuthorizedMachines(UserRole role)
 bool PermissionManager::isMachineAuthorized(const QString &ipAddress) const
 {
     if (!m_repository)
-        return true; // Par défaut, autorisé si le repository n'est pas initialisé
+        return false; // Fail-closed : refuse par défaut si le repository n'est pas initialisé
     return m_repository->isAuthorized(ipAddress);
 }
 

@@ -22,6 +22,8 @@ Item {
     signal usersRequested()
     signal chatRequested()
     signal fileTransferRequested()
+    signal callRequested()
+    signal adminRequested()
 
     Rectangle {
         anchors.fill: parent
@@ -163,6 +165,52 @@ Item {
                     }
 
                     onClicked: root.fileTransferRequested()
+                }
+
+                Button {
+                    text: qsTr("Appel")
+                    Layout.leftMargin: Theme.spacingSmall
+                    Layout.preferredHeight: 36
+
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
+                        border.width: 1
+                        border.color: Theme.border
+                    }
+
+                    contentItem: Text {
+                        text: qsTr("Appel")
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    onClicked: root.callRequested()
+                }
+
+                Button {
+                    text: qsTr("Administration")
+                    Layout.leftMargin: Theme.spacingSmall
+                    Layout.preferredHeight: 36
+
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
+                        border.width: 1
+                        border.color: Theme.border
+                    }
+
+                    contentItem: Text {
+                        text: qsTr("Administration")
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    onClicked: root.adminRequested()
                 }
 
                 ThemeToggleButton {
