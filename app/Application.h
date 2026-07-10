@@ -26,6 +26,10 @@ class SecurityService;
 class TransferService;
 }
 
+namespace services {
+class AudioService;
+}
+
 /**
  * @brief Point d'entree logique de CollabLAN : initialise les services
  * (reseau, base de donnees, parametres) au demarrage de l'application.
@@ -82,6 +86,9 @@ public:
     // Expose au bootstrap QML le TransferManager pour l'historique des transferts (issue #55).
     core::TransferManager *transferManager() const;
 
+    // Expose au bootstrap QML l'AudioService pour les sons de notification (issue #56).
+    services::AudioService *audioService() const;
+
 private:
     // TODO: instancier ici les autres services (Security, Settings...)
     std::unique_ptr<database::DatabaseManager> m_databaseManager;
@@ -96,6 +103,7 @@ private:
     network::MessagingServer *m_messagingServer = nullptr;    // parente = this (QObject)
     network::TransferService *m_transferService = nullptr;    // parente = this (QObject)
     core::TransferManager *m_transferManager = nullptr;       // parente = this (QObject)
+    services::AudioService *m_audioService = nullptr;         // parente = this (QObject)
 };
 
 #endif // APP_APPLICATION_H

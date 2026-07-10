@@ -60,3 +60,7 @@ add_test(NAME test_transferservice COMMAND test_transferservice)
 add_executable(test_transfermanager UnitTests/test_transfermanager.cpp)
 target_link_libraries(test_transfermanager PRIVATE Qt6::Test Qt6::Network core database models network)
 add_test(NAME test_transfermanager COMMAND test_transfermanager)
+
+add_executable(test_audioservice UnitTests/test_audioservice.cpp)
+target_link_libraries(test_audioservice PRIVATE Qt6::Test Qt6::Multimedia services)
+add_test(NAME test_audioservice COMMAND test_audioservice)

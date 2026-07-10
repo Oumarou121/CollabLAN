@@ -15,6 +15,7 @@
 #include "Messaging/MessagingServer.h"
 #include "Security/SecurityService.h"
 #include "Transfer/TransferService.h"
+#include "AudioService.h"
 
 Application::Application(QObject *parent)
     : QObject(parent)
@@ -89,6 +90,23 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // consultable meme apres redemarrage de l'application (issue #55).
     m_transferManager = new core::TransferManager(m_databaseManager.get(), this);
     m_transferManager->setTransferService(m_transferService);
+
+    // Initialiser l'AudioService pour les sons de notification
+    // (message, transfert, appel - issue #56).
+    m_audioService = new services::AudioService(this);
+
+    // Un nouveau message declenche le son "message" des que la
+    // notification correspondante est demandee.
+    connect(m_notificationManager, &core::NotificationManager::notificationRequested,
+            m_audioService, &services::AudioService::playMessageSound);
+
+    // Un transfert termine declenche le son "transfert".
+    connect(m_transferService, &network::TransferService::transferCompleted,
+            m_audioService, &services::AudioService::playTransferSound);
+
+    // NOTE: VoiceService (appels vocaux) n'est pas encore implemente ;
+    // brancher AudioService::playCallSound() sur son signal d'appel
+    // entrant des que ce service existera.
 
     // Connecter les services au MessagingManager
     m_messagingManager->setMessagingService(m_messagingService);
@@ -186,4 +204,9 @@ network::TransferService *Application::transferService() const
 core::TransferManager *Application::transferManager() const
 {
     return m_transferManager;
+}
+
+services::AudioService *Application::audioService() const
+{
+    return m_audioService;
 }
