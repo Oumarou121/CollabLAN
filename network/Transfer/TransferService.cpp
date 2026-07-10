@@ -35,6 +35,25 @@ bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize
     return stream.status() == QDataStream::Ok;
 }
 
+// Serialise/deserialise un entier 64 bits (utilise pour la reponse
+// resumeOffset envoyee par le destinataire apres l'entete).
+QByteArray encodeUint64(quint64 value)
+{
+    QByteArray payload;
+    QDataStream stream(&payload, QIODevice::WriteOnly);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << value;
+    return payload;
+}
+
+bool decodeUint64(const QByteArray &payload, quint64 *value)
+{
+    QDataStream stream(payload);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream >> *value;
+    return stream.status() == QDataStream::Ok;
+}
+
 // Prefixe un payload par sa taille (quint32, ordre reseau via QDataStream).
 QByteArray frameOf(const QByteArray &payload)
 {
@@ -167,9 +186,6 @@ bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QSt
     state.file = file;
     state.filePath = filePath;
     state.fileSize = file->size();
-    state.bytesSent = 0;
-    state.headerSent = false;
-    state.waitingForAck = false;
     m_sendStates.insert(socket, state);
 
     connect(socket, &QTcpSocket::connected, this, &TransferService::onClientSocketConnected);
@@ -194,7 +210,8 @@ void TransferService::onClientSocketConnected()
 
     const QByteArray header = encodeHeader(info.fileName(), state.fileSize);
     socket->write(frameOf(header));
-    state.waitingForAck = true;
+    // La reponse (resumeOffset) arrive de facon asynchrone dans
+    // onClientSocketReadyRead ; voir state.resumeOffsetReceived.
 }
 
 void TransferService::onClientSocketBytesWritten(qint64 bytes)
@@ -214,21 +231,75 @@ void TransferService::onClientSocketReadyRead()
     }
 
     SendState &state = m_sendStates[socket];
+    state.buffer.append(socket->readAll());
 
-    // Consomme les octets d'accuse de reception disponibles (un octet
-    // par bloc envoye). On peut en recevoir plusieurs d'un coup si le
-    // reseau/systeme groupe les paquets.
-    while (socket->bytesAvailable() > 0 && state.waitingForAck) {
-        char ack = 0;
-        if (socket->read(&ack, 1) != 1) {
+    while (true) {
+        if (!state.resumeOffsetReceived) {
+            // Reponse d'en-tete : trame [quint32 taille][quint64 resumeOffset].
+            if (state.pendingFrameSize < 0) {
+                if (state.buffer.size() < static_cast<int>(sizeof(quint32))) {
+                    break;
+                }
+                QDataStream sizeStream(state.buffer);
+                sizeStream.setVersion(QDataStream::Qt_6_0);
+                quint32 len = 0;
+                sizeStream >> len;
+                state.pendingFrameSize = len;
+                state.buffer.remove(0, sizeof(quint32));
+            }
+
+            if (state.buffer.size() < state.pendingFrameSize) {
+                break;
+            }
+
+            const QByteArray payload = state.buffer.left(static_cast<int>(state.pendingFrameSize));
+            state.buffer.remove(0, static_cast<int>(state.pendingFrameSize));
+            state.pendingFrameSize = -1;
+
+            quint64 resumeOffset = 0;
+            if (!decodeUint64(payload, &resumeOffset) || static_cast<qint64>(resumeOffset) > state.fileSize) {
+                finishSend(socket, false, QStringLiteral("Reponse de reprise invalide"));
+                return;
+            }
+
+            state.resumeOffsetReceived = true;
+            state.bytesSent = static_cast<qint64>(resumeOffset);
+            if (!state.file->seek(state.bytesSent)) {
+                finishSend(socket, false, QStringLiteral("Impossible de reprendre le fichier local"));
+                return;
+            }
+
+            emit transferProgress(state.transferKey, state.bytesSent, state.fileSize);
+            sendNextBlock(socket);
+            // sendNextBlock() peut avoir termine le transfert (fichier deja
+            // entierement envoye, ou erreur de lecture) et appele
+            // finishSend(), qui retire l'entree de m_sendStates : "state"
+            // serait alors une reference pendante. On arrete ici dans ce cas.
+            if (!m_sendStates.contains(socket)) {
+                return;
+            }
+            continue;
+        }
+
+        // Accuses de reception des blocs de donnees (un octet chacun).
+        if (!state.waitingForAck || state.buffer.isEmpty()) {
             break;
         }
+
+        const char ack = state.buffer.at(0);
+        state.buffer.remove(0, 1);
+
         if (ack != kAckByte) {
             finishSend(socket, false, QStringLiteral("Accuse de reception invalide"));
             return;
         }
         state.waitingForAck = false;
         sendNextBlock(socket);
+        // Meme remarque que ci-dessus : le transfert peut s'etre termine
+        // (dernier bloc acquitte) et avoir invalide "state".
+        if (!m_sendStates.contains(socket)) {
+            return;
+        }
     }
 }
 
@@ -285,6 +356,7 @@ void TransferService::finishSend(QTcpSocket *socket, bool success, const QString
     }
 
     socket->disconnect(this);
+    socket->flush();
     socket->close();
     socket->deleteLater();
 }
@@ -359,18 +431,38 @@ void TransferService::onServerSocketReadyRead()
             const QString dir = receiveDirectory();
             QDir().mkpath(dir);
             state.destinationPath = QDir(dir).filePath(state.fileName);
+            state.partialPath = state.destinationPath + QStringLiteral(".part");
 
-            state.file = new QFile(state.destinationPath);
-            if (!state.file->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            // Reprise (issue #54) : si un fichier partiel de meme nom
+            // existe deja et n'est pas plus grand que la taille finale
+            // attendue, on reprend a partir de sa taille actuelle.
+            // Sinon (taille incoherente, ex. fichier different portant
+            // le meme nom), on repart de zero en l'ecrasant.
+            qint64 resumeOffset = 0;
+            const QFileInfo partialInfo(state.partialPath);
+            if (partialInfo.exists() && partialInfo.size() > 0 && partialInfo.size() <= state.fileSize) {
+                resumeOffset = partialInfo.size();
+            }
+
+            state.file = new QFile(state.partialPath);
+            const QIODevice::OpenMode mode = resumeOffset > 0
+                ? (QIODevice::WriteOnly | QIODevice::Append)
+                : (QIODevice::WriteOnly | QIODevice::Truncate);
+            if (!state.file->open(mode)) {
                 finishReceive(socket, false, QStringLiteral("Impossible de creer le fichier local"));
                 return;
             }
+            state.bytesReceived = resumeOffset;
 
-            emit transferStarted(state.transferKey, state.fileName, state.fileSize, true);
+            emit transferStarted(state.transferKey, state.fileName, state.fileSize, true, resumeOffset);
+            if (resumeOffset > 0) {
+                emit transferProgress(state.transferKey, state.bytesReceived, state.fileSize);
+            }
 
-            socket->write(QByteArray(1, kAckByte));
+            state.headerAcked = true;
+            socket->write(frameOf(encodeUint64(static_cast<quint64>(resumeOffset))));
 
-            if (state.fileSize == 0) {
+            if (state.fileSize == 0 || state.bytesReceived >= state.fileSize) {
                 finishReceive(socket, true);
                 return;
             }
@@ -427,15 +519,28 @@ void TransferService::finishReceive(QTcpSocket *socket, bool success, const QStr
     }
 
     if (success) {
+        // Transfert termine : promouvoir le fichier temporaire "<nom>.part"
+        // vers son nom final.
+        if (!state.partialPath.isEmpty() && state.partialPath != state.destinationPath) {
+            QFile::remove(state.destinationPath); // Ecrase un fichier final precedent le cas echeant.
+            QFile::rename(state.partialPath, state.destinationPath);
+        }
         emit transferCompleted(state.transferKey, state.destinationPath);
     } else {
+        // Ne PAS supprimer le fichier partiel : il permet de reprendre le
+        // transfert a partir du dernier bloc confirme (issue #54) lors
+        // d'un prochain appel a sendFile() pour le meme fichier.
         emit transferFailed(state.transferKey, errorString);
-        if (!state.destinationPath.isEmpty()) {
-            QFile::remove(state.destinationPath);
-        }
     }
 
     socket->disconnect(this);
+    // Flush avant fermeture : le dernier octet d'accuse de reception
+    // (ou la reponse resumeOffset pour un fichier vide) a pu etre remis
+    // au socket juste avant cet appel ; sans flush(), close() peut
+    // couper la connexion avant son envoi effectif, ce que l'expediteur
+    // percoit comme "connexion fermee par l'hote distant" au lieu de
+    // recevoir l'accusee final (voir issue #53/#54).
+    socket->flush();
     socket->close();
     socket->deleteLater();
 }
