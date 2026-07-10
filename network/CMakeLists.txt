@@ -36,15 +36,21 @@ target_sources(network PRIVATE ${NETWORK_SOURCES} ${NETWORK_HEADERS})
 
 target_include_directories(network PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${CMAKE_CURRENT_SOURCE_DIR}/Discovery
+    ${CMAKE_CURRENT_SOURCE_DIR}/Election
     ${CMAKE_CURRENT_SOURCE_DIR}/Messaging
+    ${CMAKE_CURRENT_SOURCE_DIR}/Sync
     ${CMAKE_CURRENT_SOURCE_DIR}/Transfer
     ${CMAKE_CURRENT_SOURCE_DIR}/Voice
     ${CMAKE_CURRENT_SOURCE_DIR}/Security
 )
 
+# database (SyncLogRepository) requis par network/Sync/SyncService.cpp (reconciliation
+# post-panne, HYBRID_SERVER_FAILOVER.md section 7). models est deja tire par database.
 target_link_libraries(network PUBLIC
     Qt6::Core Qt6::Network Qt6::WebSockets Qt6::Multimedia
     OpenSSL::SSL OpenSSL::Crypto
     LibDataChannel::LibDataChannel
+    database
 )

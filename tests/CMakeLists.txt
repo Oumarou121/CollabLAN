@@ -25,6 +25,10 @@ add_executable(test_userrepository UnitTests/test_userrepository.cpp)
 target_link_libraries(test_userrepository PRIVATE Qt6::Test database models)
 add_test(NAME test_userrepository COMMAND test_userrepository)
 
+add_executable(test_serverelectionrepository UnitTests/test_serverelectionrepository.cpp)
+target_link_libraries(test_serverelectionrepository PRIVATE Qt6::Test database models)
+add_test(NAME test_serverelectionrepository COMMAND test_serverelectionrepository)
+
 add_executable(test_messagingservice UnitTests/test_messagingservice.cpp)
 target_link_libraries(test_messagingservice PRIVATE Qt6::Test Qt6::WebSockets network)
 add_test(NAME test_messagingservice COMMAND test_messagingservice)
@@ -75,3 +79,11 @@ add_test(NAME test_transfercontext COMMAND test_transfercontext)
 add_executable(test_audioservice UnitTests/test_audioservice.cpp)
 target_link_libraries(test_audioservice PRIVATE Qt6::Test Qt6::Multimedia services)
 add_test(NAME test_audioservice COMMAND test_audioservice)
+
+add_executable(test_electionservice UnitTests/test_electionservice.cpp)
+target_link_libraries(test_electionservice PRIVATE Qt6::Test Qt6::Network network models)
+add_test(NAME test_electionservice COMMAND test_electionservice)
+
+add_executable(test_synclogrepository UnitTests/test_synclogrepository.cpp)
+target_link_libraries(test_synclogrepository PRIVATE Qt6::Test database models)
+add_test(NAME test_synclogrepository COMMAND test_synclogrepository)
