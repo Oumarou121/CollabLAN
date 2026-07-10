@@ -67,7 +67,14 @@ public:
     static qint64 blockSize();
 
     /**
-     * @brief Envoie le fichier local filePath vers host:port.
+     * @brief Envoie le fichier local filePath vers host:port, pour le
+     * compte de l'utilisateur senderId a destination de recipientId.
+     *
+     * senderId/recipientId sont transmis dans l'en-tete du protocole et
+     * restitues par transferStarted() cote destinataire : ils permettent
+     * a core::TransferManager d'enregistrer l'historique du transfert en
+     * base (issue #55) sans que TransferService n'ait besoin de connaitre
+     * la couche base de donnees.
      *
      * Asynchrone : le resultat est communique via les signaux
      * transferStarted/transferProgress/transferCompleted/transferFailed.
@@ -79,13 +86,16 @@ public:
      * ou si la connexion ne peut pas etre initiee ; true sinon (le
      * transfert est en cours).
      */
-    bool sendFile(const QHostAddress &host, quint16 port, const QString &filePath);
+    bool sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
+                  int senderId, int recipientId);
 
 signals:
     /// Emis quand un transfert (entrant ou sortant) demarre. resumeOffset
     /// est > 0 lorsque le transfert reprend un transfert interrompu
-    /// precedemment (0 pour un transfert qui commence de zero).
-    void transferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize, bool incoming, qint64 resumeOffset = 0);
+    /// precedemment (0 pour un transfert qui commence de zero). senderId
+    /// et recipientId sont ceux fournis a sendFile() par l'expediteur.
+    void transferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
+                          bool incoming, qint64 resumeOffset, int senderId, int recipientId);
 
     /// Emis a intervalles reguliers pendant le transfert.
     void transferProgress(const QString &transferKey, qint64 bytesTransferred, qint64 totalBytes);
@@ -122,6 +132,8 @@ private:
         QString fileName;
         qint64 fileSize = 0;
         qint64 bytesReceived = 0;
+        int senderId = -1;
+        int recipientId = -1;
         QFile *file = nullptr;
         QString destinationPath;   ///< Chemin final (une fois le transfert termine).
         QString partialPath;       ///< Fichier temporaire "<nom>.part" pendant le transfert.
@@ -135,6 +147,8 @@ private:
         QString filePath;
         qint64 fileSize = 0;
         qint64 bytesSent = 0;
+        int senderId = -1;
+        int recipientId = -1;
         bool resumeOffsetReceived = false; ///< true une fois la reponse du destinataire recue.
         bool waitingForAck = false;
         QByteArray buffer;          ///< Octets recus non encore consommes (reponse d'en-tete puis accuses).

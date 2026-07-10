@@ -75,4 +75,7 @@ private:
 
 } // namespace models
 
+Q_DECLARE_METATYPE(models::TransferStatus)
+Q_DECLARE_METATYPE(models::Transfer)
+
 #endif // MODELS_TRANSFER_H

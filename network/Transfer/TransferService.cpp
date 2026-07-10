@@ -16,22 +16,30 @@ const QByteArray TransferService::kMagic = QByteArrayLiteral("CLFT");
 
 namespace {
 
-// Serialise (fileName, fileSize) dans un QByteArray auto-suffisant,
-// utilise a la fois pour l'envoi (writeHeader) et la reception (parse).
-QByteArray encodeHeader(const QString &fileName, qint64 fileSize)
+// Serialise (fileName, fileSize, senderId, recipientId) dans un
+// QByteArray auto-suffisant, utilise a la fois pour l'envoi et la
+// reception. senderId/recipientId permettent a core::TransferManager
+// d'enregistrer l'historique du transfert en base (issue #55).
+QByteArray encodeHeader(const QString &fileName, qint64 fileSize, int senderId, int recipientId)
 {
     QByteArray payload;
     QDataStream stream(&payload, QIODevice::WriteOnly);
     stream.setVersion(QDataStream::Qt_6_0);
-    stream << fileName << static_cast<qint64>(fileSize);
+    stream << fileName << static_cast<qint64>(fileSize)
+           << static_cast<qint32>(senderId) << static_cast<qint32>(recipientId);
     return payload;
 }
 
-bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize)
+bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize,
+                   int *senderId, int *recipientId)
 {
     QDataStream stream(payload);
     stream.setVersion(QDataStream::Qt_6_0);
-    stream >> *fileName >> *fileSize;
+    qint32 sender = -1;
+    qint32 recipient = -1;
+    stream >> *fileName >> *fileSize >> sender >> recipient;
+    *senderId = sender;
+    *recipientId = recipient;
     return stream.status() == QDataStream::Ok;
 }
 
@@ -170,7 +178,8 @@ QString TransferService::makeTransferKey(QTcpSocket *socket)
 // Cote expediteur
 // ---------------------------------------------------------------------
 
-bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QString &filePath)
+bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
+                                int senderId, int recipientId)
 {
     auto *file = new QFile(filePath);
     if (!file->open(QIODevice::ReadOnly)) {
@@ -186,6 +195,8 @@ bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QSt
     state.file = file;
     state.filePath = filePath;
     state.fileSize = file->size();
+    state.senderId = senderId;
+    state.recipientId = recipientId;
     m_sendStates.insert(socket, state);
 
     connect(socket, &QTcpSocket::connected, this, &TransferService::onClientSocketConnected);
@@ -206,9 +217,10 @@ void TransferService::onClientSocketConnected()
 
     SendState &state = m_sendStates[socket];
     const QFileInfo info(state.filePath);
-    emit transferStarted(state.transferKey, info.fileName(), state.fileSize, false);
+    emit transferStarted(state.transferKey, info.fileName(), state.fileSize, false, 0,
+                          state.senderId, state.recipientId);
 
-    const QByteArray header = encodeHeader(info.fileName(), state.fileSize);
+    const QByteArray header = encodeHeader(info.fileName(), state.fileSize, state.senderId, state.recipientId);
     socket->write(frameOf(header));
     // La reponse (resumeOffset) arrive de facon asynchrone dans
     // onClientSocketReadyRead ; voir state.resumeOffsetReceived.
@@ -417,7 +429,9 @@ void TransferService::onServerSocketReadyRead()
         if (!state.headerParsed) {
             QString fileName;
             qint64 fileSize = 0;
-            if (!decodeHeader(payload, &fileName, &fileSize) || fileSize < 0) {
+            int senderId = -1;
+            int recipientId = -1;
+            if (!decodeHeader(payload, &fileName, &fileSize, &senderId, &recipientId) || fileSize < 0) {
                 finishReceive(socket, false, QStringLiteral("En-tete de transfert invalide"));
                 return;
             }
@@ -426,6 +440,8 @@ void TransferService::onServerSocketReadyRead()
             // toute ecriture en dehors du repertoire de reception.
             state.fileName = QFileInfo(fileName).fileName();
             state.fileSize = fileSize;
+            state.senderId = senderId;
+            state.recipientId = recipientId;
             state.headerParsed = true;
 
             const QString dir = receiveDirectory();
@@ -454,7 +470,8 @@ void TransferService::onServerSocketReadyRead()
             }
             state.bytesReceived = resumeOffset;
 
-            emit transferStarted(state.transferKey, state.fileName, state.fileSize, true, resumeOffset);
+            emit transferStarted(state.transferKey, state.fileName, state.fileSize, true, resumeOffset,
+                                  state.senderId, state.recipientId);
             if (resumeOffset > 0) {
                 emit transferProgress(state.transferKey, state.bytesReceived, state.fileSize);
             }

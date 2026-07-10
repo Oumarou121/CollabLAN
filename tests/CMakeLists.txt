@@ -56,3 +56,7 @@ add_test(NAME test_transferrepository COMMAND test_transferrepository)
 add_executable(test_transferservice UnitTests/test_transferservice.cpp)
 target_link_libraries(test_transferservice PRIVATE Qt6::Test Qt6::Network network)
 add_test(NAME test_transferservice COMMAND test_transferservice)
+
+add_executable(test_transfermanager UnitTests/test_transfermanager.cpp)
+target_link_libraries(test_transfermanager PRIVATE Qt6::Test Qt6::Network core database models network)
+add_test(NAME test_transfermanager COMMAND test_transfermanager)

@@ -75,7 +75,7 @@ private slots:
         QSignalSpy senderCompleted(&sender, &TransferService::transferCompleted);
         QSignalSpy senderFailed(&sender, &TransferService::transferFailed);
 
-        QVERIFY(sender.sendFile(QHostAddress::LocalHost, 23461, sourcePath));
+        QVERIFY(sender.sendFile(QHostAddress::LocalHost, 23461, sourcePath, /*senderId=*/1, /*recipientId=*/2));
 
         QVERIFY(senderCompleted.wait(10000));
         QCOMPARE(senderFailed.count(), 0);
@@ -105,7 +105,7 @@ private slots:
     {
         TransferService sender;
         QVERIFY(!sender.sendFile(QHostAddress::LocalHost, 23462,
-                                  QStringLiteral("/path/does/not/exist.bin")));
+                                  QStringLiteral("/path/does/not/exist.bin"), 1, 2));
     }
 
     /*
@@ -156,7 +156,7 @@ private slots:
         QSignalSpy senderCompleted(&sender, &TransferService::transferCompleted);
         QSignalSpy senderProgress(&sender, &TransferService::transferProgress);
 
-        QVERIFY(sender.sendFile(QHostAddress::LocalHost, 23463, sourcePath));
+        QVERIFY(sender.sendFile(QHostAddress::LocalHost, 23463, sourcePath, /*senderId=*/1, /*recipientId=*/2));
 
         QVERIFY(senderCompleted.wait(10000));
         if (receiverCompleted.isEmpty()) {

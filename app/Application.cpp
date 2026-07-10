@@ -7,6 +7,7 @@
 #include "UserManager.h"
 #include "MessagingManager.h"
 #include "GroupManager.h"
+#include "TransferManager.h"
 #include "NotificationManager.h"
 #include "Discovery/DiscoveryService.h"
 #include "Discovery/PeersModel.h"
@@ -81,6 +82,13 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     if (!m_transferService->start(static_cast<quint16>(messagingServerPort + 1))) {
         qWarning() << "Impossible de demarrer TransferService";
     }
+
+    // Initialiser le TransferManager : persiste l'historique des
+    // transferts (fichier, expediteur, destinataire, statut) en base a
+    // chaque transfert emis/recu par TransferService, et le rend
+    // consultable meme apres redemarrage de l'application (issue #55).
+    m_transferManager = new core::TransferManager(m_databaseManager.get(), this);
+    m_transferManager->setTransferService(m_transferService);
 
     // Connecter les services au MessagingManager
     m_messagingManager->setMessagingService(m_messagingService);
@@ -173,4 +181,9 @@ core::NotificationManager *Application::notificationManager() const
 network::TransferService *Application::transferService() const
 {
     return m_transferService;
+}
+
+core::TransferManager *Application::transferManager() const
+{
+    return m_transferManager;
 }

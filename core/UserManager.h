@@ -63,6 +63,11 @@ public:
     bool isCurrentUserAdmin() const;
     bool isBusy() const;
 
+    /// Id (table Users) de l'utilisateur actuellement authentifie, ou
+    /// nullopt si personne n'est connecte. Utilise par ex. par
+    /// core::TransferManager pour renseigner l'expediteur d'un transfert.
+    std::optional<int> currentUserId() const;
+
     // --- API C++ (administration) ---------------------------------------
 
     /**
