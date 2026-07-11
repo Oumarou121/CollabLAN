@@ -19,7 +19,20 @@ rtc::Configuration lanOnlyConfiguration()
 {
     rtc::Configuration config;
     // config.iceServers reste vide volontairement.
-    config.disableAutoNegotiation = false;
+    //
+    // disableAutoNegotiation = true : addTrack() ne doit PAS declencher sa
+    // propre negociation automatique. Sans ca, cote appele, addTrack()
+    // (appele avant setRemoteDescription() dans createPeerConnection())
+    // programme une renegotiation qui se declenche juste APRES l'envoi de
+    // la reponse SDP, produisant une 2e offre parasite. Cette offre arrive
+    // chez l'appelant alors qu'il est deja en communication : elle est
+    // traitee comme "offre concurrente" et provoque un sendHangup() qui
+    // casse l'appel en plein handshake DTLS (issue observee : "DTLS
+    // handshake failed" systematique juste apres la connexion ICE).
+    // On declenche donc setLocalDescription() nous-memes, une seule fois,
+    // au bon moment (cf. VoiceService::createPeerConnection() et le cas
+    // Offer de VoiceService::onSignalingMessage()).
+    config.disableAutoNegotiation = true;
     return config;
 }
 
@@ -35,6 +48,8 @@ VoiceService::VoiceService(SecurityService *securityService, QObject *parent)
             this, &VoiceService::onSignalingMessage);
     connect(m_signaling.get(), &VoiceSignalingChannel::peerDisconnected,
             this, &VoiceService::onSignalingPeerDisconnected);
+    connect(m_signaling.get(), &VoiceSignalingChannel::peerConnected,
+            this, &VoiceService::onSignalingPeerConnected);
     connect(m_signaling.get(), &VoiceSignalingChannel::error,
             this, &VoiceService::errorOccurred);
 
@@ -58,6 +73,11 @@ bool VoiceService::startListening(quint16 signalingPort)
 void VoiceService::stopListening()
 {
     m_signaling->stopListening();
+}
+
+quint16 VoiceService::defaultSignalingPort()
+{
+    return 12347;
 }
 
 void VoiceService::setState(CallState newState)
@@ -87,10 +107,14 @@ void VoiceService::createPeerConnection()
     m_peerConnection->onLocalDescription([this](rtc::Description description) {
         const QString sdp = QString::fromStdString(std::string(description));
         const bool isOffer = description.type() == rtc::Description::Type::Offer;
+        qDebug() << "VoiceService: description locale generee, type:" << (isOffer ? "offer" : "answer")
+                 << "taille:" << sdp.length();
         QMetaObject::invokeMethod(this, [this, sdp, isOffer]() {
             if (isOffer) {
+                qDebug() << "VoiceService: envoi de l'offre SDP";
                 m_signaling->sendOffer(sdp, m_currentCallId);
             } else {
+                qDebug() << "VoiceService: envoi de la reponse SDP";
                 m_signaling->sendAnswer(sdp, m_currentCallId);
             }
         }, Qt::QueuedConnection);
@@ -129,8 +153,24 @@ void VoiceService::createPeerConnection()
         std::to_string(kRtpPayloadTypePcmu) + " PCMU/" + std::to_string(kVoiceSampleRate));
     media.addRtpMap(rtpMap);
 
-    m_audioTrack = m_peerConnection->addTrack(media);
+    try {
+        m_audioTrack = m_peerConnection->addTrack(media);
+    } catch (const std::exception &ex) {
+        qWarning() << "VoiceService: echec addTrack -" << ex.what();
+        return;
+    }
     wireTrackCallbacks();
+
+    // disableAutoNegotiation = true (cf. lanOnlyConfiguration) : addTrack()
+    // seul ne declenche plus rien. C'est nous qui declenchons explicitement
+    // la generation de l'offre locale, une seule fois, cote appelant.
+    if (m_isCaller) {
+        try {
+            m_peerConnection->setLocalDescription();
+        } catch (const std::exception &ex) {
+            qWarning() << "VoiceService: echec setLocalDescription (offre) -" << ex.what();
+        }
+    }
 }
 
 void VoiceService::wireTrackCallbacks()
@@ -180,11 +220,11 @@ bool VoiceService::call(const QHostAddress &peerAddress, quint16 signalingPort)
         return false;
     }
 
-    createPeerConnection();
     setState(CallState::Calling);
-    // L'offre SDP est generee automatiquement par libdatachannel des
-    // l'ajout de la piste (negociation automatique) et transmise via
-    // onLocalDescription -> VoiceSignalingChannel::sendOffer.
+    // La PeerConnection sera creee dans onSignalingPeerConnected() une fois
+    // que le socket WebSocket sera connecte. L'offre SDP est generee
+    // automatiquement par libdatachannel des l'ajout de la piste (negociation
+    // automatique) et transmise via onLocalDescription -> VoiceSignalingChannel::sendOffer.
     return true;
 }
 
@@ -227,6 +267,21 @@ void VoiceService::teardownSession(const QString &reason)
 
     m_audioIo->stop();
 
+    if (m_peerConnection) {
+        // On desarme les callbacks AVANT close()/reset() : les threads
+        // internes de libdatachannel (il en demarre une vingtaine, cf.
+        // "Spawning 20 threads" dans les logs) peuvent encore invoquer un
+        // callback pendant qu'on detruit la session. Un callback qui
+        // capture "this" et appelle QMetaObject::invokeMethod(this, ...)
+        // sur un VoiceService en cours de destruction (ou deja detruit)
+        // provoque un crash/assert cote Qt ("Cannot send events to objects
+        // owned by a different thread"), observe a la fermeture simultanee
+        // des deux instances.
+        m_peerConnection->onStateChange([](rtc::PeerConnection::State) {});
+        m_peerConnection->onLocalDescription([](rtc::Description) {});
+        m_peerConnection->onLocalCandidate([](rtc::Candidate) {});
+    }
+
     if (m_audioTrack) {
         m_audioTrack->close();
         m_audioTrack.reset();
@@ -248,19 +303,33 @@ void VoiceService::teardownSession(const QString &reason)
 
 void VoiceService::onSignalingMessage(const SignalingMessage &message, const QHostAddress &peerAddress)
 {
+    qDebug() << "VoiceService: message de signalisation recu, type:" << static_cast<int>(message.type)
+             << "callId:" << message.callId;
+
     switch (message.type) {
     case SignalingMessageType::Offer: {
         if (m_state != CallState::Idle) {
             // Deja en communication : on ignore les offres concurrentes.
+            qDebug() << "VoiceService: offre ignoree (deja en communication)";
             m_signaling->sendHangup(message.callId);
             return;
         }
+        qDebug() << "VoiceService: offre SDP recue, taille:" << message.sdp.length();
         m_peerAddress = peerAddress;
         m_isCaller = false;
         m_currentCallId = message.callId;
 
         createPeerConnection();
         m_peerConnection->setRemoteDescription(rtc::Description(message.sdp.toStdString(), "offer"));
+
+        // disableAutoNegotiation = true : on declenche nous-memes la reponse
+        // SDP, une seule fois, plutot que de laisser une eventuelle
+        // negociation automatique parasite se produire (cf. lanOnlyConfiguration).
+        try {
+            m_peerConnection->setLocalDescription();
+        } catch (const std::exception &ex) {
+            qWarning() << "VoiceService: echec setLocalDescription (reponse) -" << ex.what();
+        }
 
         setState(CallState::Ringing);
         emit incomingCall(peerAddress);
@@ -294,8 +363,18 @@ void VoiceService::onSignalingMessage(const SignalingMessage &message, const QHo
     }
 }
 
+void VoiceService::onSignalingPeerConnected()
+{
+    qDebug() << "VoiceService: socket de signalisation connecte";
+    if (m_isCaller && m_state == CallState::Calling) {
+        qDebug() << "VoiceService: creation de la PeerConnection (appelant)";
+        createPeerConnection();
+    }
+}
+
 void VoiceService::onSignalingPeerDisconnected()
 {
+    qDebug() << "VoiceService: socket de signalisation deconnecte";
     if (m_state != CallState::Idle) {
         teardownSession(QStringLiteral("signaling-disconnected"));
     }

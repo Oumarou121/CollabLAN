@@ -61,6 +61,9 @@ public:
     /// Initie un appel sortant vers le poste distant.
     bool call(const QHostAddress &peerAddress, quint16 signalingPort = 12347);
 
+    /// Port de signalisation par défaut utilisé par startListening() et call().
+    static quint16 defaultSignalingPort();
+
     /// Accepte l'appel entrant actuellement en sonnerie (etat Ringing).
     void acceptCall();
 
@@ -92,6 +95,7 @@ signals:
 private slots:
     void onSignalingMessage(const network::SignalingMessage &message, const QHostAddress &peerAddress);
     void onSignalingPeerDisconnected();
+    void onSignalingPeerConnected();
     void onCapturedAudioFrame(const QByteArray &pcm16);
 
 private:

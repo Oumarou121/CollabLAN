@@ -163,6 +163,26 @@ void DiscoveryService::setPermissionManager(QObject *manager)
     m_permissionManager = manager;
 }
 
+quint16 DiscoveryService::transferPort() const
+{
+    return m_transferPort;
+}
+
+void DiscoveryService::setTransferPort(quint16 port)
+{
+    m_transferPort = port;
+}
+
+quint16 DiscoveryService::signalingPort() const
+{
+    return m_signalingPort;
+}
+
+void DiscoveryService::setSignalingPort(quint16 port)
+{
+    m_signalingPort = port;
+}
+
 void DiscoveryService::sendAnnounce()
 {
     QJsonObject packet;
@@ -172,6 +192,8 @@ void DiscoveryService::sendAnnounce()
     packet["name"] = m_localName;
     packet["status"] = m_localStatus;
     packet["port"] = m_port;
+    packet["transferPort"] = static_cast<int>(m_transferPort);
+    packet["signalingPort"] = static_cast<int>(m_signalingPort);
 
     const QByteArray data = QJsonDocument(packet).toJson(QJsonDocument::Compact);
 
@@ -229,6 +251,8 @@ void DiscoveryService::handleAnnouncePacket(const QByteArray &data, const QHostA
     peer.status = obj.value("status").toString(QStringLiteral("online"));
     peer.address = senderAddress;
     peer.port = static_cast<quint16>(obj.value("port").toInt(m_port));
+    peer.transferPort = static_cast<quint16>(obj.value("transferPort").toInt(m_transferPort));
+    peer.signalingPort = static_cast<quint16>(obj.value("signalingPort").toInt(m_signalingPort));
     peer.lastSeenMs = QDateTime::currentMSecsSinceEpoch();
 
     const auto existingIt = m_peers.constFind(peerId);
@@ -237,7 +261,9 @@ void DiscoveryService::handleAnnouncePacket(const QByteArray &data, const QHostA
         && (existingIt->name != peer.name
             || existingIt->status != peer.status
             || existingIt->address != peer.address
-            || existingIt->port != peer.port);
+            || existingIt->port != peer.port
+            || existingIt->transferPort != peer.transferPort
+            || existingIt->signalingPort != peer.signalingPort);
 
     m_peers.insert(peerId, peer);
 

@@ -230,7 +230,8 @@ Item {
                             for (let i = 0; i < peers.length; ++i) {
                                 result.push({
                                     label: peers[i].name + " (" + peers[i].address + ")",
-                                    address: peers[i].address
+                                    address: peers[i].address,
+                                    port: peers[i].port
                                 })
                             }
                             return result
@@ -272,7 +273,7 @@ Item {
                             // correctement Windows et Linux (contrairement a un
                             // decoupage regex manuel ici, qui laissait un slash en
                             // trop devant la lettre de lecteur : "/C:/...").
-                            if (root.context.sendFile(root.selectedFilePath.toString(), selected.address)) {
+                            if (root.context.sendFile(root.selectedFilePath.toString(), selected.address, selected.port)) {
                                 root.selectedFilePath = ""
                                 root.selectedFileName = ""
                             }

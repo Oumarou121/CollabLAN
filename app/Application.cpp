@@ -466,6 +466,8 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // (PeersModel) qui alimentera UsersView.qml en temps reel (issue #17).
     m_discoveryService = new network::DiscoveryService(this);
     m_discoveryService->setPermissionManager(m_permissionManager);
+    m_discoveryService->setTransferPort(static_cast<quint16>(messagingServerPort + 1));
+    m_discoveryService->setSignalingPort(static_cast<quint16>(messagingServerPort + 2));
     m_peersModel = new network::PeersModel(m_discoveryService, this);
 
     // Un poste qui apparait/disparait du reseau local declenche une

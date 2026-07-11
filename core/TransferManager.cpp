@@ -69,17 +69,12 @@ void TransferManager::onNetworkTransferStarted(const QString &transferKey, const
 {
     Q_UNUSED(incoming);
 
-    if (senderId <= 0 || recipientId <= 0) {
-        // Pas d'identite exploitable (ex. senderId/recipientId non
-        // fournis) : rien a persister pour ce transfert.
-        qWarning() << "TransferManager: transfert" << transferKey
-                   << "sans expediteur/destinataire valide, non enregistre";
-        return;
-    }
-
+    // Accepter les IDs negatifs comme "inconnus" - le transfert peut
+    // toujours etre enregistre pour l'historique, meme sans identite
+    // complete (ex. recipientId inconnu sur un reseau P2P).
     models::Transfer transfer;
-    transfer.setSenderId(senderId);
-    transfer.setRecipientId(recipientId);
+    transfer.setSenderId(senderId > 0 ? senderId : -1);
+    transfer.setRecipientId(recipientId > 0 ? recipientId : -1);
     transfer.setFileName(fileName);
     transfer.setFileSize(fileSize);
     // Une reprise (resumeOffset > 0) redemarre un transfert deja en

@@ -22,8 +22,18 @@
 #include "SettingsModel.h"
 #include "Election/ElectionService.h"
 
+#include <rtc/rtc.hpp>
+
 int main(int argc, char *argv[])
 {
+    // Sans cet appel, toute la journalisation interne de libdatachannel
+    // (gathering ICE, negociation DTLS, erreurs de certificat...) est
+    // totalement silencieuse : impossible de diagnostiquer un appel qui
+    // reste bloque sans jamais lever d'exception cote Qt. Debug en
+    // developpement ; a repasser en LogLevel::Warning pour une release
+    // si le volume de logs devient genant.
+    rtc::InitLogger(rtc::LogLevel::Debug);
+
     // Le .qrc "sounds" est compile dans la bibliotheque STATIQUE "services".
     // Sans reference explicite, l'editeur de liens elague l'objet genere par
     // AUTORCC (rien dans l'executable ne l'appelle), et les ressources

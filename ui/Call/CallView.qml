@@ -210,7 +210,7 @@ Item {
                             }
 
                             Label {
-                                text: address
+                                text: address + " (port: " + signalingPort + ")"
                                 color: Theme.textSecondary
                                 font.pixelSize: Theme.fontSizeSmall
                                 elide: Text.ElideRight
@@ -243,7 +243,8 @@ Item {
                                 if (!root.call) {
                                     return
                                 }
-                                if (!root.call.call(address)) {
+                                console.log("CallView: Appel vers", address, "sur port", signalingPort)
+                                if (!root.call.call(address, signalingPort)) {
                                     errorBanner.show(qsTr("Impossible d'appeler %1").arg(name))
                                 }
                             }

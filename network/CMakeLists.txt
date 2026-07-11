@@ -51,6 +51,6 @@ target_include_directories(network PUBLIC
 target_link_libraries(network PUBLIC
     Qt6::Core Qt6::Network Qt6::WebSockets Qt6::Multimedia
     OpenSSL::SSL OpenSSL::Crypto
-    LibDataChannel::LibDataChannel
+    LibDataChannel::LibDataChannelStatic   # <- remplacer LibDataChannel::LibDataChannel par ceci
     database
 )

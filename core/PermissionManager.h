@@ -5,10 +5,15 @@
 #include <QString>
 #include <optional>
 #include <memory>
+#include <vector>
 
 namespace database {
 class DatabaseManager;
 class AuthorizedMachineRepository;
+}
+
+namespace models {
+class AuthorizedMachine;
 }
 
 namespace core {
@@ -71,6 +76,12 @@ public:
 
     /// Autorise une machine par son adresse IP (issue #68).
     bool authorizeMachine(const QString &ipAddress, int authorizedBy, const QString &reason = QString());
+
+    /// Retourne toutes les machines (pour AuthorizedMachineModel)
+    std::vector<models::AuthorizedMachine> getAllMachines() const;
+
+    /// Retourne le DatabaseManager (pour AuthorizedMachineModel)
+    database::DatabaseManager* databaseManager() const;
 
 private:
     database::DatabaseManager *m_dbManager = nullptr;

@@ -56,7 +56,7 @@ public:
     /// aucun appel ne peut etre demarre (adresse invalide, service absent,
     /// appel deja en cours) : dans ce cas errorOccurred n'est pas forcement
     /// emis (l'appelant QML peut deja reagir sur la valeur de retour).
-    Q_INVOKABLE bool call(const QString &address);
+    Q_INVOKABLE bool call(const QString &address, int signalingPort = 0);
 
     /// Accepte l'appel entrant actuellement en sonnerie (etat "ringing").
     Q_INVOKABLE void acceptCall();

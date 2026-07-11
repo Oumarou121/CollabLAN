@@ -65,38 +65,53 @@ void AuthorizedMachineModel::refresh()
     beginResetModel();
     m_machines.clear();
     
-    // TODO: Charger depuis AuthorizedMachineRepository via PermissionManager
-    // Pour l'instant, données de test
-    m_machines.append(models::AuthorizedMachine(1, "192.168.1.10", "PC-Alice", true, 1, QDateTime::currentDateTime(), "Machine par défaut"));
-    m_machines.append(models::AuthorizedMachine(2, "192.168.1.11", "PC-Bilal", true, 1, QDateTime::currentDateTime(), "Machine par défaut"));
+    // Charger depuis AuthorizedMachineRepository via PermissionManager
+    if (m_permissionManager) {
+        auto *permissionManager = qobject_cast<PermissionManager*>(m_permissionManager);
+        if (permissionManager) {
+            const auto machines = permissionManager->getAllMachines();
+            for (const auto &machine : machines) {
+                m_machines.append(machine);
+            }
+        }
+    }
     
     endResetModel();
 }
 
 bool AuthorizedMachineModel::addMachine(const QString &ipAddress, const QString &hostname, const QString &reason)
 {
-    // TODO: Appeler PermissionManager.authorizeMachine()
-    beginInsertRows(QModelIndex(), m_machines.size(), m_machines.size());
-    models::AuthorizedMachine machine;
-    machine.setIpAddress(ipAddress);
-    machine.setHostname(hostname);
-    machine.setAuthorized(true);
-    machine.setReason(reason);
-    machine.setAddedAt(QDateTime::currentDateTime());
-    m_machines.append(machine);
-    endInsertRows();
-    return true;
+    if (m_permissionManager) {
+        auto *permissionManager = qobject_cast<PermissionManager*>(m_permissionManager);
+        if (permissionManager) {
+            // Obtenir l'ID de l'utilisateur courant depuis le DatabaseManager
+            // Pour l'instant, on utilise 1 comme valeur par défaut (admin)
+            const int currentUserId = 1;
+            if (permissionManager->authorizeMachine(ipAddress, currentUserId, reason)) {
+                refresh(); // Recharger depuis la base
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 bool AuthorizedMachineModel::revokeMachine(int id, const QString &reason)
 {
-    // TODO: Appeler PermissionManager.revokeMachine()
-    for (int i = 0; i < m_machines.size(); ++i) {
-        if (m_machines[i].id() == id) {
-            m_machines[i].setAuthorized(false);
-            m_machines[i].setReason(reason);
-            emit dataChanged(index(i), index(i));
-            return true;
+    if (m_permissionManager) {
+        auto *permissionManager = qobject_cast<PermissionManager*>(m_permissionManager);
+        if (permissionManager) {
+            // Trouver l'adresse IP correspondant à l'ID
+            for (int i = 0; i < m_machines.size(); ++i) {
+                if (m_machines[i].id() == id) {
+                    const int currentUserId = 1;
+                    if (permissionManager->revokeMachine(m_machines[i].ipAddress(), currentUserId, reason)) {
+                        refresh(); // Recharger depuis la base
+                        return true;
+                    }
+                    break;
+                }
+            }
         }
     }
     return false;
@@ -104,13 +119,20 @@ bool AuthorizedMachineModel::revokeMachine(int id, const QString &reason)
 
 bool AuthorizedMachineModel::authorizeMachine(int id, const QString &reason)
 {
-    // TODO: Appeler PermissionManager.authorizeMachine()
-    for (int i = 0; i < m_machines.size(); ++i) {
-        if (m_machines[i].id() == id) {
-            m_machines[i].setAuthorized(true);
-            m_machines[i].setReason(reason);
-            emit dataChanged(index(i), index(i));
-            return true;
+    if (m_permissionManager) {
+        auto *permissionManager = qobject_cast<PermissionManager*>(m_permissionManager);
+        if (permissionManager) {
+            // Trouver l'adresse IP correspondant à l'ID
+            for (int i = 0; i < m_machines.size(); ++i) {
+                if (m_machines[i].id() == id) {
+                    const int currentUserId = 1;
+                    if (permissionManager->authorizeMachine(m_machines[i].ipAddress(), currentUserId, reason)) {
+                        refresh(); // Recharger depuis la base
+                        return true;
+                    }
+                    break;
+                }
+            }
         }
     }
     return false;

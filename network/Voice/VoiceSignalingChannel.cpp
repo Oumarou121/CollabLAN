@@ -164,6 +164,7 @@ bool VoiceSignalingChannel::connectToPeer(const QHostAddress &address, quint16 p
     }
 
     const QString url = QStringLiteral("wss://%1:%2").arg(address.toString()).arg(port);
+    qDebug() << "VoiceSignalingChannel: tentative de connexion a" << url;
     m_outgoingSocket->open(QUrl(url));
     return true;
 }
@@ -232,6 +233,8 @@ void VoiceSignalingChannel::onServerNewConnection()
         return;
     }
 
+    qDebug() << "VoiceSignalingChannel: nouvelle connexion entrante de" << socket->peerAddress();
+
     if (m_incomingSocket) {
         // Un seul appel entrant gere a la fois : on refuse les suivants.
         qWarning() << "VoiceSignalingChannel: appel entrant refuse (session deja active)";
@@ -243,20 +246,38 @@ void VoiceSignalingChannel::onServerNewConnection()
     m_incomingSocket = socket;
     connect(m_incomingSocket, &QWebSocket::textMessageReceived, this, &VoiceSignalingChannel::onTextMessageReceived);
     connect(m_incomingSocket, &QWebSocket::disconnected, this, [this]() {
+        qDebug() << "VoiceSignalingChannel: socket entrant deconnecte, erreur:" << m_incomingSocket->errorString();
         emit peerDisconnected();
         if (m_incomingSocket) {
             m_incomingSocket->deleteLater();
             m_incomingSocket = nullptr;
         }
     });
+    connect(m_incomingSocket, &QWebSocket::errorOccurred, this, [this](QAbstractSocket::SocketError error) {
+        qDebug() << "VoiceSignalingChannel: erreur socket entrant:" << error << m_incomingSocket->errorString();
+    });
+    connect(m_incomingSocket, &QWebSocket::sslErrors, this, [this](const QList<QSslError> &errors) {
+        qDebug() << "VoiceSignalingChannel: erreurs SSL sur socket entrant (" << errors.size() << "):";
+        for (const QSslError &e : errors) {
+            qDebug() << "  -" << e.errorString();
+        }
+        m_incomingSocket->ignoreSslErrors();
+    });
 
-    emit peerConnected(m_incomingSocket->peerAddress());
+    // Emettre peerConnected dans le thread principal pour eviter les problemes de thread
+    QMetaObject::invokeMethod(this, [this, socket]() {
+        emit peerConnected(socket->peerAddress());
+    }, Qt::QueuedConnection);
 }
 
 void VoiceSignalingChannel::onClientConnected()
 {
+    qDebug() << "VoiceSignalingChannel: client connecte a" << m_outgoingSocket->peerAddress();
     m_outgoingConnected = true;
-    emit peerConnected(m_outgoingSocket->peerAddress());
+    // Emettre peerConnected dans le thread principal pour eviter les problemes de thread
+    QMetaObject::invokeMethod(this, [this]() {
+        emit peerConnected(m_outgoingSocket->peerAddress());
+    }, Qt::QueuedConnection);
 }
 
 void VoiceSignalingChannel::onClientDisconnected()
@@ -281,8 +302,10 @@ void VoiceSignalingChannel::onTextMessageReceived(const QString &message)
 
 void VoiceSignalingChannel::onSslErrors(const QList<QSslError> &errors)
 {
+    qDebug() << "VoiceSignalingChannel: erreurs SSL (" << errors.size() << "):";
     bool hasHostnameMismatch = false;
     for (const QSslError &e : errors) {
+        qDebug() << "  -" << e.errorString();
         if (e.error() == QSslError::HostNameMismatch) {
             hasHostnameMismatch = true;
         }

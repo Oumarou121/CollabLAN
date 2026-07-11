@@ -1,6 +1,7 @@
 #include "PermissionManager.h"
 #include "DatabaseManager.h"
 #include "Database/Repositories/AuthorizedMachineRepository.h"
+#include "models/AuthorizedMachine.h"
 
 namespace core {
 
@@ -76,6 +77,18 @@ bool PermissionManager::authorizeMachine(const QString &ipAddress, int authorize
     if (!m_repository)
         return false;
     return m_repository->authorizeByIpAddress(ipAddress, authorizedBy, reason);
+}
+
+std::vector<models::AuthorizedMachine> PermissionManager::getAllMachines() const
+{
+    if (!m_repository)
+        return {};
+    return m_repository->findAll();
+}
+
+database::DatabaseManager* PermissionManager::databaseManager() const
+{
+    return m_dbManager;
 }
 
 } // namespace core

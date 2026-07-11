@@ -83,6 +83,7 @@ QVariantList TransferContext::availableRecipients() const
         QVariantMap entry;
         entry[QStringLiteral("name")] = m_peersModel->data(idx, network::PeersModel::NameRole);
         entry[QStringLiteral("address")] = m_peersModel->data(idx, network::PeersModel::AddressRole);
+        entry[QStringLiteral("port")] = m_peersModel->data(idx, network::PeersModel::TransferPortRole);
         entry[QStringLiteral("status")] = m_peersModel->data(idx, network::PeersModel::StatusRole);
         list.append(entry);
     }

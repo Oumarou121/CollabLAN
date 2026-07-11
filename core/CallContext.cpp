@@ -57,7 +57,7 @@ void CallContext::setMuted(bool muted)
     emit mutedChanged();
 }
 
-bool CallContext::call(const QString &address)
+bool CallContext::call(const QString &address, int signalingPort)
 {
     if (!m_voiceService) {
         emit errorOccurred(tr("Le service d'appel n'est pas disponible."));
@@ -70,7 +70,9 @@ bool CallContext::call(const QString &address)
         return false;
     }
 
-    const bool started = m_voiceService->call(host);
+    const quint16 port = signalingPort > 0 ? static_cast<quint16>(signalingPort)
+                                          : network::VoiceService::defaultSignalingPort();
+    const bool started = m_voiceService->call(host, port);
     if (started) {
         m_remoteAddress = address;
         emit remoteAddressChanged();
