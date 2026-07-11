@@ -28,6 +28,7 @@ Rectangle {
         case "transfer": return Theme.primary
         case "connection": return Theme.success
         case "disconnection": return Theme.textSecondary
+        case "group": return Theme.accent
         default: return Theme.accent
         }
     }
@@ -37,6 +38,7 @@ Rectangle {
         case "transfer": return "\u21C5"       // fleches haut/bas (transfert)
         case "connection": return "\u25CF"      // point plein (en ligne)
         case "disconnection": return "\u25CB"   // point vide (hors ligne)
+        case "group": return "\u2637"           // symbole groupe/postes
         default: return "\u2709"                // enveloppe (message)
         }
     }

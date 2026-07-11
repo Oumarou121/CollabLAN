@@ -32,12 +32,18 @@ public:
     qint64 conversationId() const { return m_conversationId; }
     void setConversationId(qint64 conversationId) { m_conversationId = conversationId; }
 
+    /// Identifiant stable inter-postes (independant de l'id local
+    /// AUTOINCREMENT), utilise comme record_uuid par SyncLogRepository.
+    QString uuid() const { return m_uuid; }
+    void setUuid(const QString &uuid) { m_uuid = uuid; }
+
 private:
     qint64 m_id = 0;
     QString m_name;
     QVector<qint64> m_memberIds;
     qint64 m_ownerId = 0;  // Créateur du groupe
     qint64 m_conversationId = 0;  // Conversation liee (messagerie de groupe)
+    QString m_uuid;
 };
 
 } // namespace models

@@ -4,6 +4,7 @@
 
 #include <QSqlQuery>
 #include <QSqlError>
+#include <QUuid>
 #include <QDebug>
 
 namespace database {
@@ -26,16 +27,25 @@ std::optional<models::Message> MessageRepository::insert(const models::Message &
     QSqlDatabase db = m_dbManager->database();
     QSqlQuery query(db);
 
+    // uuid : identifiant stable inter-postes (independant de l'id local
+    // AUTOINCREMENT), utilise comme record_uuid par SyncLogRepository lors
+    // de la reconciliation post-panne. Jamais force depuis l'exterieur : on
+    // en genere un nouveau si absent, comme UserRepository::create().
+    const QString uuid = message.uuid().isEmpty()
+        ? QUuid::createUuid().toString(QUuid::WithoutBraces)
+        : message.uuid();
+
     const QString timestamp = message.timestamp().toString(Qt::ISODate);
     query.prepare(QStringLiteral(
-        "INSERT INTO Messages (conversationId, senderId, content, timestamp, is_read) "
-        "VALUES (:conversationId, :senderId, :content, :timestamp, :isRead)"
+        "INSERT INTO Messages (conversationId, senderId, content, timestamp, is_read, uuid) "
+        "VALUES (:conversationId, :senderId, :content, :timestamp, :isRead, :uuid)"
     ));
     query.bindValue(QStringLiteral(":conversationId"), message.conversationId());
     query.bindValue(QStringLiteral(":senderId"), message.senderId());
     query.bindValue(QStringLiteral(":content"), message.content());
     query.bindValue(QStringLiteral(":timestamp"), timestamp);
     query.bindValue(QStringLiteral(":isRead"), message.isRead() ? 1 : 0);
+    query.bindValue(QStringLiteral(":uuid"), uuid);
 
     if (!query.exec()) {
         qWarning() << "Failed to insert message:" << query.lastError().text();
@@ -45,6 +55,7 @@ std::optional<models::Message> MessageRepository::insert(const models::Message &
     const qint64 messageId = query.lastInsertId().toLongLong();
     models::Message insertedMessage(message);
     insertedMessage.setId(messageId);
+    insertedMessage.setUuid(uuid);
     return insertedMessage;
 }
 
@@ -60,7 +71,7 @@ QVector<models::Message> MessageRepository::getMessages(qint64 conversationId, i
     QSqlQuery query(db);
 
     const QString queryString = QStringLiteral(
-        "SELECT id, conversationId, senderId, content, timestamp, is_read "
+        "SELECT id, conversationId, senderId, content, timestamp, is_read, uuid "
         "FROM Messages "
         "WHERE conversationId = %1 "
         "ORDER BY id ASC "
@@ -77,6 +88,7 @@ QVector<models::Message> MessageRepository::getMessages(qint64 conversationId, i
             );
             msg.setTimestamp(QDateTime::fromString(query.value(4).toString(), Qt::ISODate));
             msg.setRead(query.value(5).toBool());
+            msg.setUuid(query.value(6).toString());
             messages.append(msg);
         }
     }
@@ -135,6 +147,35 @@ bool MessageRepository::markConversationAsRead(qint64 conversationId, qint64 use
     ).arg(conversationId).arg(userId);
 
     return query.exec(queryString);
+}
+
+std::optional<models::Message> MessageRepository::findByUuid(const QString &uuid) const
+{
+    if (!m_dbManager || uuid.isEmpty()) {
+        return std::nullopt;
+    }
+
+    QSqlDatabase db = m_dbManager->database();
+    QSqlQuery query(db);
+    query.prepare(QStringLiteral(
+        "SELECT id, conversationId, senderId, content, timestamp, is_read, uuid "
+        "FROM Messages WHERE uuid = :uuid"));
+    query.bindValue(QStringLiteral(":uuid"), uuid);
+
+    if (!query.exec() || !query.next()) {
+        return std::nullopt;
+    }
+
+    models::Message msg(
+        query.value(0).toLongLong(),
+        query.value(1).toLongLong(),
+        query.value(2).toLongLong(),
+        query.value(3).toString()
+    );
+    msg.setTimestamp(QDateTime::fromString(query.value(4).toString(), Qt::ISODate));
+    msg.setRead(query.value(5).toBool());
+    msg.setUuid(query.value(6).toString());
+    return msg;
 }
 
 } // namespace database

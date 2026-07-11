@@ -6,6 +6,7 @@
 #include <QVector>
 #include <optional>
 
+#include "database/Repositories/MessageRepository.h"
 #include "models/Message.h"
 #include "models/Conversation.h"
 
@@ -90,6 +91,7 @@ signals:
 
 private:
     database::DatabaseManager *m_dbManager = nullptr;
+    database::MessageRepository m_repository;
     network::MessagingService *m_messagingService = nullptr;
     network::MessagingServer *m_messagingServer = nullptr;
     NotificationManager *m_notificationManager = nullptr;

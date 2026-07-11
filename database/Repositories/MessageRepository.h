@@ -39,6 +39,10 @@ public:
     /// Marque tous les messages d'une conversation comme lus pour un utilisateur.
     bool markConversationAsRead(qint64 conversationId, qint64 userId);
 
+    /// Recupere un message par son uuid stable (independant de l'id local),
+    /// utilise par SyncLogRepository pour la deduplication a la reconciliation.
+    std::optional<models::Message> findByUuid(const QString &uuid) const;
+
 private:
     DatabaseManager *m_dbManager = nullptr;
 };

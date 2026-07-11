@@ -6,10 +6,15 @@
 #include <QVector>
 #include <optional>
 
+#include "database/Repositories/GroupRepository.h"
 #include "models/Group.h"
 
 namespace database {
 class DatabaseManager;
+}
+
+namespace network {
+class MessagingServer;
 }
 
 namespace core {
@@ -37,6 +42,13 @@ public:
     explicit GroupManager(database::DatabaseManager *dbManager, QObject *parent = nullptr);
     ~GroupManager() override;
 
+    /// Configure le serveur de reseau (connexions entrantes), utilise pour
+    /// diffuser en temps reel la creation d'un groupe (type "group_created")
+    /// a tous les postes actuellement connectes : sans cela, les autres
+    /// membres n'apprenaient l'existence du groupe qu'a la prochaine
+    /// reconciliation SyncLog (potentiellement bien plus tard).
+    void setMessagingServer(network::MessagingServer *messagingServer);
+
     /// Cree un nouveau groupe avec un nom et des membres initiaux.
     std::optional<models::Group> createGroup(const QString &name, qint64 ownerId, const QVector<qint64> &initialMembers);
 
@@ -51,6 +63,14 @@ public:
 
     /// Recupere un groupe par son ID.
     std::optional<models::Group> getGroup(qint64 groupId);
+
+    /// Traite un message reseau de type "group_created" recu d'un autre
+    /// poste : cree le groupe localement s'il n'est pas deja connu (par
+    /// son uuid stable) et emet groupCreated pour que l'UI (et les
+    /// notifications) reagissent immediatement. Retourne std::nullopt si
+    /// le payload est invalide, d'un type inconnu, ou si le groupe est
+    /// deja connu localement.
+    std::optional<models::Group> receiveGroupCreated(const QString &jsonPayload);
 
     /// Derniere erreur survenue.
     GroupManagerError lastError() const { return m_lastError; }
@@ -68,6 +88,8 @@ signals:
 
 private:
     database::DatabaseManager *m_dbManager = nullptr;
+    database::GroupRepository m_repository;
+    network::MessagingServer *m_messagingServer = nullptr;
     GroupManagerError m_lastError = GroupManagerError::None;
     QString m_lastErrorString;
 };

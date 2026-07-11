@@ -179,28 +179,53 @@ bool SyncLogRepository::applyDomainEntry(const models::SyncLogEntry &entry)
     return true;
 }
 
-bool SyncLogRepository::ensureConversation(qint64 conversationId, const QString &type, const QString &name)
+qint64 SyncLogRepository::ensureConversationByUuid(const QString &conversationUuid, const QString &type, const QString &name)
 {
-    if (conversationId <= 0) {
-        return true;
+    if (conversationUuid.isEmpty()) {
+        return -1;
     }
 
-    QSqlQuery query(m_db);
-    query.prepare(QStringLiteral(
-        "INSERT OR IGNORE INTO Conversations (id, type, name) VALUES (:id, :type, :name)"));
-    query.bindValue(QStringLiteral(":id"), conversationId);
-    query.bindValue(QStringLiteral(":type"), type.isEmpty() ? QStringLiteral("individual") : type);
-    query.bindValue(QStringLiteral(":name"), name.isEmpty() ? QStringLiteral("Conversation") : name);
-    if (!query.exec()) {
-        m_lastError = query.lastError().text();
-        return false;
+    QSqlQuery findQuery(m_db);
+    findQuery.prepare(QStringLiteral("SELECT id FROM Conversations WHERE uuid = :uuid"));
+    findQuery.bindValue(QStringLiteral(":uuid"), conversationUuid);
+    if (!findQuery.exec()) {
+        m_lastError = findQuery.lastError().text();
+        return -1;
     }
-    return true;
+    if (findQuery.next()) {
+        return findQuery.value(0).toLongLong();
+    }
+
+    // Pas encore connue localement : on la cree avec un NOUVEL id local
+    // (AUTOINCREMENT), jamais celui de la machine d'origine - seul l'uuid
+    // est une reference valable inter-postes.
+    QSqlQuery insertQuery(m_db);
+    insertQuery.prepare(QStringLiteral(
+        "INSERT INTO Conversations (type, name, uuid) VALUES (:type, :name, :uuid)"));
+    insertQuery.bindValue(QStringLiteral(":type"), type.isEmpty() ? QStringLiteral("individual") : type);
+    insertQuery.bindValue(QStringLiteral(":name"), name.isEmpty() ? QStringLiteral("Conversation") : name);
+    insertQuery.bindValue(QStringLiteral(":uuid"), conversationUuid);
+    if (!insertQuery.exec()) {
+        m_lastError = insertQuery.lastError().text();
+        return -1;
+    }
+    return insertQuery.lastInsertId().toLongLong();
 }
 
 bool SyncLogRepository::applyMessageEntry(const models::SyncLogEntry &entry)
 {
     if (entry.operation() != models::SyncOperation::Insert) {
+        return true;
+    }
+
+    // Deja connu localement (rejeu d'un sync_batch) : l'uuid du message
+    // (entry.recordUuid()) est la seule cle de dedup valable, l'id local
+    // AUTOINCREMENT de la machine d'origine n'ayant aucune raison de
+    // coincider avec le notre (cf. migration 011).
+    QSqlQuery existsQuery(m_db);
+    existsQuery.prepare(QStringLiteral("SELECT 1 FROM Messages WHERE uuid = :uuid"));
+    existsQuery.bindValue(QStringLiteral(":uuid"), entry.recordUuid());
+    if (existsQuery.exec() && existsQuery.next()) {
         return true;
     }
 
@@ -210,27 +235,39 @@ bool SyncLogRepository::applyMessageEntry(const models::SyncLogEntry &entry)
         return false;
     }
     const QJsonObject obj = doc.object();
-    const qint64 id = obj.value(QStringLiteral("id")).toString(entry.recordUuid()).toLongLong();
-    const qint64 conversationId = obj.value(QStringLiteral("conversationId")).toString().toLongLong();
-    const qint64 senderId = obj.value(QStringLiteral("senderId")).toString().toLongLong();
+    const QString senderUuid = obj.value(QStringLiteral("senderUuid")).toString();
+    const QString conversationUuid = obj.value(QStringLiteral("conversationUuid")).toString();
     const QString content = obj.value(QStringLiteral("content")).toString();
     const QString timestamp = obj.value(QStringLiteral("timestamp")).toString(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
     const bool isRead = obj.value(QStringLiteral("isRead")).toBool(false);
 
-    if (!ensureConversation(conversationId, QStringLiteral("individual"), QStringLiteral("Conversation"))) {
+    UserRepository users(m_db);
+    const auto sender = users.findByUuid(senderUuid);
+    if (!sender.has_value()) {
+        // L'utilisateur emetteur n'est pas encore connu localement (Users
+        // pas encore reconcilie) : on ne peut pas inserer ce message
+        // correctement, il sera rejoue lors d'un prochain sync_batch.
+        m_lastError = QStringLiteral("Sender inconnu (uuid=%1), message differe").arg(senderUuid);
         return false;
     }
 
+    const qint64 conversationId = ensureConversationByUuid(conversationUuid, QStringLiteral("individual"), QStringLiteral("Conversation"));
+    if (conversationId < 0) {
+        return false;
+    }
+
+    // id local laisse a l'AUTOINCREMENT : seul entry.recordUuid() (uuid du
+    // message) est une reference stable inter-postes.
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
-        "INSERT OR IGNORE INTO Messages (id, conversationId, senderId, content, timestamp, is_read) "
-        "VALUES (:id, :conversationId, :senderId, :content, :timestamp, :isRead)"));
-    query.bindValue(QStringLiteral(":id"), id);
+        "INSERT INTO Messages (conversationId, senderId, content, timestamp, is_read, uuid) "
+        "VALUES (:conversationId, :senderId, :content, :timestamp, :isRead, :uuid)"));
     query.bindValue(QStringLiteral(":conversationId"), conversationId);
-    query.bindValue(QStringLiteral(":senderId"), senderId);
+    query.bindValue(QStringLiteral(":senderId"), sender->id());
     query.bindValue(QStringLiteral(":content"), content);
     query.bindValue(QStringLiteral(":timestamp"), timestamp);
     query.bindValue(QStringLiteral(":isRead"), isRead ? 1 : 0);
+    query.bindValue(QStringLiteral(":uuid"), entry.recordUuid());
     if (!query.exec()) {
         m_lastError = query.lastError().text();
         return false;
@@ -244,41 +281,68 @@ bool SyncLogRepository::applyGroupEntry(const models::SyncLogEntry &entry)
         return true;
     }
 
+    // Deja connu localement (rejeu d'un sync_batch) : entry.recordUuid() est
+    // l'uuid propre du groupe (cf. Application::appendGroupSyncLog), seule
+    // cle de dedup valable inter-postes (cf. migration 011).
+    QSqlQuery existsQuery(m_db);
+    existsQuery.prepare(QStringLiteral("SELECT 1 FROM Groups WHERE uuid = :uuid"));
+    existsQuery.bindValue(QStringLiteral(":uuid"), entry.recordUuid());
+    if (existsQuery.exec() && existsQuery.next()) {
+        return true;
+    }
+
     const QJsonDocument doc = QJsonDocument::fromJson(entry.payloadJson().toUtf8());
     if (!doc.isObject()) {
         m_lastError = QStringLiteral("Payload Groups invalide");
         return false;
     }
     const QJsonObject obj = doc.object();
-    const qint64 id = obj.value(QStringLiteral("id")).toString(entry.recordUuid()).toLongLong();
     const QString name = obj.value(QStringLiteral("name")).toString();
-    const qint64 ownerId = obj.value(QStringLiteral("ownerId")).toString().toLongLong();
-    const qint64 conversationId = obj.value(QStringLiteral("conversationId")).toString().toLongLong();
+    const QString ownerUuid = obj.value(QStringLiteral("ownerUuid")).toString();
+    const QString conversationUuid = obj.value(QStringLiteral("conversationUuid")).toString();
+    const QJsonArray memberUuids = obj.value(QStringLiteral("memberUuids")).toArray();
 
-    if (!ensureConversation(conversationId, QStringLiteral("group"), name)) {
+    UserRepository users(m_db);
+    const auto owner = users.findByUuid(ownerUuid);
+    if (!owner.has_value()) {
+        // Meme logique que applyMessageEntry : l'owner doit deja etre connu
+        // localement (Users reconcilie avant Groups), sinon on differe.
+        m_lastError = QStringLiteral("Owner inconnu (uuid=%1), groupe differe").arg(ownerUuid);
+        return false;
+    }
+
+    const qint64 conversationId = ensureConversationByUuid(conversationUuid, QStringLiteral("group"), name);
+    if (conversationId < 0) {
         return false;
     }
 
     QSqlQuery groupQuery(m_db);
     groupQuery.prepare(QStringLiteral(
-        "INSERT OR IGNORE INTO Groups (id, name, owner_id, conversation_id) "
-        "VALUES (:id, :name, :ownerId, :conversationId)"));
-    groupQuery.bindValue(QStringLiteral(":id"), id);
+        "INSERT INTO Groups (name, owner_id, conversation_id, uuid) "
+        "VALUES (:name, :ownerId, :conversationId, :uuid)"));
     groupQuery.bindValue(QStringLiteral(":name"), name);
-    groupQuery.bindValue(QStringLiteral(":ownerId"), ownerId);
-    groupQuery.bindValue(QStringLiteral(":conversationId"), conversationId > 0 ? QVariant(conversationId) : QVariant(QVariant::LongLong));
+    groupQuery.bindValue(QStringLiteral(":ownerId"), owner->id());
+    groupQuery.bindValue(QStringLiteral(":conversationId"), conversationId);
+    groupQuery.bindValue(QStringLiteral(":uuid"), entry.recordUuid());
     if (!groupQuery.exec()) {
         m_lastError = groupQuery.lastError().text();
         return false;
     }
+    const qint64 groupId = groupQuery.lastInsertId().toLongLong();
 
-    const QJsonArray members = obj.value(QStringLiteral("memberIds")).toArray();
-    for (const QJsonValue &value : members) {
+    for (const QJsonValue &value : memberUuids) {
+        const auto member = users.findByUuid(value.toString());
+        if (!member.has_value()) {
+            // Membre pas encore connu localement : on ne bloque pas la
+            // creation du groupe pour autant, il rejoindra via un futur
+            // sync_batch GroupMembers (applyGroupMemberEntry est idempotent).
+            continue;
+        }
         QSqlQuery memberQuery(m_db);
         memberQuery.prepare(QStringLiteral(
             "INSERT OR IGNORE INTO GroupMembers (group_id, user_id) VALUES (:groupId, :userId)"));
-        memberQuery.bindValue(QStringLiteral(":groupId"), id);
-        memberQuery.bindValue(QStringLiteral(":userId"), value.toString().toLongLong());
+        memberQuery.bindValue(QStringLiteral(":groupId"), groupId);
+        memberQuery.bindValue(QStringLiteral(":userId"), member->id());
         if (!memberQuery.exec()) {
             m_lastError = memberQuery.lastError().text();
             return false;
@@ -295,8 +359,28 @@ bool SyncLogRepository::applyGroupMemberEntry(const models::SyncLogEntry &entry)
         return false;
     }
     const QJsonObject obj = doc.object();
-    const qint64 groupId = obj.value(QStringLiteral("groupId")).toString().toLongLong();
-    const qint64 memberId = obj.value(QStringLiteral("memberId")).toString().toLongLong();
+    const QString groupUuid = obj.value(QStringLiteral("groupUuid")).toString();
+    const QString memberUuid = obj.value(QStringLiteral("memberUuid")).toString();
+
+    QSqlQuery groupIdQuery(m_db);
+    groupIdQuery.prepare(QStringLiteral("SELECT id FROM Groups WHERE uuid = :uuid"));
+    groupIdQuery.bindValue(QStringLiteral(":uuid"), groupUuid);
+    if (!groupIdQuery.exec() || !groupIdQuery.next()) {
+        // Le groupe n'est pas encore connu localement : on differe, un
+        // sync_batch ulterieur (contenant l'entree Groups correspondante)
+        // permettra de rejouer celle-ci.
+        m_lastError = QStringLiteral("Groupe inconnu (uuid=%1), membre differe").arg(groupUuid);
+        return false;
+    }
+    const qint64 groupId = groupIdQuery.value(0).toLongLong();
+
+    UserRepository users(m_db);
+    const auto member = users.findByUuid(memberUuid);
+    if (!member.has_value()) {
+        m_lastError = QStringLiteral("Membre inconnu (uuid=%1), entree differee").arg(memberUuid);
+        return false;
+    }
+    const qint64 memberId = member->id();
 
     if (entry.operation() == models::SyncOperation::Delete) {
         QSqlQuery query(m_db);

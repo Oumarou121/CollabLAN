@@ -126,6 +126,57 @@ private slots:
         candidateLowPriority.stop();
     }
 
+    void machineUuidTieBreaksEqualPriorityWeight()
+    {
+        // HYBRID_SERVER_FAILOVER.md section 5 / section 9 plan de test,
+        // point 4 : deux candidats de priorite egale -> le tie-break par
+        // machine_uuid (ordre lexical croissant) doit designer un seul
+        // gagnant et empecher un double TEMP_SERVER.
+        ElectionService serverGoneMissing;
+        ElectionService candidateA; // uuid lexicalement le plus petit => doit gagner
+        ElectionService candidateB;
+
+        const quint16 testPort = 47003;
+        serverGoneMissing.setPort(testPort);
+        candidateA.setPort(testPort);
+        candidateB.setPort(testPort);
+
+        candidateA.setLocalMachineUuid(QStringLiteral("aaaaaaaa-0000-0000-0000-000000000000"));
+        candidateB.setLocalMachineUuid(QStringLiteral("bbbbbbbb-0000-0000-0000-000000000000"));
+
+        serverGoneMissing.setHeartbeatIntervalMs(150);
+        serverGoneMissing.setInitialState(ServerRole::Server, 5);
+
+        for (ElectionService *svc : {&candidateA, &candidateB}) {
+            svc->setHeartbeatTimeoutMs(500);
+            svc->setElectionWindowMs(300);
+            svc->setPriorityWeight(42); // meme poids : le tie-break doit trancher
+        }
+
+        QSignalSpy promotedOnA(&candidateA, &ElectionService::serverPromoted);
+        QSignalSpy promotedOnB(&candidateB, &ElectionService::serverPromoted);
+
+        QVERIFY(serverGoneMissing.start());
+        QVERIFY(candidateA.start());
+        QVERIFY(candidateB.start());
+
+        QTest::qWait(300);
+        serverGoneMissing.stop();
+
+        QVERIFY(promotedOnA.wait(2000));
+        QVERIFY(promotedOnB.wait(2000));
+
+        // Un seul gagnant (celui dont le machine_uuid est lexicalement le plus
+        // petit) : pas de double TEMP_SERVER.
+        QCOMPARE(candidateA.role(), ServerRole::TempServer);
+        QCOMPARE(candidateB.role(), ServerRole::Client);
+        QCOMPARE(candidateB.activeServerUuid(), candidateA.localMachineUuid());
+        QCOMPARE(candidateA.epoch(), candidateB.epoch());
+
+        candidateA.stop();
+        candidateB.stop();
+    }
+
     void staleServerPromotedIsIgnoredAntiSplitBrain()
     {
         ElectionService service;

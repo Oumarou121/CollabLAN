@@ -32,6 +32,11 @@ public:
     bool isRead() const { return m_isRead; }
     void setRead(bool read) { m_isRead = read; }
 
+    /// Identifiant stable inter-postes (independant de l'id local
+    /// AUTOINCREMENT), utilise comme record_uuid par SyncLogRepository.
+    QString uuid() const { return m_uuid; }
+    void setUuid(const QString &uuid) { m_uuid = uuid; }
+
 private:
     qint64 m_id = 0;
     qint64 m_conversationId = 0;
@@ -39,6 +44,7 @@ private:
     QString m_content;
     QDateTime m_timestamp;
     bool m_isRead = false;
+    QString m_uuid;
 };
 
 } // namespace models

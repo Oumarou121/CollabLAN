@@ -68,6 +68,19 @@ public:
 
     QString lastError() const;
 
+    /**
+     * @brief Retrouve (ou cree si absente) la Conversation locale
+     *        correspondant a cet uuid stable, et retourne son id LOCAL
+     *        (jamais celui de la machine d'origine : l'autoincrement
+     *        local n'a aucune raison de coincider entre deux bases
+     *        SQLite independantes - cf. migration 011). Utilise en
+     *        interne par applyGroupEntry/applyMessageEntry, et
+     *        directement par MessagingManager::receiveMessage pour
+     *        resoudre la conversation d'un message recu en temps reel.
+     * @return -1 en cas d'echec.
+     */
+    qint64 ensureConversationByUuid(const QString &conversationUuid, const QString &type, const QString &name);
+
 private:
     models::SyncLogEntry entryFromQuery(const QSqlQuery &query) const;
     bool applyDomainEntry(const models::SyncLogEntry &entry);
@@ -75,7 +88,6 @@ private:
     bool applyGroupEntry(const models::SyncLogEntry &entry);
     bool applyGroupMemberEntry(const models::SyncLogEntry &entry);
     bool applyUserEntry(const models::SyncLogEntry &entry);
-    bool ensureConversation(qint64 conversationId, const QString &type, const QString &name);
 
     QSqlDatabase m_db;
     mutable QString m_lastError;

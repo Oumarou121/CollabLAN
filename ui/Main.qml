@@ -27,6 +27,9 @@ ApplicationWindow {
     title: qsTr("CollabLAN")
     color: Theme.background
 
+    // Référence à la propriété globale messagingContext pour l'utiliser dans les Components
+    property var globalMessagingContext: messagingContext
+
     StackView {
         id: stackView
         anchors.fill: parent
@@ -158,7 +161,7 @@ ApplicationWindow {
         id: conversationsViewComponent
 
         ConversationsView {
-            messagingContext: messagingContext
+            messagingContext: globalMessagingContext
             onBackRequested: {
                 stackView.pop()
             }
@@ -168,6 +171,24 @@ ApplicationWindow {
             onCreateGroupRequested: {
                 stackView.push(createGroupViewComponent)
             }
+            onNewConversationRequested: {
+                stackView.push(newConversationViewComponent)
+            }
+        }
+    }
+
+    Component {
+        id: newConversationViewComponent
+
+        NewConversationView {
+            messagingContext: globalMessagingContext
+            onBackRequested: {
+                stackView.pop()
+            }
+            onConversationStarted: function(conversationId) {
+                stackView.pop()
+                stackView.push(chatViewComponent, { conversationId: conversationId })
+            }
         }
     }
 
@@ -175,7 +196,7 @@ ApplicationWindow {
         id: createGroupViewComponent
 
         CreateGroupView {
-            messagingContext: messagingContext
+            messagingContext: globalMessagingContext
             onBackRequested: {
                 stackView.pop()
             }
@@ -184,8 +205,8 @@ ApplicationWindow {
                 // MessagingContext.createGroup() a deja appele setConversation()
                 // en interne : le messageModel pointe donc deja sur la bonne
                 // conversation de groupe.
-                if (messagingContext && messagingContext.messageModel.conversationId > 0) {
-                    stackView.push(chatViewComponent, { conversationId: messagingContext.messageModel.conversationId })
+                if (globalMessagingContext && globalMessagingContext.messageModel.conversationId > 0) {
+                    stackView.push(chatViewComponent, { conversationId: globalMessagingContext.messageModel.conversationId })
                 }
             }
         }
@@ -195,7 +216,7 @@ ApplicationWindow {
         id: chatViewComponent
 
         ChatView {
-            messagingContext: messagingContext
+            messagingContext: globalMessagingContext
             onBackRequested: {
                 stackView.pop()
             }

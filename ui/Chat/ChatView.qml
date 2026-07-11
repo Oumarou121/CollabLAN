@@ -82,7 +82,8 @@ Item {
                 height: messageColumn.height + 20
                 color: senderId === root.currentUserId ? Theme.accent : Theme.surface
                 radius: 10
-                anchors.horizontalCenter: senderId === root.currentUserId ? Qt.AlignRight : Qt.AlignLeft
+                anchors.right: senderId === root.currentUserId ? parent.right : undefined
+                anchors.left: senderId === root.currentUserId ? undefined : parent.left
 
                 Column {
                     id: messageColumn

@@ -49,6 +49,11 @@ public:
     /// Envoie un message dans la conversation active.
     Q_INVOKABLE void sendMessage(const QString &content);
 
+    /// Cree ou recupere une conversation individuelle avec un autre
+    /// utilisateur et la definit comme conversation active. Retourne l'id
+    /// de la conversation, ou 0 en cas d'echec (ex. otherUserId invalide).
+    Q_INVOKABLE qint64 startConversationWith(qint64 otherUserId);
+
     /// Charge les groupes de l'utilisateur actuel.
     Q_INVOKABLE void loadUserGroups();
 
@@ -76,6 +81,15 @@ public:
 signals:
     void messagingManagerChanged();
     void groupManagerChanged();
+    void availableUsersChanged();
+
+    /// Emis chaque fois que la liste des conversations (individuelles ou
+    /// de groupe) de l'utilisateur courant a pu changer : nouveau message
+    /// envoye/recu (apercu/horodatage a rafraichir) ou nouveau groupe
+    /// cree/recu. ConversationsView.qml n'ecoutait jusqu'ici que
+    /// Component.onCompleted, ce qui obligeait a quitter puis revenir sur
+    /// l'ecran pour voir la liste se mettre a jour.
+    void conversationsChanged();
 
 private slots:
     void onMessageReceived(const models::Message &message);

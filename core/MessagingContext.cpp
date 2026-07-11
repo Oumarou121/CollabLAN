@@ -60,7 +60,33 @@ void MessagingContext::setGroupManager(GroupManager *manager)
 
 void MessagingContext::setUserManager(UserManager *manager)
 {
-    m_userManager = manager;
+    qDebug() << "MessagingContext::setUserManager called, manager =" << manager;
+    if (m_userManager != manager) {
+        // Disconnect old manager
+        if (m_userManager) {
+            disconnect(m_userManager, nullptr, this, nullptr);
+        }
+
+        m_userManager = manager;
+
+        // Connect new manager to notify when users change
+        // Utiliser Qt::QueuedConnection pour éviter les crashs de thread
+        if (m_userManager) {
+            qDebug() << "MessagingContext::setUserManager: connecting to UserManager signals";
+            connect(m_userManager, &UserManager::userCreated,
+                    this, &MessagingContext::availableUsersChanged, Qt::QueuedConnection);
+            connect(m_userManager, &UserManager::userUpdated,
+                    this, &MessagingContext::availableUsersChanged, Qt::QueuedConnection);
+            connect(m_userManager, &UserManager::userDeleted,
+                    this, &MessagingContext::availableUsersChanged, Qt::QueuedConnection);
+            connect(m_userManager, &UserManager::usersChanged,
+                    this, &MessagingContext::availableUsersChanged, Qt::QueuedConnection);
+        }
+
+        // NE PAS émettre le signal lors de l'initialisation pour éviter les crashs de thread
+        // Le signal sera émis automatiquement quand l'UI sera prête via Component.onCompleted
+        qDebug() << "MessagingContext::setUserManager: skipping initial emit to avoid thread crash";
+    }
 }
 
 QVariantList MessagingContext::availableUsers() const
@@ -68,12 +94,20 @@ QVariantList MessagingContext::availableUsers() const
     QVariantList list;
 
     if (!m_userManager) {
+        qWarning() << "MessagingContext::availableUsers: m_userManager is null";
         return list;
     }
 
     const qint64 currentId = currentUserId();
-    for (const auto &user : m_userManager->allUsers()) {
+    qDebug() << "MessagingContext::availableUsers: currentUserId =" << currentId;
+
+    const auto users = m_userManager->allUsers();
+    qDebug() << "MessagingContext::availableUsers: total users in DB =" << users.size();
+
+    for (const auto &user : users) {
+        qDebug() << "  User:" << user.id() << user.name();
         if (user.id() == currentId) {
+            qDebug() << "    Skipping current user";
             continue;  // On ne se propose pas soi-meme comme membre.
         }
         QVariantMap entry;
@@ -82,6 +116,7 @@ QVariantList MessagingContext::availableUsers() const
         list.append(entry);
     }
 
+    qDebug() << "MessagingContext::availableUsers: returning" << list.size() << "users";
     return list;
 }
 
@@ -152,6 +187,29 @@ QVariantList MessagingContext::conversationsList()
     return list;
 }
 
+qint64 MessagingContext::startConversationWith(qint64 otherUserId)
+{
+    if (!m_messagingManager || otherUserId <= 0) {
+        return 0;
+    }
+
+    const qint64 currentId = currentUserId();
+    if (currentId <= 0 || currentId == otherUserId) {
+        return 0;
+    }
+
+    const auto conversation = m_messagingManager->getOrCreateConversation(currentId, otherUserId);
+    if (!conversation.has_value()) {
+        qWarning() << "MessagingContext::startConversationWith: echec de la creation/recuperation"
+                   << "de la conversation avec l'utilisateur" << otherUserId;
+        return 0;
+    }
+
+    setConversation(conversation->id());
+    emit conversationsChanged();
+    return conversation->id();
+}
+
 void MessagingContext::loadUserGroups()
 {
     if (m_groupManager) {
@@ -187,6 +245,7 @@ qint64 MessagingContext::createGroup(const QString &name, const QVariantList &me
 void MessagingContext::onGroupCreated(const models::Group &group)
 {
     m_groupModel->addGroup(group);
+    emit conversationsChanged();
 }
 
 void MessagingContext::setConversation(qint64 conversationId)
@@ -222,6 +281,11 @@ void MessagingContext::onMessageReceived(const models::Message &message)
     if (message.conversationId() == m_messageModel->conversationId()) {
         m_messageModel->addMessage(message);
     }
+    // Meme si la conversation n'est pas celle actuellement ouverte, son
+    // apercu (dernier message/horodatage) dans ConversationsView doit se
+    // mettre a jour sans que l'utilisateur ait besoin de quitter puis
+    // revenir sur l'ecran.
+    emit conversationsChanged();
 }
 
 void MessagingContext::onMessageSent(const models::Message &message)
@@ -230,6 +294,7 @@ void MessagingContext::onMessageSent(const models::Message &message)
     if (message.conversationId() == m_messageModel->conversationId()) {
         m_messageModel->addMessage(message);
     }
+    emit conversationsChanged();
 }
 
 } // namespace core

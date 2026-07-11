@@ -16,6 +16,7 @@ Item {
     signal backRequested()
     signal conversationSelected(var conversationId)
     signal createGroupRequested()
+    signal newConversationRequested()
 
     Rectangle {
         anchors.fill: parent
@@ -67,6 +68,26 @@ Item {
                 }
 
                 Button {
+                    text: "✉"
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
+                    background: Rectangle {
+                        color: parent.pressed ? Theme.accentDark : Theme.accent
+                        radius: 5
+                    }
+                    contentItem: Label {
+                        text: parent.text
+                        color: Theme.text
+                        font.pixelSize: 18
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        root.newConversationRequested()
+                    }
+                }
+
+                Button {
                     text: "+"
                     Layout.preferredWidth: 40
                     Layout.preferredHeight: 40
@@ -101,7 +122,8 @@ Item {
                 id: conversationsModel
             }
 
-            Component.onCompleted: {
+            function reloadConversations() {
+                conversationsModel.clear()
                 if (root.messagingContext) {
                     const items = root.messagingContext.conversationsList()
                     for (let i = 0; i < items.length; ++i) {
@@ -112,6 +134,23 @@ Item {
                             timestamp: items[i].timestamp ? Qt.formatDateTime(items[i].timestamp, "hh:mm") : ""
                         })
                     }
+                }
+            }
+
+            Component.onCompleted: {
+                reloadConversations()
+            }
+
+            // Sans cette Connections, la liste ne se rafraichissait qu'a
+            // l'ouverture de l'ecran (Component.onCompleted) : un nouveau
+            // message ou un nouveau groupe cree/recu pendant que l'on est
+            // deja sur cet ecran n'apparaissait qu'apres en etre sorti puis
+            // revenu (issue rapportee : "bugs UI necessitant de sortir et
+            // revenir pour les changements").
+            Connections {
+                target: root.messagingContext
+                function onConversationsChanged() {
+                    conversationsListView.reloadConversations()
                 }
             }
 

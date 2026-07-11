@@ -136,15 +136,34 @@ Item {
                             }
 
                             Component.onCompleted: {
+                                reloadUsers()
+                            }
+
+                            Connections {
+                                target: root.messagingContext
+                                function onAvailableUsersChanged() {
+                                    console.log("CreateGroupView: onAvailableUsersChanged called")
+                                    reloadUsers()
+                                }
+                            }
+
+                            function reloadUsers() {
+                                console.log("CreateGroupView: reloadUsers called")
+                                console.log("CreateGroupView: root.messagingContext =", root.messagingContext)
                                 if (root.messagingContext) {
+                                    availableUsersModel.clear()
                                     const users = root.messagingContext.availableUsers()
+                                    console.log("CreateGroupView: got", users.length, "users from availableUsers()")
                                     for (let i = 0; i < users.length; ++i) {
+                                        console.log("  User:", users[i].userId, users[i].username)
                                         availableUsersModel.append({
                                             userId: users[i].userId,
                                             username: users[i].username,
                                             selected: false
                                         })
                                     }
+                                } else {
+                                    console.log("CreateGroupView: messagingContext is null!")
                                 }
                             }
 

@@ -33,12 +33,19 @@ public:
     qint64 participant2Id() const { return m_participant2Id; }
     void setParticipant2Id(qint64 id) { m_participant2Id = id; }
 
+    /// Identifiant stable inter-postes (independant de l'id local
+    /// AUTOINCREMENT), utilise comme reference stable par les payloads
+    /// SyncLog de Messages/Groups (conversationUuid).
+    QString uuid() const { return m_uuid; }
+    void setUuid(const QString &uuid) { m_uuid = uuid; }
+
 private:
     qint64 m_id = 0;
     ConversationType m_type = ConversationType::Individual;
     QString m_name;
     qint64 m_participant1Id = 0;  // Pour conversations individuelles
     qint64 m_participant2Id = 0;  // Pour conversations individuelles
+    QString m_uuid;
 };
 
 } // namespace models

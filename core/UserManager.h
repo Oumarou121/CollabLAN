@@ -107,6 +107,12 @@ public:
     std::vector<models::User> allUsers() const;
 
     /**
+     * @brief Emet le signal usersChanged() pour notifier que la liste
+     *        d'utilisateurs a change (apres synchronisation par exemple).
+     */
+    void emitUsersChanged();
+
+    /**
      * @brief Dernier message d'erreur SQL brut (debogage).
      */
     QString lastDatabaseErrorText() const;
@@ -127,6 +133,12 @@ signals:
     void userCreated(const models::User &user);
     void userUpdated(const models::User &user);
     void userDeleted(const QString &uuid, int id);
+
+    /**
+     * @brief Emis quand la liste des utilisateurs change (creation,
+     *        suppression, ou synchronisation depuis un autre poste).
+     */
+    void usersChanged();
 
 private:
     void setBusy(bool busy);

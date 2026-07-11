@@ -5,6 +5,7 @@
 #include <QString>
 
 #include "models/Message.h"
+#include "models/Group.h"
 
 namespace core {
 
@@ -40,6 +41,11 @@ public slots:
 
     /// Appelé lorsqu'un poste du reseau local n'est plus joignable (deconnexion).
     void onPeerDisconnected(const QString &peerName);
+
+    /// Appelé lorsqu'un groupe distant est recu (creation, cf.
+    /// GroupManager::receiveGroupCreated). N'est PAS appele pour un groupe
+    /// que l'on cree soi-meme (pas de notification pour sa propre action).
+    void onGroupCreated(const models::Group &group);
 
 signals:
     /// Emis lorsqu'une notification doit être affichée (toast) et/ou

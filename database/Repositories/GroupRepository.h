@@ -26,6 +26,12 @@ public:
     /// Met a jour un groupe existant.
     bool update(const models::Group &group);
 
+    /// Lie un groupe a sa Conversation (type='group') associee.
+    /// Utilise par core::GroupManager juste apres la creation de la
+    /// Conversation, car celle-ci ne peut etre creee qu'une fois le
+    /// groupe (et donc son id) connu.
+    bool setConversationId(qint64 groupId, qint64 conversationId);
+
     /// Supprime un groupe par son ID.
     bool remove(qint64 groupId);
 
@@ -46,6 +52,10 @@ public:
 
     /// Verifie si un utilisateur est membre d'un groupe.
     bool isMember(qint64 groupId, qint64 userId);
+
+    /// Recupere un groupe par son uuid stable (independant de l'id local),
+    /// utilise par SyncLogRepository pour la deduplication a la reconciliation.
+    std::optional<models::Group> findByUuid(const QString &uuid);
 
 private:
     DatabaseManager *m_dbManager = nullptr;

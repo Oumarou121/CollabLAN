@@ -153,6 +153,9 @@ public:
     // Expose au bootstrap QML le VoiceService pour les appels vocaux P2P (issues #60/#61/#64).
     network::VoiceService *voiceService() const;
 
+    // Expose le DatabaseManager pour les services qui en ont besoin (ex: SettingsService).
+    database::DatabaseManager *databaseManager() const;
+
 private:
     bool shouldWriteSyncLog() const;
     void appendSyncLogEntry(const QString &tableName, const QString &recordUuid,
@@ -160,6 +163,17 @@ private:
     void appendMessageSyncLog(const models::Message &message);
     void appendGroupSyncLog(const models::Group &group, const QString &operation);
     void appendUserSyncLog(const models::User &user, const QString &operation);
+
+    /// Uuid de l'utilisateur local d'id donne (chaine vide si introuvable).
+    /// Utilise pour serialiser des references stables (senderUuid, ownerUuid,
+    /// memberUuids) dans les payloads SyncLog de Messages/Groups/GroupMembers,
+    /// plutot que l'id local AUTOINCREMENT qui ne coincide pas forcement
+    /// entre postes (cf. HYBRID_SERVER_FAILOVER.md et la note de
+    /// SyncLogRepository::applyUserEntry).
+    QString userUuidForId(qint64 userId) const;
+
+    /// Uuid de la Conversation locale d'id donne (chaine vide si introuvable).
+    QString conversationUuidForId(qint64 conversationId) const;
 
     // TODO: instancier ici les autres services (Security, Settings...)
     std::unique_ptr<database::DatabaseManager> m_databaseManager;

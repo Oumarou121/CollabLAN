@@ -77,4 +77,16 @@ void NotificationManager::onPeerDisconnected(const QString &peerName)
     emit notificationRequested(title, peerName, QStringLiteral("disconnection"));
 }
 
+void NotificationManager::onGroupCreated(const models::Group &group)
+{
+    if (!m_notificationsEnabled) {
+        return;
+    }
+
+    const QString title = QStringLiteral("Nouveau groupe");
+    const QString message = QStringLiteral("Vous avez ete ajoute au groupe \"%1\"").arg(group.name());
+
+    emit notificationRequested(title, message, QStringLiteral("group"));
+}
+
 } // namespace core

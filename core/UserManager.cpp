@@ -233,6 +233,14 @@ std::vector<models::User> UserManager::allUsers() const
     return m_userRepository.findAll();
 }
 
+void UserManager::emitUsersChanged()
+{
+    // Émettre le signal dans le thread principal pour éviter les crashs Qt
+    QMetaObject::invokeMethod(this, [this]() {
+        emit usersChanged();
+    }, Qt::QueuedConnection);
+}
+
 QString UserManager::lastDatabaseErrorText() const
 {
     return m_userRepository.lastError();

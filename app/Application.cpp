@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSqlQuery>
 #include <QVariantMap>
 #include <QVariantList>
 
@@ -29,6 +30,7 @@
 #include "Sync/SyncService.h"
 #include "database/Repositories/ServerElectionRepository.h"
 #include "database/Repositories/SyncLogRepository.h"
+#include "database/Repositories/GroupRepository.h"
 #include "models/ServerElection.h"
 #include "models/Message.h"
 #include "models/Group.h"
@@ -181,21 +183,41 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             });
     connect(m_groupManager, &core::GroupManager::memberAdded,
             this, [this](qint64 groupId, qint64 memberId) {
+                // groupUuid/memberUuid : references stables inter-postes
+                // (cf. migration 011 / applyGroupMemberEntry), l'id local
+                // de groupe ou d'utilisateur n'ayant aucune raison de
+                // coincider entre postes.
+                database::GroupRepository groupRepo(m_databaseManager.get());
+                const auto group = groupRepo.getById(groupId);
+                const QString groupUuid = group.has_value() ? group->uuid() : QString();
+                const QString memberUuid = userUuidForId(memberId);
+                if (groupUuid.isEmpty() || memberUuid.isEmpty()) {
+                    qWarning() << "memberAdded : group/user non resolu en uuid, entree ignoree";
+                    return;
+                }
                 QJsonObject payload;
-                payload.insert(QStringLiteral("groupId"), QString::number(groupId));
-                payload.insert(QStringLiteral("memberId"), QString::number(memberId));
+                payload.insert(QStringLiteral("groupUuid"), groupUuid);
+                payload.insert(QStringLiteral("memberUuid"), memberUuid);
                 appendSyncLogEntry(QStringLiteral("GroupMembers"),
-                                   QStringLiteral("%1:%2").arg(groupId).arg(memberId),
+                                   QStringLiteral("%1:%2").arg(groupUuid, memberUuid),
                                    models::SyncOperation::Insert,
                                    QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
             });
     connect(m_groupManager, &core::GroupManager::memberRemoved,
             this, [this](qint64 groupId, qint64 memberId) {
+                database::GroupRepository groupRepo(m_databaseManager.get());
+                const auto group = groupRepo.getById(groupId);
+                const QString groupUuid = group.has_value() ? group->uuid() : QString();
+                const QString memberUuid = userUuidForId(memberId);
+                if (groupUuid.isEmpty() || memberUuid.isEmpty()) {
+                    qWarning() << "memberRemoved : group/user non resolu en uuid, entree ignoree";
+                    return;
+                }
                 QJsonObject payload;
-                payload.insert(QStringLiteral("groupId"), QString::number(groupId));
-                payload.insert(QStringLiteral("memberId"), QString::number(memberId));
+                payload.insert(QStringLiteral("groupUuid"), groupUuid);
+                payload.insert(QStringLiteral("memberUuid"), memberUuid);
                 appendSyncLogEntry(QStringLiteral("GroupMembers"),
-                                   QStringLiteral("%1:%2").arg(groupId).arg(memberId),
+                                   QStringLiteral("%1:%2").arg(groupUuid, memberUuid),
                                    models::SyncOperation::Delete,
                                    QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
             });
@@ -251,6 +273,52 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                                        << activeAddress;
                         }
                     }
+                }
+            });
+
+    // Cas du regime permanent (steady state) : un Client qui demarre alors
+    // qu'un Server tourne deja depuis longtemps ne vit ni transition de role
+    // (roleChanged) ni server_promoted -- il ne fait que recevoir des
+    // heartbeats reguliers. Sans ce hook, MessagingService ne se connectait
+    // JAMAIS dans ce cas (les trois connexions ci-dessus ne se declenchent
+    // que sur un evenement de bascule), d'ou l'absence totale d'utilisateurs/
+    // groupes visibles cote Client tant qu'aucune election n'a jamais eu
+    // lieu depuis son demarrage.
+    connect(m_electionService, &network::ElectionService::activeServerUuidChanged,
+            this, [this]() {
+                if (m_electionService->role() != models::ServerRole::Client)
+                    return; // rien a connecter : ce poste est lui-meme Server/TempServer
+
+                const QString activeUuid = m_electionService->activeServerUuid();
+                if (activeUuid.isEmpty() || activeUuid == m_electionService->localMachineUuid())
+                    return;
+
+                const QHostAddress activeAddress = m_electionService->activeServerAddress();
+                const quint16 activePort = m_electionService->activeServerPort();
+                if (activeAddress.isNull() || activePort == 0)
+                    return;
+
+                if (m_messagingService->isConnected()
+                    && m_messagingService->peerAddress() == activeAddress
+                    && m_messagingService->peerPort() == activePort) {
+                    return; // deja connecte au bon serveur, rien a faire
+                }
+
+                const QString localUuid = m_electionService->localMachineUuid();
+                connect(m_messagingService, &network::MessagingService::connected,
+                        m_syncService, [this, localUuid]() {
+                            // fromEpoch=0 : demande l'integralite du journal
+                            // (Users/Groups/Messages), pas seulement ce qui a
+                            // ete rate depuis une panne -- c'est la premiere
+                            // fois que ce poste voit ce serveur.
+                            // SyncLogRepository::applyBatch() est idempotent :
+                            // rejouable sans risque a chaque (re)connexion.
+                            m_syncService->requestReconciliation(0, localUuid);
+                        }, Qt::SingleShotConnection);
+
+                m_messagingService->disconnectFromHost();
+                if (!m_messagingService->connectToHost(activeAddress, activePort)) {
+                    qWarning() << "Connexion initiale au serveur actif impossible :" << activeAddress << activePort;
                 }
             });
 
@@ -329,7 +397,21 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 m_serverElectionRepository->appendLogEntry(models::ServerElectionEvent::ServerReconciled,
                                                            m_electionService->epoch(),
                                                            m_electionService->activeServerUuid());
-                m_electionService->reclaimAsOfficialServer();
+                // Notifier que la liste des utilisateurs a change (apres synchro)
+                // Utiliser Qt::QueuedConnection pour éviter les crashs de thread
+                if (m_userManager) {
+                    QMetaObject::invokeMethod(m_userManager, [this]() {
+                        m_userManager->emitUsersChanged();
+                    }, Qt::QueuedConnection);
+                }
+                // reclaimAsOfficialServer() ne concerne QUE le Server officiel
+                // qui revient d'une panne (section 7.3) : reconciliationCompleted
+                // est desormais aussi emis pour la synchro initiale d'un simple
+                // Client (cf. activeServerUuidChanged plus haut) qui ne doit
+                // surtout pas s'auto-promouvoir Server.
+                if (m_electionService->role() == models::ServerRole::Server) {
+                    m_electionService->reclaimAsOfficialServer();
+                }
             });
 
     connect(m_syncService, &network::SyncService::reconciliationFailed,
@@ -430,18 +512,33 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     m_messagingManager->setMessagingService(m_messagingService);
     m_messagingManager->setMessagingServer(m_messagingServer);
     m_messagingManager->setNotificationManager(m_notificationManager);
+    m_groupManager->setMessagingServer(m_messagingServer);
 
     // Connecter PermissionManager aux services réseau pour vérifier les machines autorisées
     m_messagingService->setPermissionManager(m_permissionManager);
     m_messagingServer->setPermissionManager(m_permissionManager);
 
     // Connecter MessagingServer à MessagingManager pour traiter les messages reçus
+    // SyncService écoute aussi MessagingServer::messageReceived pour les messages de sync
     connect(m_messagingServer, &network::MessagingServer::messageReceived,
             m_messagingManager, [this](const QString &message, const QHostAddress &senderAddress) {
                 Q_UNUSED(senderAddress)
-                if (!m_messagingManager->receiveMessage(message)) {
-                    qWarning() << "Message reseau ignore (payload invalide) :" << message;
+                // MessagingManager ne traite que les messages de type "message"
+                // SyncService traite les messages de type "sync_request", "sync_ack", "sync_batch"
+                if (m_messagingManager->receiveMessage(message)) {
+                    return;
                 }
+                // Pas un message : peut-etre la creation d'un groupe diffusee en
+                // temps reel par un autre poste (type "group_created", cf.
+                // GroupManager::createGroup) - sans ce relais, les autres membres
+                // n'apprenaient l'existence du groupe qu'a la prochaine
+                // reconciliation SyncLog.
+                if (const auto group = m_groupManager->receiveGroupCreated(message); group.has_value()) {
+                    m_notificationManager->onGroupCreated(*group);
+                    return;
+                }
+                // Ce n'est pas forcément une erreur : peut-être un message de sync
+                qDebug() << "Message ignore par MessagingManager/GroupManager (probablement message de sync) :" << message.left(100);
             });
 
     // Connecter les connexions refusées à l'audit (issue #70)
@@ -459,7 +556,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 if (errorString.contains(QStringLiteral("not authorized"))) {
                     m_auditManager->logRefusedAttempt(errorString);
                 }
-            });
+            }, Qt::QueuedConnection);
 
     // Seed du compte admin par defaut (dev/demo), tant qu'aucun ecran
     // d'inscription n'existe. Le hash est toujours produit par
@@ -490,11 +587,11 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_discoveryService, &network::DiscoveryService::peerDiscovered,
             m_notificationManager, [this](const network::DiscoveredPeer &peer) {
                 m_notificationManager->onPeerConnected(peer.name);
-            });
+            }, Qt::QueuedConnection);
     connect(m_discoveryService, &network::DiscoveryService::peerLost,
             m_notificationManager, [this](const network::DiscoveredPeer &peer) {
                 m_notificationManager->onPeerDisconnected(peer.name);
-            });
+            }, Qt::QueuedConnection);
 
     // Renomme l'annonce avec le nom d'utilisateur connecte des qu'une
     // authentification reussit (avant cela, le hostname sert de nom par
@@ -556,6 +653,11 @@ network::ElectionService *Application::electionService() const
 network::SyncService *Application::syncService() const
 {
     return m_syncService;
+}
+
+database::DatabaseManager *Application::databaseManager() const
+{
+    return m_databaseManager.get();
 }
 
 QVariantList Application::electionHistory(int limit) const
@@ -659,12 +761,57 @@ void Application::appendSyncLogEntry(const QString &tableName, const QString &re
     }
 }
 
+QString Application::userUuidForId(qint64 userId) const
+{
+    if (!m_userManager) {
+        return QString();
+    }
+    for (const auto &user : m_userManager->allUsers()) {
+        if (user.id() == userId) {
+            return user.uuid();
+        }
+    }
+    return QString();
+}
+
+QString Application::conversationUuidForId(qint64 conversationId) const
+{
+    if (!m_databaseManager || conversationId <= 0) {
+        return QString();
+    }
+    QSqlQuery query(m_databaseManager->database());
+    query.prepare(QStringLiteral("SELECT uuid FROM Conversations WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), conversationId);
+    if (!query.exec() || !query.next()) {
+        return QString();
+    }
+    return query.value(0).toString();
+}
+
 void Application::appendMessageSyncLog(const models::Message &message)
 {
+    // record_uuid = uuid propre du message (independant de son id local),
+    // et les references croisees (senderUuid/conversationUuid) aussi en
+    // uuid : cf. migration 011 et SyncLogRepository::applyMessageEntry, qui
+    // resolvent ces uuid vers les id locaux du poste destinataire plutot
+    // que de reutiliser tel quel l'id de la machine d'origine (id qui n'a
+    // aucune raison de coincider entre deux bases SQLite independantes).
+    if (message.uuid().isEmpty()) {
+        qWarning() << "appendMessageSyncLog : message sans uuid, entree ignoree" << message.id();
+        return;
+    }
+
+    const QString senderUuid = userUuidForId(message.senderId());
+    const QString conversationUuid = conversationUuidForId(message.conversationId());
+    if (senderUuid.isEmpty() || conversationUuid.isEmpty()) {
+        qWarning() << "appendMessageSyncLog : sender/conversation non resolu en uuid, entree ignoree"
+                   << message.id();
+        return;
+    }
+
     QJsonObject payload;
-    payload.insert(QStringLiteral("id"), QString::number(message.id()));
-    payload.insert(QStringLiteral("conversationId"), QString::number(message.conversationId()));
-    payload.insert(QStringLiteral("senderId"), QString::number(message.senderId()));
+    payload.insert(QStringLiteral("senderUuid"), senderUuid);
+    payload.insert(QStringLiteral("conversationUuid"), conversationUuid);
     payload.insert(QStringLiteral("content"), message.content());
     payload.insert(QStringLiteral("isRead"), message.isRead());
     payload.insert(QStringLiteral("timestamp"),
@@ -673,27 +820,44 @@ void Application::appendMessageSyncLog(const models::Message &message)
                        : QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
 
     appendSyncLogEntry(QStringLiteral("Messages"),
-                       QString::number(message.id()),
+                       message.uuid(),
                        models::SyncOperation::Insert,
                        QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
 }
 
 void Application::appendGroupSyncLog(const models::Group &group, const QString &operation)
 {
-    QJsonArray members;
+    // Meme principe que appendMessageSyncLog ci-dessus : record_uuid = uuid
+    // propre du groupe, et toutes les references croisees (ownerUuid,
+    // conversationUuid, memberUuids) en uuid plutot qu'en id local.
+    if (group.uuid().isEmpty()) {
+        qWarning() << "appendGroupSyncLog : groupe sans uuid, entree ignoree" << group.name();
+        return;
+    }
+
+    const QString ownerUuid = userUuidForId(group.ownerId());
+    const QString conversationUuid = conversationUuidForId(group.conversationId());
+    if (ownerUuid.isEmpty()) {
+        qWarning() << "appendGroupSyncLog : owner non resolu en uuid, entree ignoree" << group.name();
+        return;
+    }
+
+    QJsonArray memberUuids;
     for (qint64 memberId : group.memberIds()) {
-        members.append(QString::number(memberId));
+        const QString memberUuid = userUuidForId(memberId);
+        if (!memberUuid.isEmpty()) {
+            memberUuids.append(memberUuid);
+        }
     }
 
     QJsonObject payload;
-    payload.insert(QStringLiteral("id"), QString::number(group.id()));
     payload.insert(QStringLiteral("name"), group.name());
-    payload.insert(QStringLiteral("ownerId"), QString::number(group.ownerId()));
-    payload.insert(QStringLiteral("conversationId"), QString::number(group.conversationId()));
-    payload.insert(QStringLiteral("memberIds"), members);
+    payload.insert(QStringLiteral("ownerUuid"), ownerUuid);
+    payload.insert(QStringLiteral("conversationUuid"), conversationUuid);
+    payload.insert(QStringLiteral("memberUuids"), memberUuids);
 
     appendSyncLogEntry(QStringLiteral("Groups"),
-                       QString::number(group.id()),
+                       group.uuid(),
                        operation,
                        QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
 }
