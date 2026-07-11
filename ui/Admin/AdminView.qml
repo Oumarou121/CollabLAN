@@ -20,7 +20,32 @@ Item {
 
     signal backRequested()
 
-    property int currentTab: 0  // 0 = Audit log, 1 = Machines autorisées, 2 = Utilisateurs, 3 = Paramètres
+    property int currentTab: 0  // 0 = Audit log, 1 = Machines autorisées, 2 = Utilisateurs, 3 = Paramètres, 4 = Bascule serveur
+
+    // Historique des bascules (ServerElectionLog), pour l'onglet "Bascule
+    // serveur" (HYBRID_SERVER_FAILOVER.md section 9, etape 5). Pas de
+    // signal de changement cote C++ (simple Q_INVOKABLE) : on rafraichit
+    // explicitement (bouton, ouverture de l'onglet, et un Timer discret
+    // pendant que l'onglet est actif) plutot que de tout faire reposer sur
+    // le binding reactif comme pour electionService.
+    property var electionHistoryEntries: []
+
+    function refreshElectionHistory() {
+        if (typeof application !== "undefined" && application)
+            root.electionHistoryEntries = application.electionHistory(100)
+    }
+
+    onCurrentTabChanged: {
+        if (currentTab === 4)
+            refreshElectionHistory()
+    }
+
+    Timer {
+        interval: 5000
+        running: root.currentTab === 4
+        repeat: true
+        onTriggered: root.refreshElectionHistory()
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -91,6 +116,13 @@ Item {
                         checked: root.currentTab === 3
                         onClicked: root.currentTab = 3
                     }
+
+                    Button {
+                        text: "Bascule serveur"
+                        checkable: true
+                        checked: root.currentTab === 4
+                        onClicked: root.currentTab = 4
+                    }
                 }
 
                 Item {
@@ -113,6 +145,12 @@ Item {
                     text: "Ajouter utilisateur"
                     visible: root.currentTab === 2
                     onClicked: addUserDialog.open()
+                }
+
+                Button {
+                    text: "Rafraîchir"
+                    visible: root.currentTab === 4
+                    onClicked: root.refreshElectionHistory()
                 }
             }
         }
@@ -240,7 +278,7 @@ Item {
 
                                     Label {
                                         text: model.description
-                                        font.pixelSize: Theme.fontSizeMedium
+                                        font.pixelSize: Theme.fontSizeBody
                                         color: Theme.text
                                         wrapMode: Text.WordWrap
                                         Layout.fillWidth: true
@@ -287,7 +325,7 @@ Item {
 
                                 Label {
                                     text: model.ipAddress
-                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.pixelSize: Theme.fontSizeBody
                                     font.bold: true
                                     color: Theme.text
                                 }
@@ -371,7 +409,7 @@ Item {
 
                                 Label {
                                     text: model.name
-                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.pixelSize: Theme.fontSizeBody
                                     font.bold: true
                                     color: Theme.text
                                 }
@@ -585,6 +623,114 @@ Item {
 
                     Item {
                         Layout.fillHeight: true
+                    }
+                }
+            }
+        }
+
+        // Contenu de l'onglet "Bascule serveur" (HYBRID_SERVER_FAILOVER.md
+        // section 9, etape 5) : historique des elections/reconciliations
+        // (ServerElectionLog), utile pour diagnostiquer une instabilite
+        // reseau.
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: root.currentTab === 4
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Theme.spacingLarge
+                spacing: Theme.spacingMedium
+
+                Label {
+                    text: "Historique des bascules"
+                    font.pixelSize: Theme.fontSizeHeading
+                    font.bold: true
+                    color: Theme.text
+                }
+
+                Label {
+                    text: "Chaque ligne correspond a un evenement du protocole d'election (perte de heartbeat, promotion en serveur de secours, reconciliation, reprise du serveur officiel)."
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeSmall
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: Theme.border
+                }
+
+                Label {
+                    visible: root.electionHistoryEntries.length === 0
+                    text: "Aucun evenement enregistre pour l'instant."
+                    color: Theme.textSecondary
+                }
+
+                ListView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    visible: root.electionHistoryEntries.length > 0
+                    model: root.electionHistoryEntries
+
+                    delegate: Rectangle {
+                        width: ListView.view ? ListView.view.width : 0
+                        height: entryRow.implicitHeight + Theme.spacingMedium
+                        color: index % 2 === 0 ? Theme.surface : Theme.surfaceAlt
+                        border.width: 1
+                        border.color: Theme.border
+
+                        RowLayout {
+                            id: entryRow
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingSmall
+                            spacing: Theme.spacingMedium
+
+                            Rectangle {
+                                width: 10
+                                height: 10
+                                radius: 5
+                                Layout.alignment: Qt.AlignVCenter
+                                color: {
+                                    switch (modelData.event) {
+                                    case "HEARTBEAT_LOST": return Theme.error
+                                    case "TEMP_PROMOTED": return Theme.warning
+                                    case "SERVER_RECONCILED": return Theme.primary
+                                    case "SERVER_RESTORED": return Theme.success
+                                    default: return Theme.textSecondary
+                                    }
+                                }
+                            }
+
+                            Label {
+                                text: modelData.event
+                                color: Theme.text
+                                font.bold: true
+                                Layout.preferredWidth: 180
+                            }
+
+                            Label {
+                                text: "epoch " + modelData.epoch
+                                color: Theme.textSecondary
+                                Layout.preferredWidth: 80
+                            }
+
+                            Label {
+                                text: modelData.machineUuid
+                                color: Theme.textSecondary
+                                elide: Text.ElideMiddle
+                                Layout.fillWidth: true
+                            }
+
+                            Label {
+                                text: modelData.createdAt
+                                color: Theme.textSecondary
+                                font.pixelSize: Theme.fontSizeSmall
+                            }
+                        }
                     }
                 }
             }

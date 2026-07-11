@@ -48,14 +48,21 @@ ApplicationWindow {
         }
     }
 
+    // Indicateur discret de bascule automatique de serveur (issue UI section
+    // 9 etape 5) : place comme ToastHost, au-dessus du StackView, visible
+    // quel que soit l'ecran actif.
+    ServerStatusIndicator {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: Theme.spacingMedium
+    }
+
     // Superposition globale des toasts (issue #58) : place en dernier
     // pour rester au-dessus du StackView quelle que soit la vue active.
     ToastHost {
         anchors.fill: parent
     }
 
-    // TODO: Réactiver quand callContext sera disponible (après correction de l'erreur de threading)
-    /*
     // Navigation automatique vers CallView pour un appel entrant (issue #64bis) :
     // callContext est global et ecoute meme quand l'utilisateur est sur un
     // autre ecran (Home/Chat/...). Sans ce hook, "ringing" ne se voit que si
@@ -70,7 +77,6 @@ ApplicationWindow {
             }
         }
     }
-    */
 
     Component {
         id: loginViewComponent

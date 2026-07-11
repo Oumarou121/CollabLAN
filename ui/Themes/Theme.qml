@@ -39,6 +39,7 @@ QtObject {
 
     readonly property color error: darkMode ? "#FF7A7A" : "#D64545"
     readonly property color success: darkMode ? "#4ADE80" : "#2FAE60"
+    readonly property color warning: darkMode ? "#FBBF24" : "#D97706"
 
     // Metriques communes
     readonly property int spacingSmall: 8

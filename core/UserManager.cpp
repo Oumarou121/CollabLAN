@@ -1,5 +1,7 @@
 #include "UserManager.h"
 
+#include <QDateTime>
+
 #include "DatabaseManager.h"
 #include "PasswordHasher.h"
 
@@ -135,8 +137,16 @@ std::optional<models::User> UserManager::createUser(const QString &name,
         m_lastError = UserManagerError::DatabaseError;
         return std::nullopt;
     }
-    user.setId(id);
     m_lastError = UserManagerError::None;
+
+    // Recharger depuis la base : create() genere le uuid/updated_at
+    // (migration 010) que le modele passe en parametre ne connait pas encore.
+    const auto persisted = m_userRepository.findById(id);
+    if (persisted.has_value()) {
+        emit userCreated(*persisted);
+        return persisted;
+    }
+    user.setId(id);
     return user;
 }
 
@@ -165,6 +175,12 @@ bool UserManager::setStatus(int userId, models::UserStatus status)
 {
     const bool ok = m_userRepository.updateStatus(userId, status);
     m_lastError = ok ? UserManagerError::None : UserManagerError::DatabaseError;
+    if (ok) {
+        const auto updated = m_userRepository.findById(userId);
+        if (updated.has_value()) {
+            emit userUpdated(*updated);
+        }
+    }
     return ok;
 }
 
@@ -175,6 +191,41 @@ std::optional<models::UserStatus> UserManager::status(int userId) const
         return std::nullopt;
     }
     return user->status();
+}
+
+bool UserManager::changeRole(int userId, bool isAdmin)
+{
+    auto existing = m_userRepository.findById(userId);
+    if (!existing.has_value()) {
+        m_lastError = UserManagerError::UserNotFound;
+        return false;
+    }
+
+    existing->setRole(isAdmin ? models::UserRole::Admin : models::UserRole::User);
+    existing->setUpdatedAt(QDateTime::currentDateTimeUtc());
+
+    const bool ok = m_userRepository.update(*existing);
+    m_lastError = ok ? UserManagerError::None : UserManagerError::DatabaseError;
+    if (ok) {
+        emit userUpdated(*existing);
+    }
+    return ok;
+}
+
+bool UserManager::deleteUser(int userId)
+{
+    const auto existing = m_userRepository.findById(userId);
+    if (!existing.has_value()) {
+        m_lastError = UserManagerError::UserNotFound;
+        return false;
+    }
+
+    const bool ok = m_userRepository.remove(userId);
+    m_lastError = ok ? UserManagerError::None : UserManagerError::DatabaseError;
+    if (ok) {
+        emit userDeleted(existing->uuid(), userId);
+    }
+    return ok;
 }
 
 std::vector<models::User> UserManager::allUsers() const

@@ -56,10 +56,13 @@ private slots:
         database::DatabaseManager manager2(QStringLiteral("test-reopen-b-%1").arg(reinterpret_cast<quintptr>(this)));
         QVERIFY(manager2.open(path));
         QVERIFY(manager2.lastError().isEmpty());
-        // 5 fichiers de migration presents dans database/Migrations/ :
+        // 11 fichiers de migration presents dans database/Migrations/ a ce jour :
         // 001_initial_schema, 002_add_user_password, 002_add_conversations_table,
-        // 003_update_messages_table, 004_link_groups_to_conversations.
-        QCOMPARE(manager2.schemaVersion(), 5);
+        // 003_update_messages_table, 004_link_groups_to_conversations,
+        // 005_add_audit_logs_table, 006_add_user_role, 007_add_authorized_machines_table,
+        // 008_add_server_election_tables, 009_add_sync_log_table, 010_add_user_sync_columns.
+        // (a mettre a jour a chaque nouvelle migration ajoutee au dossier).
+        QCOMPARE(manager2.schemaVersion(), 11);
     }
 
     void foreignKeysAreEnabled()
@@ -120,8 +123,8 @@ private slots:
         QVERIFY(manager.open(path));
         QVERIFY(manager.isOpen());
         QVERIFY(manager.lastError().isEmpty());
-        // Voir reopenIsIdempotent() : 5 migrations presentes sur le disque.
-        QCOMPARE(manager.schemaVersion(), 5);
+        // Voir reopenIsIdempotent() : 11 migrations presentes sur le disque.
+        QCOMPARE(manager.schemaVersion(), 11);
 
         manager.close();
     }

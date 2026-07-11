@@ -7,6 +7,7 @@
 #include <QHostAddress>
 #include <QSslConfiguration>
 #include <QSslKey>
+#include <QFile>
 #include <QDebug>
 #include <QMetaObject>
 
@@ -34,15 +35,36 @@ bool MessagingServer::start(quint16 port)
     m_server = new QWebSocketServer(QStringLiteral("CollabLAN Messaging Server"), QWebSocketServer::SecureMode, this);
 
     // Configurer SSL/TLS avec SecurityService
+    bool sslConfigured = false;
     if (m_securityService && m_securityService->isReady()) {
         QSslConfiguration sslConfig = m_server->sslConfiguration();
         QList<QSslCertificate> certs = QSslCertificate::fromData(m_securityService->certificatePem());
-        if (!certs.isEmpty()) {
-            sslConfig.setLocalCertificate(certs.first());
+
+        QFile keyFile(m_securityService->privateKeyPath());
+        if (!certs.isEmpty() && keyFile.open(QIODevice::ReadOnly)) {
+            const QByteArray keyData = keyFile.readAll();
+            keyFile.close();
+            QSslKey privateKey(keyData, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+
+            if (!privateKey.isNull()) {
+                // Sans la cle privee, le handshake TLS echoue systematiquement
+                // (le certificat seul ne suffit pas au serveur pour prouver sa
+                // possession de la cle) : c'etait le bug qui empechait toute
+                // reconciliation SERVER<->TEMP_SERVER reelle via WebSocket.
+                sslConfig.setLocalCertificate(certs.first());
+                sslConfig.setPrivateKey(privateKey);
+                sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone); // Pour le développement local
+                m_server->setSslConfiguration(sslConfig);
+                sslConfigured = true;
+            } else {
+                qWarning() << "Cle privee TLS illisible, bascule en mode non securise";
+            }
+        } else {
+            qWarning() << "Certificat ou cle privee TLS introuvable, bascule en mode non securise";
         }
-        sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone); // Pour le développement local
-        m_server->setSslConfiguration(sslConfig);
-    } else {
+    }
+
+    if (!sslConfigured) {
         qWarning() << "SecurityService not ready, using insecure mode";
         // En mode développement, on peut utiliser un mode non sécurisé
         delete m_server;

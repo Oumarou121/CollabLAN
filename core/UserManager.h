@@ -92,6 +92,18 @@ public:
     bool setStatus(int userId, models::UserStatus status);
     std::optional<models::UserStatus> status(int userId) const;
 
+    /**
+     * @brief Change le role (User/Admin) d'un utilisateur existant.
+     *        Met a jour updated_at pour que le replay LWW cote reconciliation
+     *        (SyncLogRepository::applyUserEntry) puisse dater ce changement.
+     */
+    bool changeRole(int userId, bool isAdmin);
+
+    /**
+     * @brief Supprime definitivement un utilisateur (administration).
+     */
+    bool deleteUser(int userId);
+
     std::vector<models::User> allUsers() const;
 
     /**
@@ -105,6 +117,16 @@ signals:
     void loginFailed(const QString &reason);
     void authenticationChanged();
     void busyChanged();
+
+    /**
+     * @brief Emis apres une ecriture reelle en base sur Users (creation,
+     *        changement de role/statut). Utilise par Application pour
+     *        journaliser dans SyncLog (cf. Application::appendUserSyncLog)
+     *        quand ce poste fait autorite (SERVER ou TEMP_SERVER).
+     */
+    void userCreated(const models::User &user);
+    void userUpdated(const models::User &user);
+    void userDeleted(const QString &uuid, int id);
 
 private:
     void setBusy(bool busy);

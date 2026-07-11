@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "models/SyncLogEntry.h"
+#include "models/User.h"
 
 class QSqlQuery;
 
@@ -69,6 +70,12 @@ public:
 
 private:
     models::SyncLogEntry entryFromQuery(const QSqlQuery &query) const;
+    bool applyDomainEntry(const models::SyncLogEntry &entry);
+    bool applyMessageEntry(const models::SyncLogEntry &entry);
+    bool applyGroupEntry(const models::SyncLogEntry &entry);
+    bool applyGroupMemberEntry(const models::SyncLogEntry &entry);
+    bool applyUserEntry(const models::SyncLogEntry &entry);
+    bool ensureConversation(qint64 conversationId, const QString &type, const QString &name);
 
     QSqlDatabase m_db;
     mutable QString m_lastError;

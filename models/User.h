@@ -79,6 +79,12 @@ public:
     QDateTime createdAt() const;
     void setCreatedAt(const QDateTime &createdAt);
 
+    QString uuid() const;
+    void setUuid(const QString &uuid);
+
+    QDateTime updatedAt() const;
+    void setUpdatedAt(const QDateTime &updatedAt);
+
     bool isValid() const;
 
 private:
@@ -90,6 +96,8 @@ private:
     QString m_passwordHash = QStringLiteral("");
     QString m_passwordSalt = QStringLiteral("");
     QDateTime m_createdAt;
+    QString m_uuid;
+    QDateTime m_updatedAt;
 };
 
 } // namespace models

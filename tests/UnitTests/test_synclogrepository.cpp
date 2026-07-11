@@ -1,10 +1,13 @@
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QRandomGenerator>
+#include <QSqlQuery>
 
 #include "SyncLogRepository.h"
 #include "DatabaseManager.h"
 #include "models/SyncLogEntry.h"
+#include "database/Repositories/UserRepository.h"
+#include "models/User.h"
 
 using database::SyncLogRepository;
 
@@ -28,6 +31,9 @@ private:
         QVERIFY(opened);
 
         m_repository = std::make_unique<SyncLogRepository>(m_dbManager->database());
+
+        QSqlQuery seedUser(m_dbManager->database());
+        QVERIFY(seedUser.exec(QStringLiteral("INSERT INTO Users (id, name, password_hash, password_salt) VALUES (1, 'phase4-user', 'hash', 'salt')")));
     }
 
     models::SyncLogEntry makeEntry(const QString &uuid, int epoch, qint64 lamport,
@@ -36,12 +42,33 @@ private:
         models::SyncLogEntry entry;
         entry.setEntryUuid(uuid);
         entry.setTableName(QStringLiteral("Messages"));
-        entry.setRecordUuid(QStringLiteral("record-%1").arg(uuid));
+        const qint64 messageId = 1000 + lamport;
+        entry.setRecordUuid(QString::number(messageId));
         entry.setOperation(models::SyncOperation::Insert);
-        entry.setPayloadJson(QStringLiteral("{\"content\":\"hello\"}"));
+        entry.setPayloadJson(QStringLiteral(R"json({"id":"%1","conversationId":"500","senderId":"1","content":"hello","timestamp":"2026-01-01T00:00:00Z","isRead":false})json").arg(messageId));
         entry.setLamportClock(lamport);
         entry.setEpoch(epoch);
         entry.setOriginMachineId(originMachineId);
+        entry.setUpdatedAt(QDateTime::currentDateTimeUtc());
+        return entry;
+    }
+
+    models::SyncLogEntry makeUserEntry(const QString &entryUuid, const QString &recordUuid,
+                                        const QString &operation, const QString &name,
+                                        const QString &updatedAt,
+                                        const QString &role = QStringLiteral("User"))
+    {
+        models::SyncLogEntry entry;
+        entry.setEntryUuid(entryUuid);
+        entry.setTableName(QStringLiteral("Users"));
+        entry.setRecordUuid(recordUuid);
+        entry.setOperation(operation);
+        entry.setPayloadJson(QStringLiteral(
+            R"json({"name":"%1","ipAddress":"192.168.1.10","status":"Offline","role":"%2","passwordHash":"h","passwordSalt":"s","updatedAt":"%3"})json")
+            .arg(name, role, updatedAt));
+        entry.setLamportClock(1);
+        entry.setEpoch(1);
+        entry.setOriginMachineId(QStringLiteral("temp-server"));
         entry.setUpdatedAt(QDateTime::currentDateTimeUtc());
         return entry;
     }
@@ -90,6 +117,41 @@ private slots:
         QCOMPARE(m_repository->entriesSinceEpoch(0).size(), static_cast<size_t>(2));
     }
 
+
+    void applyBatchReplaysSupportedDomainRows()
+    {
+        freshDatabase();
+
+        models::SyncLogEntry message = makeEntry(QStringLiteral("uuid-message"), 7, 20);
+
+        models::SyncLogEntry group;
+        group.setEntryUuid(QStringLiteral("uuid-group"));
+        group.setTableName(QStringLiteral("Groups"));
+        group.setRecordUuid(QStringLiteral("42"));
+        group.setOperation(models::SyncOperation::Insert);
+        group.setPayloadJson(QStringLiteral(R"json({"id":"42","name":"Secours","ownerId":"1","conversationId":"77","memberIds":["1"]})json"));
+        group.setLamportClock(21);
+        group.setEpoch(7);
+        group.setOriginMachineId(QStringLiteral("temp-server"));
+        group.setUpdatedAt(QDateTime::currentDateTimeUtc());
+
+        QCOMPARE(m_repository->applyBatch({message, group}), 2);
+
+        QSqlQuery messageQuery(m_dbManager->database());
+        QVERIFY(messageQuery.exec(QStringLiteral("SELECT content FROM Messages WHERE id = 1020")));
+        QVERIFY(messageQuery.next());
+        QCOMPARE(messageQuery.value(0).toString(), QStringLiteral("hello"));
+
+        QSqlQuery groupQuery(m_dbManager->database());
+        QVERIFY(groupQuery.exec(QStringLiteral("SELECT name, conversation_id FROM Groups WHERE id = 42")));
+        QVERIFY(groupQuery.next());
+        QCOMPARE(groupQuery.value(0).toString(), QStringLiteral("Secours"));
+        QCOMPARE(groupQuery.value(1).toLongLong(), static_cast<qint64>(77));
+
+        QSqlQuery memberQuery(m_dbManager->database());
+        QVERIFY(memberQuery.exec(QStringLiteral("SELECT 1 FROM GroupMembers WHERE group_id = 42 AND user_id = 1")));
+        QVERIFY(memberQuery.next());
+    }
     void highestLamportClockTracksMax()
     {
         freshDatabase();
@@ -114,6 +176,177 @@ private slots:
         // Une nouvelle reconciliation met a jour la meme ligne (upsert).
         QVERIFY(m_repository->markPeerSynced(QStringLiteral("temp-server-uuid"), 8));
         QCOMPARE(m_repository->lastSyncedEpoch(QStringLiteral("temp-server-uuid")), 8);
+    }
+
+    void applyUserEntryInsertsNewAccount()
+    {
+        freshDatabase();
+
+        const auto entry = makeUserEntry(QStringLiteral("uuid-user-insert"),
+                                          QStringLiteral("record-uuid-1"),
+                                          models::SyncOperation::Insert,
+                                          QStringLiteral("nouvel-utilisateur"),
+                                          QStringLiteral("2026-01-01T00:00:00Z"));
+
+        QCOMPARE(m_repository->applyBatch({entry}), 1);
+
+        QSqlQuery query(m_dbManager->database());
+        QVERIFY(query.exec(QStringLiteral("SELECT name FROM Users WHERE uuid = 'record-uuid-1'")));
+        QVERIFY(query.next());
+        QCOMPARE(query.value(0).toString(), QStringLiteral("nouvel-utilisateur"));
+    }
+
+    void applyUserEntryInsertIsIdempotent()
+    {
+        freshDatabase();
+
+        const auto entry = makeUserEntry(QStringLiteral("uuid-user-insert2"),
+                                          QStringLiteral("record-uuid-2"),
+                                          models::SyncOperation::Insert,
+                                          QStringLiteral("bob"),
+                                          QStringLiteral("2026-01-01T00:00:00Z"));
+
+        QCOMPARE(m_repository->applyBatch({entry}), 1);
+
+        // Rejeu du meme lot (sync_batch retransmis) : SyncLog l'ignore deja
+        // via entry_uuid, mais applyUserEntry lui-meme doit aussi rester
+        // idempotent (uuid deja connu) si jamais rappele directement.
+        QSqlQuery countBefore(m_dbManager->database());
+        QVERIFY(countBefore.exec(QStringLiteral("SELECT COUNT(*) FROM Users WHERE uuid = 'record-uuid-2'")));
+        QVERIFY(countBefore.next());
+        QCOMPARE(countBefore.value(0).toInt(), 1);
+    }
+
+    void applyUserEntryRenamesOnNameCollision()
+    {
+        freshDatabase();
+
+        // "phase4-user" existe deja (seed de freshDatabase).
+        const auto entry = makeUserEntry(QStringLiteral("uuid-user-collision"),
+                                          QStringLiteral("record-uuid-3"),
+                                          models::SyncOperation::Insert,
+                                          QStringLiteral("phase4-user"),
+                                          QStringLiteral("2026-01-01T00:00:00Z"));
+
+        QCOMPARE(m_repository->applyBatch({entry}), 1);
+
+        QSqlQuery query(m_dbManager->database());
+        QVERIFY(query.exec(QStringLiteral("SELECT name FROM Users WHERE uuid = 'record-uuid-3'")));
+        QVERIFY(query.next());
+        QVERIFY(query.value(0).toString().startsWith(QStringLiteral("phase4-user*conflict*")));
+
+        QSqlQuery logQuery(m_dbManager->database());
+        QVERIFY(logQuery.exec(QStringLiteral(
+            "SELECT COUNT(*) FROM ServerElectionLog WHERE event = 'USER_NAME_CONFLICT'")));
+        QVERIFY(logQuery.next());
+        QCOMPARE(logQuery.value(0).toInt(), 1);
+    }
+
+    void applyUserEntryUpdateWinsWhenNewer()
+    {
+        freshDatabase();
+
+        const auto insertEntry = makeUserEntry(QStringLiteral("uuid-user-u1"),
+                                                QStringLiteral("record-uuid-4"),
+                                                models::SyncOperation::Insert,
+                                                QStringLiteral("carol"),
+                                                QStringLiteral("2026-01-01T00:00:00Z"),
+                                                QStringLiteral("User"));
+        QCOMPARE(m_repository->applyBatch({insertEntry}), 1);
+
+        const auto updateEntry = makeUserEntry(QStringLiteral("uuid-user-u2"),
+                                                QStringLiteral("record-uuid-4"),
+                                                models::SyncOperation::Update,
+                                                QStringLiteral("carol"),
+                                                QStringLiteral("2026-01-02T00:00:00Z"),
+                                                QStringLiteral("Admin"));
+        QCOMPARE(m_repository->applyBatch({updateEntry}), 1);
+
+        QSqlQuery query(m_dbManager->database());
+        QVERIFY(query.exec(QStringLiteral("SELECT role FROM Users WHERE uuid = 'record-uuid-4'")));
+        QVERIFY(query.next());
+        // Le stockage canonique est en minuscules (cf. models::userRoleToString) ;
+        // on compare via l'enum plutot que la casse brute du payload, comme le
+        // fait test_syncserviceintegration.cpp.
+        const auto storedRole = models::stringToUserRole(query.value(0).toString());
+        QVERIFY(storedRole.has_value());
+        QCOMPARE(*storedRole, models::UserRole::Admin);
+    }
+
+    void applyUserEntryUpdateLosesWhenOlder()
+    {
+        freshDatabase();
+
+        const auto insertEntry = makeUserEntry(QStringLiteral("uuid-user-u3"),
+                                                QStringLiteral("record-uuid-5"),
+                                                models::SyncOperation::Insert,
+                                                QStringLiteral("dave"),
+                                                QStringLiteral("2026-01-05T00:00:00Z"),
+                                                QStringLiteral("User"));
+        QCOMPARE(m_repository->applyBatch({insertEntry}), 1);
+
+        // updated_at plus ancien que l'existant (modif locale posterieure a la
+        // panne, deja plus recente) : LWW garde la version locale.
+        const auto staleUpdate = makeUserEntry(QStringLiteral("uuid-user-u4"),
+                                                QStringLiteral("record-uuid-5"),
+                                                models::SyncOperation::Update,
+                                                QStringLiteral("dave"),
+                                                QStringLiteral("2026-01-01T00:00:00Z"),
+                                                QStringLiteral("Admin"));
+        QCOMPARE(m_repository->applyBatch({staleUpdate}), 1);
+
+        QSqlQuery query(m_dbManager->database());
+        QVERIFY(query.exec(QStringLiteral("SELECT role FROM Users WHERE uuid = 'record-uuid-5'")));
+        QVERIFY(query.next());
+        const auto storedRole = models::stringToUserRole(query.value(0).toString());
+        QVERIFY(storedRole.has_value());
+        QCOMPARE(*storedRole, models::UserRole::User);
+    }
+
+    void applyUserEntryUpdateBeforeInsertFallsBackToInsert()
+    {
+        freshDatabase();
+
+        // Batch partiel : l'UPDATE arrive sans INSERT prealable connu localement.
+        const auto updateOnly = makeUserEntry(QStringLiteral("uuid-user-u5"),
+                                               QStringLiteral("record-uuid-6"),
+                                               models::SyncOperation::Update,
+                                               QStringLiteral("erin"),
+                                               QStringLiteral("2026-01-01T00:00:00Z"));
+        QCOMPARE(m_repository->applyBatch({updateOnly}), 1);
+
+        QSqlQuery query(m_dbManager->database());
+        QVERIFY(query.exec(QStringLiteral("SELECT name FROM Users WHERE uuid = 'record-uuid-6'")));
+        QVERIFY(query.next());
+        QCOMPARE(query.value(0).toString(), QStringLiteral("erin"));
+    }
+
+    void applyUserEntryDeleteRemovesAccount()
+    {
+        freshDatabase();
+
+        const auto insertEntry = makeUserEntry(QStringLiteral("uuid-user-d1"),
+                                                QStringLiteral("record-uuid-7"),
+                                                models::SyncOperation::Insert,
+                                                QStringLiteral("frank"),
+                                                QStringLiteral("2026-01-01T00:00:00Z"));
+        QCOMPARE(m_repository->applyBatch({insertEntry}), 1);
+
+        models::SyncLogEntry deleteEntry;
+        deleteEntry.setEntryUuid(QStringLiteral("uuid-user-d2"));
+        deleteEntry.setTableName(QStringLiteral("Users"));
+        deleteEntry.setRecordUuid(QStringLiteral("record-uuid-7"));
+        deleteEntry.setOperation(models::SyncOperation::Delete);
+        deleteEntry.setLamportClock(2);
+        deleteEntry.setEpoch(1);
+        deleteEntry.setOriginMachineId(QStringLiteral("temp-server"));
+        deleteEntry.setUpdatedAt(QDateTime::currentDateTimeUtc());
+        QCOMPARE(m_repository->applyBatch({deleteEntry}), 1);
+
+        QSqlQuery query(m_dbManager->database());
+        QVERIFY(query.exec(QStringLiteral("SELECT COUNT(*) FROM Users WHERE uuid = 'record-uuid-7'")));
+        QVERIFY(query.next());
+        QCOMPARE(query.value(0).toInt(), 0);
     }
 };
 

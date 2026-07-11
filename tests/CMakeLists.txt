@@ -87,3 +87,15 @@ add_test(NAME test_electionservice COMMAND test_electionservice)
 add_executable(test_synclogrepository UnitTests/test_synclogrepository.cpp)
 target_link_libraries(test_synclogrepository PRIVATE Qt6::Test database models)
 add_test(NAME test_synclogrepository COMMAND test_synclogrepository)
+
+add_executable(test_syncserviceintegration UnitTests/test_syncserviceintegration.cpp)
+target_link_libraries(test_syncserviceintegration PRIVATE Qt6::Test Qt6::WebSockets Qt6::Network Qt6::Sql database models network)
+add_test(NAME test_syncserviceintegration COMMAND test_syncserviceintegration)
+
+add_executable(test_applicationelectionwiring UnitTests/test_applicationelectionwiring.cpp)
+target_link_libraries(test_applicationelectionwiring PRIVATE Qt6::Test Qt6::Network Qt6::Sql app_core network models)
+add_test(NAME test_applicationelectionwiring COMMAND test_applicationelectionwiring)
+
+add_executable(test_applicationreconciliationwiring UnitTests/test_applicationreconciliationwiring.cpp)
+target_link_libraries(test_applicationreconciliationwiring PRIVATE Qt6::Test Qt6::Network Qt6::Sql app_core network models)
+add_test(NAME test_applicationreconciliationwiring COMMAND test_applicationreconciliationwiring)

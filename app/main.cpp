@@ -12,6 +12,7 @@
 #include "MessageModel.h"
 #include "GroupModel.h"
 #include "TransferContext.h"
+#include "CallContext.h"
 #include "NotificationManager.h"
 #include "AuditLogModel.h"
 #include "AuditManager.h"
@@ -19,6 +20,7 @@
 #include "AuthorizedMachineModel.h"
 #include "UserManagementModel.h"
 #include "SettingsModel.h"
+#include "Election/ElectionService.h"
 
 int main(int argc, char *argv[])
 {
@@ -70,14 +72,33 @@ int main(int argc, char *argv[])
         "nom:motdepasse", "");
     parser.addOption(createUserOption);
 
+    QCommandLineOption roleOption(QStringList() << "role",
+        "Force le role initial de ce poste dans l'election de serveur "
+        "(SERVER, CLIENT ou TEMP_SERVER), en ecrasant ce qui est deja "
+        "persiste en base. Reserve aux scenarios de test multi-instances "
+        "(HYBRID_SERVER_FAILOVER.md) : en usage normal, le role evolue "
+        "seul via ElectionService et n'a pas besoin d'etre force.",
+        "role", "");
+    parser.addOption(roleOption);
+
+    QCommandLineOption priorityWeightOption(QStringList() << "priority-weight",
+        "Force le priority_weight de ce poste (plus petit = plus prioritaire "
+        "pour devenir TEMP_SERVER lors d'une election). Utile en test pour "
+        "designer a l'avance quel client doit gagner l'election. Ignore si "
+        "absent (garde la valeur deja en base, 100 par defaut).",
+        "poids", "-1");
+    parser.addOption(priorityWeightOption);
+
     parser.process(app);
 
     quint16 messagingPort = parser.value(portOption).toUShort();
     const QString dbFilePath = parser.value(dbOption);
+    const QString roleOverride = parser.value(roleOption);
+    const int priorityWeightOverride = parser.value(priorityWeightOption).toInt();
     qDebug() << "MessagingServer port:" << messagingPort;
 
     Application application;
-    application.initialize(messagingPort, dbFilePath);
+    application.initialize(messagingPort, dbFilePath, roleOverride, priorityWeightOverride);
 
     if (parser.isSet(createUserOption)) {
         const QString spec = parser.value(createUserOption);
@@ -114,6 +135,10 @@ int main(int argc, char *argv[])
     // Brancher ToastHost.qml (Main.qml) sur les evenements notifiables
     // (message, transfert, connexion/deconnexion - issue #58).
     engine.rootContext()->setContextProperty("notificationManager", static_cast<QObject*>(application.notificationManager()));
+    // Brancher SettingsView.qml (priority_weight/timeout) et l'indicateur de
+    // role dans Main.qml sur ElectionService (HYBRID_SERVER_FAILOVER.md
+    // section 9, etape 5).
+    engine.rootContext()->setContextProperty("electionService", static_cast<QObject*>(application.electionService()));
 
     // Enregistrer les types QML pour la messagerie
     qmlRegisterType<core::MessagingContext>("Core", 1, 0, "MessagingContext");
@@ -137,6 +162,17 @@ int main(int argc, char *argv[])
     transferContext->setPeersModel(application.peersModel());
     transferContext->setUserManager(application.userManager());
     engine.rootContext()->setContextProperty("transferContext", transferContext);
+
+    // Créer et exposer le contexte d'appel vocal (issues #60/#61/#64) :
+    // relie network::VoiceService (signalisation WebRTC + session media) a
+    // CallView.qml. Expose globalement (comme electionService plus haut,
+    // et non uniquement via qmlRegisterType) pour que Main.qml puisse
+    // ecouter callContext.callStateChanged en dehors de CallView (navigation
+    // automatique vers l'ecran d'appel sur reception d'un appel entrant,
+    // meme depuis un autre ecran).
+    core::CallContext *callContext = new core::CallContext(&engine);
+    callContext->setVoiceService(application.voiceService());
+    engine.rootContext()->setContextProperty("callContext", callContext);
 
     // Créer et exposer le modèle du journal d'audit (issues #62/#63,
     // UI #65) : consultation filtrable et export CSV depuis AdminView.qml.

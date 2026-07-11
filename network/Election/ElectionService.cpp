@@ -66,6 +66,7 @@ bool ElectionService::start()
     // depuis la base), il commence a emettre son heartbeat immediatement.
     if (m_role == models::ServerRole::Server || m_role == models::ServerRole::TempServer) {
         m_activeServerUuid = m_localMachineUuid;
+        m_activeServerAddress = QHostAddress::LocalHost;
         sendHeartbeat();
     }
 
@@ -117,7 +118,10 @@ int ElectionService::priorityWeight() const
 
 void ElectionService::setPriorityWeight(int weight)
 {
+    if (m_priorityWeight == weight)
+        return;
     m_priorityWeight = weight;
+    emit priorityWeightChanged();
 }
 
 quint16 ElectionService::port() const
@@ -132,6 +136,16 @@ void ElectionService::setPort(quint16 port)
         return;
     }
     m_port = port;
+}
+
+quint16 ElectionService::messagingPort() const
+{
+    return m_messagingPort;
+}
+
+void ElectionService::setMessagingPort(quint16 port)
+{
+    m_messagingPort = port;
 }
 
 int ElectionService::heartbeatIntervalMs() const
@@ -156,6 +170,7 @@ void ElectionService::setHeartbeatTimeoutMs(int ms)
     m_heartbeatTimeoutMs = ms;
     if (m_running)
         m_timeoutTimer->start(qMax(500, m_heartbeatTimeoutMs / 4));
+    emit heartbeatTimeoutMsChanged();
 }
 
 int ElectionService::electionWindowMs() const
@@ -172,13 +187,20 @@ void ElectionService::setInitialState(models::ServerRole role, int epoch)
 {
     m_role = role;
     m_epoch = epoch;
-    if (role == models::ServerRole::Server || role == models::ServerRole::TempServer)
+    if (role == models::ServerRole::Server || role == models::ServerRole::TempServer) {
         m_activeServerUuid = m_localMachineUuid;
+        m_activeServerAddress = QHostAddress::LocalHost;
+    }
 }
 
 models::ServerRole ElectionService::role() const
 {
     return m_role;
+}
+
+QString ElectionService::roleLabel() const
+{
+    return models::serverRoleToString(m_role);
 }
 
 int ElectionService::epoch() const
@@ -189,6 +211,16 @@ int ElectionService::epoch() const
 QString ElectionService::activeServerUuid() const
 {
     return m_activeServerUuid;
+}
+
+QHostAddress ElectionService::activeServerAddress() const
+{
+    return m_activeServerAddress;
+}
+
+quint16 ElectionService::activeServerPort() const
+{
+    return m_activeServerPort;
 }
 
 void ElectionService::reclaimAsOfficialServer()
@@ -212,6 +244,7 @@ void ElectionService::sendHeartbeat()
     packet["msg"] = QString::fromLatin1(kMsgHeartbeat);
     packet["server_uuid"] = m_localMachineUuid;
     packet["epoch"] = m_epoch;
+    packet["messaging_port"] = m_messagingPort;
 
     broadcastPacket(QJsonDocument(packet).toJson(QJsonDocument::Compact));
 }
@@ -294,7 +327,11 @@ void ElectionService::enterServerRole(int newEpoch, bool temporary)
 
     m_epoch = newEpoch;
     m_activeServerUuid = m_localMachineUuid;
+    m_activeServerAddress = QHostAddress::LocalHost;
+    m_activeServerPort = m_messagingPort;
     applyRole(newRole);
+    emit epochChanged();
+    emit activeServerUuidChanged();
 
     QJsonObject packet;
     packet["type"] = QString::fromLatin1(kPacketType);
@@ -303,6 +340,7 @@ void ElectionService::enterServerRole(int newEpoch, bool temporary)
     packet["epoch"] = m_epoch;
     packet["machine_uuid"] = m_localMachineUuid;
     packet["temporary"] = temporary;
+    packet["messaging_port"] = m_messagingPort;
 
     broadcastPacket(QJsonDocument(packet).toJson(QJsonDocument::Compact));
 
@@ -322,6 +360,7 @@ void ElectionService::applyRole(models::ServerRole newRole)
     const models::ServerRole previous = m_role;
     m_role = newRole;
     emit roleChanged(newRole, previous);
+    emit roleLabelChanged();
 }
 
 void ElectionService::broadcastPacket(const QByteArray &data)
@@ -353,11 +392,11 @@ void ElectionService::readPendingDatagrams()
         const QNetworkDatagram datagram = m_socket->receiveDatagram();
         if (!datagram.isValid())
             continue;
-        handlePacket(datagram.data());
+        handlePacket(datagram.data(), datagram.senderAddress());
     }
 }
 
-void ElectionService::handlePacket(const QByteArray &data)
+void ElectionService::handlePacket(const QByteArray &data, const QHostAddress &senderAddress)
 {
     QJsonParseError parseError;
     const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
@@ -381,9 +420,29 @@ void ElectionService::handlePacket(const QByteArray &data)
         if (remoteEpoch < m_epoch)
             return;
 
+        // Le client adopte l'epoch du serveur legitime : c'est ce qui permet
+        // ensuite a startElection()/enterServerRole() de repartir de la bonne
+        // valeur (epoch+1) plutot que de l'epoch initial jamais mis a jour.
+        const bool epochChangedFlag = (m_epoch != remoteEpoch);
+        m_epoch = remoteEpoch;
+
         m_lastHeartbeatSeenMs = QDateTime::currentMSecsSinceEpoch();
         m_heartbeatEverSeen = true;
+        const bool activeServerChangedFlag = (m_activeServerUuid != serverUuid);
         m_activeServerUuid = serverUuid;
+        m_activeServerAddress = senderAddress;
+        // messaging_port : ajouté pour corriger un bug silencieux où l'on
+        // supposait que le pair actif écoutait sur NOTRE PROPRE
+        // messagingServerPort (voir messagingPort()/activeServerPort()).
+        // toInt(0) : un pair qui n'aurait pas encore ce champ (paquet
+        // ancien format) laisse le port à 0, traité comme "inconnu" par
+        // l'appelant plutôt que de connecter silencieusement au mauvais port.
+        m_activeServerPort = static_cast<quint16>(obj.value("messaging_port").toInt(0));
+
+        if (epochChangedFlag)
+            emit epochChanged();
+        if (activeServerChangedFlag)
+            emit activeServerUuidChanged();
 
         // Section 7.1 : le Server officiel qui etait hors-ligne et revient
         // constate qu'un autre poste emet deja un heartbeat en son nom (un
@@ -431,14 +490,40 @@ void ElectionService::handlePacket(const QByteArray &data)
 
         m_epoch = remoteEpoch;
         m_activeServerUuid = machineUuid;
+        m_activeServerAddress = senderAddress;
+        m_activeServerPort = static_cast<quint16>(obj.value("messaging_port").toInt(0));
         m_lastHeartbeatSeenMs = QDateTime::currentMSecsSinceEpoch();
         m_heartbeatEverSeen = true;
+        emit epochChanged();
+        emit activeServerUuidChanged();
 
         // Une election en cours localement est annulee : quelqu'un d'autre
         // a deja tranche avec un epoch superieur.
         m_electionInProgress = false;
         m_electionWindowTimer->stop();
         m_candidates.clear();
+
+        // Section 7.1/7.3 : si CE poste est actuellement le Server officiel,
+        // un server_promoted (forcement emis par un TempServer, puisqu'un
+        // epoch superieur au notre suffit a le faire passer le filtre
+        // ci-dessus) NE DOIT PAS nous faire retomber en Client en silence.
+        // C'est exactement le meme cas de figure que la reception de son
+        // heartbeat juste au-dessus : on doit passer par la reconciliation
+        // (SyncService, cf. Application::initialize()) puis reprendre la
+        // main nous-memes (reclaimAsOfficialServer()), pas laisser le
+        // TempServer prendre le controle.
+        //
+        // Avant ce correctif, applyRole(Client) etait appele sans condition
+        // ici. Comme enterServerRole() diffuse server_promoted AVANT son
+        // premier heartbeat, ce paquet arrivait generalement en premier chez
+        // le Server officiel et le degradait en Client avant meme qu'il ait
+        // pu voir le heartbeat correspondant -> reconciliationRequired
+        // n'etait alors jamais emis (cf. test_applicationreconciliationwiring,
+        // issue #4).
+        if (m_role == models::ServerRole::Server) {
+            emit reconciliationRequired(machineUuid);
+            return;
+        }
 
         // Un autre poste a ete promu : on redevient/reste Client et on
         // bascule notre connexion vers lui (a la charge de l'appelant, via

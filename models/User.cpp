@@ -40,15 +40,17 @@ QString userRoleToString(UserRole role)
 
 std::optional<UserRole> stringToUserRole(const QString &str)
 {
-    if (str == QStringLiteral("admin"))
+    const QString v = str.toLower();
+    if (v == QStringLiteral("admin"))
         return UserRole::Admin;
-    if (str == QStringLiteral("user"))
+    if (v == QStringLiteral("user"))
         return UserRole::User;
     return std::nullopt;
 }
 
 User::User()
     : m_createdAt(QDateTime::currentDateTimeUtc())
+    , m_updatedAt(m_createdAt)
 {
 }
 
@@ -68,6 +70,7 @@ User::User(int id,
     , m_passwordHash(passwordHash.isNull() ? QStringLiteral("") : std::move(passwordHash))
     , m_passwordSalt(passwordSalt.isNull() ? QStringLiteral("") : std::move(passwordSalt))
     , m_createdAt(std::move(createdAt))
+    , m_updatedAt(m_createdAt)
 {
 }
 
@@ -99,6 +102,12 @@ void User::setPasswordSalt(const QString &salt) { m_passwordSalt = salt.isNull()
 
 QDateTime User::createdAt() const { return m_createdAt; }
 void User::setCreatedAt(const QDateTime &createdAt) { m_createdAt = createdAt; }
+
+QString User::uuid() const { return m_uuid; }
+void User::setUuid(const QString &uuid) { m_uuid = uuid; }
+
+QDateTime User::updatedAt() const { return m_updatedAt; }
+void User::setUpdatedAt(const QDateTime &updatedAt) { m_updatedAt = updatedAt; }
 
 bool User::isValid() const
 {

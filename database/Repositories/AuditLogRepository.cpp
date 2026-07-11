@@ -116,7 +116,16 @@ QVector<models::AuditLog> AuditLogRepository::find(const AuditLogFilter &filter)
     if (!conditions.isEmpty()) {
         sql += QStringLiteral(" WHERE ") + conditions.join(QStringLiteral(" AND "));
     }
-    sql += QStringLiteral(" ORDER BY created_at DESC, id DESC LIMIT :limit OFFSET :offset");
+    // LIMIT/OFFSET sont interpoles directement plutot que lies via des
+    // placeholders nommes (:limit/:offset) : le driver QSQLITE de Qt
+    // decompte parfois mal le nombre de parametres attendus quand des
+    // placeholders nommes suivent LIMIT/OFFSET, d'ou l'erreur "Parameter
+    // count mismatch" observee malgre un nombre de bindValue() corrects
+    // (issue #63bis). Sans risque d'injection ici : filter.limit/offset
+    // sont de simples int, jamais des chaines fournies par l'UI.
+    sql += QStringLiteral(" ORDER BY created_at DESC, id DESC LIMIT %1 OFFSET %2")
+               .arg(filter.limit)
+               .arg(filter.offset);
 
     query.prepare(sql);
     if (filter.eventType.has_value()) {
@@ -131,8 +140,6 @@ QVector<models::AuditLog> AuditLogRepository::find(const AuditLogFilter &filter)
     if (filter.to.has_value()) {
         query.bindValue(QStringLiteral(":toDate"), filter.to->toUTC().toString(Qt::ISODateWithMs));
     }
-    query.bindValue(QStringLiteral(":limit"), filter.limit);
-    query.bindValue(QStringLiteral(":offset"), filter.offset);
 
     if (!query.exec()) {
         qWarning() << "AuditLogRepository: echec lecture filtree -" << query.lastError().text();

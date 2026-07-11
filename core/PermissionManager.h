@@ -59,7 +59,12 @@ public:
     static bool canManageAuthorizedMachines(UserRole role);
 
     /// Vérifie si une adresse IP est autorisée à rejoindre le réseau (issue #68).
-    bool isMachineAuthorized(const QString &ipAddress) const;
+    /// Q_INVOKABLE requis : MessagingServer/MessagingService l'appellent via
+    /// QMetaObject::invokeMethod("isMachineAuthorized", ...) plutot que par un
+    /// pointeur direct (voir issue #70). Sans ce marqueur, invokeMethod
+    /// echoue silencieusement ("No such method...") et le controle d'acces
+    /// se retrouve fail-open (authorized reste a sa valeur par defaut true).
+    Q_INVOKABLE bool isMachineAuthorized(const QString &ipAddress) const;
 
     /// Révoque une machine par son adresse IP (issue #68).
     bool revokeMachine(const QString &ipAddress, int revokedBy, const QString &reason = QString());

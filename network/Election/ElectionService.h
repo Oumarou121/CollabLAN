@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QDateTime>
+#include <QHostAddress>
 
 #include "models/ServerElection.h"
 
@@ -38,6 +39,15 @@ namespace network {
 class ElectionService : public QObject
 {
     Q_OBJECT
+    // Proprietes exposees a l'UI (SettingsView.qml section 9 etape 5) :
+    // roleLabel/epoch/activeServerUuid en lecture seule (pilotees par le
+    // protocole reseau), priorityWeight/heartbeatTimeoutMs en lecture-
+    // ecriture (reglables par l'admin).
+    Q_PROPERTY(QString roleLabel READ roleLabel NOTIFY roleLabelChanged)
+    Q_PROPERTY(int epoch READ epoch NOTIFY epochChanged)
+    Q_PROPERTY(QString activeServerUuid READ activeServerUuid NOTIFY activeServerUuidChanged)
+    Q_PROPERTY(int priorityWeight READ priorityWeight WRITE setPriorityWeight NOTIFY priorityWeightChanged)
+    Q_PROPERTY(int heartbeatTimeoutMs READ heartbeatTimeoutMs WRITE setHeartbeatTimeoutMs NOTIFY heartbeatTimeoutMsChanged)
 
 public:
     explicit ElectionService(QObject *parent = nullptr);
@@ -65,6 +75,16 @@ public:
     quint16 port() const;
     void setPort(quint16 port);
 
+    /// Port TCP sur lequel MessagingServer de CE poste écoute réellement
+    /// quand il est Server/TempServer (typiquement --port en CLI, cf.
+    /// app/main.cpp). Diffusé dans heartbeat/server_promoted afin que les
+    /// autres postes sachent sur quel port se connecter : sans cela,
+    /// Application supposait à tort que le pair actif écoutait sur son
+    /// PROPRE messagingServerPort, ce qui casse silencieusement dès que
+    /// --port diffère d'un poste à l'autre.
+    quint16 messagingPort() const;
+    void setMessagingPort(quint16 port);
+
     /// Intervalle entre deux heartbeats emis quand ce poste est Server/TempServer.
     int heartbeatIntervalMs() const;
     void setHeartbeatIntervalMs(int ms);
@@ -82,8 +102,18 @@ public:
     void setInitialState(models::ServerRole role, int epoch);
 
     models::ServerRole role() const;
+    /// Libelle textuel de role() (serverRoleToString), pour affichage direct
+    /// en QML sans avoir a exposer l'enum ServerRole lui-meme.
+    QString roleLabel() const;
     int epoch() const;
     QString activeServerUuid() const;
+    QHostAddress activeServerAddress() const;
+
+    /// Port TCP de messagerie du serveur actif courant (Server ou TempServer),
+    /// tel qu'annoncé par son propre setMessagingPort() dans heartbeat/
+    /// server_promoted. À utiliser à la place de son propre messagingServerPort
+    /// pour se connecter à lui (voir messagingPort()).
+    quint16 activeServerPort() const;
 
     /**
      * @brief A appeler par le poste officiel Server une fois la reconciliation
@@ -119,6 +149,14 @@ signals:
     /// pour declencher la reconciliation via le futur SyncService (section 7.1).
     void reconciliationRequired(const QString &tempServerUuid);
 
+    // Signaux NOTIFY des Q_PROPERTY ci-dessus, pour le binding QML reactif
+    // (SettingsView.qml / indicateur Main.qml, section 9 etape 5).
+    void roleLabelChanged();
+    void epochChanged();
+    void activeServerUuidChanged();
+    void priorityWeightChanged();
+    void heartbeatTimeoutMsChanged();
+
 private slots:
     void readPendingDatagrams();
     void sendHeartbeat();
@@ -131,7 +169,7 @@ private:
         int priorityWeight = 100;
     };
 
-    void handlePacket(const QByteArray &data);
+    void handlePacket(const QByteArray &data, const QHostAddress &senderAddress);
     void broadcastPacket(const QByteArray &data);
     void startElection();
     void applyRole(models::ServerRole newRole);
@@ -147,6 +185,7 @@ private:
     int m_priorityWeight = 100;
 
     quint16 m_port = 45455;
+    quint16 m_messagingPort = 0;
     int m_heartbeatIntervalMs = 3000;
     int m_heartbeatTimeoutMs = 15000;
     int m_electionWindowMs = 2000;
@@ -157,6 +196,8 @@ private:
     models::ServerRole m_role = models::ServerRole::Client;
     int m_epoch = 0;
     QString m_activeServerUuid;
+    QHostAddress m_activeServerAddress;
+    quint16 m_activeServerPort = 0;
     qint64 m_lastHeartbeatSeenMs = 0;
     bool m_heartbeatEverSeen = false;
 

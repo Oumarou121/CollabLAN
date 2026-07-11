@@ -51,6 +51,7 @@ public:
     // Recherche par nom d'utilisateur (identifiant de connexion), qui
     // est contraint unique par la migration 002_add_user_password.sql.
     std::optional<models::User> findByName(const QString &name) const;
+    std::optional<models::User> findByUuid(const QString &uuid) const;
     bool existsByName(const QString &name) const;
     std::vector<models::User> findAll() const;
 

@@ -62,66 +62,82 @@ void UserManagementModel::refresh()
 {
     beginResetModel();
     m_users.clear();
-    
-    // TODO: Charger depuis UserRepository via UserManager
-    // Pour l'instant, données de test
-    m_users.append(models::User(1, "admin", "192.168.1.10", models::UserStatus::Online, models::UserRole::Admin, "", "", QDateTime::currentDateTime()));
-    m_users.append(models::User(2, "alice", "192.168.1.11", models::UserStatus::Online, models::UserRole::User, "", "", QDateTime::currentDateTime()));
-    m_users.append(models::User(3, "bilal", "192.168.1.12", models::UserStatus::Offline, models::UserRole::User, "", "", QDateTime::currentDateTime()));
-    
+
+    if (auto *manager = qobject_cast<UserManager *>(m_userManager)) {
+        const auto users = manager->allUsers();
+        m_users.reserve(static_cast<int>(users.size()));
+        for (const auto &user : users) {
+            m_users.append(user);
+        }
+    }
+
     endResetModel();
 }
 
 bool UserManagementModel::createUser(const QString &name, const QString &password, bool isAdmin)
 {
-    // TODO: Appeler UserManager.createUser()
-    beginInsertRows(QModelIndex(), m_users.size(), m_users.size());
-    models::User user;
-    user.setName(name);
-    user.setStatus(models::UserStatus::Offline);
-    user.setRole(isAdmin ? models::UserRole::Admin : models::UserRole::User);
-    user.setCreatedAt(QDateTime::currentDateTime());
-    m_users.append(user);
-    endInsertRows();
+    auto *manager = qobject_cast<UserManager *>(m_userManager);
+    if (!manager) {
+        return false;
+    }
+
+    const auto created = manager->createUser(name, password, isAdmin);
+    if (!created.has_value()) {
+        return false;
+    }
+
+    // Rechargement complet plutot qu'une insertion locale : createUser()
+    // emet deja userCreated() (branche par Application::appendUserSyncLog),
+    // et refresh() garantit que ce modele reste le reflet fidele de la base
+    // (uuid/updated_at generes cote UserRepository, pas devinables ici).
+    refresh();
     return true;
 }
 
 bool UserManagementModel::deleteUser(int id)
 {
-    for (int i = 0; i < m_users.size(); ++i) {
-        if (m_users[i].id() == id) {
-            beginRemoveRows(QModelIndex(), i, i);
-            m_users.removeAt(i);
-            endRemoveRows();
-            return true;
-        }
+    auto *manager = qobject_cast<UserManager *>(m_userManager);
+    if (!manager) {
+        return false;
     }
-    return false;
+
+    if (!manager->deleteUser(id)) {
+        return false;
+    }
+
+    refresh();
+    return true;
 }
 
 bool UserManagementModel::changeRole(int id, bool isAdmin)
 {
-    for (int i = 0; i < m_users.size(); ++i) {
-        if (m_users[i].id() == id) {
-            m_users[i].setRole(isAdmin ? models::UserRole::Admin : models::UserRole::User);
-            emit dataChanged(index(i), index(i));
-            return true;
-        }
+    auto *manager = qobject_cast<UserManager *>(m_userManager);
+    if (!manager) {
+        return false;
     }
-    return false;
+
+    if (!manager->changeRole(id, isAdmin)) {
+        return false;
+    }
+
+    refresh();
+    return true;
 }
 
 bool UserManagementModel::changeStatus(int id, const QString &status)
 {
-    const auto userStatus = models::userStatusFromString(status);
-    for (int i = 0; i < m_users.size(); ++i) {
-        if (m_users[i].id() == id) {
-            m_users[i].setStatus(userStatus);
-            emit dataChanged(index(i), index(i));
-            return true;
-        }
+    auto *manager = qobject_cast<UserManager *>(m_userManager);
+    if (!manager) {
+        return false;
     }
-    return false;
+
+    const auto userStatus = models::userStatusFromString(status);
+    if (!manager->setStatus(id, userStatus)) {
+        return false;
+    }
+
+    refresh();
+    return true;
 }
 
 void UserManagementModel::setUserManager(QObject *manager)
