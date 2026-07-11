@@ -50,6 +50,11 @@ public slots:
     void playTransferSound();
     void playCallSound();
 
+    /// Arrete la sonnerie d'appel en cours (boucle infinie declenchee par
+    /// playCallSound()) : a appeler des que l'appel entrant est traite
+    /// (decroche, refuse, raccroche par l'appelant, timeout...).
+    void stopCallSound();
+
 private:
     void loadSound(EventType type, const QString &resourcePath);
 

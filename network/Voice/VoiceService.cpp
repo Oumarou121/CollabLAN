@@ -230,13 +230,20 @@ bool VoiceService::call(const QHostAddress &peerAddress, quint16 signalingPort)
 
 void VoiceService::acceptCall()
 {
-    if (m_state != CallState::Ringing) {
+    if (m_state != CallState::Ringing || !m_peerConnection) {
         return;
     }
-    // La PeerConnection a deja ete creee et setRemoteDescription() appele
-    // a la reception de l'offre (onSignalingMessage). Il ne reste qu'a
-    // laisser libdatachannel generer la reponse (automatique des que la
-    // piste locale est ajoutee), ce qui a egalement deja ete fait.
+    // C'est ICI, et seulement ici, que la reponse SDP doit partir : c'est
+    // le moment ou l'utilisateur a reellement clique sur "Decrocher".
+    // setRemoteDescription() a deja ete appele a la reception de l'offre
+    // (onSignalingMessage), donc la PeerConnection a tout ce qu'il faut
+    // pour generer la reponse maintenant.
+    try {
+        m_peerConnection->setLocalDescription();
+    } catch (const std::exception &ex) {
+        qWarning() << "VoiceService: echec setLocalDescription (reponse) -" << ex.what();
+        return;
+    }
     setState(CallState::Connecting);
 }
 
@@ -322,15 +329,11 @@ void VoiceService::onSignalingMessage(const SignalingMessage &message, const QHo
         createPeerConnection();
         m_peerConnection->setRemoteDescription(rtc::Description(message.sdp.toStdString(), "offer"));
 
-        // disableAutoNegotiation = true : on declenche nous-memes la reponse
-        // SDP, une seule fois, plutot que de laisser une eventuelle
-        // negociation automatique parasite se produire (cf. lanOnlyConfiguration).
-        try {
-            m_peerConnection->setLocalDescription();
-        } catch (const std::exception &ex) {
-            qWarning() << "VoiceService: echec setLocalDescription (reponse) -" << ex.what();
-        }
-
+        // On ne genere PAS la reponse SDP ici : ce serait repondre a
+        // l'appel avant meme que l'utilisateur ait clique sur "Decrocher".
+        // setRemoteDescription() ci-dessus suffit a preparer la
+        // PeerConnection ; la reponse (setLocalDescription()) est
+        // declenchee explicitement dans acceptCall().
         setState(CallState::Ringing);
         emit incomingCall(peerAddress);
         break;

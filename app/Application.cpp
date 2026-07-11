@@ -407,6 +407,17 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 m_audioService->playCallSound();
             });
 
+    // La sonnerie (boucle infinie, cf. AudioService::AudioService) doit
+    // s'arreter des que l'appel quitte l'etat "Ringing", quelle qu'en soit
+    // la raison : decroche, refuse localement, ou raccroche par l'appelant
+    // avant que l'utilisateur ait reagi.
+    connect(m_voiceService, &network::VoiceService::stateChanged,
+            m_audioService, [this](network::CallState state) {
+                if (state != network::CallState::Ringing) {
+                    m_audioService->stopCallSound();
+                }
+            });
+
     // Initialiser l'AuditManager pour le journal d'audit (issues #62/#63),
     // consulte/exporte depuis AdminView.qml (issue #65).
     m_auditManager = new core::AuditManager(m_databaseManager.get(), this);

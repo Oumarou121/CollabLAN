@@ -19,6 +19,17 @@ AudioService::AudioService(QObject *parent)
     loadSound(EventType::Message, QStringLiteral(":/sounds/message.wav"));
     loadSound(EventType::Transfer, QStringLiteral(":/sounds/transfer.wav"));
     loadSound(EventType::Call, QStringLiteral(":/sounds/call.wav"));
+
+    // Contrairement aux sons message/transfert (notifications ponctuelles,
+    // une seule lecture), la sonnerie d'appel entrant doit se repeter tant
+    // que l'appel n'a pas ete traite (decroche/refuse/raccroche par
+    // l'appelant) - sinon elle ne sonne qu'une fois et l'appel devient
+    // silencieux alors qu'il continue de sonner a l'ecran. La lecture est
+    // arretee explicitement par stopCallSound() (cf. Application.cpp, des
+    // que l'etat de l'appel quitte "Ringing").
+    if (QSoundEffect *callEffect = m_sounds.value(EventType::Call)) {
+        callEffect->setLoopCount(QSoundEffect::Infinite);
+    }
 }
 
 AudioService::~AudioService() = default;
@@ -122,6 +133,14 @@ void AudioService::playTransferSound()
 void AudioService::playCallSound()
 {
     playSound(EventType::Call);
+}
+
+void AudioService::stopCallSound()
+{
+    auto it = m_sounds.constFind(EventType::Call);
+    if (it != m_sounds.constEnd()) {
+        it.value()->stop();
+    }
 }
 
 } // namespace services
