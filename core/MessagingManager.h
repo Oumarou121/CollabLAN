@@ -22,6 +22,7 @@ class MessagingServer;
 namespace core {
 
 class NotificationManager;
+class UserManager;
 
 enum class MessagingManagerError {
     None,
@@ -57,6 +58,11 @@ public:
 
     /// Configure le gestionnaire de notifications.
     void setNotificationManager(NotificationManager *notificationManager);
+
+    /// Configure le gestionnaire d'utilisateurs, necessaire a
+    /// receiveMessage() pour connaitre notre propre identite locale
+    /// (voir commentaire dans receiveMessage()).
+    void setUserManager(UserManager *userManager);
 
     /// Cree ou recupere une conversation individuelle entre deux utilisateurs.
     std::optional<models::Conversation> getOrCreateConversation(qint64 userId1, qint64 userId2);
@@ -95,6 +101,7 @@ private:
     network::MessagingService *m_messagingService = nullptr;
     network::MessagingServer *m_messagingServer = nullptr;
     NotificationManager *m_notificationManager = nullptr;
+    UserManager *m_userManager = nullptr;
     MessagingManagerError m_lastError = MessagingManagerError::None;
     QString m_lastErrorString;
 };

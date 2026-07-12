@@ -4,6 +4,7 @@
 #include "Messaging/MessagingService.h"
 #include "Messaging/MessagingServer.h"
 #include "NotificationManager.h"
+#include "UserManager.h"
 #include "database/Repositories/UserRepository.h"
 #include "database/Repositories/SyncLogRepository.h"
 
@@ -47,6 +48,11 @@ void MessagingManager::setNotificationManager(NotificationManager *notificationM
 void MessagingManager::setMessagingServer(network::MessagingServer *messagingServer)
 {
     m_messagingServer = messagingServer;
+}
+
+void MessagingManager::setUserManager(UserManager *userManager)
+{
+    m_userManager = userManager;
 }
 
 std::optional<models::Conversation> MessagingManager::getOrCreateConversation(qint64 userId1, qint64 userId2)
@@ -168,25 +174,49 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
     QString conversationUuid;
     QString conversationType = QStringLiteral("individual");
     QString conversationName = QStringLiteral("Conversation");
+    qint64 participant1Id = 0;
+    qint64 participant2Id = 0;
     {
         QSqlDatabase db = m_dbManager->database();
         QSqlQuery convQuery(db);
         convQuery.prepare(QStringLiteral(
-            "SELECT uuid, type, name FROM Conversations WHERE id = :id"));
+            "SELECT uuid, type, name, participant1_id, participant2_id FROM Conversations WHERE id = :id"));
         convQuery.bindValue(QStringLiteral(":id"), conversationId);
         if (convQuery.exec() && convQuery.next()) {
             conversationUuid = convQuery.value(0).toString();
             conversationType = convQuery.value(1).toString();
             conversationName = convQuery.value(2).toString();
+            participant1Id = convQuery.value(3).toLongLong();
+            participant2Id = convQuery.value(4).toLongLong();
         }
     }
 
     QString senderUuid;
+    // uuids stables des DEUX participants de la conversation (et non
+    // seulement de l'expediteur) : sans le uuid de l'autre participant, le
+    // destinataire ne peut pas renseigner participant1_id/participant2_id
+    // en creant la conversation localement (cf. ensureConversationByUuid),
+    // et celle-ci reste alors invisible pour toujours dans
+    // getUserConversations() meme si le message lui-meme est bien insere.
+    QString participant1Uuid;
+    QString participant2Uuid;
     {
         database::UserRepository users(m_dbManager->database());
         const auto sender = users.findById(static_cast<int>(senderId));
         if (sender.has_value()) {
             senderUuid = sender->uuid();
+        }
+        if (participant1Id > 0) {
+            const auto p1 = users.findById(static_cast<int>(participant1Id));
+            if (p1.has_value()) {
+                participant1Uuid = p1->uuid();
+            }
+        }
+        if (participant2Id > 0) {
+            const auto p2 = users.findById(static_cast<int>(participant2Id));
+            if (p2.has_value()) {
+                participant2Uuid = p2->uuid();
+            }
         }
     }
 
@@ -203,6 +233,8 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
     payload.insert(QStringLiteral("conversationType"), conversationType);
     payload.insert(QStringLiteral("conversationName"), conversationName);
     payload.insert(QStringLiteral("senderUuid"), senderUuid);
+    payload.insert(QStringLiteral("participant1Uuid"), participant1Uuid);
+    payload.insert(QStringLiteral("participant2Uuid"), participant2Uuid);
     const QString jsonMessage = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
 
     // Envoyer le message via le reseau si le service est configure
@@ -265,6 +297,8 @@ std::optional<models::Message> MessagingManager::receiveMessage(const QString &j
     const QString conversationType = obj.value(QStringLiteral("conversationType")).toString(QStringLiteral("individual"));
     const QString conversationName = obj.value(QStringLiteral("conversationName")).toString(QStringLiteral("Conversation"));
     const QString senderUuid = obj.value(QStringLiteral("senderUuid")).toString();
+    const QString participant1Uuid = obj.value(QStringLiteral("participant1Uuid")).toString();
+    const QString participant2Uuid = obj.value(QStringLiteral("participant2Uuid")).toString();
 
     if (!m_dbManager) {
         m_lastError = MessagingManagerError::DatabaseError;
@@ -287,12 +321,60 @@ std::optional<models::Message> MessagingManager::receiveMessage(const QString &j
         }
     }
 
+    // Resoudre l'expediteur local via son uuid stable, et si possible les
+    // ids locaux des deux participants (pour ensureConversationByUuid
+    // ci-dessous : sans eux, la conversation individuelle creee ici
+    // resterait invisible dans getUserConversations()).
+    database::UserRepository users(m_dbManager->database());
+    qint64 participant1Id = -1;
+    qint64 participant2Id = -1;
+    if (!participant1Uuid.isEmpty()) {
+        const auto p1 = users.findByUuid(participant1Uuid);
+        if (p1.has_value()) {
+            participant1Id = p1->id();
+        }
+    }
+    if (!participant2Uuid.isEmpty()) {
+        const auto p2 = users.findByUuid(participant2Uuid);
+        if (p2.has_value()) {
+            participant2Id = p2->id();
+        }
+    }
+
+    // Repli sur notre identite locale (BUG : "message bien ecrit en base
+    // mais discussion/messages invisibles cote destinataire, meme apres
+    // redemarrage"). Pour une conversation individuelle, les deux seuls
+    // participants possibles sont l'expediteur (deja resolu ci-dessus via
+    // senderUuid, plus bas) et NOUS-MEMES. Si le uuid envoye par
+    // l'expediteur pour "l'autre" participant ne correspond a AUCUN
+    // utilisateur local - typiquement parce que notre compte local n'a
+    // jamais ete synchronise avec cet uuid-la avant ce premier message -,
+    // participant1Id/participant2Id restaient a -1 -> ensureConversationByUuid
+    // inserait alors la conversation avec participant1_id/participant2_id a
+    // NULL. Or MessagingManager::getUserConversations() filtre strictement
+    // sur "participant1_id = ? OR participant2_id = ?" : une conversation
+    // sans NOTRE id dans l'une de ces deux colonnes restait donc a jamais
+    // invisible dans l'UI, meme apres redemarrage complet de l'application
+    // (ce n'est pas un probleme de rafraichissement de signal QML, la
+    // donnee en base elle-meme ne matchait plus jamais la requete).
+    if (conversationType == QStringLiteral("individual") && m_userManager) {
+        const auto localUserId = m_userManager->currentUserId();
+        if (localUserId.has_value()) {
+            if (participant1Id <= 0 && participant1Uuid != senderUuid) {
+                participant1Id = localUserId.value();
+            }
+            if (participant2Id <= 0 && participant2Uuid != senderUuid) {
+                participant2Id = localUserId.value();
+            }
+        }
+    }
+
     // Resoudre la conversation locale via son uuid stable : la cree si
     // necessaire (ex. groupe cree sur un autre poste, jamais vu ici).
     if (!conversationUuid.isEmpty()) {
         database::SyncLogRepository syncRepo(m_dbManager->database());
         const qint64 resolvedConversationId = syncRepo.ensureConversationByUuid(
-            conversationUuid, conversationType, conversationName);
+            conversationUuid, conversationType, conversationName, participant1Id, participant2Id);
         if (resolvedConversationId > 0) {
             conversationId = resolvedConversationId;
         }
@@ -300,7 +382,6 @@ std::optional<models::Message> MessagingManager::receiveMessage(const QString &j
 
     // Resoudre l'expediteur local via son uuid stable.
     if (!senderUuid.isEmpty()) {
-        database::UserRepository users(m_dbManager->database());
         const auto sender = users.findByUuid(senderUuid);
         if (sender.has_value()) {
             senderId = sender->id();

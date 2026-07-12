@@ -78,8 +78,20 @@ public:
      *        directement par MessagingManager::receiveMessage pour
      *        resoudre la conversation d'un message recu en temps reel.
      * @return -1 en cas d'echec.
+     *
+     * @param participant1Id / @param participant2Id id LOCAUX (deja resolus
+     *        par l'appelant via UserRepository::findByUuid) des deux membres
+     *        d'une conversation individuelle. Laisses a -1 par defaut (non
+     *        renseignes : cas des groupes, ou l'appelant ne les connait pas
+     *        encore). Sans cela, une conversation individuelle creee ici
+     *        n'a ni participant1_id ni participant2_id : elle devient
+     *        invisible pour toujours dans MessagingManager::getUserConversations()
+     *        (qui filtre sur ces deux colonnes), meme si les messages sont
+     *        bien inseres en base - c'etait la cause du bug "message recu
+     *        mais qui n'apparait nulle part".
      */
-    qint64 ensureConversationByUuid(const QString &conversationUuid, const QString &type, const QString &name);
+    qint64 ensureConversationByUuid(const QString &conversationUuid, const QString &type, const QString &name,
+                                     qint64 participant1Id = -1, qint64 participant2Id = -1);
 
 private:
     models::SyncLogEntry entryFromQuery(const QSqlQuery &query) const;

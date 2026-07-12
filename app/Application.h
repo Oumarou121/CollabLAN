@@ -175,6 +175,20 @@ private:
     /// Uuid de la Conversation locale d'id donne (chaine vide si introuvable).
     QString conversationUuidForId(qint64 conversationId) const;
 
+    /// Traite un payload applicatif recu du reseau (type "message" ou
+    /// "group_created"), que ce poste soit celui qui l'a recu en tant que
+    /// SERVER (connexion entrante, cf. MessagingServer::messageReceived)
+    /// ou en tant que CLIENT (connexion sortante vers le SERVER actif, cf.
+    /// MessagingService::messageReceived). Persiste localement (ou
+    /// deduplique si deja connu) puis, si `relay` est vrai (poste SERVER
+    /// disposant d'autres clients connectes), rediffuse le payload tel
+    /// quel : dans la topologie en etoile de CollabLAN, un message envoye
+    /// par un client n'atteignait jusqu'ici QUE le SERVER (qui le
+    /// persistait dans SA PROPRE base sans jamais le retransmettre au
+    /// veritable destinataire) - c'etait la cause principale des messages
+    /// "perdus" cote destinataire.
+    void handleIncomingPayload(const QString &message, bool relay);
+
     // TODO: instancier ici les autres services (Security, Settings...)
     std::unique_ptr<database::DatabaseManager> m_databaseManager;
     std::unique_ptr<database::ServerElectionRepository> m_serverElectionRepository;

@@ -179,32 +179,69 @@ bool SyncLogRepository::applyDomainEntry(const models::SyncLogEntry &entry)
     return true;
 }
 
-qint64 SyncLogRepository::ensureConversationByUuid(const QString &conversationUuid, const QString &type, const QString &name)
+qint64 SyncLogRepository::ensureConversationByUuid(const QString &conversationUuid, const QString &type, const QString &name,
+                                                     qint64 participant1Id, qint64 participant2Id)
 {
     if (conversationUuid.isEmpty()) {
         return -1;
     }
 
     QSqlQuery findQuery(m_db);
-    findQuery.prepare(QStringLiteral("SELECT id FROM Conversations WHERE uuid = :uuid"));
+    findQuery.prepare(QStringLiteral(
+        "SELECT id, participant1_id, participant2_id FROM Conversations WHERE uuid = :uuid"));
     findQuery.bindValue(QStringLiteral(":uuid"), conversationUuid);
     if (!findQuery.exec()) {
         m_lastError = findQuery.lastError().text();
         return -1;
     }
     if (findQuery.next()) {
-        return findQuery.value(0).toLongLong();
+        const qint64 conversationId = findQuery.value(0).toLongLong();
+        // Backfill : une conversation deja creee ici par un appel anterieur
+        // (avant ce correctif, ou parce que l'appelant ne connaissait pas
+        // encore les deux participants) peut avoir participant1_id/
+        // participant2_id a NULL. Si l'appelant les connait maintenant, on
+        // les renseigne pour que la conversation redevienne visible dans
+        // MessagingManager::getUserConversations().
+        if (participant1Id > 0 && participant2Id > 0
+            && (findQuery.value(1).isNull() || findQuery.value(2).isNull())) {
+            QSqlQuery backfillQuery(m_db);
+            backfillQuery.prepare(QStringLiteral(
+                "UPDATE Conversations SET participant1_id = :p1, participant2_id = :p2 "
+                "WHERE id = :id AND (participant1_id IS NULL OR participant2_id IS NULL)"));
+            backfillQuery.bindValue(QStringLiteral(":p1"), participant1Id);
+            backfillQuery.bindValue(QStringLiteral(":p2"), participant2Id);
+            backfillQuery.bindValue(QStringLiteral(":id"), conversationId);
+            if (!backfillQuery.exec()) {
+                m_lastError = backfillQuery.lastError().text();
+                // Non bloquant : la conversation existe deja et reste utilisable.
+            }
+        }
+        return conversationId;
     }
 
     // Pas encore connue localement : on la cree avec un NOUVEL id local
     // (AUTOINCREMENT), jamais celui de la machine d'origine - seul l'uuid
-    // est une reference valable inter-postes.
+    // est une reference valable inter-postes. participant1_id/participant2_id
+    // sont renseignes quand l'appelant les connait (conversation
+    // individuelle) : sans eux la conversation resterait a jamais invisible
+    // dans MessagingManager::getUserConversations(), qui filtre dessus.
     QSqlQuery insertQuery(m_db);
     insertQuery.prepare(QStringLiteral(
-        "INSERT INTO Conversations (type, name, uuid) VALUES (:type, :name, :uuid)"));
+        "INSERT INTO Conversations (type, name, uuid, participant1_id, participant2_id) "
+        "VALUES (:type, :name, :uuid, :p1, :p2)"));
     insertQuery.bindValue(QStringLiteral(":type"), type.isEmpty() ? QStringLiteral("individual") : type);
     insertQuery.bindValue(QStringLiteral(":name"), name.isEmpty() ? QStringLiteral("Conversation") : name);
     insertQuery.bindValue(QStringLiteral(":uuid"), conversationUuid);
+    if (participant1Id > 0) {
+        insertQuery.bindValue(QStringLiteral(":p1"), participant1Id);
+    } else {
+        insertQuery.bindValue(QStringLiteral(":p1"), QVariant(QMetaType(QMetaType::LongLong)));
+    }
+    if (participant2Id > 0) {
+        insertQuery.bindValue(QStringLiteral(":p2"), participant2Id);
+    } else {
+        insertQuery.bindValue(QStringLiteral(":p2"), QVariant(QMetaType(QMetaType::LongLong)));
+    }
     if (!insertQuery.exec()) {
         m_lastError = insertQuery.lastError().text();
         return -1;
@@ -237,6 +274,8 @@ bool SyncLogRepository::applyMessageEntry(const models::SyncLogEntry &entry)
     const QJsonObject obj = doc.object();
     const QString senderUuid = obj.value(QStringLiteral("senderUuid")).toString();
     const QString conversationUuid = obj.value(QStringLiteral("conversationUuid")).toString();
+    const QString participant1Uuid = obj.value(QStringLiteral("participant1Uuid")).toString();
+    const QString participant2Uuid = obj.value(QStringLiteral("participant2Uuid")).toString();
     const QString content = obj.value(QStringLiteral("content")).toString();
     const QString timestamp = obj.value(QStringLiteral("timestamp")).toString(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
     const bool isRead = obj.value(QStringLiteral("isRead")).toBool(false);
@@ -251,7 +290,27 @@ bool SyncLogRepository::applyMessageEntry(const models::SyncLogEntry &entry)
         return false;
     }
 
-    const qint64 conversationId = ensureConversationByUuid(conversationUuid, QStringLiteral("individual"), QStringLiteral("Conversation"));
+    // Ids locaux des deux participants, si deja connus (cf. commentaire de
+    // ensureConversationByUuid ci-dessus) : sans eux, une conversation
+    // individuelle reconciliee ici resterait invisible dans
+    // MessagingManager::getUserConversations().
+    qint64 participant1Id = -1;
+    qint64 participant2Id = -1;
+    if (!participant1Uuid.isEmpty()) {
+        const auto p1 = users.findByUuid(participant1Uuid);
+        if (p1.has_value()) {
+            participant1Id = p1->id();
+        }
+    }
+    if (!participant2Uuid.isEmpty()) {
+        const auto p2 = users.findByUuid(participant2Uuid);
+        if (p2.has_value()) {
+            participant2Id = p2->id();
+        }
+    }
+
+    const qint64 conversationId = ensureConversationByUuid(conversationUuid, QStringLiteral("individual"), QStringLiteral("Conversation"),
+                                                            participant1Id, participant2Id);
     if (conversationId < 0) {
         return false;
     }

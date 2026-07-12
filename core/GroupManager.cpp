@@ -2,6 +2,7 @@
 
 #include "DatabaseManager.h"
 #include "Messaging/MessagingServer.h"
+#include "Messaging/MessagingService.h"
 #include "database/Repositories/UserRepository.h"
 #include "database/Repositories/SyncLogRepository.h"
 #include "models/SyncLogEntry.h"
@@ -31,6 +32,11 @@ GroupManager::~GroupManager()
 void GroupManager::setMessagingServer(network::MessagingServer *messagingServer)
 {
     m_messagingServer = messagingServer;
+}
+
+void GroupManager::setMessagingService(network::MessagingService *messagingService)
+{
+    m_messagingService = messagingService;
 }
 
 std::optional<models::Group> GroupManager::createGroup(const QString &name, qint64 ownerId, const QVector<qint64> &initialMembers)
@@ -107,7 +113,16 @@ std::optional<models::Group> GroupManager::createGroup(const QString &name, qint
     // champs (ownerUuid/conversationUuid/memberUuids) que
     // SyncLogRepository::applyGroupEntry, afin que receiveGroupCreated()
     // puisse s'appuyer sur cette meme logique de resolution par uuid.
-    if (m_messagingServer) {
+    //
+    // Envoi via les DEUX canaux, comme MessagingManager::sendMessage : le
+    // createur peut etre le SERVER actif (m_messagingServer diffuse alors
+    // directement a tous les clients connectes) OU un simple CLIENT
+    // (m_messagingServer n'ecoute jamais dans ce role, cf. Application.cpp
+    // - seul m_messagingService, la connexion sortante vers le SERVER,
+    // permet alors de faire parvenir la creation du groupe a qui que ce
+    // soit). Sans le second canal, un groupe cree depuis un poste Client
+    // n'etait jamais transmis a personne avant la prochaine reconciliation.
+    if (m_messagingServer || m_messagingService) {
         database::UserRepository users(m_dbManager->database());
         QString ownerUuid;
         if (const auto owner = users.findById(static_cast<int>(ownerId)); owner.has_value()) {
@@ -130,7 +145,12 @@ std::optional<models::Group> GroupManager::createGroup(const QString &name, qint
         payload.insert(QStringLiteral("memberUuids"), memberUuids);
         const QString jsonMessage = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
 
-        m_messagingServer->broadcastMessage(jsonMessage);
+        if (m_messagingService && m_messagingService->isConnected()) {
+            m_messagingService->sendMessage(jsonMessage);
+        }
+        if (m_messagingServer) {
+            m_messagingServer->broadcastMessage(jsonMessage);
+        }
     }
 
     emit groupCreated(group);

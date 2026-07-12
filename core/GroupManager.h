@@ -15,6 +15,7 @@ class DatabaseManager;
 
 namespace network {
 class MessagingServer;
+class MessagingService;
 }
 
 namespace core {
@@ -48,6 +49,15 @@ public:
     /// membres n'apprenaient l'existence du groupe qu'a la prochaine
     /// reconciliation SyncLog (potentiellement bien plus tard).
     void setMessagingServer(network::MessagingServer *messagingServer);
+
+    /// Configure le service de reseau (connexion sortante), utilise pour
+    /// diffuser la creation d'un groupe quand CE poste est un CLIENT
+    /// (aucun MessagingServer actif dans ce cas, cf. Application.cpp :
+    /// seuls les roles Server/TempServer en demarrent un). Sans cela, un
+    /// groupe cree depuis un poste Client n'etait jamais transmis au
+    /// SERVER actif - les autres membres n'en apprenaient l'existence
+    /// qu'a la prochaine reconciliation SyncLog.
+    void setMessagingService(network::MessagingService *messagingService);
 
     /// Cree un nouveau groupe avec un nom et des membres initiaux.
     std::optional<models::Group> createGroup(const QString &name, qint64 ownerId, const QVector<qint64> &initialMembers);
@@ -90,6 +100,7 @@ private:
     database::DatabaseManager *m_dbManager = nullptr;
     database::GroupRepository m_repository;
     network::MessagingServer *m_messagingServer = nullptr;
+    network::MessagingService *m_messagingService = nullptr;
     GroupManagerError m_lastError = GroupManagerError::None;
     QString m_lastErrorString;
 };

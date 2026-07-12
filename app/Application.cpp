@@ -512,33 +512,42 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     m_messagingManager->setMessagingService(m_messagingService);
     m_messagingManager->setMessagingServer(m_messagingServer);
     m_messagingManager->setNotificationManager(m_notificationManager);
+    // Necessaire pour que MessagingManager::receiveMessage() connaisse
+    // notre identite locale (repli quand l'uuid de "l'autre" participant
+    // envoye par l'expediteur ne correspond a aucun utilisateur local -
+    // cf. commentaire dans MessagingManager::receiveMessage()).
+    m_messagingManager->setUserManager(m_userManager);
     m_groupManager->setMessagingServer(m_messagingServer);
+    m_groupManager->setMessagingService(m_messagingService);
 
     // Connecter PermissionManager aux services réseau pour vérifier les machines autorisées
     m_messagingService->setPermissionManager(m_permissionManager);
     m_messagingServer->setPermissionManager(m_permissionManager);
 
-    // Connecter MessagingServer à MessagingManager pour traiter les messages reçus
+    // Connecter MessagingServer à MessagingManager pour traiter les messages reçus.
+    // Ce poste agit ici en tant que SERVER (connexions entrantes) : relay=true,
+    // il doit retransmettre (broadcastMessage) le payload aux AUTRES clients
+    // connectes pour que le veritable destinataire le reçoive en temps reel
+    // (topologie en etoile : sans ce relais, le message n'etait persiste que
+    // dans la base du SERVER, jamais transmis au destinataire).
     // SyncService écoute aussi MessagingServer::messageReceived pour les messages de sync
     connect(m_messagingServer, &network::MessagingServer::messageReceived,
             m_messagingManager, [this](const QString &message, const QHostAddress &senderAddress) {
                 Q_UNUSED(senderAddress)
-                // MessagingManager ne traite que les messages de type "message"
-                // SyncService traite les messages de type "sync_request", "sync_ack", "sync_batch"
-                if (m_messagingManager->receiveMessage(message)) {
-                    return;
-                }
-                // Pas un message : peut-etre la creation d'un groupe diffusee en
-                // temps reel par un autre poste (type "group_created", cf.
-                // GroupManager::createGroup) - sans ce relais, les autres membres
-                // n'apprenaient l'existence du groupe qu'a la prochaine
-                // reconciliation SyncLog.
-                if (const auto group = m_groupManager->receiveGroupCreated(message); group.has_value()) {
-                    m_notificationManager->onGroupCreated(*group);
-                    return;
-                }
-                // Ce n'est pas forcément une erreur : peut-être un message de sync
-                qDebug() << "Message ignore par MessagingManager/GroupManager (probablement message de sync) :" << message.left(100);
+                handleIncomingPayload(message, /*relay=*/true);
+            });
+
+    // Connecter MessagingService (connexion sortante) à MessagingManager :
+    // ce poste agit ici en tant que CLIENT du SERVER actif. Ce signal
+    // n'etait auparavant ecoute que par SyncService (qui ignore
+    // silencieusement les payloads de type "message"/"group_created") :
+    // un poste CLIENT ne traitait donc JAMAIS les messages qui lui
+    // etaient pourtant bien transmis par le SERVER - ils disparaissaient
+    // purement et simplement. relay=false : un CLIENT n'a pas ses propres
+    // clients connectes a retransmettre.
+    connect(m_messagingService, &network::MessagingService::messageReceived,
+            m_messagingManager, [this](const QString &message) {
+                handleIncomingPayload(message, /*relay=*/false);
             });
 
     // Connecter les connexions refusées à l'audit (issue #70)
@@ -788,6 +797,43 @@ QString Application::conversationUuidForId(qint64 conversationId) const
     return query.value(0).toString();
 }
 
+void Application::handleIncomingPayload(const QString &message, bool relay)
+{
+    // MessagingManager ne traite que les messages de type "message".
+    // SyncService traite de son cote les messages de type "sync_request",
+    // "sync_ack", "sync_batch" (connecte separement sur les memes signaux).
+    if (m_messagingManager->receiveMessage(message)) {
+        if (relay && m_messagingServer) {
+            // Rediffuse a tous les clients connectes a NOTRE serveur (y
+            // compris, potentiellement, vers l'expediteur d'origine : sans
+            // gravite, MessagingManager::receiveMessage() deduplique par
+            // uuid, cf. m_repository.findByUuid ci-dessus). C'est ce relais
+            // qui manquait : jusqu'ici le SERVER se contentait de persister
+            // le message dans SA PROPRE base sans jamais le retransmettre,
+            // si bien qu'un destinataire connecte en CLIENT au meme SERVER
+            // ne le recevait jamais.
+            m_messagingServer->broadcastMessage(message);
+        }
+        return;
+    }
+
+    // Pas un message : peut-etre la creation d'un groupe diffusee en
+    // temps reel par un autre poste (type "group_created", cf.
+    // GroupManager::createGroup) - sans ce relais, les autres membres
+    // n'apprenaient l'existence du groupe qu'a la prochaine
+    // reconciliation SyncLog.
+    if (const auto group = m_groupManager->receiveGroupCreated(message); group.has_value()) {
+        m_notificationManager->onGroupCreated(*group);
+        if (relay && m_messagingServer) {
+            m_messagingServer->broadcastMessage(message);
+        }
+        return;
+    }
+
+    // Ce n'est pas forcément une erreur : peut-être un message de sync
+    qDebug() << "Message ignore par MessagingManager/GroupManager (probablement message de sync) :" << message.left(100);
+}
+
 void Application::appendMessageSyncLog(const models::Message &message)
 {
     // record_uuid = uuid propre du message (independant de son id local),
@@ -809,9 +855,29 @@ void Application::appendMessageSyncLog(const models::Message &message)
         return;
     }
 
+    // uuids stables des deux participants de la conversation : necessaires
+    // a SyncLogRepository::applyMessageEntry pour renseigner
+    // participant1_id/participant2_id lors de la reconciliation (cf.
+    // ensureConversationByUuid), sans quoi la conversation reconciliee
+    // reste invisible dans MessagingManager::getUserConversations().
+    QString participant1Uuid;
+    QString participant2Uuid;
+    if (m_databaseManager) {
+        QSqlQuery convQuery(m_databaseManager->database());
+        convQuery.prepare(QStringLiteral(
+            "SELECT participant1_id, participant2_id FROM Conversations WHERE id = :id"));
+        convQuery.bindValue(QStringLiteral(":id"), message.conversationId());
+        if (convQuery.exec() && convQuery.next()) {
+            participant1Uuid = userUuidForId(convQuery.value(0).toLongLong());
+            participant2Uuid = userUuidForId(convQuery.value(1).toLongLong());
+        }
+    }
+
     QJsonObject payload;
     payload.insert(QStringLiteral("senderUuid"), senderUuid);
     payload.insert(QStringLiteral("conversationUuid"), conversationUuid);
+    payload.insert(QStringLiteral("participant1Uuid"), participant1Uuid);
+    payload.insert(QStringLiteral("participant2Uuid"), participant2Uuid);
     payload.insert(QStringLiteral("content"), message.content());
     payload.insert(QStringLiteral("isRead"), message.isRead());
     payload.insert(QStringLiteral("timestamp"),
