@@ -4,7 +4,11 @@ import Themes
 import "Login"
 import "Home"
 import "Users"
-import "SharedFolder"
+import "Chat"
+import "FileTransfer"
+import "Call"
+import "Admin"
+import "Components"
 
 /*
  * Main - fenetre racine de CollabLAN.
@@ -22,6 +26,9 @@ ApplicationWindow {
     visible: true
     title: qsTr("CollabLAN")
     color: Theme.background
+
+    // Référence à la propriété globale messagingContext pour l'utiliser dans les Components
+    property var globalMessagingContext: messagingContext
 
     StackView {
         id: stackView
@@ -41,6 +48,36 @@ ApplicationWindow {
         }
         popExit: Transition {
             NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 150 }
+        }
+    }
+
+    // Indicateur discret de bascule automatique de serveur (issue UI section
+    // 9 etape 5) : place comme ToastHost, au-dessus du StackView, visible
+    // quel que soit l'ecran actif.
+    ServerStatusIndicator {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: Theme.spacingMedium
+    }
+
+    // Superposition globale des toasts (issue #58) : place en dernier
+    // pour rester au-dessus du StackView quelle que soit la vue active.
+    ToastHost {
+        anchors.fill: parent
+    }
+
+    // Navigation automatique vers CallView pour un appel entrant (issue #64bis) :
+    // callContext est global et ecoute meme quand l'utilisateur est sur un
+    // autre ecran (Home/Chat/...). Sans ce hook, "ringing" ne se voit que si
+    // CallView est deja ouvert, d'ou les tentatives ignorees cote appelant.
+    Connections {
+        target: callContext
+        function onCallStateChanged() {
+            if (callContext.callState === "ringing"
+                    && stackView.currentItem
+                    && stackView.currentItem.objectName !== "callView") {
+                stackView.push(callViewComponent)
+            }
         }
     }
 
@@ -64,8 +101,48 @@ ApplicationWindow {
             onUsersRequested: {
                 stackView.push(usersViewComponent)
             }
-            onSharedFoldersRequested: {
-                stackView.push(sharedFolderViewComponent)
+            onChatRequested: {
+                stackView.push(conversationsViewComponent)
+            }
+            onFileTransferRequested: {
+                stackView.push(fileTransferViewComponent)
+            }
+            onCallRequested: {
+                stackView.push(callViewComponent)
+            }
+            onAdminRequested: {
+                stackView.push(adminViewComponent)
+            }
+        }
+    }
+
+    Component {
+        id: callViewComponent
+
+        CallView {
+            objectName: "callView"
+            onBackRequested: {
+                stackView.pop()
+            }
+        }
+    }
+
+    Component {
+        id: adminViewComponent
+
+        AdminView {
+            onBackRequested: {
+                stackView.pop()
+            }
+        }
+    }
+
+    Component {
+        id: fileTransferViewComponent
+
+        FileTransferView {
+            onBackRequested: {
+                stackView.pop()
             }
         }
     }
@@ -81,22 +158,65 @@ ApplicationWindow {
     }
 
     Component {
-        id: sharedFolderViewComponent
+        id: conversationsViewComponent
 
-        SharedFolderView {
+        ConversationsView {
+            messagingContext: globalMessagingContext
             onBackRequested: {
                 stackView.pop()
             }
-            onFolderOpened: function(folderId, folderName) {
-                stackView.push(sharedFolderDetailComponent, { folderId: folderId, folderName: folderName })
+            onConversationSelected: function(conversationId) {
+                stackView.push(chatViewComponent, { conversationId: conversationId })
+            }
+            onCreateGroupRequested: {
+                stackView.push(createGroupViewComponent)
+            }
+            onNewConversationRequested: {
+                stackView.push(newConversationViewComponent)
             }
         }
     }
 
     Component {
-        id: sharedFolderDetailComponent
+        id: newConversationViewComponent
 
-        SharedFolderDetailView {
+        NewConversationView {
+            messagingContext: globalMessagingContext
+            onBackRequested: {
+                stackView.pop()
+            }
+            onConversationStarted: function(conversationId) {
+                stackView.pop()
+                stackView.push(chatViewComponent, { conversationId: conversationId })
+            }
+        }
+    }
+
+    Component {
+        id: createGroupViewComponent
+
+        CreateGroupView {
+            messagingContext: globalMessagingContext
+            onBackRequested: {
+                stackView.pop()
+            }
+            onGroupCreated: function(groupId) {
+                stackView.pop()
+                // MessagingContext.createGroup() a deja appele setConversation()
+                // en interne : le messageModel pointe donc deja sur la bonne
+                // conversation de groupe.
+                if (globalMessagingContext && globalMessagingContext.messageModel.conversationId > 0) {
+                    stackView.push(chatViewComponent, { conversationId: globalMessagingContext.messageModel.conversationId })
+                }
+            }
+        }
+    }
+
+    Component {
+        id: chatViewComponent
+
+        ChatView {
+            messagingContext: globalMessagingContext
             onBackRequested: {
                 stackView.pop()
             }

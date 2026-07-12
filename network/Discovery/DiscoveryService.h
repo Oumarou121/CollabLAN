@@ -22,6 +22,8 @@ struct DiscoveredPeer {
     QString status;         ///< Statut declare ("online", "away", "busy"...)
     QHostAddress address;   ///< Adresse IP source de la derniere annonce recue
     quint16 port = 0;       ///< Port UDP utilise par le poste distant
+    quint16 transferPort = 0; ///< Port TCP utilise par TransferService pour les transferts de fichiers
+    quint16 signalingPort = 0; ///< Port TCP utilise par VoiceService pour la signalisation d'appels
     qint64 lastSeenMs = 0;  ///< QDateTime::currentMSecsSinceEpoch() de la derniere annonce recue
 };
 
@@ -84,6 +86,17 @@ public:
     /// Liste courante des postes detectes (hors soi-meme).
     QList<DiscoveredPeer> peers() const;
 
+    /// Définit le PermissionManager pour vérifier les machines autorisées (issue #68).
+    void setPermissionManager(QObject *manager);
+
+    /// Définit le port TCP utilisé par TransferService pour les transferts de fichiers.
+    void setTransferPort(quint16 port);
+    quint16 transferPort() const;
+
+    /// Définit le port TCP utilisé par VoiceService pour la signalisation d'appels.
+    void setSignalingPort(quint16 port);
+    quint16 signalingPort() const;
+
 signals:
     void started();
     void stopped();
@@ -117,12 +130,15 @@ private:
     QString m_localStatus = QStringLiteral("online");
 
     quint16 m_port = 45454;
+    quint16 m_transferPort = 12346; ///< Port TCP par défaut pour TransferService
+    quint16 m_signalingPort = 12347; ///< Port TCP par défaut pour VoiceService
     int m_announceIntervalMs = 2000;
     int m_peerTimeoutMs = 8000;
 
     bool m_running = false;
 
     QHash<QString, DiscoveredPeer> m_peers; // cle = id du poste distant
+    QObject *m_permissionManager = nullptr;
 };
 
 } // namespace network

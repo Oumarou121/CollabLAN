@@ -4,10 +4,12 @@
         <file>Login/LoginView.qml</file>
         <file>Home/HomeView.qml</file>
         <file>Chat/ChatView.qml</file>
+        <file>Chat/ConversationsView.qml</file>
+        <file>Chat/CreateGroupView.qml</file>
+        <file>Chat/NewConversationView.qml</file>
         <file>Users/UsersView.qml</file>
         <file>FileTransfer/FileTransferView.qml</file>
-        <file>SharedFolder/SharedFolderView.qml</file>
-        <file>SharedFolder/SharedFolderDetailView.qml</file>
+        <file>FileTransfer/FileIcon.qml</file>
         <file>Call/CallView.qml</file>
         <file>Settings/SettingsView.qml</file>
         <file>Admin/AdminView.qml</file>
@@ -16,5 +18,14 @@
         <file>Themes/Theme.qml</file>
         <file>Themes/qmldir</file>
         <file>Components/ThemeToggleButton.qml</file>
+        <file>Components/AppButton.qml</file>
+        <file>Components/Avatar.qml</file>
+        <file>Components/SidebarNavItem.qml</file>
+        <file>Components/TabPill.qml</file>
+        <file>Components/DashboardCard.qml</file>
+        <file>Components/FolderTile.qml</file>
+        <file>Components/Toast.qml</file>
+        <file>Components/ToastHost.qml</file>
+        <file>Components/ServerStatusIndicator.qml</file>
     </qresource>
 </RCC>

@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/sounds">
+        <file alias="message.wav">Sounds/message.wav</file>
+        <file alias="transfer.wav">Sounds/transfer.wav</file>
+        <file alias="call.wav">Sounds/call.wav</file>
+    </qresource>
+</RCC>

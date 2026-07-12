@@ -1,5 +1,7 @@
 #include "UserManager.h"
 
+#include <QDateTime>
+
 #include "DatabaseManager.h"
 #include "PasswordHasher.h"
 
@@ -42,6 +44,8 @@ bool UserManager::login(const QString &username, const QString &password)
 
     m_currentUsername = user->name();
     m_currentUserIsAdmin = user->isAdmin();
+    m_currentUserId = user->id();
+    m_currentUserUuid = user->uuid();
     m_authenticated = true;
     setBusy(false);
     emit authenticationChanged();
@@ -54,6 +58,7 @@ void UserManager::logout()
     if (m_currentUserId.has_value()) {
         m_userRepository.updateStatus(*m_currentUserId, models::UserStatus::Offline);
         m_currentUserId.reset();
+        m_currentUserUuid.clear();
     }
 
     if (!m_authenticated) {
@@ -78,6 +83,16 @@ QString UserManager::currentUsername() const
 bool UserManager::isCurrentUserAdmin() const
 {
     return m_currentUserIsAdmin;
+}
+
+std::optional<int> UserManager::currentUserId() const
+{
+    return m_currentUserId;
+}
+
+QString UserManager::currentUserUuid() const
+{
+    return m_currentUserUuid;
 }
 
 bool UserManager::isBusy() const
@@ -120,7 +135,7 @@ std::optional<models::User> UserManager::createUser(const QString &name,
     models::User user;
     user.setName(trimmedName);
     user.setStatus(models::UserStatus::Offline);
-    user.setIsAdmin(isAdmin);
+    user.setRole(isAdmin ? models::UserRole::Admin : models::UserRole::User);
     user.setPasswordHash(hash);
     user.setPasswordSalt(salt);
 
@@ -129,8 +144,16 @@ std::optional<models::User> UserManager::createUser(const QString &name,
         m_lastError = UserManagerError::DatabaseError;
         return std::nullopt;
     }
-    user.setId(id);
     m_lastError = UserManagerError::None;
+
+    // Recharger depuis la base : create() genere le uuid/updated_at
+    // (migration 010) que le modele passe en parametre ne connait pas encore.
+    const auto persisted = m_userRepository.findById(id);
+    if (persisted.has_value()) {
+        emit userCreated(*persisted);
+        return persisted;
+    }
+    user.setId(id);
     return user;
 }
 
@@ -159,6 +182,12 @@ bool UserManager::setStatus(int userId, models::UserStatus status)
 {
     const bool ok = m_userRepository.updateStatus(userId, status);
     m_lastError = ok ? UserManagerError::None : UserManagerError::DatabaseError;
+    if (ok) {
+        const auto updated = m_userRepository.findById(userId);
+        if (updated.has_value()) {
+            emit userUpdated(*updated);
+        }
+    }
     return ok;
 }
 
@@ -171,9 +200,52 @@ std::optional<models::UserStatus> UserManager::status(int userId) const
     return user->status();
 }
 
+bool UserManager::changeRole(int userId, bool isAdmin)
+{
+    auto existing = m_userRepository.findById(userId);
+    if (!existing.has_value()) {
+        m_lastError = UserManagerError::UserNotFound;
+        return false;
+    }
+
+    existing->setRole(isAdmin ? models::UserRole::Admin : models::UserRole::User);
+    existing->setUpdatedAt(QDateTime::currentDateTimeUtc());
+
+    const bool ok = m_userRepository.update(*existing);
+    m_lastError = ok ? UserManagerError::None : UserManagerError::DatabaseError;
+    if (ok) {
+        emit userUpdated(*existing);
+    }
+    return ok;
+}
+
+bool UserManager::deleteUser(int userId)
+{
+    const auto existing = m_userRepository.findById(userId);
+    if (!existing.has_value()) {
+        m_lastError = UserManagerError::UserNotFound;
+        return false;
+    }
+
+    const bool ok = m_userRepository.remove(userId);
+    m_lastError = ok ? UserManagerError::None : UserManagerError::DatabaseError;
+    if (ok) {
+        emit userDeleted(existing->uuid(), userId);
+    }
+    return ok;
+}
+
 std::vector<models::User> UserManager::allUsers() const
 {
     return m_userRepository.findAll();
+}
+
+void UserManager::emitUsersChanged()
+{
+    // Émettre le signal dans le thread principal pour éviter les crashs Qt
+    QMetaObject::invokeMethod(this, [this]() {
+        emit usersChanged();
+    }, Qt::QueuedConnection);
 }
 
 QString UserManager::lastDatabaseErrorText() const

@@ -1,3 +1,0 @@
-- [Ninja + __FILE__ relative paths](cmake-ninja-file-macro.md) — code relying on `__FILE__` for runtime path lookups breaks under CMake+Ninja on this platform since it expands to a relative path, not absolute.
-- [Null QString bound to NOT NULL SQLite column](qt-null-qstring-sqlite-bind.md) — QSqlQuery::bindValue with a null (not empty) QString violates NOT NULL even with a column DEFAULT; normalize before binding.
-- [TrustedPeerStore has no admin UI by default](trustedpeerstore-no-default-ui.md) — TLS peer whitelist requires an explicit trust step; wiring a channel through it without an approval UI silently blocks all connections.

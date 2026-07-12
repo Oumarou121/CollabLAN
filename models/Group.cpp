@@ -2,12 +2,14 @@
 
 namespace models {
 
-Group::Group() {
-    // TODO
+Group::Group()
+{
 }
 
-Group::~Group() {
-    // TODO
+Group::Group(qint64 id, const QString &name)
+    : m_id(id)
+    , m_name(name)
+{
 }
 
 } // namespace models

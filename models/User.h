@@ -3,6 +3,7 @@
 
 #include <QString>
 #include <QDateTime>
+#include <optional>
 
 namespace models {
 
@@ -17,6 +18,17 @@ enum class UserStatus {
 
 QString userStatusToString(UserStatus status);
 UserStatus userStatusFromString(const QString &value);
+
+/**
+ * @brief Rôles utilisateurs dans l'application (issue #67).
+ */
+enum class UserRole {
+    User,   ///< Utilisateur standard (accès limité)
+    Admin   ///< Administrateur (accès complet, y compris administration)
+};
+
+QString userRoleToString(UserRole role);
+std::optional<UserRole> stringToUserRole(const QString &str);
 
 /**
  * @brief Represente un utilisateur/poste sur le reseau.
@@ -34,7 +46,7 @@ public:
          QString name,
          QString ipAddress,
          UserStatus status,
-         bool isAdmin,
+         UserRole role,
          QString passwordHash,
          QString passwordSalt,
          QDateTime createdAt = QDateTime::currentDateTimeUtc());
@@ -52,8 +64,11 @@ public:
     UserStatus status() const;
     void setStatus(UserStatus status);
 
-    bool isAdmin() const;
-    void setIsAdmin(bool isAdmin);
+    UserRole role() const;
+    void setRole(UserRole role);
+
+    bool isAdmin() const; ///< Convenience method for backward compatibility
+    void setIsAdmin(bool isAdmin); ///< Convenience method for backward compatibility
 
     QString passwordHash() const;
     void setPasswordHash(const QString &hash);
@@ -64,6 +79,12 @@ public:
     QDateTime createdAt() const;
     void setCreatedAt(const QDateTime &createdAt);
 
+    QString uuid() const;
+    void setUuid(const QString &uuid);
+
+    QDateTime updatedAt() const;
+    void setUpdatedAt(const QDateTime &updatedAt);
+
     bool isValid() const;
 
 private:
@@ -71,10 +92,12 @@ private:
     QString m_name;
     QString m_ipAddress = QStringLiteral("");
     UserStatus m_status = UserStatus::Offline;
-    bool m_isAdmin = false;
+    UserRole m_role = UserRole::User;
     QString m_passwordHash = QStringLiteral("");
     QString m_passwordSalt = QStringLiteral("");
     QDateTime m_createdAt;
+    QString m_uuid;
+    QDateTime m_updatedAt;
 };
 
 } // namespace models

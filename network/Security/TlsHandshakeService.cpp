@@ -215,8 +215,7 @@ void TlsHandshakeService::onEncrypted(QSslSocket *socket, bool incoming)
         qCWarning(lcTls) << "TlsHandshakeService: machine NON autorisee rejetee -" << peerAddress
                           << "fingerprint=" << fingerprint;
         emit handshakeRejected(peerAddress,
-                                QStringLiteral("certificat non autorise (fingerprint %1)").arg(fingerprint),
-                                fingerprint);
+                                QStringLiteral("certificat non autorise (fingerprint %1)").arg(fingerprint));
         // Abort differe (connexion en file) : eviter de detruire/reinitialiser
         // le socket de maniere synchrone alors qu'on est encore dans son
         // propre gestionnaire du signal encrypted() (reentrance risquee,

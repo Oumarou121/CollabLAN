@@ -44,6 +44,10 @@ QVariant PeersModel::data(const QModelIndex &index, int role) const
         return peer.address.toString();
     case PortRole:
         return peer.port;
+    case TransferPortRole:
+        return peer.transferPort;
+    case SignalingPortRole:
+        return peer.signalingPort;
     case LastSeenMsRole:
         return peer.lastSeenMs;
     default:
@@ -59,6 +63,8 @@ QHash<int, QByteArray> PeersModel::roleNames() const
         { StatusRole, "status" },
         { AddressRole, "address" },
         { PortRole, "port" },
+        { TransferPortRole, "transferPort" },
+        { SignalingPortRole, "signalingPort" },
         { LastSeenMsRole, "lastSeenMs" },
     };
 }

@@ -37,14 +37,6 @@ CREATE TABLE IF NOT EXISTS Transfers (
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS AuditLogs (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_type    TEXT NOT NULL,
-    description   TEXT,
-    user_id       INTEGER REFERENCES Users(id),
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
 CREATE TABLE IF NOT EXISTS Settings (
     key           TEXT PRIMARY KEY,
     value         TEXT

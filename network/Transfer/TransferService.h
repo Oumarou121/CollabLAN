@@ -2,61 +2,221 @@
 #define NETWORK_TRANSFERSERVICE_H
 
 #include <QObject>
+#include <QHostAddress>
 #include <QString>
+#include <QByteArray>
+#include <QHash>
 #include <functional>
+
+class QTcpServer;
+class QTcpSocket;
+class QFile;
 
 namespace network {
 
 /**
- * @brief Transfert de fichiers par blocs (chunks), avec reprise
- * (Phase 8 de "Shared Folder").
+ * @brief Transfert de fichiers via TCP, par blocs, avec accuses de reception
+ * et reprise apres interruption.
  *
- * Utilitaire pur d'entrees/sorties : ne connait rien du reseau. Cote
- * emission, on lit le fichier local morceau par morceau et on delegue
- * l'envoi effectif a un callback (fourni par SyncNetworkService, qui
- * encode chaque morceau en message FILE_CHUNK). Cote reception, on
- * ecrit chaque morceau recu a l'offset indique, ce qui permet de
- * reprendre un transfert interrompu sans tout retelecharger : il suffit
- * de connaitre la taille deja ecrite (fileSize()) et de reprendre a cet
- * offset.
+ * Protocole applicatif (au-dessus de TCP, un socket par transfert) :
+ *  1. L'expediteur ouvre une connexion TCP vers le port d'ecoute du
+ *     destinataire et envoie un en-tete : nom du fichier (UTF-8) et
+ *     taille totale en octets (voir encodeHeader()/decodeHeader()).
+ *  2. Le destinataire ecrit chaque fichier recu dans un fichier temporaire
+ *     "<nom>.part". Si un "<nom>.part" de meme taille finale existe deja
+ *     (transfert precedent interrompu), il repond avec le nombre d'octets
+ *     deja recus (resumeOffset) au lieu de recommencer a zero ; sinon
+ *     resumeOffset vaut 0. L'expediteur se positionne (seek) a cet
+ *     octet dans le fichier local avant de commencer l'envoi (issue #54).
+ *  3. Le fichier est ensuite envoye sequentiellement, a partir de
+ *     resumeOffset, par blocs de kBlockSize octets maximum, chaque bloc
+ *     etant prefixe par sa taille. Apres ecriture d'un bloc sur disque,
+ *     le destinataire renvoie un octet d'accuse de reception (kAckByte)
+ *     avant que l'expediteur n'envoie le bloc suivant (aller-retour
+ *     "stop-and-wait"), ce qui garantit qu'aucun bloc n'est perdu et que
+ *     le fichier reconstruit est identique a l'original (issue #53).
+ *  4. Si la connexion est perdue en cours de route, le fichier ".part"
+ *     du destinataire n'est PAS supprime : rappeler sendFile() avec le
+ *     meme fichier local reprend automatiquement a partir du dernier
+ *     bloc confirme (issue #54). Une fois le transfert termine avec
+ *     succes, "<nom>.part" est renomme vers son nom final.
+ *
+ * Utilise directement QTcpServer/QTcpSocket (pas de WebSocket) : le
+ * transfert de fichiers n'a pas besoin du framing WebSocket utilise par
+ * la messagerie (network::MessagingService/MessagingServer).
  */
-class TransferService : public QObject {
+class TransferService : public QObject
+{
     Q_OBJECT
 
 public:
-    static constexpr qint64 kDefaultChunkSize = 262144; // 256 KiB
-
-    // Callback appele pour chaque morceau lu : renvoie false pour
-    // interrompre l'envoi (ex. connexion perdue).
-    using ChunkSender = std::function<bool(const QByteArray &data, qint64 offset, bool isLast)>;
-
     explicit TransferService(QObject *parent = nullptr);
     ~TransferService() override;
 
-    // Lit filePath par blocs de chunkSize octets a partir de startOffset
-    // (reprise) et appelle chunkSender() pour chacun. Retourne false si
-    // le fichier est illisible ou si chunkSender() a interrompu l'envoi.
-    bool sendFileInChunks(const QString &filePath,
-                           const ChunkSender &chunkSender,
-                           qint64 startOffset = 0,
-                           qint64 chunkSize = kDefaultChunkSize);
+    /// Demarre l'ecoute des transferts entrants sur le port specifie.
+    bool start(quint16 port = kDefaultPort);
 
-    // Ecrit data a l'offset donne dans destFilePath (cree le fichier et
-    // ses dossiers parents si necessaire). Utilise cote reception, un
-    // appel par message FILE_CHUNK recu.
-    bool receiveChunk(const QString &destFilePath, qint64 offset, const QByteArray &data);
+    /// Arrete l'ecoute et annule les transferts en cours.
+    void stop();
 
-    // Taille actuelle du fichier destination, utile pour reprendre un
-    // transfert interrompu (offset = fileSize()).
-    static qint64 fileSize(const QString &filePath);
+    bool isRunning() const;
 
-    QString lastError() const;
+    /// Port d'ecoute effectif (0 si non demarre).
+    quint16 port() const;
+
+    /// Taille maximale d'un bloc, en octets (voir kBlockSize).
+    static qint64 blockSize();
+
+    /// Port TCP par defaut utilise par start() lorsqu'aucun port n'est
+    /// precise. Utile pour les couches superieures (UI...) qui ont besoin
+    /// de deviner le port d'un pair distant sans le connaitre explicitement.
+    static quint16 defaultPort();
+
+    /**
+     * @brief Envoie le fichier local filePath vers host:port, pour le
+     * compte de l'utilisateur senderUuid a destination de recipientUuid.
+     *
+     * senderUuid/recipientUuid sont transmis dans l'en-tete du protocole et
+     * restitues par transferStarted() cote destinataire : ils permettent
+     * a core::TransferManager d'enregistrer l'historique du transfert en
+     * base (issue #55) sans que TransferService n'ait besoin de connaitre
+     * la couche base de donnees.
+     *
+     * Asynchrone : le resultat est communique via les signaux
+     * transferStarted/transferProgress/transferCompleted/transferFailed.
+     * Reprise automatique (issue #54) : si un transfert precedent du
+     * meme fichier (meme nom, meme taille) vers ce destinataire a ete
+     * interrompu avant la fin, l'envoi reprend a partir du dernier bloc
+     * confirme par le destinataire au lieu de repartir de zero.
+     * @return false immediatement si le fichier ne peut pas etre ouvert
+     * ou si la connexion ne peut pas etre initiee ; true sinon (le
+     * transfert est en cours).
+     */
+    bool sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
+                  const QString &senderUuid, const QString &recipientUuid);
 
 signals:
-    void progressChanged(const QString &filePath, qint64 bytesTransferred, qint64 totalBytes);
+    /// Emis quand un transfert (entrant ou sortant) demarre. resumeOffset
+    /// est > 0 lorsque le transfert reprend un transfert interrompu
+    /// precedemment (0 pour un transfert qui commence de zero). senderUuid
+    /// et recipientUuid sont ceux fournis a sendFile() par l'expediteur.
+    /// peerAddress est l'adresse IP de l'autre poste de l'echange (celle
+    /// fournie a sendFile() pour un envoi, celle du socket entrant pour
+    /// une reception) : permet a l'historique de regrouper les transferts
+    /// par correspondant independamment de tout compte utilisateur local.
+    /// peerMachineId est l'UUID DiscoveryService::localId() de l'expediteur
+    /// pour une reception (vide pour un envoi, voir encodeHeader()) :
+    /// resolution de peer_name par identifiant plutot que par adresse IP,
+    /// necessaire sur une machine multi-interfaces ou l'annonce UDP de
+    /// decouverte et la connexion TCP du transfert peuvent emprunter des
+    /// interfaces (donc des adresses) differentes.
+    void transferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
+                          bool incoming, qint64 resumeOffset, const QString &senderUuid,
+                          const QString &recipientUuid, const QHostAddress &peerAddress,
+                          const QString &peerMachineId);
+
+    /// Emis a intervalles reguliers pendant le transfert.
+    void transferProgress(const QString &transferKey, qint64 bytesTransferred, qint64 totalBytes);
+
+    /// Emis quand le transfert est termine avec succes.
+    void transferCompleted(const QString &transferKey, const QString &filePath);
+
+    /// Emis en cas d'echec (connexion perdue, erreur disque...).
+    void transferFailed(const QString &transferKey, const QString &errorString);
+
+private slots:
+    // Cote serveur (reception).
+    void onNewConnection();
+    void onServerSocketReadyRead();
+    void onServerSocketDisconnected();
+
+    // Cote client (envoi).
+    void onClientSocketConnected();
+    void onClientSocketReadyRead();
+    void onClientSocketBytesWritten(qint64 bytes);
+    void onClientSocketErrorOccurred();
 
 private:
-    QString m_lastError;
+    static constexpr quint32 kBlockSize = 64 * 1024;      ///< Taille max d'un bloc (64 Ko).
+    static constexpr quint16 kDefaultPort = 12346;        ///< Port TCP par defaut (voir defaultPort()).
+    static constexpr char kAckByte = 0x01;                ///< Octet d'accuse de reception.
+    static const QByteArray kMagic;                       ///< Signature d'en-tete du protocole.
+
+    /// Etat de reception associe a un socket cote serveur.
+    struct ReceiveState {
+        QString transferKey;
+        QByteArray buffer;          ///< Octets recus non encore consommes.
+        bool headerParsed = false;
+        bool headerAcked = false;   ///< true une fois la reponse resumeOffset envoyee.
+        QString fileName;
+        qint64 fileSize = 0;
+        qint64 bytesReceived = 0;
+        QString senderUuid;
+        QString recipientUuid;
+        QString senderMachineId;   ///< UUID DiscoveryService::localId() de l'expediteur (voir encodeHeader()).
+        QFile *file = nullptr;
+        QString destinationPath;   ///< Chemin final (une fois le transfert termine).
+        QString partialPath;       ///< Fichier temporaire "<nom>.part" pendant le transfert.
+        qint64 pendingBlockSize = -1; ///< Taille du bloc en cours d'attente (-1 = attend l'entete de bloc).
+    };
+
+    /// Etat d'envoi associe a un socket cote client.
+    struct SendState {
+        QString transferKey;
+        QFile *file = nullptr;
+        QString filePath;
+        qint64 fileSize = 0;
+        qint64 bytesSent = 0;
+        QString senderUuid;
+        QString recipientUuid;
+        bool resumeOffsetReceived = false; ///< true une fois la reponse du destinataire recue.
+        bool waitingForAck = false;
+        QByteArray buffer;          ///< Octets recus non encore consommes (reponse d'en-tete puis accuses).
+        qint64 pendingFrameSize = -1; ///< Taille de la trame de reponse d'en-tete en attente.
+    };
+
+    void sendNextBlock(QTcpSocket *socket);
+    void finishReceive(QTcpSocket *socket, bool success, const QString &errorString = QString());
+    void finishSend(QTcpSocket *socket, bool success, const QString &errorString = QString());
+    static QString makeTransferKey(QTcpSocket *socket);
+
+    QTcpServer *m_server = nullptr;
+    QHash<QTcpSocket*, ReceiveState> m_receiveStates;
+    QHash<QTcpSocket*, SendState> m_sendStates;
+    QString m_receiveDirOverride;
+    QString m_localMachineId;   ///< UUID DiscoveryService::localId() local, transmis dans l'en-tete (voir encodeHeader()).
+    std::function<QString(const QHostAddress &, const QString &)> m_peerFolderNameResolver;
+
+public:
+    /// Permet de surcharger le repertoire de reception (tests). Vide =
+    /// repertoire "CollabLAN Transfers" dans les documents de l'utilisateur.
+    void setReceiveDirectory(const QString &dir);
+
+    /// Identifiant machine (DiscoveryService::localId()) embarque dans
+    /// l'en-tete de chaque envoi, pour permettre au destinataire de
+    /// resoudre peer_name par UUID plutot que par adresse IP (voir
+    /// transferStarted()). A appeler avant tout sendFile().
+    void setLocalMachineId(const QString &machineId);
+
+    /// Fonction de resolution du nom de dossier utilise pour regrouper,
+    /// cote reception, tous les fichiers recus d'un meme correspondant
+    /// dans un seul sous-dossier de receiveDirectory() (ex.
+    /// "CollabLAN Transfers/laptop-marie/", au lieu d'un unique
+    /// repertoire plat) - reçoit l'adresse IP et l'UUID machine
+    /// (senderMachineId, voir encodeHeader()) du pair, doit renvoyer un
+    /// nom de dossier deja nettoye des caracteres invalides sous Windows
+    /// (voir Application::setupTransferPeerFolders() pour l'implementation
+    /// par defaut, basee sur DiscoveryService). Si non definie ou si
+    /// l'appel renvoie une chaine vide, repli sur l'UUID machine brut
+    /// (senderMachineId, voir encodeHeader()) ; si celui-ci est egalement
+    /// vide, aucun sous-dossier n'est cree (repertoire plat d'origine).
+    void setPeerFolderNameResolver(std::function<QString(const QHostAddress &, const QString &)> resolver);
+
+    /// Repertoire ou sont ecrits les fichiers recus (apres application de
+    /// setReceiveDirectory() si utilise). Expose publiquement pour que
+    /// l'UI (core::TransferContext) puisse proposer d'ouvrir ce dossier
+    /// directement, independamment de tout transfert particulier.
+    QString receiveDirectory() const;
 };
 
 } // namespace network

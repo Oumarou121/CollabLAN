@@ -29,6 +29,8 @@ public:
         StatusRole,
         AddressRole,
         PortRole,
+        TransferPortRole,
+        SignalingPortRole,
         LastSeenMsRole,
     };
     Q_ENUM(Roles)

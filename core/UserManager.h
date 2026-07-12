@@ -63,6 +63,18 @@ public:
     bool isCurrentUserAdmin() const;
     bool isBusy() const;
 
+    /// Id (table Users) de l'utilisateur actuellement authentifie, ou
+    /// nullopt si personne n'est connecte. Utilise par ex. par
+    /// core::TransferManager pour renseigner l'expediteur d'un transfert.
+    std::optional<int> currentUserId() const;
+
+    /// UUID (Users.uuid, migration #010) de l'utilisateur actuellement
+    /// authentifie, ou chaine vide si personne n'est connecte. Utilise
+    /// par ex. par core::TransferContext pour renseigner senderUuid d'un
+    /// transfert (voir migration #017 : sender_id/recipient_id entiers
+    /// remplaces par sender_uuid/recipient_uuid).
+    QString currentUserUuid() const;
+
     // --- API C++ (administration) ---------------------------------------
 
     /**
@@ -87,7 +99,25 @@ public:
     bool setStatus(int userId, models::UserStatus status);
     std::optional<models::UserStatus> status(int userId) const;
 
+    /**
+     * @brief Change le role (User/Admin) d'un utilisateur existant.
+     *        Met a jour updated_at pour que le replay LWW cote reconciliation
+     *        (SyncLogRepository::applyUserEntry) puisse dater ce changement.
+     */
+    bool changeRole(int userId, bool isAdmin);
+
+    /**
+     * @brief Supprime definitivement un utilisateur (administration).
+     */
+    bool deleteUser(int userId);
+
     std::vector<models::User> allUsers() const;
+
+    /**
+     * @brief Emet le signal usersChanged() pour notifier que la liste
+     *        d'utilisateurs a change (apres synchronisation par exemple).
+     */
+    void emitUsersChanged();
 
     /**
      * @brief Dernier message d'erreur SQL brut (debogage).
@@ -101,6 +131,22 @@ signals:
     void authenticationChanged();
     void busyChanged();
 
+    /**
+     * @brief Emis apres une ecriture reelle en base sur Users (creation,
+     *        changement de role/statut). Utilise par Application pour
+     *        journaliser dans SyncLog (cf. Application::appendUserSyncLog)
+     *        quand ce poste fait autorite (SERVER ou TEMP_SERVER).
+     */
+    void userCreated(const models::User &user);
+    void userUpdated(const models::User &user);
+    void userDeleted(const QString &uuid, int id);
+
+    /**
+     * @brief Emis quand la liste des utilisateurs change (creation,
+     *        suppression, ou synchronisation depuis un autre poste).
+     */
+    void usersChanged();
+
 private:
     void setBusy(bool busy);
 
@@ -112,6 +158,7 @@ private:
     QString m_currentUsername;
     bool m_currentUserIsAdmin = false;
     std::optional<int> m_currentUserId;
+    QString m_currentUserUuid;
 
     UserManagerError m_lastError = UserManagerError::None;
 };

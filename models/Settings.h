@@ -1,18 +1,31 @@
 #ifndef MODELS_SETTINGS_H
 #define MODELS_SETTINGS_H
 
+#include <QString>
+#include <QVariant>
+
 namespace models {
 
 /**
  * @brief Represente les parametres de l'application pour un poste.
  */
-class Settings {
+class Settings
+{
 public:
     Settings();
-    ~Settings();
+    explicit Settings(const QString &key, const QVariant &value);
+
+    QString key() const;
+    void setKey(const QString &key);
+
+    QVariant value() const;
+    void setValue(const QVariant &value);
+
+    QString valueType() const;
 
 private:
-    // TODO: implementer Settings
+    QString m_key;
+    QVariant m_value;
 };
 
 } // namespace models

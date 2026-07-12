@@ -78,10 +78,8 @@ signals:
     /// incoming = true si la connexion a ete initiee par le poste distant.
     void handshakeSucceeded(QSslSocket *socket, const QString &peerFingerprint, bool incoming);
 
-    /// Emis lorsque la session TLS est refusee (poste non autorise ou
-    /// erreur). fingerprint est vide si aucun certificat n'a pu etre lu
-    /// (ex: erreur avant la fin de la poignee de main).
-    void handshakeRejected(const QString &peerAddress, const QString &reason, const QString &fingerprint = QString());
+    /// Emis lorsque la session TLS est refusee (poste non autorise ou erreur).
+    void handshakeRejected(const QString &peerAddress, const QString &reason);
 
 private:
     class TlsServer;
