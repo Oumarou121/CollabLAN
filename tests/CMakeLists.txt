@@ -103,3 +103,20 @@ add_test(NAME test_applicationelectionwiring COMMAND test_applicationelectionwir
 add_executable(test_applicationreconciliationwiring UnitTests/test_applicationreconciliationwiring.cpp)
 target_link_libraries(test_applicationreconciliationwiring PRIVATE Qt6::Test Qt6::Network Qt6::Sql app_core network models)
 add_test(NAME test_applicationreconciliationwiring COMMAND test_applicationreconciliationwiring)
+
+# Release 2/3 : detection des changements + journal de synchronisation
+add_executable(test_sharedfoldermanager UnitTests/test_sharedfoldermanager.cpp)
+target_link_libraries(test_sharedfoldermanager PRIVATE Qt6::Test core database models)
+add_test(NAME test_sharedfoldermanager COMMAND test_sharedfoldermanager)
+
+add_executable(test_syncoperationrepository UnitTests/test_syncoperationrepository.cpp)
+target_link_libraries(test_syncoperationrepository PRIVATE Qt6::Test database models)
+add_test(NAME test_syncoperationrepository COMMAND test_syncoperationrepository)
+
+add_executable(test_folderwatcher UnitTests/test_folderwatcher.cpp)
+target_link_libraries(test_folderwatcher PRIVATE Qt6::Test core)
+add_test(NAME test_folderwatcher COMMAND test_folderwatcher)
+
+add_executable(test_syncengine UnitTests/test_syncengine.cpp)
+target_link_libraries(test_syncengine PRIVATE Qt6::Test core database models)
+add_test(NAME test_syncengine COMMAND test_syncengine)

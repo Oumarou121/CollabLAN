@@ -76,6 +76,14 @@ public:
 signals:
     void errorOccurred(const QString &message);
 
+    /// Emis apres chaque reindexation reussie (qu'elle soit declenchee par
+    /// FolderWatcher ou par l'utilisateur via shareFolder()), avec le nombre
+    /// de changements journalises dans SyncOperations.  L'UI (SharedFolderView
+    /// QML) ecoute ce signal pour rafraichir automatiquement la liste des
+    /// fichiers et le panneau d'historique sans que l'utilisateur ait a
+    /// cliquer sur "Reindexer".
+    void folderReindexed(qint64 folderId, int changeCount);
+
 private:
     SharedFolderManager *m_manager = nullptr;
     core::sync::SyncEngine *m_syncEngine = nullptr;

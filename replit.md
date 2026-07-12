@@ -56,5 +56,32 @@ cd build && ctest --output-on-failure
   repository insert code. Proposed as a follow-up task rather than fixed here
   (out of scope for project setup).
 
+## Release 2 / 3 — Détection des changements + Journal de synchronisation
+All C++ components were already implemented. The following gaps were closed:
+
+**core/SharedFolderContext.cpp / .h**
+- Connected `SharedFolderManager::folderShared` → `SharedFolderContext::refresh()`
+  so the folder tile file count updates automatically after FolderWatcher triggers
+  a reindex (no manual navigation required).
+- Added `folderReindexed(folderId, changeCount)` signal forwarded from
+  `SyncEngine::folderReindexed`; QML listens to this to auto-refresh the file
+  list and sync history panel without user interaction.
+
+**ui/SharedFolder/SharedFolderView.qml**
+- Added `refreshHistory()` and automatic calls after watcher-triggered reindex.
+- Added "Historique" toggle button that swaps the file list for a sync history
+  panel showing Create / Update / Delete / Rename operations (type badge,
+  relative path, old path for renames, version, timestamp).
+
+**tests/** — 4 new test suites (30+ test cases):
+- `test_sharedfoldermanager.cpp`: Create/Update/Delete/Rename detection, error
+  handling.
+- `test_syncoperationrepository.cpp`: insert, getByFolderId (with relativePath
+  join), getSinceId (pagination for Release 7 catch-up), latestId.
+- `test_folderwatcher.cpp`: idempotent watch/unwatch, safe calls on unknown
+  folders, debounce behaviour.
+- `test_syncengine.cpp`: full reindexFolder pipeline, folderReindexed signal,
+  historyForFolder ordering.
+
 ## User preferences
 None recorded yet.

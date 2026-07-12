@@ -29,6 +29,8 @@ Item {
     property var openedFolderName: ""
     property var openedFolderId: -1
     property var currentFiles: []
+    property var currentSyncHistory: []
+    property bool showHistory: false
 
     function formatBytes(bytes) {
         if (!bytes || bytes <= 0) return "0 o"
@@ -45,7 +47,9 @@ Item {
     function openFolder(folderId, name) {
         root.openedFolderId = folderId
         root.openedFolderName = name
+        root.showHistory = false
         root.refreshFiles()
+        root.refreshHistory()
     }
 
     function refreshFiles() {
@@ -53,6 +57,27 @@ Item {
             root.currentFiles = root.context.filesForFolder(root.openedFolderId)
         } else {
             root.currentFiles = []
+        }
+    }
+
+    function refreshHistory() {
+        if (root.context && root.openedFolderId >= 0) {
+            root.currentSyncHistory = root.context.syncHistoryForFolder(root.openedFolderId, 100)
+        } else {
+            root.currentSyncHistory = []
+        }
+    }
+
+    // Rafraichissement automatique apres chaque reindexation declenchee par
+    // FolderWatcher (Release 2) ou manuellement : l'utilisateur voit le
+    // nouveau contenu + l'historique (Release 3) sans avoir a naviguer.
+    Connections {
+        target: root.context
+        function onFolderReindexed(folderId, changeCount) {
+            if (folderId === root.openedFolderId) {
+                root.refreshFiles()
+                root.refreshHistory()
+            }
         }
     }
 
@@ -335,12 +360,20 @@ Item {
 
                 AppButton {
                     visible: root.openedFolderId >= 0
+                    text: root.showHistory ? qsTr("Fichiers") : qsTr("Historique")
+                    variant: "ghost"
+                    onClicked: root.showHistory = !root.showHistory
+                }
+
+                AppButton {
+                    visible: root.openedFolderId >= 0
                     text: qsTr("Réindexer")
                     variant: "secondary"
                     onClicked: {
                         if (root.context) {
                             root.context.shareFolder(root.openedFolderId)
                             root.refreshFiles()
+                            root.refreshHistory()
                         }
                     }
                 }
@@ -405,7 +438,7 @@ Item {
 
         // ---- Vue liste des fichiers d'un dossier partagé ----
         ScrollView {
-            visible: root.openedFolderId >= 0
+            visible: root.openedFolderId >= 0 && !root.showHistory
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -478,6 +511,147 @@ Item {
                     anchors.centerIn: parent
                     text: qsTr("Ce dossier partagé ne contient aucun fichier indexé.")
                     color: Theme.textTertiary
+                    font.pixelSize: Theme.fontSizeBody
+                }
+            }
+        }
+
+        // ---- Journal de synchronisation (Release 3) ----
+        // Affiche les SyncOperations enregistrees par SyncEngine apres chaque
+        // (re)indexation : Create / Update / Delete / Rename, avec le chemin
+        // relatif, la version et l'horodatage. Bascule via le bouton "Historique".
+        ScrollView {
+            visible: root.openedFolderId >= 0 && root.showHistory
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            clip: true
+
+            ListView {
+                id: historyListView
+                anchors.fill: parent
+                anchors.margins: Theme.spacingMedium
+                spacing: 2
+                model: root.currentSyncHistory
+
+                header: Rectangle {
+                    width: historyListView.width
+                    height: 32
+                    color: Theme.surfaceAlt
+                    border.width: 1
+                    border.color: Theme.border
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: Theme.spacingSmall
+                        anchors.rightMargin: Theme.spacingSmall
+                        Label { Layout.preferredWidth: 70; text: qsTr("Opération"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
+                        Label { Layout.fillWidth: true; text: qsTr("Fichier"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
+                        Label { Layout.preferredWidth: 50; text: qsTr("Ver."); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
+                        Label { Layout.preferredWidth: 120; text: qsTr("Date"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
+                    }
+                }
+
+                delegate: Rectangle {
+                    width: historyListView.width
+                    height: modelData.type === "Rename" ? 52 : 36
+                    color: "transparent"
+
+                    // Bordure de séparation en bas
+                    Rectangle {
+                        anchors.bottom: parent.bottom
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        height: 1
+                        color: Theme.border
+                        opacity: 0.5
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: Theme.spacingSmall
+                        anchors.rightMargin: Theme.spacingSmall
+
+                        // Pastille colorée selon le type d'opération
+                        Rectangle {
+                            Layout.preferredWidth: 70
+                            height: 22
+                            radius: Theme.radiusSmall
+                            color: {
+                                switch (modelData.type) {
+                                case "Create": return "#1A7F4B"
+                                case "Update": return "#1A5FA0"
+                                case "Delete": return "#9B2E2E"
+                                case "Rename": return "#6B4EA0"
+                                default:       return Theme.border
+                                }
+                            }
+                            opacity: 0.85
+                            Label {
+                                anchors.centerIn: parent
+                                text: {
+                                    switch (modelData.type) {
+                                    case "Create": return qsTr("Créé")
+                                    case "Update": return qsTr("Modifié")
+                                    case "Delete": return qsTr("Supprimé")
+                                    case "Rename": return qsTr("Renommé")
+                                    default:       return modelData.type
+                                    }
+                                }
+                                color: "#FFFFFF"
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.bold: true
+                            }
+                        }
+
+                        // Chemin relatif (ancien → nouveau pour Rename)
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 1
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: modelData.relativePath
+                                color: modelData.type === "Delete" ? Theme.textTertiary : Theme.text
+                                font.pixelSize: Theme.fontSizeSmall
+                                elide: Text.ElideMiddle
+                                font.strikeout: modelData.type === "Delete"
+                            }
+                            Label {
+                                visible: modelData.type === "Rename" && modelData.oldRelativePath.length > 0
+                                Layout.fillWidth: true
+                                text: qsTr("← %1").arg(modelData.oldRelativePath)
+                                color: Theme.textTertiary
+                                font.pixelSize: Theme.fontSizeCaption
+                                elide: Text.ElideMiddle
+                            }
+                        }
+
+                        Label {
+                            Layout.preferredWidth: 50
+                            text: "v" + modelData.version
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontSizeSmall
+                        }
+
+                        Label {
+                            Layout.preferredWidth: 120
+                            text: {
+                                const d = new Date(modelData.createdAt)
+                                return isNaN(d.getTime()) ? modelData.createdAt
+                                    : d.toLocaleTimeString(Qt.locale(), "HH:mm:ss")
+                            }
+                            color: Theme.textTertiary
+                            font.pixelSize: Theme.fontSizeCaption
+                        }
+                    }
+                }
+
+                Label {
+                    visible: historyListView.count === 0
+                    anchors.centerIn: parent
+                    text: qsTr("Aucune opération enregistrée pour ce dossier.\nReindexez le dossier pour commencer à alimenter le journal.")
+                    color: Theme.textTertiary
+                    horizontalAlignment: Text.AlignHCenter
                     font.pixelSize: Theme.fontSizeBody
                 }
             }

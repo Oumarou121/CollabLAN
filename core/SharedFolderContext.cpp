@@ -18,12 +18,31 @@ SharedFolderContext::~SharedFolderContext()
 void SharedFolderContext::setSharedFolderManager(SharedFolderManager *manager)
 {
     m_manager = manager;
+
+    // Mise a jour automatique du modele de dossiers (compteur de fichiers)
+    // apres chaque (re)indexation, meme declenchee automatiquement par
+    // FolderWatcher -- sans ce connect, l'utilisateur devait naviguer
+    // manuellement hors/dans l'ecran pour voir le nouveau compteur.
+    if (m_manager) {
+        connect(m_manager, &SharedFolderManager::folderShared,
+                this, [this](qint64, int) { refresh(); });
+    }
+
     refresh();
 }
 
 void SharedFolderContext::setSyncEngine(core::sync::SyncEngine *engine)
 {
     m_syncEngine = engine;
+
+    // Transmet le signal SyncEngine::folderReindexed a QML : SharedFolderView
+    // l'ecoute pour rafraichir la liste des fichiers et l'historique de
+    // synchronisation des qu'un changement est detecte par FolderWatcher,
+    // sans action manuelle de l'utilisateur.
+    if (m_syncEngine) {
+        connect(m_syncEngine, &core::sync::SyncEngine::folderReindexed,
+                this, &SharedFolderContext::folderReindexed);
+    }
 }
 
 void SharedFolderContext::setUserManager(UserManager *manager)
