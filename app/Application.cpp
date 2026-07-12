@@ -11,6 +11,7 @@
 #include "SyncEngine.h"
 #include "SyncHistoryService.h"
 #include "Sync/SyncNetworkService.h"
+#include "Security/SecurityService.h"
 
 Application::Application(QObject *parent)
     : QObject(parent)
@@ -79,7 +80,14 @@ void Application::setupSharedFolders()
     m_syncHistoryService = new core::SyncHistoryService(m_databaseManager.get(), this);
 
     m_syncEngine = new core::SyncEngine(m_databaseManager.get(), m_discoveryService->localId(), this);
-    m_syncNetworkService = new network::SyncNetworkService(m_discoveryService->localId(), m_discoveryService->localName(), this);
+
+    // Identite cryptographique locale (cle privee + certificat auto-signe,
+    // issue #11) utilisee pour chiffrer le canal de synchronisation.
+    m_securityService = std::make_unique<network::SecurityService>();
+    if (!m_securityService->initialize()) {
+        qWarning() << "Impossible d'initialiser SecurityService : le canal de synchronisation ne pourra pas demarrer";
+    }
+    m_syncNetworkService = new network::SyncNetworkService(m_discoveryService->localId(), m_discoveryService->localName(), m_securityService.get(), this);
 
     // Surveille tous les dossiers deja actifs au demarrage.
     for (const auto &folder : m_sharedFolderManager->activeFolders()) {
@@ -167,4 +175,9 @@ core::SharedFoldersModel *Application::sharedFoldersModel() const
 core::SyncHistoryService *Application::syncHistoryService() const
 {
     return m_syncHistoryService;
+}
+
+network::SyncNetworkService *Application::syncNetworkService() const
+{
+    return m_syncNetworkService;
 }

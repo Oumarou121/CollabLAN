@@ -8,6 +8,7 @@
 #include "SharedFolderManager.h"
 #include "SharedFoldersModel.h"
 #include "SyncHistoryService.h"
+#include "Sync/SyncNetworkService.h"
 
 int main(int argc, char *argv[])
 {
@@ -31,6 +32,9 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("sharedFolderManager", static_cast<QObject*>(application.sharedFolderManager()));
     engine.rootContext()->setContextProperty("sharedFoldersModel", static_cast<QObject*>(application.sharedFoldersModel()));
     engine.rootContext()->setContextProperty("syncHistoryService", static_cast<QObject*>(application.syncHistoryService()));
+    // Brancher AdminView.qml sur la gestion des postes de confiance TLS du
+    // canal de synchronisation (accepter/revoquer un poste).
+    engine.rootContext()->setContextProperty("syncNetworkService", static_cast<QObject*>(application.syncNetworkService()));
     engine.load(QUrl(QStringLiteral("qrc:/ui/Main.qml")));
 
     if (engine.rootObjects().isEmpty())

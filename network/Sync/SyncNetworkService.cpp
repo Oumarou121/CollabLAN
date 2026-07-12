@@ -2,23 +2,32 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QTcpServer>
-#include <QTcpSocket>
+#include <QSslSocket>
 
 #include "SyncProtocol.h"
+#include "../Security/TlsHandshakeService.h"
 
 namespace network {
 
-SyncNetworkService::SyncNetworkService(QString localMachineId, QString localMachineName, QObject *parent)
+SyncNetworkService::SyncNetworkService(QString localMachineId, QString localMachineName, SecurityService *securityService, QObject *parent)
     : QObject(parent)
     , m_localMachineId(std::move(localMachineId))
     , m_localMachineName(std::move(localMachineName))
-    , m_server(new QTcpServer(this))
+    , m_tls(new TlsHandshakeService(securityService, this))
 {
-    connect(m_server, &QTcpServer::newConnection, this, [this]() {
-        while (m_server->hasPendingConnections()) {
-            QTcpSocket *socket = m_server->nextPendingConnection();
-            setupSocket(socket, QString());
+    connect(m_tls, &TlsHandshakeService::handshakeSucceeded, this, [this](QSslSocket *socket, const QString &fingerprint, bool incoming) {
+        Q_UNUSED(fingerprint);
+        const QString knownPeerId = incoming ? QString() : m_pendingOutgoingPeerIds.take(socket);
+        setupSocket(socket, knownPeerId);
+        // Le HELLO permet au poste distant de nous identifier, cote sortant
+        // comme entrant, une fois la session chiffree et autorisee.
+        socket->write(SyncProtocol::serialize(SyncProtocol::makeHello(m_localMachineId, m_localMachineName)));
+    });
+
+    connect(m_tls, &TlsHandshakeService::handshakeRejected, this, [this](const QString &peerAddress, const QString &reason, const QString &fingerprint) {
+        Q_UNUSED(reason);
+        if (!fingerprint.isEmpty()) {
+            emit unknownPeerRejected(fingerprint, peerAddress);
         }
     });
 }
@@ -27,21 +36,21 @@ SyncNetworkService::~SyncNetworkService() = default;
 
 bool SyncNetworkService::start(quint16 port)
 {
-    return m_server->listen(QHostAddress::Any, port);
+    return m_tls->listen(port);
 }
 
 void SyncNetworkService::stop()
 {
-    m_server->close();
+    m_tls->stopListening();
     const auto sockets = m_connections.keys();
-    for (QTcpSocket *socket : sockets) {
+    for (QSslSocket *socket : sockets) {
         socket->disconnectFromHost();
     }
 }
 
 bool SyncNetworkService::isListening() const
 {
-    return m_server->isListening();
+    return m_tls->isListening();
 }
 
 void SyncNetworkService::connectToPeer(const QString &peerId, const QHostAddress &address, quint16 port)
@@ -50,9 +59,12 @@ void SyncNetworkService::connectToPeer(const QString &peerId, const QHostAddress
         return; // deja connecte
     }
 
-    QTcpSocket *socket = new QTcpSocket(this);
-    setupSocket(socket, peerId);
-    socket->connectToHost(address, port);
+    QSslSocket *socket = m_tls->connectToPeer(address, port);
+    m_pendingOutgoingPeerIds.insert(socket, peerId);
+
+    connect(socket, &QAbstractSocket::disconnected, this, [this, socket]() {
+        m_pendingOutgoingPeerIds.remove(socket);
+    });
 }
 
 void SyncNetworkService::disconnectFromPeer(const QString &peerId)
@@ -73,20 +85,34 @@ QStringList SyncNetworkService::connectedPeers() const
     return peers;
 }
 
-void SyncNetworkService::setupSocket(QTcpSocket *socket, const QString &knownPeerId)
+void SyncNetworkService::trustPeer(const QString &fingerprintSha256, const QString &label)
+{
+    m_tls->trustPeer(fingerprintSha256, label);
+}
+
+void SyncNetworkService::revokePeer(const QString &fingerprintSha256)
+{
+    m_tls->revokePeer(fingerprintSha256);
+}
+
+bool SyncNetworkService::isPeerTrusted(const QString &fingerprintSha256) const
+{
+    return m_tls->isPeerTrusted(fingerprintSha256);
+}
+
+QStringList SyncNetworkService::trustedFingerprints() const
+{
+    return m_tls->trustedFingerprints();
+}
+
+void SyncNetworkService::setupSocket(QSslSocket *socket, const QString &knownPeerId)
 {
     Connection connection;
     connection.socket = socket;
     connection.peerId = knownPeerId;
     m_connections.insert(socket, connection);
 
-    connect(socket, &QTcpSocket::connected, this, [this, socket]() {
-        // Le HELLO permet au poste distant de nous identifier meme sur
-        // une connexion sortante.
-        socket->write(SyncProtocol::serialize(SyncProtocol::makeHello(m_localMachineId, m_localMachineName)));
-    });
-
-    connect(socket, &QTcpSocket::readyRead, this, [this, socket]() {
+    connect(socket, &QSslSocket::readyRead, this, [this, socket]() {
         auto it = m_connections.find(socket);
         if (it == m_connections.end()) {
             return;
@@ -97,18 +123,18 @@ void SyncNetworkService::setupSocket(QTcpSocket *socket, const QString &knownPee
         }
     });
 
-    connect(socket, &QTcpSocket::disconnected, this, [this, socket]() {
+    connect(socket, &QAbstractSocket::disconnected, this, [this, socket]() {
         removeConnectionFor(socket);
         socket->deleteLater();
     });
 
-    connect(socket, &QTcpSocket::errorOccurred, this, [this, socket](QAbstractSocket::SocketError) {
+    connect(socket, &QAbstractSocket::errorOccurred, this, [this, socket](QAbstractSocket::SocketError) {
         removeConnectionFor(socket);
         socket->deleteLater();
     });
 }
 
-void SyncNetworkService::handleMessage(QTcpSocket *socket, const QJsonObject &message)
+void SyncNetworkService::handleMessage(QSslSocket *socket, const QJsonObject &message)
 {
     Connection *connection = connectionForSocket(socket);
     if (!connection) {
@@ -186,7 +212,7 @@ void SyncNetworkService::sendToPeer(const QString &peerId, const QJsonObject &me
     }
 }
 
-void SyncNetworkService::removeConnectionFor(QTcpSocket *socket)
+void SyncNetworkService::removeConnectionFor(QSslSocket *socket)
 {
     const auto it = m_connections.find(socket);
     if (it == m_connections.end()) {
@@ -199,7 +225,7 @@ void SyncNetworkService::removeConnectionFor(QTcpSocket *socket)
     }
 }
 
-SyncNetworkService::Connection *SyncNetworkService::connectionForSocket(QTcpSocket *socket)
+SyncNetworkService::Connection *SyncNetworkService::connectionForSocket(QSslSocket *socket)
 {
     auto it = m_connections.find(socket);
     return it == m_connections.end() ? nullptr : &(*it);

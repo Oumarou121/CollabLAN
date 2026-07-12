@@ -9,11 +9,13 @@
 #include <QString>
 
 QT_BEGIN_NAMESPACE
-class QTcpServer;
-class QTcpSocket;
+class QSslSocket;
 QT_END_NAMESPACE
 
 namespace network {
+
+class SecurityService;
+class TlsHandshakeService;
 
 /**
  * @brief Transport reseau du protocole de synchronisation des dossiers
@@ -27,12 +29,16 @@ namespace network {
  * permettent a un poste qui revient en ligne de rattraper l'etat complet
  * d'un dossier (Phase 6).
  *
- * Note de securite : ce service echange les messages en clair sur TCP.
- * Le projet dispose deja d'une infrastructure TLS (network::SecurityService
- * + network::TlsHandshakeService + TrustedPeerStore) utilisee par d'autres
- * canaux ; brancher la synchronisation dessus est une amelioration
- * naturelle mais volontairement laissee hors scope ici pour limiter les
- * risques de cette premiere version (voir tache de suivi proposee).
+ * Securite : les connexions passent par network::TlsHandshakeService (issue
+ * #12), qui chiffre le canal avec l'identite locale fournie par
+ * network::SecurityService (issue #11) et n'accepte de session que si le
+ * poste distant presente un certificat dont l'empreinte figure dans
+ * TrustedPeerStore. Les messages applicatifs (HELLO, FILE_INFO, ...) ne
+ * circulent qu'une fois cette poignee de main validee. Ce service possede
+ * sa propre instance de TlsHandshakeService (identite partagee via
+ * SecurityService, mais liste de confiance persistee sur disque et donc
+ * partagee entre instances). trustPeer()/revokePeer() delegue directement
+ * a cette instance ; voir ui/Admin pour la gestion des postes en attente.
  */
 class SyncNetworkService : public QObject {
     Q_OBJECT
@@ -40,19 +46,29 @@ class SyncNetworkService : public QObject {
 public:
     static constexpr quint16 kDefaultPort = 45456;
 
-    explicit SyncNetworkService(QString localMachineId, QString localMachineName, QObject *parent = nullptr);
+    // securityService doit rester valide pendant toute la duree de vie de
+    // ce service (fournit l'identite locale utilisee pour le TLS).
+    explicit SyncNetworkService(QString localMachineId, QString localMachineName, SecurityService *securityService, QObject *parent = nullptr);
     ~SyncNetworkService() override;
 
     bool start(quint16 port = kDefaultPort);
     void stop();
-    bool isListening() const;
+    Q_INVOKABLE bool isListening() const;
 
     // Initie une connexion sortante vers un poste distant (typiquement
     // suite a DiscoveryService::peerDiscovered). Sans effet si une
-    // connexion vers ce peerId existe deja.
+    // connexion vers ce peerId existe deja. La session applicative ne
+    // debute qu'une fois la poignee de main TLS validee (poste autorise).
     void connectToPeer(const QString &peerId, const QHostAddress &address, quint16 port = kDefaultPort);
     void disconnectFromPeer(const QString &peerId);
-    QStringList connectedPeers() const;
+    Q_INVOKABLE QStringList connectedPeers() const;
+
+    // --- Gestion des machines autorisees (delegue a TlsHandshakeService),
+    // exposees a ui/Admin/AdminView.qml -------------------------------------
+    Q_INVOKABLE void trustPeer(const QString &fingerprintSha256, const QString &label = QString());
+    Q_INVOKABLE void revokePeer(const QString &fingerprintSha256);
+    Q_INVOKABLE bool isPeerTrusted(const QString &fingerprintSha256) const;
+    Q_INVOKABLE QStringList trustedFingerprints() const;
 
     // --- Emission de messages -------------------------------------------
     void broadcastFileInfo(const QString &folder, const QString &path, const QString &hash, qint64 size, int version);
@@ -69,6 +85,12 @@ signals:
     void peerConnected(const QString &peerId);
     void peerDisconnected(const QString &peerId);
 
+    // Emis quand un poste presente un certificat valide mais non autorise
+    // (absent de TrustedPeerStore) : la connexion a ete refusee. Permet a
+    // l'UI (ui/Admin) de proposer l'ajout de ce poste a la liste de
+    // confiance.
+    void unknownPeerRejected(const QString &fingerprint, const QString &peerAddress);
+
     void syncRequestReceived(const QString &peerId, const QString &folder);
     void syncResponseReceived(const QString &peerId, const QString &folder, const QJsonArray &files);
     void fileInfoReceived(const QString &peerId, const QString &folder, const QString &path, const QString &hash, qint64 size, int version);
@@ -80,22 +102,23 @@ signals:
 
 private:
     struct Connection {
-        QTcpSocket *socket = nullptr;
+        QSslSocket *socket = nullptr;
         QString peerId; // vide jusqu'a reception du HELLO (connexions entrantes)
         QByteArray buffer;
     };
 
-    void setupSocket(QTcpSocket *socket, const QString &knownPeerId);
-    void handleMessage(QTcpSocket *socket, const QJsonObject &message);
+    void setupSocket(QSslSocket *socket, const QString &knownPeerId);
+    void handleMessage(QSslSocket *socket, const QJsonObject &message);
     void sendToPeer(const QString &peerId, const QJsonObject &message);
-    void removeConnectionFor(QTcpSocket *socket);
-    Connection *connectionForSocket(QTcpSocket *socket);
+    void removeConnectionFor(QSslSocket *socket);
+    Connection *connectionForSocket(QSslSocket *socket);
     Connection *connectionForPeer(const QString &peerId);
 
     QString m_localMachineId;
     QString m_localMachineName;
-    QTcpServer *m_server = nullptr;
-    QHash<QTcpSocket *, Connection> m_connections;
+    TlsHandshakeService *m_tls = nullptr; // parente = this (QObject)
+    QHash<QSslSocket *, Connection> m_connections;
+    QHash<QSslSocket *, QString> m_pendingOutgoingPeerIds; // en attente de poignee de main TLS
 };
 
 } // namespace network

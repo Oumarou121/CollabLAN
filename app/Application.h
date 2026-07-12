@@ -16,6 +16,7 @@ namespace network {
 class DiscoveryService;
 class PeersModel;
 class SyncNetworkService;
+class SecurityService;
 }
 
 namespace core {
@@ -55,6 +56,11 @@ public:
     core::SharedFoldersModel *sharedFoldersModel() const;
     core::SyncHistoryService *syncHistoryService() const;
 
+    // Expose au bootstrap QML la gestion des postes de confiance TLS
+    // (ui/Admin) : le SyncNetworkService delegue a sa propre instance de
+    // TlsHandshakeService, dont la liste de confiance persiste sur disque.
+    network::SyncNetworkService *syncNetworkService() const;
+
 private:
     void setupSharedFolders();
 
@@ -68,6 +74,7 @@ private:
     core::SharedFoldersModel *m_sharedFoldersModel = nullptr;     // parente = this (QObject)
     core::SyncEngine *m_syncEngine = nullptr;                     // parente = this (QObject)
     core::SyncHistoryService *m_syncHistoryService = nullptr;     // parente = this (QObject)
+    std::unique_ptr<network::SecurityService> m_securityService;
     network::SyncNetworkService *m_syncNetworkService = nullptr;  // parente = this (QObject)
 };
 
