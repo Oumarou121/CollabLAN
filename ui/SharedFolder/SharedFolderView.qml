@@ -69,7 +69,17 @@ Item {
         id: folderPickerDialog
         title: qsTr("Choisir un dossier local à partager")
         onAccepted: {
-            createDialog.localPath = selectedFolder.toString().replace("file://", "")
+            // selectedFolder est une URL (ex: "file:///C:/Users/..." sous Windows,
+            // "file:///home/..." sous Linux/macOS). On ne peut pas juste retirer
+            // "file://" : sous Windows il reste alors un "/" en trop devant la
+            // lettre de lecteur ("/C:/Users/..."), ce qui rend le chemin invalide.
+            let path = decodeURIComponent(selectedFolder.toString())
+            path = path.replace(/^file:\/\//, "")
+            if (/^\/[A-Za-z]:/.test(path)) {
+                // Windows : "/C:/Users/..." -> "C:/Users/..."
+                path = path.substring(1)
+            }
+            createDialog.localPath = path
         }
     }
 

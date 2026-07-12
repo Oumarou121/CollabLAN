@@ -35,9 +35,16 @@ std::optional<models::SharedFolder> SharedFolderRepository::insert(const models:
         : folder.uuid();
 
     QSqlQuery query(m_db);
-    query.prepare(QStringLiteral(
+    if (!query.prepare(QStringLiteral(
         "INSERT INTO SharedFolders (uuid, name, local_path, owner_id, is_active) "
-        "VALUES (:uuid, :name, :local_path, :owner_id, :is_active)"));
+        "VALUES (:uuid, :name, :local_path, :owner_id, :is_active)"))) {
+        // Si prepare() echoue (ex: schema en base desynchronise du code,
+        // colonne manquante...), on remonte l'erreur ici plutot que de
+        // laisser bindValue()/exec() produire un message trompeur du
+        // style "Parameter count mismatch" sur une requete non preparee.
+        m_lastError = query.lastError().text();
+        return std::nullopt;
+    }
     query.bindValue(QStringLiteral(":uuid"), uuid);
     query.bindValue(QStringLiteral(":name"), folder.name());
     query.bindValue(QStringLiteral(":local_path"), folder.localPath());
