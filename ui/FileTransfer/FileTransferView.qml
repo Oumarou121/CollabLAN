@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import Themes
+import "../Components"
 
 /*
  * FileTransferView - ecran "FileTransfer" (issue #57).
@@ -54,6 +55,29 @@ Item {
         return d.toLocaleString(Qt.locale(), "dd/MM/yyyy HH:mm")
     }
 
+    // Normalise une adresse IP pour le regroupement par correspondant.
+    // Une connexion ENTRANTE (reception) sur le socket serveur, qui ecoute
+    // en double pile IPv4/IPv6, rapporte souvent l'adresse distante sous
+    // forme IPv4-mappee en IPv6 (ex. "::ffff:192.168.1.5"), alors qu'un
+    // envoi SORTANT vers ce meme poste utilise l'adresse IPv4 "nue"
+    // (ex. "192.168.1.5"). Sans normalisation, ces deux formes produisent
+    // 2 cles differentes et donc 2 dossiers distincts pour un seul et
+    // meme correspondant (issue signalee : "2 dossiers differents pour
+    // les memes echanges, un pour l'envoi et un pour la reception").
+    // core::TransferContext::resolvePeerName() applique deja une
+    // comparaison tolerante equivalente cote C++ pour resoudre le nom
+    // affiche ; on applique ici la meme tolerance a la cle de regroupement.
+    function normalizePeerAddress(address) {
+        if (!address)
+            return ""
+        let a = address.trim().toLowerCase()
+        const v4MappedPrefix = "::ffff:"
+        if (a.indexOf(v4MappedPrefix) === 0) {
+            a = a.substring(v4MappedPrefix.length)
+        }
+        return a
+    }
+
     // Regroupe la liste plate activeTransfers par correspondant (adresse IP
     // comme cle stable, nom affiche quand connu), le correspondant le plus
     // recemment actif en premier, et au sein de chaque groupe le transfert
@@ -65,17 +89,18 @@ Item {
 
         for (let i = 0; i < transfers.length; i++) {
             const item = transfers[i]
-            const key = item.peerAddress && item.peerAddress.length > 0
-                        ? item.peerAddress
+            const rawAddress = item.peerAddress || ""
+            const key = rawAddress.length > 0
+                        ? root.normalizePeerAddress(rawAddress)
                         : "__unknown__"
 
             if (!groupsByKey[key]) {
                 groupsByKey[key] = {
                     peerKey: key,
                     peerLabel: (item.peerName && item.peerName.length > 0) ? item.peerName
-                               : (item.peerAddress && item.peerAddress.length > 0) ? item.peerAddress
+                               : (rawAddress.length > 0) ? rawAddress
                                : qsTr("Correspondant inconnu"),
-                    peerAddress: item.peerAddress || "",
+                    peerAddress: rawAddress,
                     items: [],
                     lastTimestampMs: 0
                 }
@@ -88,6 +113,16 @@ Item {
             // meme correspondant ne l'avait pas).
             if (item.peerName && item.peerName.length > 0) {
                 group.peerLabel = item.peerName
+            }
+            // Prefere afficher la forme d'adresse la plus lisible
+            // ("192.168.1.5" plutot que "::ffff:192.168.1.5") si aucun nom
+            // n'est encore connu pour ce correspondant.
+            if (rawAddress.length > 0 && group.peerAddress.toLowerCase().indexOf("::ffff:") === 0
+                    && rawAddress.toLowerCase().indexOf("::ffff:") !== 0) {
+                group.peerAddress = rawAddress
+                if (!item.peerName || item.peerName.length === 0) {
+                    group.peerLabel = rawAddress
+                }
             }
 
             const ts = item.timestamp ? Date.parse(item.timestamp) : 0
@@ -108,6 +143,51 @@ Item {
     }
 
     property var peerGroups: root.buildPeerGroups(root.context ? root.context.activeTransfers : [])
+
+    // --- Navigation par dossiers -------------------------------------
+    // "" = on est a la racine (grille de dossiers, un par correspondant).
+    // Sinon : peerKey du dossier actuellement ouvert (vue detail = liste
+    // des fichiers echanges avec ce correspondant).
+    property string openedPeerKey: ""
+    property string searchText: ""
+
+    readonly property var currentGroup: {
+        for (let i = 0; i < root.peerGroups.length; i++) {
+            if (root.peerGroups[i].peerKey === root.openedPeerKey)
+                return root.peerGroups[i]
+        }
+        return null
+    }
+
+    // Dossiers (correspondants) filtres par la recherche, a la racine.
+    readonly property var filteredPeerGroups: {
+        const q = root.searchText.trim().toLowerCase()
+        if (q.length === 0)
+            return root.peerGroups
+        return root.peerGroups.filter(function(g) {
+            return g.peerLabel.toLowerCase().indexOf(q) !== -1
+        })
+    }
+
+    // Fichiers du dossier ouvert, filtres par la recherche.
+    readonly property var filteredCurrentItems: {
+        if (!root.currentGroup)
+            return []
+        const q = root.searchText.trim().toLowerCase()
+        if (q.length === 0)
+            return root.currentGroup.items
+        return root.currentGroup.items.filter(function(it) {
+            return it.fileName.toLowerCase().indexOf(q) !== -1
+        })
+    }
+
+    // Si le correspondant du dossier ouvert disparait (plus aucun
+    // transfert) on revient automatiquement a la grille de dossiers.
+    onPeerGroupsChanged: {
+        if (root.openedPeerKey.length > 0 && !root.currentGroup) {
+            root.openedPeerKey = ""
+        }
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -357,6 +437,12 @@ Item {
 
         // Suivi des transferts en cours (envoi et reception), issue #57 :
         // "L'utilisateur voit la progression exacte d'un transfert en cours".
+        //
+        // Organisation par dossiers : a la racine, un dossier par
+        // correspondant (comme un explorateur d'archives) ; on ouvre un
+        // dossier pour voir la liste des fichiers echanges avec lui. Fil
+        // d'Ariane + recherche permettent de naviguer et filtrer, a la
+        // maniere des ecrans d'archivage fournis en reference.
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -371,15 +457,68 @@ Item {
                 anchors.margins: Theme.spacingMedium
                 spacing: Theme.spacingSmall
 
+                // En-tete : fil d'Ariane (Transferts > Correspondant), recherche
+                // et raccourci vers le dossier de reception.
                 RowLayout {
                     Layout.fillWidth: true
+                    spacing: Theme.spacingSmall
 
-                    Label {
-                        Layout.fillWidth: true
-                        text: qsTr("Transferts")
-                        font.pixelSize: Theme.fontSizeBody
-                        font.bold: true
+                    RowLayout {
+                        spacing: 4
+
+                        Label {
+                            text: qsTr("Transferts")
+                            font.pixelSize: Theme.fontSizeBody
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                            color: root.openedPeerKey.length > 0 ? Theme.primary : Theme.text
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: root.openedPeerKey.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                enabled: root.openedPeerKey.length > 0
+                                onClicked: root.openedPeerKey = ""
+                            }
+                        }
+
+                        Label {
+                            visible: root.openedPeerKey.length > 0
+                            text: "\u203A"
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontSizeBody
+                        }
+
+                        Label {
+                            visible: root.openedPeerKey.length > 0
+                            text: root.currentGroup ? root.currentGroup.peerLabel : ""
+                            font.pixelSize: Theme.fontSizeBody
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                            color: Theme.text
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    TextField {
+                        id: searchField
+                        Layout.preferredWidth: 220
+                        Layout.preferredHeight: 32
+                        placeholderText: root.openedPeerKey.length > 0
+                                         ? qsTr("Rechercher un fichier...")
+                                         : qsTr("Rechercher un correspondant...")
+                        font.pixelSize: Theme.fontSizeSmall
                         color: Theme.text
+                        text: root.searchText
+                        onTextChanged: root.searchText = text
+
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: Theme.surfaceAlt
+                            border.width: 1
+                            border.color: searchField.activeFocus ? Theme.primary : Theme.border
+                        }
                     }
 
                     // Ouvre directement le dossier ou CollabLAN enregistre
@@ -395,11 +534,11 @@ Item {
                     }
                 }
 
-                // Etat vide.
+                // Etat vide (aucun transfert du tout).
                 ColumnLayout {
                     Layout.alignment: Qt.AlignHCenter
                     Layout.topMargin: Theme.spacingLarge
-                    visible: peersList.count === 0
+                    visible: root.peerGroups.length === 0
                     spacing: Theme.spacingSmall
 
                     Label {
@@ -410,211 +549,223 @@ Item {
                     }
                 }
 
-                // Un groupe par correspondant (issue : "regrouper les
-                // transferts echanges avec la meme personne"), le
-                // correspondant le plus recemment actif en premier ; a
-                // l'interieur, chaque transfert affiche sa date d'envoi.
+                // --- Vue "racine" : grille de dossiers, un par correspondant ---
+                ScrollView {
+                    id: foldersScroll
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    visible: root.peerGroups.length > 0 && root.openedPeerKey.length === 0
+                    contentWidth: availableWidth
+
+                    // ScrollView n'accepte qu'un seul enfant direct : la
+                    // grille et le message "aucun resultat" sont donc
+                    // regroupes dans un Item.
+                    Item {
+                        width: foldersScroll.availableWidth
+                        height: Math.max(foldersGrid.height, root.filteredPeerGroups.length === 0 ? 80 : 0)
+
+                        GridView {
+                            id: foldersGrid
+                            width: parent.width
+                            height: Math.ceil(model.length / Math.max(1, Math.floor(width / cellWidth))) * cellHeight
+                            interactive: false
+                            cellWidth: 140
+                            cellHeight: 132
+                            model: root.filteredPeerGroups
+
+                            add: Transition {
+                                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+                            }
+
+                            delegate: FolderTile {
+                                width: foldersGrid.cellWidth
+                                height: foldersGrid.cellHeight
+                                label: modelData.peerLabel
+                                count: modelData.items.length
+                                accentColor: Theme.colorForName(modelData.peerLabel)
+                                sublabel: modelData.items.length > 0
+                                          ? root.formatDate(modelData.items[0].timestamp)
+                                          : ""
+                                onOpened: root.openedPeerKey = modelData.peerKey
+                            }
+                        }
+
+                        // Aucun resultat pour la recherche en cours.
+                        Label {
+                            visible: root.filteredPeerGroups.length === 0
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.top: parent.top
+                            anchors.topMargin: Theme.spacingLarge
+                            text: qsTr("Aucun correspondant ne correspond a \u00ab %1 \u00bb").arg(root.searchText)
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontSizeSmall
+                        }
+                    }
+                }
+
+                // --- Vue "dossier ouvert" : fichiers echanges avec ce correspondant ---
                 ListView {
-                    id: peersList
+                    id: filesList
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     spacing: Theme.spacingSmall
                     clip: true
-                    model: root.peerGroups
+                    visible: root.openedPeerKey.length > 0
+                    model: root.filteredCurrentItems
 
                     add: Transition {
                         NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
                     }
 
+                    header: RowLayout {
+                        width: filesList.width
+                        visible: root.currentGroup !== null
+                        spacing: Theme.spacingSmall
+
+                        Rectangle {
+                            width: 32
+                            height: 32
+                            radius: 16
+                            color: root.currentGroup ? Theme.colorForName(root.currentGroup.peerLabel) : Theme.primary
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: root.currentGroup && root.currentGroup.peerLabel.length > 0
+                                      ? root.currentGroup.peerLabel.charAt(0).toUpperCase() : "?"
+                                color: Theme.primaryText
+                                font.pixelSize: 14
+                                font.bold: true
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: root.currentGroup
+                                  ? qsTr("%n fichier(s)", "", root.currentGroup.items.length)
+                                  : ""
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontSizeSmall
+                        }
+                    }
+
+                    // Aucun resultat pour la recherche en cours a l'interieur du dossier.
+                    Label {
+                        visible: filesList.count === 0
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.top: parent.top
+                        anchors.topMargin: Theme.spacingLarge
+                        text: qsTr("Aucun fichier ne correspond a \u00ab %1 \u00bb").arg(root.searchText)
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontSizeSmall
+                    }
+
                     delegate: Rectangle {
-                        id: groupDelegate
-                        width: peersList.width
-                        height: groupColumn.implicitHeight + Theme.spacingMedium
+                        width: filesList.width
+                        height: transferDelegate.implicitHeight + Theme.spacingMedium
                         radius: Theme.radiusMedium
                         color: Theme.surfaceAlt
 
-                        property bool expanded: true
-
                         ColumnLayout {
-                            id: groupColumn
+                            id: transferDelegate
                             anchors.fill: parent
                             anchors.margins: Theme.spacingSmall
-                            spacing: Theme.spacingSmall
+                            spacing: 4
 
-                            // En-tete du correspondant : avatar, nom/adresse,
-                            // nombre de transferts, derniere activite.
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: Theme.spacingSmall
 
+                                // Pastille de direction (envoi / reception).
                                 Rectangle {
-                                    width: 32
-                                    height: 32
-                                    radius: 16
-                                    color: Theme.primary
+                                    width: 22
+                                    height: 22
+                                    radius: 11
+                                    color: modelData.direction === qsTr("Reception") ? Theme.accent : Theme.primary
 
                                     Text {
                                         anchors.centerIn: parent
-                                        text: modelData.peerLabel.length > 0
-                                              ? modelData.peerLabel.charAt(0).toUpperCase() : "?"
+                                        text: modelData.direction === qsTr("Reception") ? "\u2193" : "\u2191"
                                         color: Theme.primaryText
-                                        font.pixelSize: 14
+                                        font.pixelSize: 12
                                         font.bold: true
                                     }
                                 }
 
-                                ColumnLayout {
+                                Label {
                                     Layout.fillWidth: true
-                                    spacing: 1
-
-                                    Label {
-                                        text: modelData.peerLabel
-                                        color: Theme.text
-                                        font.pixelSize: Theme.fontSizeBody
-                                        font.bold: true
-                                        elide: Text.ElideRight
-                                        Layout.fillWidth: true
-                                    }
-
-                                    Label {
-                                        text: qsTr("%n fichier(s)", "", modelData.items.length)
-                                              + (modelData.items.length > 0
-                                                 ? (" \u2022 " + qsTr("dernier echange le %1")
-                                                    .arg(root.formatDate(modelData.items[0].timestamp)))
-                                                 : "")
-                                        color: Theme.textSecondary
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        elide: Text.ElideRight
-                                        Layout.fillWidth: true
-                                    }
+                                    text: modelData.fileName
+                                    color: Theme.text
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.bold: true
+                                    elide: Text.ElideMiddle
                                 }
 
-                                Button {
-                                    text: groupDelegate.expanded ? qsTr("Reduire") : qsTr("Afficher")
-                                    Layout.preferredHeight: 26
-                                    onClicked: groupDelegate.expanded = !groupDelegate.expanded
+                                Label {
+                                    text: modelData.statusText
+                                    color: modelData.statusText === qsTr("Echoue") ? Theme.error
+                                           : modelData.statusText === qsTr("Termine") ? Theme.success
+                                           : Theme.textSecondary
+                                    font.pixelSize: Theme.fontSizeSmall
                                 }
                             }
 
-                            // Fichiers echanges avec ce correspondant.
-                            ColumnLayout {
+                            ProgressBar {
+                                id: progressBar
                                 Layout.fillWidth: true
-                                spacing: Theme.spacingSmall
-                                visible: groupDelegate.expanded
+                                from: 0
+                                to: 100
+                                value: modelData.percent
 
-                                Repeater {
-                                    model: modelData.items
+                                background: Rectangle {
+                                    implicitHeight: 8
+                                    radius: 4
+                                    color: Theme.border
+                                }
 
-                                    delegate: Rectangle {
-                                        Layout.fillWidth: true
-                                        height: transferDelegate.implicitHeight + Theme.spacingMedium
-                                        radius: Theme.radiusMedium
-                                        color: Theme.surface
+                                contentItem: Item {
+                                    implicitHeight: 8
 
-                                        ColumnLayout {
-                                            id: transferDelegate
-                                            anchors.fill: parent
-                                            anchors.margins: Theme.spacingSmall
-                                            spacing: 4
+                                    Rectangle {
+                                        width: progressBar.visualPosition * parent.width
+                                        height: parent.height
+                                        radius: 4
+                                        color: modelData.statusText === qsTr("Echoue") ? Theme.error : Theme.primary
+                                    }
+                                }
+                            }
 
-                                            RowLayout {
-                                                Layout.fillWidth: true
-                                                spacing: Theme.spacingSmall
+                            RowLayout {
+                                Layout.fillWidth: true
 
-                                                // Pastille de direction (envoi / reception).
-                                                Rectangle {
-                                                    width: 22
-                                                    height: 22
-                                                    radius: 11
-                                                    color: modelData.direction === qsTr("Reception") ? Theme.accent : Theme.primary
+                                Label {
+                                    text: {
+                                        const dateText = root.formatDate(modelData.timestamp)
+                                        if (modelData.statusText === qsTr("Echoue") && modelData.errorString.length > 0) {
+                                            return dateText.length > 0 ? (dateText + " \u2022 " + modelData.errorString) : modelData.errorString
+                                        }
+                                        const sizeText = qsTr("%1 / %2 (%3 %)")
+                                            .arg(root.formatBytes(modelData.bytesTransferred))
+                                            .arg(root.formatBytes(modelData.totalBytes))
+                                            .arg(modelData.percent)
+                                        return dateText.length > 0 ? (dateText + " \u2022 " + sizeText) : sizeText
+                                    }
+                                    color: Theme.textSecondary
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
 
-                                                    Text {
-                                                        anchors.centerIn: parent
-                                                        text: modelData.direction === qsTr("Reception") ? "\u2193" : "\u2191"
-                                                        color: Theme.primaryText
-                                                        font.pixelSize: 12
-                                                        font.bold: true
-                                                    }
-                                                }
-
-                                                Label {
-                                                    Layout.fillWidth: true
-                                                    text: modelData.fileName
-                                                    color: Theme.text
-                                                    font.pixelSize: Theme.fontSizeSmall
-                                                    font.bold: true
-                                                    elide: Text.ElideMiddle
-                                                }
-
-                                                Label {
-                                                    text: modelData.statusText
-                                                    color: modelData.statusText === qsTr("Echoue") ? Theme.error
-                                                           : modelData.statusText === qsTr("Termine") ? Theme.success
-                                                           : Theme.textSecondary
-                                                    font.pixelSize: Theme.fontSizeSmall
-                                                }
-                                            }
-
-                                            ProgressBar {
-                                                id: progressBar
-                                                Layout.fillWidth: true
-                                                from: 0
-                                                to: 100
-                                                value: modelData.percent
-
-                                                background: Rectangle {
-                                                    implicitHeight: 8
-                                                    radius: 4
-                                                    color: Theme.border
-                                                }
-
-                                                contentItem: Item {
-                                                    implicitHeight: 8
-
-                                                    Rectangle {
-                                                        width: progressBar.visualPosition * parent.width
-                                                        height: parent.height
-                                                        radius: 4
-                                                        color: modelData.statusText === qsTr("Echoue") ? Theme.error : Theme.primary
-                                                    }
-                                                }
-                                            }
-
-                                            RowLayout {
-                                                Layout.fillWidth: true
-
-                                                Label {
-                                                    text: {
-                                                        const dateText = root.formatDate(modelData.timestamp)
-                                                        if (modelData.statusText === qsTr("Echoue") && modelData.errorString.length > 0) {
-                                                            return dateText.length > 0 ? (dateText + " \u2022 " + modelData.errorString) : modelData.errorString
-                                                        }
-                                                        const sizeText = qsTr("%1 / %2 (%3 %)")
-                                                            .arg(root.formatBytes(modelData.bytesTransferred))
-                                                            .arg(root.formatBytes(modelData.totalBytes))
-                                                            .arg(modelData.percent)
-                                                        return dateText.length > 0 ? (dateText + " \u2022 " + sizeText) : sizeText
-                                                    }
-                                                    color: Theme.textSecondary
-                                                    font.pixelSize: Theme.fontSizeSmall
-                                                    Layout.fillWidth: true
-                                                    elide: Text.ElideRight
-                                                }
-
-                                                // Visible uniquement une fois le transfert
-                                                // termine : avant cela, le fichier de
-                                                // destination n'existe pas encore (ou n'est
-                                                // pas encore a son emplacement final).
-                                                Button {
-                                                    text: qsTr("Ouvrir l'emplacement")
-                                                    visible: modelData.statusText === qsTr("Termine")
-                                                    onClicked: {
-                                                        if (root.context && !root.context.openFileLocation(modelData.filePath)) {
-                                                            console.warn("Impossible d'ouvrir l'emplacement du fichier")
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                // Visible uniquement une fois le transfert
+                                // termine : avant cela, le fichier de
+                                // destination n'existe pas encore (ou n'est
+                                // pas encore a son emplacement final).
+                                Button {
+                                    text: qsTr("Ouvrir l'emplacement")
+                                    visible: modelData.statusText === qsTr("Termine")
+                                    onClicked: {
+                                        if (root.context && !root.context.openFileLocation(modelData.filePath)) {
+                                            console.warn("Impossible d'ouvrir l'emplacement du fichier")
                                         }
                                     }
                                 }

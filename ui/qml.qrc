@@ -23,6 +23,7 @@
         <file>Components/SidebarNavItem.qml</file>
         <file>Components/TabPill.qml</file>
         <file>Components/DashboardCard.qml</file>
+        <file>Components/FolderTile.qml</file>
         <file>Components/Toast.qml</file>
         <file>Components/ToastHost.qml</file>
         <file>Components/ServerStatusIndicator.qml</file>

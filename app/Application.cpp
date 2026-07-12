@@ -644,6 +644,37 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // par adresse IP (voir TransferManager::resolvePeerName()).
     if (m_transferService) {
         m_transferService->setLocalMachineId(m_discoveryService->localId());
+
+        // Regroupe cote reception tous les fichiers d'un meme
+        // correspondant dans un seul sous-dossier de receiveDirectory()
+        // (ex. "CollabLAN Transfers/laptop-marie/"), a la maniere d'un
+        // explorateur de fichiers Windows organise par contact plutot
+        // qu'un unique repertoire plat. Priorite au nom lisible du pair
+        // (hostname annonce par DiscoveryService) s'il est actuellement
+        // decouvert sur le reseau ; TransferService retombe de lui-meme
+        // sur l'UUID machine brut puis sur l'adresse IP si ce nom n'est
+        // pas resolu (voir TransferService::setPeerFolderNameResolver()).
+        network::DiscoveryService *discoveryService = m_discoveryService;
+        m_transferService->setPeerFolderNameResolver(
+            [discoveryService](const QHostAddress &peerAddress, const QString &peerMachineId) -> QString {
+                if (!discoveryService) {
+                    return QString();
+                }
+                const QList<network::DiscoveredPeer> peers = discoveryService->peers();
+                if (!peerMachineId.isEmpty()) {
+                    for (const network::DiscoveredPeer &peer : peers) {
+                        if (peer.id == peerMachineId) {
+                            return peer.name;
+                        }
+                    }
+                }
+                for (const network::DiscoveredPeer &peer : peers) {
+                    if (peer.address.isEqual(peerAddress, QHostAddress::TolerantConversion)) {
+                        return peer.name;
+                    }
+                }
+                return QString();
+            });
     }
 }
 

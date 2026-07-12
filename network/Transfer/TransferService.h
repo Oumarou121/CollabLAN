@@ -6,6 +6,7 @@
 #include <QString>
 #include <QByteArray>
 #include <QHash>
+#include <functional>
 
 class QTcpServer;
 class QTcpSocket;
@@ -184,6 +185,7 @@ private:
     QHash<QTcpSocket*, SendState> m_sendStates;
     QString m_receiveDirOverride;
     QString m_localMachineId;   ///< UUID DiscoveryService::localId() local, transmis dans l'en-tete (voir encodeHeader()).
+    std::function<QString(const QHostAddress &, const QString &)> m_peerFolderNameResolver;
 
 public:
     /// Permet de surcharger le repertoire de reception (tests). Vide =
@@ -195,6 +197,20 @@ public:
     /// resoudre peer_name par UUID plutot que par adresse IP (voir
     /// transferStarted()). A appeler avant tout sendFile().
     void setLocalMachineId(const QString &machineId);
+
+    /// Fonction de resolution du nom de dossier utilise pour regrouper,
+    /// cote reception, tous les fichiers recus d'un meme correspondant
+    /// dans un seul sous-dossier de receiveDirectory() (ex.
+    /// "CollabLAN Transfers/laptop-marie/", au lieu d'un unique
+    /// repertoire plat) - reçoit l'adresse IP et l'UUID machine
+    /// (senderMachineId, voir encodeHeader()) du pair, doit renvoyer un
+    /// nom de dossier deja nettoye des caracteres invalides sous Windows
+    /// (voir Application::setupTransferPeerFolders() pour l'implementation
+    /// par defaut, basee sur DiscoveryService). Si non definie ou si
+    /// l'appel renvoie une chaine vide, repli sur l'UUID machine brut
+    /// (senderMachineId, voir encodeHeader()) ; si celui-ci est egalement
+    /// vide, aucun sous-dossier n'est cree (repertoire plat d'origine).
+    void setPeerFolderNameResolver(std::function<QString(const QHostAddress &, const QString &)> resolver);
 
     /// Repertoire ou sont ecrits les fichiers recus (apres application de
     /// setReceiveDirectory() si utilise). Expose publiquement pour que

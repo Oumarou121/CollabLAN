@@ -91,6 +91,22 @@ QByteArray frameOf(const QByteArray &payload)
     return frame;
 }
 
+// Nettoie un nom de dossier destine au systeme de fichiers (retire les
+// caracteres invalides sous Windows : \ / : * ? " < > |, ainsi que les
+// espaces de debut/fin) - utilise pour regrouper cote reception les
+// fichiers d'un meme correspondant sous un seul sous-dossier de
+// receiveDirectory(). Renvoie une chaine vide si le nom d'origine ne
+// contient plus rien d'exploitable une fois nettoye.
+QString sanitizeFolderName(const QString &name)
+{
+    QString cleaned = name;
+    static const QString kInvalidChars = QStringLiteral("\\/:*?\"<>|");
+    for (const QChar &c : kInvalidChars) {
+        cleaned.remove(c);
+    }
+    return cleaned.trimmed();
+}
+
 } // namespace
 
 TransferService::TransferService(QObject *parent)
@@ -185,6 +201,12 @@ void TransferService::setReceiveDirectory(const QString &dir)
 void TransferService::setLocalMachineId(const QString &machineId)
 {
     m_localMachineId = machineId;
+}
+
+void TransferService::setPeerFolderNameResolver(
+    std::function<QString(const QHostAddress &, const QString &)> resolver)
+{
+    m_peerFolderNameResolver = std::move(resolver);
 }
 
 QString TransferService::receiveDirectory() const
@@ -482,8 +504,33 @@ void TransferService::onServerSocketReadyRead()
             state.headerParsed = true;
 
             const QString dir = receiveDirectory();
-            QDir().mkpath(dir);
-            state.destinationPath = QDir(dir).filePath(state.fileName);
+            // Sous-dossier par correspondant : regroupe tous les fichiers
+            // recus d'un meme pair (envoi comme reception, l'historique
+            // reste associe au meme sender_uuid/recipient_uuid - migration
+            // #017) sous "<receiveDirectory>/<nom du pair>/", plutot que
+            // dans un unique repertoire plat. m_peerFolderNameResolver
+            // (typiquement branche sur DiscoveryService, voir
+            // Application::setupTransferPeerFolders()) donne un nom
+            // affichable ; a defaut, repli sur l'UUID machine brut du
+            // pair (senderMachineId, toujours renseigne en usage reel -
+            // voir setLocalMachineId()). Si aucun des deux n'est
+            // disponible (ex. TransferService utilise isolement, sans
+            // machine id configure, comme dans les tests unitaires), on
+            // conserve le repertoire plat d'origine plutot que de grouper
+            // par adresse IP, non stable (DHCP, IPv4-mappee en IPv6...).
+            QString peerFolderName;
+            if (m_peerFolderNameResolver) {
+                peerFolderName = sanitizeFolderName(
+                    m_peerFolderNameResolver(socket->peerAddress(), senderMachineId));
+            }
+            if (peerFolderName.isEmpty()) {
+                peerFolderName = sanitizeFolderName(senderMachineId);
+            }
+            const QString destDir = peerFolderName.isEmpty()
+                ? dir
+                : QDir(dir).filePath(peerFolderName);
+            QDir().mkpath(destDir);
+            state.destinationPath = QDir(destDir).filePath(state.fileName);
             state.partialPath = state.destinationPath + QStringLiteral(".part");
 
             // Reprise (issue #54) : si un fichier partiel de meme nom
