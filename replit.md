@@ -101,6 +101,34 @@ Flux Release 7 (rattrapage hors-ligne) :
 
 Tests : `test_foldersyncservice` (10 tests, tous verts).
 
+## Suite après Release 8 — Delete/Rename distants + filtre d'exclusion (Release 9 partielle)
+
+Deux lacunes identifiées en reprenant le travail interrompu ont été comblées :
+
+**core/Sync/FolderSyncService** — jusqu'ici `handleFolderOp` et
+`handleFolderCatchupBatch` n'appliquaient que Create/Update côté récepteur ;
+un Delete ou Rename distant était reçu (signal `remoteOpReceived` émis) mais
+jamais appliqué au système de fichiers ni à la base locale. Ajout de
+`applyRemoteDelete()` (supprime le fichier sur disque, `markDeleted()` en
+base, journalise un `FileSyncOperation` Delete) et `applyRemoteRename()`
+(renomme sur disque, `renameFile()` en base, journalise un Rename) — les deux
+méthodes de `SharedFileRepository` existaient déjà mais n'étaient jamais
+appelées.
+
+**core/SharedFolderManager::shareFolder()** — aucun filtre d'exclusion
+n'existait : `.git`, `.tmp`, fichiers de verrouillage (`~$*.docx`,
+`.~lock.*`), `Thumbs.db`, `.DS_Store`, etc. étaient indexés et donc
+synchronisés comme n'importe quel fichier utilisateur. Ajout d'un filtre
+`isExcludedRelativePath()` (dossiers `.git`/`.svn`/`.hg`/`node_modules`/
+`__pycache__`, fichiers système connus, verrous d'éditeurs, extensions
+`.tmp`/`.temp`/`.obj`/`.o`/`.swp`/`.bak`/`.crdownload`/`.part`).
+
+Tests : 2 nouveaux cas dans `test_foldersyncservice` (Delete et Rename
+distants appliqués correctement) + 1 nouveau cas dans
+`test_sharedfoldermanager` (fichiers techniques exclus de l'indexation).
+33/33 tests des deux suites passent ; suite complète toujours à 25/31 (mêmes
+6 échecs préexistants, aucune régression).
+
 ## Release 2 / 3 — Détection des changements + Journal de synchronisation
 All C++ components were already implemented. The following gaps were closed:
 

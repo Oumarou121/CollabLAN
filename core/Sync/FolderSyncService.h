@@ -231,6 +231,27 @@ private:
     void handleFolderCatchupBatch(const QJsonObject &obj);
     void handleFolderFileRequest(const QJsonObject &obj, const QHostAddress &senderAddress);
 
+    /**
+     * @brief Applique localement une suppression distante (folder_op Delete).
+     *
+     * Supprime le fichier sur disque (s'il existe encore), marque la ligne
+     * SharedFiles correspondante comme supprimee (tombstone) et journalise
+     * l'operation dans SyncOperations pour un futur rattrapage (Release 7).
+     */
+    void applyRemoteDelete(const models::SharedFolder &folder, const QString &relativePath,
+                           const QString &machineId);
+
+    /**
+     * @brief Applique localement un renommage/deplacement distant
+     *        (folder_op Rename).
+     *
+     * Renomme le fichier sur disque (s'il existe encore sous son ancien
+     * chemin), met a jour relative_path dans SharedFiles et journalise
+     * l'operation.
+     */
+    void applyRemoteRename(const models::SharedFolder &folder, const QString &oldRelativePath,
+                          const QString &newRelativePath, const QString &machineId);
+
     /// Construit le JSON d'un folder_op à partir d'une FileSyncOperation déjà
     /// hydratée (relativePath renseigné via JOIN de getByFolderId).
     QJsonObject buildFolderOpJson(const models::FileSyncOperation &op,

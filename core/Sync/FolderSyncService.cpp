@@ -238,9 +238,9 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
     emit remoteOpReceived(folderUuid, opType, relativePath, oldRelPath,
                           machineId, senderAddress, transferPort);
 
-    if ((opType == QStringLiteral("Create") || opType == QStringLiteral("Update"))
-        && m_folderManager)
-    {
+    if (!m_folderManager) return;
+
+    if (opType == QStringLiteral("Create") || opType == QStringLiteral("Update")) {
         const auto folders = m_folderManager->getFolders();
         for (const auto &folder : folders) {
             if (folder.uuid() != folderUuid) continue;
@@ -261,6 +261,20 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
                                   fileHash, version);
             }
             break;
+        }
+    } else if (opType == QStringLiteral("Delete")) {
+        for (const auto &folder : m_folderManager->getFolders()) {
+            if (folder.uuid() == folderUuid) {
+                applyRemoteDelete(folder, relativePath, machineId);
+                break;
+            }
+        }
+    } else if (opType == QStringLiteral("Rename")) {
+        for (const auto &folder : m_folderManager->getFolders()) {
+            if (folder.uuid() == folderUuid) {
+                applyRemoteRename(folder, oldRelPath, relativePath, machineId);
+                break;
+            }
         }
     }
 }
@@ -318,19 +332,34 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
         const QString folderUuid   = opObj[QStringLiteral("folder_uuid")].toString();
         const QString opType       = opObj[QStringLiteral("op_type")].toString();
         const QString relativePath = opObj[QStringLiteral("relative_path")].toString();
+        const QString oldRelPath   = opObj[QStringLiteral("old_relative_path")].toString();
         const QString machineId    = opObj[QStringLiteral("machine_id")].toString();
         const QString fileHash     = opObj[QStringLiteral("file_hash")].toString();
         const int version          = opObj[QStringLiteral("version")].toInt();
 
-        if ((opType == QStringLiteral("Create") || opType == QStringLiteral("Update"))
-            && machineId != m_machineId && m_folderManager)
-        {
+        if (machineId == m_machineId || !m_folderManager) continue;
+
+        if (opType == QStringLiteral("Create") || opType == QStringLiteral("Update")) {
             const auto folders = m_folderManager->getFolders();
             for (const auto &folder : folders) {
                 if (folder.uuid() == folderUuid) {
                     requestRemoteFile(folderUuid, relativePath, machineId,
                                       folder.id(), folder.localPath(),
                                       fileHash, version);
+                    break;
+                }
+            }
+        } else if (opType == QStringLiteral("Delete")) {
+            for (const auto &folder : m_folderManager->getFolders()) {
+                if (folder.uuid() == folderUuid) {
+                    applyRemoteDelete(folder, relativePath, machineId);
+                    break;
+                }
+            }
+        } else if (opType == QStringLiteral("Rename")) {
+            for (const auto &folder : m_folderManager->getFolders()) {
+                if (folder.uuid() == folderUuid) {
+                    applyRemoteRename(folder, oldRelPath, relativePath, machineId);
                     break;
                 }
             }
@@ -479,6 +508,78 @@ void FolderSyncService::onTransferCompleted(const QString &transferKey,
     m_activeByTransferKey.erase(it);
 
     integrateReceivedFile(pending, filePath);
+}
+
+// ---------------------------------------------------------------------------
+// Application des Delete / Rename distants (complète le Release 6 : jusqu'ici
+// seuls Create/Update étaient appliqués côté récepteur).
+// ---------------------------------------------------------------------------
+
+void FolderSyncService::applyRemoteDelete(const models::SharedFolder &folder,
+                                           const QString &relativePath,
+                                           const QString &machineId)
+{
+    const QString absPath = QDir::cleanPath(
+        folder.localPath() + QDir::separator() + relativePath);
+    if (QFile::exists(absPath) && !QFile::remove(absPath)) {
+        qWarning() << "[FolderSync] Suppression distante : échec de la suppression sur disque :" << absPath;
+    }
+
+    if (!m_fileRepository.markDeleted(folder.id(), relativePath)) {
+        qWarning() << "[FolderSync] Suppression distante : markDeleted échoué pour" << relativePath;
+    }
+
+    const auto existing = m_fileRepository.findByRelativePath(folder.id(), relativePath);
+
+    models::FileSyncOperation op;
+    op.setType(models::SyncChangeType::Delete);
+    if (existing.has_value()) op.setFileId(existing->id());
+    op.setRelativePath(relativePath);
+    op.setMachineId(machineId);
+    m_repository.insert(op);
+
+    qDebug() << "[FolderSync] Suppression distante appliquée :" << relativePath;
+    emit fileIntegrated(folder.uuid(), relativePath, false);
+}
+
+void FolderSyncService::applyRemoteRename(const models::SharedFolder &folder,
+                                           const QString &oldRelativePath,
+                                           const QString &newRelativePath,
+                                           const QString &machineId)
+{
+    const QString oldAbsPath = QDir::cleanPath(
+        folder.localPath() + QDir::separator() + oldRelativePath);
+    const QString newAbsPath = QDir::cleanPath(
+        folder.localPath() + QDir::separator() + newRelativePath);
+
+    QDir().mkpath(QFileInfo(newAbsPath).absolutePath());
+
+    if (QFile::exists(oldAbsPath)) {
+        if (QFile::exists(newAbsPath)) {
+            QFile::remove(newAbsPath);
+        }
+        if (!QFile::rename(oldAbsPath, newAbsPath)) {
+            qWarning() << "[FolderSync] Renommage distant : échec du renommage sur disque :"
+                       << oldAbsPath << "->" << newAbsPath;
+        }
+    }
+
+    if (!m_fileRepository.renameFile(folder.id(), oldRelativePath, newRelativePath)) {
+        qWarning() << "[FolderSync] Renommage distant : renameFile échoué pour" << oldRelativePath;
+    }
+
+    const auto existing = m_fileRepository.findByRelativePath(folder.id(), newRelativePath);
+
+    models::FileSyncOperation op;
+    op.setType(models::SyncChangeType::Rename);
+    if (existing.has_value()) op.setFileId(existing->id());
+    op.setRelativePath(newRelativePath);
+    op.setOldRelativePath(oldRelativePath);
+    op.setMachineId(machineId);
+    m_repository.insert(op);
+
+    qDebug() << "[FolderSync] Renommage distant appliqué :" << oldRelativePath << "->" << newRelativePath;
+    emit fileIntegrated(folder.uuid(), newRelativePath, false);
 }
 
 // ---------------------------------------------------------------------------

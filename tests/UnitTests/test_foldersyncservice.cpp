@@ -750,6 +750,141 @@ private slots:
         QCOMPARE(spy.count(), 0);
         delete svc;
     }
+
+    // ============================================================
+    // Delete / Rename distants (complete le Release 6 : jusqu'ici seuls
+    // Create/Update etaient appliques cote recepteur).
+    // ============================================================
+
+    // ------------------------------------------------------------------
+    // 15. folder_op Delete recu d'un pair -> fichier supprime du disque
+    //     et marque supprime (tombstone) en base.
+    // ------------------------------------------------------------------
+    void receiveFolderOpDelete_removesFileAndMarksTombstone()
+    {
+        QTemporaryDir dbDir, folderDir;
+        QVERIFY(dbDir.isValid() && folderDir.isValid());
+
+        const QString dbPath = dbDir.filePath(QStringLiteral("fss_delete_%1.sqlite")
+            .arg(QRandomGenerator::global()->generate()));
+        auto *db = openRealDb(QStringLiteral("fss_delete"), dbPath);
+        QVERIFY(db);
+
+        core::SharedFolderManager mgr(db);
+        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), 0);
+        QVERIFY(folder.has_value());
+        const qint64 folderId = folder->id();
+
+        // Fichier local existant, deja indexe (simule une synchro anterieure).
+        const QString absPath = folderDir.filePath(QStringLiteral("obsolete.txt"));
+        {
+            QFile f(absPath);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(QByteArrayLiteral("a supprimer"));
+        }
+        QVERIFY(mgr.shareFolder(folderId).has_value());
+        QVERIFY(QFile::exists(absPath));
+
+        auto *svc = new core::sync::FolderSyncService(db, &mgr, this);
+        svc->setLocalMachineId(QStringLiteral("machine-local"));
+        QSignalSpy spy(svc, &core::sync::FolderSyncService::fileIntegrated);
+
+        QJsonObject obj;
+        obj[QStringLiteral("type")]              = QStringLiteral("folder_op");
+        obj[QStringLiteral("folder_uuid")]       = folder->uuid();
+        obj[QStringLiteral("op_type")]           = QStringLiteral("Delete");
+        obj[QStringLiteral("relative_path")]     = QStringLiteral("obsolete.txt");
+        obj[QStringLiteral("old_relative_path")] = QString();
+        obj[QStringLiteral("machine_id")]        = QStringLiteral("machine-remote");
+        const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+
+        QMetaObject::invokeMethod(svc, "onClientMessageReceived",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QString, json));
+
+        // Le fichier a disparu du disque.
+        QVERIFY(!QFile::exists(absPath));
+
+        // La ligne SharedFiles est bien marquee supprimee (tombstone), plus
+        // renvoyee par getFiles().
+        QCOMPARE(mgr.getFiles(folderId).size(), 0);
+
+        database::SharedFileRepository fileRepo(db->database());
+        const auto sf = fileRepo.findByRelativePath(folderId, QStringLiteral("obsolete.txt"));
+        QVERIFY(sf.has_value());
+        QVERIFY(sf->deleted());
+
+        QCOMPARE(spy.count(), 1);
+
+        delete svc;
+        delete db;
+    }
+
+    // ------------------------------------------------------------------
+    // 16. folder_op Rename recu d'un pair -> fichier renomme sur disque et
+    //     relative_path mis a jour en base.
+    // ------------------------------------------------------------------
+    void receiveFolderOpRename_movesFileAndUpdatesRelativePath()
+    {
+        QTemporaryDir dbDir, folderDir;
+        QVERIFY(dbDir.isValid() && folderDir.isValid());
+
+        const QString dbPath = dbDir.filePath(QStringLiteral("fss_rename_%1.sqlite")
+            .arg(QRandomGenerator::global()->generate()));
+        auto *db = openRealDb(QStringLiteral("fss_rename"), dbPath);
+        QVERIFY(db);
+
+        core::SharedFolderManager mgr(db);
+        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), 0);
+        QVERIFY(folder.has_value());
+        const qint64 folderId = folder->id();
+
+        const QByteArray content = QByteArrayLiteral("meme contenu");
+        const QString oldAbsPath = folderDir.filePath(QStringLiteral("ancien.txt"));
+        {
+            QFile f(oldAbsPath);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(content);
+        }
+        QVERIFY(mgr.shareFolder(folderId).has_value());
+
+        auto *svc = new core::sync::FolderSyncService(db, &mgr, this);
+        svc->setLocalMachineId(QStringLiteral("machine-local"));
+        QSignalSpy spy(svc, &core::sync::FolderSyncService::fileIntegrated);
+
+        QJsonObject obj;
+        obj[QStringLiteral("type")]              = QStringLiteral("folder_op");
+        obj[QStringLiteral("folder_uuid")]       = folder->uuid();
+        obj[QStringLiteral("op_type")]           = QStringLiteral("Rename");
+        obj[QStringLiteral("relative_path")]     = QStringLiteral("nouveau.txt");
+        obj[QStringLiteral("old_relative_path")] = QStringLiteral("ancien.txt");
+        obj[QStringLiteral("machine_id")]        = QStringLiteral("machine-remote");
+        const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+
+        QMetaObject::invokeMethod(svc, "onClientMessageReceived",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QString, json));
+
+        const QString newAbsPath = folderDir.filePath(QStringLiteral("nouveau.txt"));
+        QVERIFY(!QFile::exists(oldAbsPath));
+        QVERIFY(QFile::exists(newAbsPath));
+        {
+            QFile f(newAbsPath);
+            QVERIFY(f.open(QIODevice::ReadOnly));
+            QCOMPARE(f.readAll(), content);
+        }
+
+        database::SharedFileRepository fileRepo(db->database());
+        QVERIFY(!fileRepo.findByRelativePath(folderId, QStringLiteral("ancien.txt")).has_value());
+        const auto sf = fileRepo.findByRelativePath(folderId, QStringLiteral("nouveau.txt"));
+        QVERIFY(sf.has_value());
+        QVERIFY(!sf->deleted());
+
+        QCOMPARE(spy.count(), 1);
+
+        delete svc;
+        delete db;
+    }
 };
 
 QTEST_MAIN(TestFolderSyncService)

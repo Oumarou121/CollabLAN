@@ -10,8 +10,50 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QSet>
+#include <QStringList>
 
 namespace core {
+
+namespace {
+
+/**
+ * @brief Filtre d'exclusion (Release 9 partielle) : evite d'indexer et de
+ * synchroniser des fichiers techniques/temporaires qui n'ont pas de sens a
+ * partager entre postes (fichiers de verrouillage d'editeurs, dossiers de
+ * VCS, caches, etc.).
+ */
+bool isExcludedRelativePath(const QString &relativePath)
+{
+    static const QSet<QString> excludedDirNames = {
+        QStringLiteral(".git"), QStringLiteral(".svn"), QStringLiteral(".hg"),
+        QStringLiteral("node_modules"), QStringLiteral("__pycache__"),
+    };
+    static const QSet<QString> excludedFileNames = {
+        QStringLiteral(".DS_Store"), QStringLiteral("Thumbs.db"), QStringLiteral("desktop.ini"),
+    };
+    static const QSet<QString> excludedSuffixes = {
+        QStringLiteral("tmp"), QStringLiteral("temp"), QStringLiteral("obj"),
+        QStringLiteral("o"), QStringLiteral("swp"), QStringLiteral("bak"),
+        QStringLiteral("crdownload"), QStringLiteral("part"),
+    };
+
+    const QStringList segments = relativePath.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    for (const QString &segment : segments) {
+        if (excludedDirNames.contains(segment)) return true;
+    }
+
+    const QFileInfo info(relativePath);
+    const QString fileName = info.fileName();
+    if (excludedFileNames.contains(fileName)) return true;
+    if (fileName.startsWith(QStringLiteral("~$"))) return true;   // verrou Office
+    if (fileName.startsWith(QStringLiteral(".~lock."))) return true; // verrou LibreOffice
+
+    if (excludedSuffixes.contains(info.suffix().toLower())) return true;
+
+    return false;
+}
+
+} // namespace
 
 SharedFolderManager::SharedFolderManager(database::DatabaseManager *dbManager, QObject *parent)
     : QObject(parent)
@@ -159,6 +201,15 @@ std::optional<QVector<models::SharedFileChange>> SharedFolderManager::shareFolde
     while (it.hasNext()) {
         const QString absolutePath = it.next();
         const QString relativePath = rootDir.relativeFilePath(absolutePath);
+
+        if (isExcludedRelativePath(relativePath)) {
+            // Fichier technique/temporaire (Release 9 partielle) : ni
+            // indexe, ni compte comme "vu" -- s'il etait connu d'une
+            // indexation precedente (peu probable, ce filtre est nouveau),
+            // il sera tombstone plus bas comme tout fichier disparu.
+            continue;
+        }
+
         seenRelativePaths.insert(relativePath);
 
         QFile file(absolutePath);

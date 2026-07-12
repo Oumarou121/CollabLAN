@@ -268,6 +268,46 @@ private slots:
         db->close();
         delete db;
     }
+
+    // ------------------------------------------------------------------
+    // Release 9 (partielle) : fichiers techniques/temporaires exclus de
+    // l'indexation (et donc de toute synchronisation reseau).
+    // ------------------------------------------------------------------
+    void shareFolderExcludesTechnicalAndTemporaryFiles()
+    {
+        auto *db = openDb(QStringLiteral("sfm_exclude_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+
+        // Fichier legitime : doit etre indexe.
+        writeFile(QStringLiteral("rapport.docx"), QByteArrayLiteral("contenu"));
+
+        // Fichiers/dossiers a exclure.
+        writeFile(QStringLiteral("scratch.tmp"), QByteArrayLiteral("temp"));
+        writeFile(QStringLiteral("build/output.obj"), QByteArrayLiteral("obj"));
+        writeFile(QStringLiteral("~$rapport.docx"), QByteArrayLiteral("lock office"));
+        writeFile(QStringLiteral(".~lock.rapport.docx#"), QByteArrayLiteral("lock libreoffice"));
+        writeFile(QStringLiteral(".git/HEAD"), QByteArrayLiteral("ref: refs/heads/main"));
+        writeFile(QStringLiteral("Thumbs.db"), QByteArrayLiteral("thumb"));
+        writeFile(QStringLiteral(".DS_Store"), QByteArrayLiteral("ds"));
+
+        const auto folder = mgr.createFolder(QStringLiteral("F"), m_folderDir->path(), 0);
+        QVERIFY2(folder.has_value(), qPrintable(mgr.lastErrorString()));
+
+        const auto changes = mgr.shareFolder(folder->id());
+        QVERIFY(changes.has_value());
+
+        // Seul rapport.docx doit avoir ete indexe.
+        QCOMPARE(changes->size(), 1);
+        QCOMPARE(changes->at(0).file().relativePath(), QStringLiteral("rapport.docx"));
+
+        const auto files = mgr.getFiles(folder->id());
+        QCOMPARE(files.size(), 1);
+        QCOMPARE(files.at(0).relativePath(), QStringLiteral("rapport.docx"));
+
+        db->close();
+        delete db;
+    }
 };
 
 QTEST_MAIN(TestSharedFolderManager)
