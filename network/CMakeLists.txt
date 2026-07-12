@@ -10,6 +10,7 @@ target_include_directories(network PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/Transfer
     ${CMAKE_CURRENT_SOURCE_DIR}/Voice
     ${CMAKE_CURRENT_SOURCE_DIR}/Security
+    ${CMAKE_CURRENT_SOURCE_DIR}/Sync
 )
 
 target_link_libraries(network PUBLIC Qt6::Core Qt6::Network OpenSSL::SSL OpenSSL::Crypto)

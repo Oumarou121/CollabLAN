@@ -20,6 +20,7 @@ Item {
 
     signal logoutRequested()
     signal usersRequested()
+    signal sharedFoldersRequested()
 
     Rectangle {
         anchors.fill: parent
@@ -115,6 +116,29 @@ Item {
                     }
 
                     onClicked: root.usersRequested()
+                }
+
+                Button {
+                    text: qsTr("Dossiers partages")
+                    Layout.leftMargin: Theme.spacingSmall
+                    Layout.preferredHeight: 36
+
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
+                        border.width: 1
+                        border.color: Theme.border
+                    }
+
+                    contentItem: Text {
+                        text: qsTr("Dossiers partages")
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    onClicked: root.sharedFoldersRequested()
                 }
 
                 ThemeToggleButton {

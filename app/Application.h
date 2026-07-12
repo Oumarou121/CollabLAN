@@ -15,6 +15,14 @@ class UserManager;
 namespace network {
 class DiscoveryService;
 class PeersModel;
+class SyncNetworkService;
+}
+
+namespace core {
+class SharedFolderManager;
+class SharedFoldersModel;
+class SyncEngine;
+class SyncHistoryService;
 }
 
 /**
@@ -40,12 +48,27 @@ public:
     // (issue #17).
     network::PeersModel *peersModel() const;
 
+    // Expose au bootstrap QML les composants de la fonctionnalite "Shared
+    // Folder" : gestion CRUD des dossiers (SharedFolderView.qml) et
+    // historique de synchronisation.
+    core::SharedFolderManager *sharedFolderManager() const;
+    core::SharedFoldersModel *sharedFoldersModel() const;
+    core::SyncHistoryService *syncHistoryService() const;
+
 private:
+    void setupSharedFolders();
+
     // TODO: instancier ici les autres services (Security, Settings...)
     std::unique_ptr<database::DatabaseManager> m_databaseManager;
     core::UserManager *m_userManager = nullptr;               // parente = this (QObject)
     network::DiscoveryService *m_discoveryService = nullptr;  // parente = this (QObject)
     network::PeersModel *m_peersModel = nullptr;               // parente = this (QObject)
+
+    core::SharedFolderManager *m_sharedFolderManager = nullptr;   // parente = this (QObject)
+    core::SharedFoldersModel *m_sharedFoldersModel = nullptr;     // parente = this (QObject)
+    core::SyncEngine *m_syncEngine = nullptr;                     // parente = this (QObject)
+    core::SyncHistoryService *m_syncHistoryService = nullptr;     // parente = this (QObject)
+    network::SyncNetworkService *m_syncNetworkService = nullptr;  // parente = this (QObject)
 };
 
 #endif // APP_APPLICATION_H

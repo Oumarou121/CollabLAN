@@ -6,6 +6,8 @@
         <file>Chat/ChatView.qml</file>
         <file>Users/UsersView.qml</file>
         <file>FileTransfer/FileTransferView.qml</file>
+        <file>SharedFolder/SharedFolderView.qml</file>
+        <file>SharedFolder/SharedFolderDetailView.qml</file>
         <file>Call/CallView.qml</file>
         <file>Settings/SettingsView.qml</file>
         <file>Admin/AdminView.qml</file>

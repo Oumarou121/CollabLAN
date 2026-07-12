@@ -6,6 +6,11 @@
 #include "UserManager.h"
 #include "Discovery/DiscoveryService.h"
 #include "Discovery/PeersModel.h"
+#include "SharedFolderManager.h"
+#include "SharedFoldersModel.h"
+#include "SyncEngine.h"
+#include "SyncHistoryService.h"
+#include "Sync/SyncNetworkService.h"
 
 Application::Application(QObject *parent)
     : QObject(parent)
@@ -63,6 +68,80 @@ void Application::initialize()
     if (!m_discoveryService->start()) {
         qWarning() << "Impossible de demarrer DiscoveryService (port deja utilise ?)";
     }
+
+    setupSharedFolders();
+}
+
+void Application::setupSharedFolders()
+{
+    m_sharedFolderManager = new core::SharedFolderManager(m_databaseManager.get(), this);
+    m_sharedFoldersModel = new core::SharedFoldersModel(m_sharedFolderManager, m_databaseManager.get(), this);
+    m_syncHistoryService = new core::SyncHistoryService(m_databaseManager.get(), this);
+
+    m_syncEngine = new core::SyncEngine(m_databaseManager.get(), m_discoveryService->localId(), this);
+    m_syncNetworkService = new network::SyncNetworkService(m_discoveryService->localId(), m_discoveryService->localName(), this);
+
+    // Surveille tous les dossiers deja actifs au demarrage.
+    for (const auto &folder : m_sharedFolderManager->activeFolders()) {
+        m_syncEngine->attachFolder(folder);
+    }
+
+    // Un nouveau dossier partage est immediatement surveille ; un dossier
+    // dont le partage est desactive n'est plus suivi.
+    connect(m_sharedFolderManager, &core::SharedFolderManager::folderCreated, m_syncEngine, [this](const models::SharedFolder &folder) {
+        m_syncEngine->attachFolder(folder);
+    });
+    connect(m_sharedFolderManager, &core::SharedFolderManager::folderShared, m_syncEngine, [this](const models::SharedFolder &folder) {
+        m_syncEngine->attachFolder(folder);
+    });
+    connect(m_sharedFolderManager, &core::SharedFolderManager::folderRemoved, m_syncEngine, [this](int folderId) {
+        m_syncEngine->detachFolder(folderId);
+    });
+
+    // Changement local detecte -> diffusion immediate aux postes connectes
+    // (Phase 7 : synchronisation en temps reel).
+    connect(m_syncEngine, &core::SyncEngine::localFileChanged, m_syncNetworkService,
+            [this](int /*folderId*/, const QString &folderName, const QString &relativePath, const QString &hash, qint64 size, int version) {
+                m_syncNetworkService->broadcastFileInfo(folderName, relativePath, hash, size, version);
+            });
+    connect(m_syncEngine, &core::SyncEngine::localFileDeleted, m_syncNetworkService,
+            [this](int /*folderId*/, const QString &folderName, const QString &relativePath, int version) {
+                m_syncNetworkService->broadcastDeleteFile(folderName, relativePath, version);
+            });
+
+    // Metadonnees recues d'un poste distant -> appliquees en base locale
+    // (le contenu du fichier suit via FILE_REQUEST/FILE_CHUNK, non
+    // automatise ici : declenche depuis l'UI ou une synchronisation
+    // complete ulterieure).
+    connect(m_syncNetworkService, &network::SyncNetworkService::fileInfoReceived, m_syncEngine,
+            [this](const QString &peerId, const QString &folderName, const QString &relativePath, const QString &hash, qint64 size, int version) {
+                for (const auto &folder : m_sharedFolderManager->activeFolders()) {
+                    if (folder.name() == folderName) {
+                        m_syncEngine->applyRemoteFileInfo(folder.id(), relativePath, hash, size, version, peerId);
+                        break;
+                    }
+                }
+            });
+    connect(m_syncNetworkService, &network::SyncNetworkService::deleteFileReceived, m_syncEngine,
+            [this](const QString &/*peerId*/, const QString &folderName, const QString &relativePath, int version) {
+                for (const auto &folder : m_sharedFolderManager->activeFolders()) {
+                    if (folder.name() == folderName) {
+                        m_syncEngine->applyRemoteDelete(folder.id(), relativePath, version);
+                        break;
+                    }
+                }
+            });
+
+    // Se connecte automatiquement a tout poste decouvert sur le reseau
+    // local pour maintenir un canal de synchronisation permanent.
+    connect(m_discoveryService, &network::DiscoveryService::peerDiscovered, m_syncNetworkService,
+            [this](const network::DiscoveredPeer &peer) {
+                m_syncNetworkService->connectToPeer(peer.id, peer.address, network::SyncNetworkService::kDefaultPort);
+            });
+
+    if (!m_syncNetworkService->start()) {
+        qWarning() << "Impossible de demarrer SyncNetworkService (port deja utilise ?)";
+    }
 }
 
 core::UserManager *Application::userManager() const
@@ -73,4 +152,19 @@ core::UserManager *Application::userManager() const
 network::PeersModel *Application::peersModel() const
 {
     return m_peersModel;
+}
+
+core::SharedFolderManager *Application::sharedFolderManager() const
+{
+    return m_sharedFolderManager;
+}
+
+core::SharedFoldersModel *Application::sharedFoldersModel() const
+{
+    return m_sharedFoldersModel;
+}
+
+core::SyncHistoryService *Application::syncHistoryService() const
+{
+    return m_syncHistoryService;
 }

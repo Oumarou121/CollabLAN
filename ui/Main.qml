@@ -4,6 +4,7 @@ import Themes
 import "Login"
 import "Home"
 import "Users"
+import "SharedFolder"
 
 /*
  * Main - fenetre racine de CollabLAN.
@@ -63,6 +64,9 @@ ApplicationWindow {
             onUsersRequested: {
                 stackView.push(usersViewComponent)
             }
+            onSharedFoldersRequested: {
+                stackView.push(sharedFolderViewComponent)
+            }
         }
     }
 
@@ -70,6 +74,29 @@ ApplicationWindow {
         id: usersViewComponent
 
         UsersView {
+            onBackRequested: {
+                stackView.pop()
+            }
+        }
+    }
+
+    Component {
+        id: sharedFolderViewComponent
+
+        SharedFolderView {
+            onBackRequested: {
+                stackView.pop()
+            }
+            onFolderOpened: function(folderId, folderName) {
+                stackView.push(sharedFolderDetailComponent, { folderId: folderId, folderName: folderName })
+            }
+        }
+    }
+
+    Component {
+        id: sharedFolderDetailComponent
+
+        SharedFolderDetailView {
             onBackRequested: {
                 stackView.pop()
             }

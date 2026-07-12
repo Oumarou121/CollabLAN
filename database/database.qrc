@@ -1,5 +1,7 @@
 <RCC>
     <qresource prefix="/database">
         <file alias="migrations/001_initial_schema.sql">Migrations/001_initial_schema.sql</file>
+        <file alias="migrations/002_add_user_password.sql">Migrations/002_add_user_password.sql</file>
+        <file alias="migrations/003_shared_folders.sql">Migrations/003_shared_folders.sql</file>
     </qresource>
 </RCC>

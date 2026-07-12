@@ -5,6 +5,9 @@
 #include "Application.h"
 #include "UserManager.h"
 #include "Discovery/PeersModel.h"
+#include "SharedFolderManager.h"
+#include "SharedFoldersModel.h"
+#include "SyncHistoryService.h"
 
 int main(int argc, char *argv[])
 {
@@ -23,6 +26,11 @@ int main(int argc, char *argv[])
     // Brancher UsersView.qml sur la liste des postes decouverts en temps
     // reel par DiscoveryService (issue #17).
     engine.rootContext()->setContextProperty("peersModel", static_cast<QObject*>(application.peersModel()));
+    // Brancher SharedFolderView.qml sur la gestion des dossiers partages
+    // (creation/suppression, liste temps reel, historique).
+    engine.rootContext()->setContextProperty("sharedFolderManager", static_cast<QObject*>(application.sharedFolderManager()));
+    engine.rootContext()->setContextProperty("sharedFoldersModel", static_cast<QObject*>(application.sharedFoldersModel()));
+    engine.rootContext()->setContextProperty("syncHistoryService", static_cast<QObject*>(application.syncHistoryService()));
     engine.load(QUrl(QStringLiteral("qrc:/ui/Main.qml")));
 
     if (engine.rootObjects().isEmpty())

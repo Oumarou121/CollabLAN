@@ -24,3 +24,7 @@ add_test(NAME test_tlshandshakeservice COMMAND test_tlshandshakeservice)
 add_executable(test_userrepository UnitTests/test_userrepository.cpp)
 target_link_libraries(test_userrepository PRIVATE Qt6::Test database models)
 add_test(NAME test_userrepository COMMAND test_userrepository)
+
+add_executable(test_sharedfolderrepositories UnitTests/test_sharedfolderrepositories.cpp)
+target_link_libraries(test_sharedfolderrepositories PRIVATE Qt6::Test database models)
+add_test(NAME test_sharedfolderrepositories COMMAND test_sharedfolderrepositories)

@@ -1,1 +1,2 @@
 - [Ninja + __FILE__ relative paths](cmake-ninja-file-macro.md) — code relying on `__FILE__` for runtime path lookups breaks under CMake+Ninja on this platform since it expands to a relative path, not absolute.
+- [Null QString bound to NOT NULL SQLite column](qt-null-qstring-sqlite-bind.md) — QSqlQuery::bindValue with a null (not empty) QString violates NOT NULL even with a column DEFAULT; normalize before binding.
