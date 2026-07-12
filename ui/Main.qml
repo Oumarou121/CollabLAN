@@ -8,6 +8,7 @@ import "Chat"
 import "FileTransfer"
 import "Call"
 import "Admin"
+import "SharedFolder"
 import "Components"
 
 /*
@@ -112,6 +113,19 @@ ApplicationWindow {
             }
             onAdminRequested: {
                 stackView.push(adminViewComponent)
+            }
+            onSharedFoldersRequested: {
+                stackView.push(sharedFolderViewComponent)
+            }
+        }
+    }
+
+    Component {
+        id: sharedFolderViewComponent
+
+        SharedFolderView {
+            onBackRequested: {
+                stackView.pop()
             }
         }
     }

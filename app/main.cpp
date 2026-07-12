@@ -12,6 +12,7 @@
 #include "MessageModel.h"
 #include "GroupModel.h"
 #include "TransferContext.h"
+#include "SharedFolderContext.h"
 #include "CallContext.h"
 #include "NotificationManager.h"
 #include "AuditLogModel.h"
@@ -219,6 +220,14 @@ int main(int argc, char *argv[])
     // Créer et exposer le modèle de paramètres globaux (issue #69).
     core::SettingsModel *settingsModel = new core::SettingsModel(&engine);
     engine.rootContext()->setContextProperty("settingsModel", settingsModel);
+
+    // Créer et exposer le contexte "Shared Folder" (1ère tranche : creer/
+    // lister/supprimer des dossiers partages + indexation locale de leur
+    // contenu, sans synchronisation reseau -- voir core::SharedFolderManager).
+    core::SharedFolderContext *sharedFolderContext = new core::SharedFolderContext(&engine);
+    sharedFolderContext->setSharedFolderManager(application.sharedFolderManager());
+    sharedFolderContext->setUserManager(application.userManager());
+    engine.rootContext()->setContextProperty("sharedFolderContext", sharedFolderContext);
 
     engine.load(QUrl(QStringLiteral("qrc:/ui/Main.qml")));
 

@@ -22,6 +22,7 @@ Item {
     signal fileTransferRequested()
     signal callRequested()
     signal adminRequested()
+    signal sharedFoldersRequested()
 
     Rectangle {
         anchors.fill: parent
@@ -109,6 +110,12 @@ Item {
                     icon: "\u260E"
                     label: qsTr("Appels")
                     onClicked: root.callRequested()
+                }
+                SidebarNavItem {
+                    Layout.fillWidth: true
+                    icon: "📂"
+                    label: qsTr("Dossiers partagés")
+                    onClicked: root.sharedFoldersRequested()
                 }
 
                 Item { Layout.preferredHeight: Theme.spacingMedium }
@@ -264,6 +271,13 @@ Item {
                             title: qsTr("Appels")
                             description: qsTr("Demarrez un appel ou consultez votre historique.")
                             onClicked: root.callRequested()
+                        }
+                        DashboardCard {
+                            Layout.fillWidth: true
+                            icon: "📂"
+                            title: qsTr("Dossiers partagés")
+                            description: qsTr("Partagez un dossier local avec votre réseau.")
+                            onClicked: root.sharedFoldersRequested()
                         }
                         DashboardCard {
                             Layout.fillWidth: true

@@ -15,6 +15,19 @@ set(NO_TESTS ON CACHE BOOL "" FORCE)
 # Les desactiver evite ce chemin de code casse.
 set(LIBSRTP_TEST_APPS OFF CACHE BOOL "" FORCE)
 set(TEST_APPS OFF CACHE BOOL "" FORCE)
+# Le depot source une fois extrait (build/_deps/libdatachannel-src) n'est
+# plus un working copy .git valide (son .git est absent une fois les
+# sous-modules extraits/aplatis) : toute reconfiguration ulterieure de
+# CMake (par ex. declenchee par l'ajout de nouveaux fichiers sources
+# ailleurs dans le projet, via CONFIGURE_DEPENDS) fait echouer l'etape
+# "git rev-parse HEAD" de FetchContent, meme en mode UPDATE_DISCONNECTED.
+# Une fois le depot deja present localement, on bascule donc en mode
+# FETCHCONTENT_FULLY_DISCONNECTED : CMake reutilise alors le repertoire
+# existant sans plus jamais invoquer git dessus.
+if(EXISTS "${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/CMakeLists.txt")
+    set(FETCHCONTENT_FULLY_DISCONNECTED ON)
+endif()
+
 FetchContent_Declare(
     libdatachannel
     GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git

@@ -18,6 +18,7 @@
 #include "NotificationManager.h"
 #include "AuditManager.h"
 #include "CallHistoryManager.h"
+#include "SharedFolderManager.h"
 #include "PermissionManager.h"
 #include "Discovery/DiscoveryService.h"
 #include "Discovery/PeersModel.h"
@@ -638,6 +639,12 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
         m_transferManager->setDiscoveryService(m_discoveryService);
     }
 
+    // Initialiser le SharedFolderManager (module "Shared Folder", 1ere
+    // tranche : creer/lister/supprimer des dossiers partages + indexation
+    // locale de leur contenu). Aucune dependance reseau -- peut etre cree
+    // des que m_databaseManager est pret.
+    m_sharedFolderManager = new core::SharedFolderManager(m_databaseManager.get(), this);
+
     // Idem pour TransferService : chaque en-tete de transfert envoye doit
     // porter l'UUID local (DiscoveryService::localId()) pour que le
     // destinataire puisse resoudre peer_name par identifiant plutot que
@@ -799,6 +806,11 @@ network::VoiceService *Application::voiceService() const
 core::CallHistoryManager *Application::callHistoryManager() const
 {
     return m_callHistoryManager;
+}
+
+core::SharedFolderManager *Application::sharedFolderManager() const
+{
+    return m_sharedFolderManager;
 }
 
 bool Application::shouldWriteSyncLog() const

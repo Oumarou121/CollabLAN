@@ -21,6 +21,7 @@ class NotificationManager;
 class AuditManager;
 class PermissionManager;
 class CallHistoryManager;
+class SharedFolderManager;
 }
 
 namespace network {
@@ -157,6 +158,9 @@ public:
     // Expose au bootstrap QML le CallHistoryManager pour l'historique des appels.
     core::CallHistoryManager *callHistoryManager() const;
 
+    // Expose au bootstrap QML le SharedFolderManager pour le module "Shared Folder".
+    core::SharedFolderManager *sharedFolderManager() const;
+
     // Expose le DatabaseManager pour les services qui en ont besoin (ex: SettingsService).
     database::DatabaseManager *databaseManager() const;
 
@@ -215,6 +219,7 @@ private:
     core::PermissionManager *m_permissionManager = nullptr; // parente = this (QObject)
     network::VoiceService *m_voiceService = nullptr;        // parente = this (QObject)
     core::CallHistoryManager *m_callHistoryManager = nullptr; // parente = this (QObject)
+    core::SharedFolderManager *m_sharedFolderManager = nullptr; // parente = this (QObject)
 };
 
 #endif // APP_APPLICATION_H

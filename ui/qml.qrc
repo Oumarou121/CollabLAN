@@ -13,6 +13,7 @@
         <file>Call/CallView.qml</file>
         <file>Settings/SettingsView.qml</file>
         <file>Admin/AdminView.qml</file>
+        <file>SharedFolder/SharedFolderView.qml</file>
         <file>Themes/Light.qml</file>
         <file>Themes/Dark.qml</file>
         <file>Themes/Theme.qml</file>
