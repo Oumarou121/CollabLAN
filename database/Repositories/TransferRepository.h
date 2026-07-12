@@ -39,6 +39,15 @@ public:
      */
     bool updateStatus(int id, models::TransferStatus status);
 
+    /**
+     * @brief Renseigne/ecrase le chemin local du fichier (voir models::Transfer::filePath()).
+     *
+     * Utilise notamment par core::TransferManager une fois la reception
+     * terminee, quand le chemin de destination final n'est connu qu'a cet
+     * instant (dossier de reception + nom de fichier).
+     */
+    bool updateFilePath(int id, const QString &filePath);
+
     bool remove(int id);
 
     QString lastError() const;

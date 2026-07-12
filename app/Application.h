@@ -20,6 +20,7 @@ class TransferManager;
 class NotificationManager;
 class AuditManager;
 class PermissionManager;
+class CallHistoryManager;
 }
 
 namespace network {
@@ -153,6 +154,9 @@ public:
     // Expose au bootstrap QML le VoiceService pour les appels vocaux P2P (issues #60/#61/#64).
     network::VoiceService *voiceService() const;
 
+    // Expose au bootstrap QML le CallHistoryManager pour l'historique des appels.
+    core::CallHistoryManager *callHistoryManager() const;
+
     // Expose le DatabaseManager pour les services qui en ont besoin (ex: SettingsService).
     database::DatabaseManager *databaseManager() const;
 
@@ -210,6 +214,7 @@ private:
     core::AuditManager *m_auditManager = nullptr;             // parente = this (QObject)
     core::PermissionManager *m_permissionManager = nullptr; // parente = this (QObject)
     network::VoiceService *m_voiceService = nullptr;        // parente = this (QObject)
+    core::CallHistoryManager *m_callHistoryManager = nullptr; // parente = this (QObject)
 };
 
 #endif // APP_APPLICATION_H

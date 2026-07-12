@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QHostAddress>
 #include <QString>
+#include <QStringList>
 #include <optional>
 #include <vector>
 
@@ -17,6 +18,7 @@ class DatabaseManager;
 
 namespace network {
 class TransferService;
+class DiscoveryService;
 }
 
 namespace core {
@@ -46,6 +48,12 @@ public:
     /// Doit etre appele avant tout envoi/reception effectif.
     void setTransferService(network::TransferService *transferService);
 
+    /// Permet de resoudre peer_name a partir de l'adresse du correspondant
+    /// (nom annonce par network::DiscoveryService, s'il est alors visible
+    /// sur le reseau). Optionnel : peer_name reste vide sinon (voir
+    /// core::CallHistoryManager pour le meme principe).
+    void setDiscoveryService(network::DiscoveryService *discoveryService);
+
     /// Envoie un fichier a un pair et enregistre le transfert (statut
     /// initial "in_progress") en base. Voir network::TransferService::sendFile().
     bool sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
@@ -70,17 +78,29 @@ signals:
 
 private slots:
     void onNetworkTransferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
-                                   bool incoming, qint64 resumeOffset, int senderId, int recipientId);
+                                   bool incoming, qint64 resumeOffset, int senderId, int recipientId,
+                                   const QHostAddress &peerAddress);
     void onNetworkTransferCompleted(const QString &transferKey, const QString &filePath);
     void onNetworkTransferFailed(const QString &transferKey, const QString &errorString);
 
 private:
+    QString resolvePeerName(const QHostAddress &peerAddress) const;
+
     database::TransferRepository m_repository;
     network::TransferService *m_transferService = nullptr;
+    network::DiscoveryService *m_discoveryService = nullptr;
 
     /// Associe la cle ephemere d'un transfert reseau en cours a l'id
     /// persistant correspondant dans la table Transfers.
     QHash<QString, int> m_activeTransfers;
+
+    /// sendFile() connait le chemin local immediatement, mais
+    /// TransferService::transferStarted() (qui declenche la creation de
+    /// l'enregistrement en base) n'est emis qu'une fois la connexion TCP
+    /// etablie, de maniere asynchrone : on fait patienter le chemin ici,
+    /// indexe par nom de fichier, le temps de le recuperer dans
+    /// onNetworkTransferStarted() (voir m_pendingSendFilePaths).
+    QHash<QString, QStringList> m_pendingSendFilePaths;
 };
 
 } // namespace core

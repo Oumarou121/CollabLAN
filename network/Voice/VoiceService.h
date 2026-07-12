@@ -85,6 +85,14 @@ signals:
     /// l'appelant.
     void incomingCall(const QHostAddress &callerAddress);
 
+    /// Emis juste apres qu'un appel sortant ait reellement demarre (offre
+    /// de signalisation envoyee avec succes, etat passe a Calling),
+    /// symetrique de incomingCall() ci-dessus. N'est PAS emis si call()
+    /// echoue avant ce point (appel deja en cours, connexion de
+    /// signalisation impossible) : dans ce cas aucune tentative n'a
+    /// vraiment eu lieu, rien a journaliser (voir core::CallHistoryManager).
+    void outgoingCallStarted(const QHostAddress &peerAddress);
+
     /// Emis lorsque la session audio est pleinement etablie dans les deux
     /// sens (critere d'acceptation de l'issue #61).
     void callConnected();

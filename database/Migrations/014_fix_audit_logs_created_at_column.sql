@@ -1,0 +1,14 @@
+-- Migration 014 : corrige un decalage de nom de colonne dans AuditLogs,
+-- decouvert en analysant pourquoi aucun appel n'apparaissait dans le
+-- journal d'audit malgre core::AuditManager::logCall().
+--
+-- La table AuditLogs (migration 005) definit la colonne "timestamp",
+-- mais database::AuditLogRepository::insert()/find()/fromRecord() lisent
+-- et ecrivent tous une colonne "created_at", qui n'existe pas dans le
+-- schema d'origine. Consequence : CHAQUE insertion d'un evenement d'audit
+-- (logConnection/logMessage/logTransfer/logCall/logRefusedAttempt) echoue
+-- silencieusement depuis la creation de la table (query.exec() renvoie
+-- false, AuditManager se contente d'un qWarning() et ne persiste rien) :
+-- le journal d'audit est inoperant en l'etat, independamment du sujet
+-- "historique des appels" traite par la migration 013.
+ALTER TABLE AuditLogs RENAME COLUMN timestamp TO created_at;

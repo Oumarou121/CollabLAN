@@ -1,8 +1,12 @@
 #include "TransferContext.h"
 
 #include <QDebug>
+#include <QDateTime>
+#include <QDesktopServices>
+#include <QDir>
 #include <QFileInfo>
 #include <QHostAddress>
+#include <QProcess>
 #include <QUrl>
 
 namespace core {
@@ -22,6 +26,14 @@ void TransferContext::setTransferManager(TransferManager *manager)
 
     m_transferManager = manager;
     emit transferManagerChanged();
+
+    // Recharge l'historique persiste (issue : "plus aucun fichier visible
+    // apres redemarrage de l'app"). A ce stade m_userManager peut ne pas
+    // encore etre renseigne (voir main.cpp, setUserManager() appele en
+    // dernier) : loadHistory() est donc appelee a nouveau depuis
+    // setUserManager() pour affiner la direction Envoi/Reception une fois
+    // l'utilisateur courant connu.
+    loadHistory();
 }
 
 void TransferContext::setTransferService(network::TransferService *service)
@@ -66,6 +78,28 @@ void TransferContext::setPeersModel(network::PeersModel *model)
 void TransferContext::setUserManager(UserManager *manager)
 {
     m_userManager = manager;
+
+    // Refait le calcul Envoi/Reception de l'historique deja charge
+    // (base sur senderId == utilisateur courant), potentiellement
+    // indetermine si setUserManager() est appele apres setTransferManager().
+    loadHistory();
+}
+
+QString TransferContext::resolvePeerName(const QHostAddress &peerAddress) const
+{
+    if (!m_peersModel || peerAddress.isNull()) {
+        return QString();
+    }
+
+    const int rows = m_peersModel->rowCount();
+    for (int row = 0; row < rows; ++row) {
+        const QModelIndex idx = m_peersModel->index(row, 0);
+        const QString address = m_peersModel->data(idx, network::PeersModel::AddressRole).toString();
+        if (QHostAddress(address) == peerAddress) {
+            return m_peersModel->data(idx, network::PeersModel::NameRole).toString();
+        }
+    }
+    return QString();
 }
 
 QVariantList TransferContext::availableRecipients() const
@@ -131,8 +165,21 @@ bool TransferContext::sendFile(const QString &filePath, const QString &address, 
                               : -1;
     const int recipientId = -1;
 
+    // TransferService::transferStarted() (qui alimente activeTransfers)
+    // n'est emis qu'une fois la connexion TCP etablie, de maniere
+    // asynchrone : on memorise le chemin local ici, indexe par nom de
+    // fichier, pour pouvoir renseigner "filePath" sur l'entree des que
+    // onTransferStarted() la cree (voir m_pendingSendFilePaths).
+    const QString fileName = info.fileName();
+    m_pendingSendFilePaths[fileName].append(localPath);
+
     const bool started = m_transferManager->sendFile(host, port, localPath, senderId, recipientId);
     if (!started) {
+        QStringList &pending = m_pendingSendFilePaths[fileName];
+        pending.removeOne(localPath);
+        if (pending.isEmpty()) {
+            m_pendingSendFilePaths.remove(fileName);
+        }
         emit transferRejected(tr("Impossible de demarrer l'envoi de %1").arg(info.fileName()));
     }
 
@@ -160,7 +207,8 @@ int TransferContext::percentOf(qint64 bytesTransferred, qint64 totalBytes)
 }
 
 void TransferContext::onTransferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
-                                         bool incoming, qint64 resumeOffset, int senderId, int recipientId)
+                                         bool incoming, qint64 resumeOffset, int senderId, int recipientId,
+                                         const QHostAddress &peerAddress)
 {
     Q_UNUSED(senderId)
     Q_UNUSED(recipientId)
@@ -174,6 +222,24 @@ void TransferContext::onTransferStarted(const QString &transferKey, const QStrin
     entry[QStringLiteral("totalBytes")] = fileSize;
     entry[QStringLiteral("percent")] = percentOf(resumeOffset, fileSize);
     entry[QStringLiteral("errorString")] = QString();
+    entry[QStringLiteral("peerAddress")] = peerAddress.isNull() ? QString() : peerAddress.toString();
+    entry[QStringLiteral("peerName")] = resolvePeerName(peerAddress);
+    entry[QStringLiteral("timestamp")] = QDateTime::currentDateTime().toString(Qt::ISODate);
+
+    // Pour un envoi, le chemin local est deja connu (voir sendFile()) ;
+    // pour une reception, il ne sera connu qu'a la fin du transfert
+    // (dossier de reception + nom de fichier final, voir onTransferCompleted()).
+    QString filePath;
+    if (!incoming) {
+        QStringList &pending = m_pendingSendFilePaths[fileName];
+        if (!pending.isEmpty()) {
+            filePath = pending.takeFirst();
+            if (pending.isEmpty()) {
+                m_pendingSendFilePaths.remove(fileName);
+            }
+        }
+    }
+    entry[QStringLiteral("filePath")] = filePath;
 
     const int existing = indexOfTransfer(transferKey);
     if (existing >= 0) {
@@ -201,6 +267,10 @@ void TransferContext::onTransferProgress(const QString &transferKey, qint64 byte
         entry[QStringLiteral("totalBytes")] = totalBytes;
         entry[QStringLiteral("percent")] = percentOf(bytesTransferred, totalBytes);
         entry[QStringLiteral("errorString")] = QString();
+        entry[QStringLiteral("filePath")] = QString();
+        entry[QStringLiteral("peerAddress")] = QString();
+        entry[QStringLiteral("peerName")] = QString();
+        entry[QStringLiteral("timestamp")] = QDateTime::currentDateTime().toString(Qt::ISODate);
         m_activeTransfers.append(entry);
         emit activeTransfersChanged();
         return;
@@ -217,8 +287,6 @@ void TransferContext::onTransferProgress(const QString &transferKey, qint64 byte
 
 void TransferContext::onTransferCompleted(const QString &transferKey, const QString &filePath)
 {
-    Q_UNUSED(filePath)
-
     const int index = indexOfTransfer(transferKey);
     if (index < 0) {
         return;
@@ -228,6 +296,14 @@ void TransferContext::onTransferCompleted(const QString &transferKey, const QStr
     entry[QStringLiteral("statusText")] = tr("Termine");
     entry[QStringLiteral("percent")] = 100;
     entry[QStringLiteral("bytesTransferred")] = entry.value(QStringLiteral("totalBytes"));
+    // filePath est le chemin final ecrit par TransferService : pour une
+    // reception, c'est la premiere fois qu'il est connu (dossier de
+    // reception + nom de fichier, une fois le ".part" renomme) ; pour un
+    // envoi il correspond au chemin local deja renseigne dans
+    // onTransferStarted(), donc sans effet ici.
+    if (!filePath.isEmpty()) {
+        entry[QStringLiteral("filePath")] = filePath;
+    }
     m_activeTransfers[index] = entry;
 
     emit activeTransfersChanged();
@@ -246,6 +322,123 @@ void TransferContext::onTransferFailed(const QString &transferKey, const QString
     m_activeTransfers[index] = entry;
 
     emit activeTransfersChanged();
+}
+
+void TransferContext::loadHistory()
+{
+    m_activeTransfers.clear();
+
+    if (m_transferManager) {
+        const std::vector<models::Transfer> history = m_transferManager->allTransfers();
+        // allTransfers() renvoie le plus recent en premier (ORDER BY
+        // created_at DESC en base) ; activeTransfers() documente
+        // l'inverse (le plus recent en dernier, coherent avec l'ajout de
+        // chaque nouveau transfert via append()), d'ou le parcours en
+        // sens inverse ci-dessous.
+        for (auto it = history.rbegin(); it != history.rend(); ++it) {
+            m_activeTransfers.append(entryFromHistory(*it));
+        }
+    }
+
+    emit activeTransfersChanged();
+}
+
+QVariantMap TransferContext::entryFromHistory(const models::Transfer &transfer) const
+{
+    QString direction = tr("Reception");
+    if (m_userManager && m_userManager->currentUserId().has_value()
+        && transfer.senderId() == m_userManager->currentUserId().value()) {
+        direction = tr("Envoi");
+    }
+
+    QString statusText;
+    qint64 bytesTransferred = 0;
+    switch (transfer.status()) {
+    case models::TransferStatus::Completed:
+        statusText = tr("Termine");
+        bytesTransferred = transfer.fileSize();
+        break;
+    case models::TransferStatus::Failed:
+        statusText = tr("Echoue");
+        break;
+    case models::TransferStatus::Cancelled:
+        statusText = tr("Annule");
+        break;
+    case models::TransferStatus::InProgress:
+    case models::TransferStatus::Pending:
+    default:
+        // Reste "in_progress"/"pending" en base uniquement si l'application
+        // a ete fermee (ou a plante) avant la fin reelle du transfert :
+        // le transfert reseau n'existe plus, donc "En cours" serait
+        // trompeur (rien ne progresse plus). On l'affiche comme interrompu.
+        statusText = tr("Interrompu");
+        break;
+    }
+
+    QVariantMap entry;
+    entry[QStringLiteral("transferKey")] = QStringLiteral("history:%1").arg(transfer.id());
+    entry[QStringLiteral("fileName")] = transfer.fileName();
+    entry[QStringLiteral("direction")] = direction;
+    entry[QStringLiteral("statusText")] = statusText;
+    entry[QStringLiteral("bytesTransferred")] = bytesTransferred;
+    entry[QStringLiteral("totalBytes")] = transfer.fileSize();
+    entry[QStringLiteral("percent")] = percentOf(bytesTransferred, transfer.fileSize());
+    entry[QStringLiteral("errorString")] = QString();
+    entry[QStringLiteral("filePath")] = transfer.filePath();
+    entry[QStringLiteral("peerAddress")] = transfer.peerAddress();
+    entry[QStringLiteral("peerName")] = transfer.peerName();
+    entry[QStringLiteral("timestamp")] = transfer.createdAt().toLocalTime().toString(Qt::ISODate);
+    return entry;
+}
+
+bool TransferContext::openFileLocation(const QString &filePath) const
+{
+    if (filePath.isEmpty()) {
+        return openDownloadsFolder();
+    }
+
+    const QFileInfo info(filePath);
+    if (info.exists()) {
+#ifdef Q_OS_WIN
+        // "Reveal in Explorer" : ouvre le dossier parent en selectionnant
+        // le fichier, plus pratique que de deposer l'utilisateur dans un
+        // dossier sans indication de quel fichier y chercher.
+        QProcess::startDetached(QStringLiteral("explorer.exe"),
+                                 {QStringLiteral("/select,"), QDir::toNativeSeparators(info.absoluteFilePath())});
+        return true;
+#else
+        return QDesktopServices::openUrl(QUrl::fromLocalFile(info.absolutePath()));
+#endif
+    }
+
+    // Le fichier a ete deplace/supprime depuis : essaie au moins le
+    // dossier parent s'il existe encore, sinon retombe sur le dossier de
+    // reception par defaut plutot que de ne rien faire.
+    const QDir parentDir(info.absolutePath());
+    if (!info.absolutePath().isEmpty() && parentDir.exists()) {
+        return QDesktopServices::openUrl(QUrl::fromLocalFile(parentDir.absolutePath()));
+    }
+
+    return openDownloadsFolder();
+}
+
+bool TransferContext::openDownloadsFolder() const
+{
+    if (!m_transferService) {
+        return false;
+    }
+
+    const QString dir = m_transferService->receiveDirectory();
+    if (dir.isEmpty()) {
+        return false;
+    }
+
+    // Le dossier n'existe que s'il a deja servi a recevoir un fichier
+    // (cree a la volee par TransferService) : le creer ici si besoin pour
+    // que le bouton fonctionne meme avant toute reception.
+    QDir().mkpath(dir);
+
+    return QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
 } // namespace core

@@ -16,6 +16,8 @@
 #include "NotificationManager.h"
 #include "AuditLogModel.h"
 #include "AuditManager.h"
+#include "CallHistoryManager.h"
+#include "CallHistoryModel.h"
 #include "PermissionManager.h"
 #include "AuthorizedMachineModel.h"
 #include "UserManagementModel.h"
@@ -183,6 +185,15 @@ int main(int argc, char *argv[])
     core::CallContext *callContext = new core::CallContext(&engine);
     callContext->setVoiceService(application.voiceService());
     engine.rootContext()->setContextProperty("callContext", callContext);
+
+    // Créer et exposer le modèle de l'historique des appels
+    // (CallHistoryView.qml) : persiste chaque appel émis/reçu en base
+    // (migration 013) et affiche l'historique de l'utilisateur local
+    // actuellement connecté.
+    core::CallHistoryModel *callHistoryModel = new core::CallHistoryModel(&engine);
+    callHistoryModel->setUserManager(application.userManager());
+    callHistoryModel->setCallHistoryManager(application.callHistoryManager());
+    engine.rootContext()->setContextProperty("callHistoryModel", callHistoryModel);
 
     // Créer et exposer le modèle du journal d'audit (issues #62/#63,
     // UI #65) : consultation filtrable et export CSV depuis AdminView.qml.

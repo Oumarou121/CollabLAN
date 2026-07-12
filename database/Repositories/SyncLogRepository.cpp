@@ -95,17 +95,16 @@ int SyncLogRepository::applyBatch(const std::vector<models::SyncLogEntry> &batch
         QSqlQuery check(m_db);
         check.prepare(QStringLiteral("SELECT 1 FROM SyncLog WHERE entry_uuid = :uuid"));
         check.bindValue(QStringLiteral(":uuid"), entry.entryUuid());
-        if (!check.exec()) {
-            m_lastError = check.lastError().text();
+        if (!check.exec()) { m_lastError = check.lastError().text(); continue; }
+        if (check.next()) continue; // déjà journalisée ET déjà appliquée
+
+        if (!applyDomainEntry(entry)) {
+            // échec (dépendance pas encore connue) : on NE journalise PAS,
+            // pour que ce même entry soit retenté lors d'une prochaine
+            // réconciliation, une fois la dépendance résolue.
             continue;
         }
-        if (check.next()) {
-            continue; // deja connue : sync_batch idempotent, on ignore le doublon
-        }
         if (append(entry)) {
-            if (!applyDomainEntry(entry)) {
-                continue;
-            }
             ++inserted;
         }
     }

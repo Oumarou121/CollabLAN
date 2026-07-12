@@ -225,6 +225,7 @@ bool VoiceService::call(const QHostAddress &peerAddress, quint16 signalingPort)
     // que le socket WebSocket sera connecte. L'offre SDP est generee
     // automatiquement par libdatachannel des l'ajout de la piste (negociation
     // automatique) et transmise via onLocalDescription -> VoiceSignalingChannel::sendOffer.
+    emit outgoingCallStarted(peerAddress);
     return true;
 }
 

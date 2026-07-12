@@ -59,6 +59,15 @@ void Transfer::setFileName(const QString &fileName) { m_fileName = fileName; }
 qint64 Transfer::fileSize() const { return m_fileSize; }
 void Transfer::setFileSize(qint64 fileSize) { m_fileSize = fileSize; }
 
+QString Transfer::filePath() const { return m_filePath; }
+void Transfer::setFilePath(const QString &filePath) { m_filePath = filePath; }
+
+QString Transfer::peerAddress() const { return m_peerAddress; }
+void Transfer::setPeerAddress(const QString &peerAddress) { m_peerAddress = peerAddress; }
+
+QString Transfer::peerName() const { return m_peerName; }
+void Transfer::setPeerName(const QString &peerName) { m_peerName = peerName; }
+
 TransferStatus Transfer::status() const { return m_status; }
 void Transfer::setStatus(TransferStatus status) { m_status = status; }
 
@@ -67,7 +76,10 @@ void Transfer::setCreatedAt(const QDateTime &createdAt) { m_createdAt = createdA
 
 bool Transfer::isValid() const
 {
-    return m_senderId > 0 && m_recipientId > 0 && !m_fileName.isEmpty() && m_fileSize >= 0;
+    // senderId/recipientId peuvent legitimement etre inconnus (-1) pour un
+    // transfert LAN vers/depuis un poste sans compte utilisateur associe
+    // (migration #012) : seuls le nom et la taille du fichier sont requis.
+    return !m_fileName.isEmpty() && m_fileSize >= 0;
 }
 
 } // namespace models

@@ -99,8 +99,13 @@ signals:
     /// est > 0 lorsque le transfert reprend un transfert interrompu
     /// precedemment (0 pour un transfert qui commence de zero). senderId
     /// et recipientId sont ceux fournis a sendFile() par l'expediteur.
+    /// peerAddress est l'adresse IP de l'autre poste de l'echange (celle
+    /// fournie a sendFile() pour un envoi, celle du socket entrant pour
+    /// une reception) : permet a l'historique de regrouper les transferts
+    /// par correspondant independamment de tout compte utilisateur local.
     void transferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
-                          bool incoming, qint64 resumeOffset, int senderId, int recipientId);
+                          bool incoming, qint64 resumeOffset, int senderId, int recipientId,
+                          const QHostAddress &peerAddress);
 
     /// Emis a intervalles reguliers pendant le transfert.
     void transferProgress(const QString &transferKey, qint64 bytesTransferred, qint64 totalBytes);
@@ -164,7 +169,6 @@ private:
     void sendNextBlock(QTcpSocket *socket);
     void finishReceive(QTcpSocket *socket, bool success, const QString &errorString = QString());
     void finishSend(QTcpSocket *socket, bool success, const QString &errorString = QString());
-    QString receiveDirectory() const;
     static QString makeTransferKey(QTcpSocket *socket);
 
     QTcpServer *m_server = nullptr;
@@ -176,6 +180,12 @@ public:
     /// Permet de surcharger le repertoire de reception (tests). Vide =
     /// repertoire "CollabLAN Transfers" dans les documents de l'utilisateur.
     void setReceiveDirectory(const QString &dir);
+
+    /// Repertoire ou sont ecrits les fichiers recus (apres application de
+    /// setReceiveDirectory() si utilise). Expose publiquement pour que
+    /// l'UI (core::TransferContext) puisse proposer d'ouvrir ce dossier
+    /// directement, independamment de tout transfert particulier.
+    QString receiveDirectory() const;
 };
 
 } // namespace network

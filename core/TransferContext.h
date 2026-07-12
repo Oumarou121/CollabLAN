@@ -5,6 +5,8 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QString>
+#include <QHash>
+#include <QStringList>
 
 #include "TransferManager.h"
 #include "UserManager.h"
@@ -51,7 +53,10 @@ public:
     /// en dernier. Chaque element est une QVariantMap prete a l'emploi
     /// comme modele QML : transferKey, fileName, direction ("Envoi" /
     /// "Reception"), statusText, bytesTransferred, totalBytes, percent
-    /// (0-100), errorString.
+    /// (0-100), errorString, filePath (chemin local, vide si inconnu),
+    /// peerAddress/peerName (correspondant, vide si inconnu - permet de
+    /// regrouper par correspondant cote QML, voir FileTransferView.qml),
+    /// timestamp (date ISO du transfert, pour affichage/tri).
     QVariantList activeTransfers() const { return m_activeTransfers; }
 
     /// Liste des postes decouverts, prete a servir de modele pour un
@@ -72,6 +77,19 @@ public:
      */
     Q_INVOKABLE bool sendFile(const QString &filePath, const QString &address, int portHint = -1);
 
+    /**
+     * @brief Ouvre l'explorateur de fichiers a l'emplacement de filePath,
+     * en selectionnant le fichier si possible (sinon le dossier parent
+     * s'il existe encore, sinon le dossier de reception par defaut).
+     * @return false si aucun emplacement exploitable n'a ete trouve.
+     */
+    Q_INVOKABLE bool openFileLocation(const QString &filePath) const;
+
+    /// Ouvre directement le dossier dans lequel CollabLAN enregistre les
+    /// fichiers recus (par defaut "CollabLAN Transfers" dans les documents
+    /// de l'utilisateur), independamment de tout transfert particulier.
+    Q_INVOKABLE bool openDownloadsFolder() const;
+
 signals:
     void transferManagerChanged();
     void transferServiceChanged();
@@ -84,7 +102,8 @@ signals:
 
 private slots:
     void onTransferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
-                            bool incoming, qint64 resumeOffset, int senderId, int recipientId);
+                            bool incoming, qint64 resumeOffset, int senderId, int recipientId,
+                            const QHostAddress &peerAddress);
     void onTransferProgress(const QString &transferKey, qint64 bytesTransferred, qint64 totalBytes);
     void onTransferCompleted(const QString &transferKey, const QString &filePath);
     void onTransferFailed(const QString &transferKey, const QString &errorString);
@@ -93,12 +112,34 @@ private:
     int indexOfTransfer(const QString &transferKey) const;
     static int percentOf(qint64 bytesTransferred, qint64 totalBytes);
 
+    /// Resout le nom affichable d'un correspondant a partir de son
+    /// adresse IP, via m_peersModel (poste actuellement decouvert sur le
+    /// reseau local). Retourne une chaine vide si non resolu.
+    QString resolvePeerName(const QHostAddress &peerAddress) const;
+
+    /// Reconstruit activeTransfers() a partir de l'historique persiste
+    /// (core::TransferManager::allTransfers()), pour que l'historique
+    /// des transferts envoyes/recus reste visible apres redemarrage de
+    /// l'application (au lieu de repartir vide a chaque lancement).
+    void loadHistory();
+
+    /// Traduit un enregistrement d'historique persiste vers le format
+    /// QVariantMap attendu par FileTransferView.qml.
+    QVariantMap entryFromHistory(const models::Transfer &transfer) const;
+
     TransferManager *m_transferManager = nullptr;
     network::TransferService *m_transferService = nullptr;
     network::PeersModel *m_peersModel = nullptr;
     UserManager *m_userManager = nullptr;
 
     QVariantList m_activeTransfers;
+
+    /// sendFile() connait le chemin local choisi par l'utilisateur avant
+    /// que TransferService::transferStarted() (asynchrone : apres
+    /// connexion TCP) ne soit emis ; on le fait patienter ici, indexe par
+    /// nom de fichier, pour l'attacher a l'entree activeTransfers a la
+    /// reception de transferStarted().
+    QHash<QString, QStringList> m_pendingSendFilePaths;
 };
 
 } // namespace core

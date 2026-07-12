@@ -110,6 +110,9 @@ ApplicationWindow {
             onCallRequested: {
                 stackView.push(callViewComponent)
             }
+            onCallHistoryRequested: {
+                stackView.push(callHistoryViewComponent)
+            }
             onAdminRequested: {
                 stackView.push(adminViewComponent)
             }
@@ -121,6 +124,16 @@ ApplicationWindow {
 
         CallView {
             objectName: "callView"
+            onBackRequested: {
+                stackView.pop()
+            }
+        }
+    }
+
+    Component {
+        id: callHistoryViewComponent
+
+        CallHistoryView {
             onBackRequested: {
                 stackView.pop()
             }

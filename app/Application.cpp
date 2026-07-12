@@ -17,6 +17,7 @@
 #include "TransferManager.h"
 #include "NotificationManager.h"
 #include "AuditManager.h"
+#include "CallHistoryManager.h"
 #include "PermissionManager.h"
 #include "Discovery/DiscoveryService.h"
 #include "Discovery/PeersModel.h"
@@ -617,6 +618,25 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     if (!m_discoveryService->start()) {
         qWarning() << "Impossible de demarrer DiscoveryService (port deja utilise ?)";
     }
+
+    // Initialiser le CallHistoryManager : persiste chaque appel (emis ou
+    // recu) et son issue finale dans la table CallHistory (migration 013),
+    // ce qui manquait jusqu'ici - VoiceService gerait l'appel entierement
+    // en memoire sans jamais rien enregistrer. Doit etre cree apres
+    // m_voiceService (deja pret plus haut), m_userManager (deja pret,
+    // cf. debut de cette methode) et m_discoveryService (juste au-dessus),
+    // les trois etant necessaires pour resoudre local_user_id/peer_name.
+    m_callHistoryManager = new core::CallHistoryManager(m_databaseManager.get(), this);
+    m_callHistoryManager->setVoiceService(m_voiceService);
+    m_callHistoryManager->setUserManager(m_userManager);
+    m_callHistoryManager->setDiscoveryService(m_discoveryService);
+
+    // TransferManager a ete instancie plus haut (avant DiscoveryService) :
+    // on ne peut lui fournir la resolution de peer_name (migration #015)
+    // qu'a partir d'ici, une fois m_discoveryService pret.
+    if (m_transferManager) {
+        m_transferManager->setDiscoveryService(m_discoveryService);
+    }
 }
 
 core::UserManager *Application::userManager() const
@@ -735,6 +755,11 @@ core::PermissionManager *Application::permissionManager() const
 network::VoiceService *Application::voiceService() const
 {
     return m_voiceService;
+}
+
+core::CallHistoryManager *Application::callHistoryManager() const
+{
+    return m_callHistoryManager;
 }
 
 bool Application::shouldWriteSyncLog() const

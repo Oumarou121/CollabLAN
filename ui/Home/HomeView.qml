@@ -21,6 +21,7 @@ Item {
     signal chatRequested()
     signal fileTransferRequested()
     signal callRequested()
+    signal callHistoryRequested()
     signal adminRequested()
 
     Rectangle {
@@ -109,6 +110,12 @@ Item {
                     icon: "\u260E"
                     label: qsTr("Appel")
                     onClicked: root.callRequested()
+                }
+                SidebarNavItem {
+                    Layout.fillWidth: true
+                    icon: "\u23F1"
+                    label: qsTr("Historique des appels")
+                    onClicked: root.callHistoryRequested()
                 }
 
                 Item { Layout.preferredHeight: Theme.spacingMedium }
@@ -264,6 +271,13 @@ Item {
                             title: qsTr("Appel")
                             description: qsTr("Demarrez un appel audio.")
                             onClicked: root.callRequested()
+                        }
+                        DashboardCard {
+                            Layout.fillWidth: true
+                            icon: "\u23F1"
+                            title: qsTr("Historique des appels")
+                            description: qsTr("Consultez vos appels emis et recus.")
+                            onClicked: root.callHistoryRequested()
                         }
                         DashboardCard {
                             Layout.fillWidth: true

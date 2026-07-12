@@ -223,7 +223,7 @@ void TransferService::onClientSocketConnected()
     SendState &state = m_sendStates[socket];
     const QFileInfo info(state.filePath);
     emit transferStarted(state.transferKey, info.fileName(), state.fileSize, false, 0,
-                          state.senderId, state.recipientId);
+                          state.senderId, state.recipientId, socket->peerAddress());
 
     const QByteArray header = encodeHeader(info.fileName(), state.fileSize, state.senderId, state.recipientId);
     socket->write(frameOf(header));
@@ -476,7 +476,7 @@ void TransferService::onServerSocketReadyRead()
             state.bytesReceived = resumeOffset;
 
             emit transferStarted(state.transferKey, state.fileName, state.fileSize, true, resumeOffset,
-                                  state.senderId, state.recipientId);
+                                  state.senderId, state.recipientId, socket->peerAddress());
             if (resumeOffset > 0) {
                 emit transferProgress(state.transferKey, state.bytesReceived, state.fileSize);
             }

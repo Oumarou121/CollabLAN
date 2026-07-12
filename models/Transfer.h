@@ -55,6 +55,26 @@ public:
     qint64 fileSize() const;
     void setFileSize(qint64 fileSize);
 
+    /// Chemin complet sur le disque local : fichier source pour un envoi,
+    /// fichier ecrit dans le dossier de reception pour une reception.
+    /// Vide si inconnu (ex. transfert enregistre avant la migration #012).
+    QString filePath() const;
+    void setFilePath(const QString &filePath);
+
+    /// Adresse IP du correspondant (l'autre poste de l'echange), vide si
+    /// inconnue (transfert enregistre avant la migration #015). Permet de
+    /// regrouper l'historique par correspondant independamment de tout
+    /// compte utilisateur local associe (senderId/recipientId restent -1
+    /// pour un poste LAN sans compte, voir migration #012).
+    QString peerAddress() const;
+    void setPeerAddress(const QString &peerAddress);
+
+    /// Nom affichable du correspondant au moment du transfert (snapshot
+    /// resolu via network::DiscoveryService si le poste etait alors
+    /// decouvert), fige a cet instant. Vide si non resolu.
+    QString peerName() const;
+    void setPeerName(const QString &peerName);
+
     TransferStatus status() const;
     void setStatus(TransferStatus status);
 
@@ -69,6 +89,9 @@ private:
     int m_recipientId = -1;
     QString m_fileName = QStringLiteral("");
     qint64 m_fileSize = 0;
+    QString m_filePath = QStringLiteral("");
+    QString m_peerAddress = QStringLiteral("");
+    QString m_peerName = QStringLiteral("");
     TransferStatus m_status = TransferStatus::Pending;
     QDateTime m_createdAt;
 };

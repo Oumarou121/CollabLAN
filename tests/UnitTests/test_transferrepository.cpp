@@ -116,6 +116,99 @@ private slots:
         QVERIFY(repo.remove(id));
         QVERIFY(!repo.findById(id).has_value());
     }
+
+    void testCreateWithUnknownUserIdsPersists()
+    {
+        // Migration #012 : un transfert vers/depuis un poste LAN sans
+        // compte utilisateur associe (id inconnu, represente par -1) doit
+        // pouvoir etre enregistre au lieu d'echouer la contrainte de cle
+        // etrangere (c'etait le bug empechant tout historique reseau).
+        database::TransferRepository repo(m_dbManager->database());
+        models::Transfer transfer;
+        transfer.setSenderId(-1);
+        transfer.setRecipientId(-1);
+        transfer.setFileName(QStringLiteral("depuis-le-lan.bin"));
+        transfer.setFileSize(42);
+        transfer.setStatus(models::TransferStatus::Completed);
+
+        const int id = repo.create(transfer);
+        QVERIFY2(id >= 0, qPrintable(repo.lastError()));
+
+        const auto found = repo.findById(id);
+        QVERIFY(found.has_value());
+        QCOMPARE(found->senderId(), -1);
+        QCOMPARE(found->recipientId(), -1);
+    }
+
+    void testUpdateFilePathPersists()
+    {
+        database::TransferRepository repo(m_dbManager->database());
+        const int id = repo.create(makeTransfer(QStringLiteral("d.txt"), 40));
+        QVERIFY(id >= 0);
+        QVERIFY(repo.findById(id)->filePath().isEmpty());
+
+        QVERIFY(repo.updateFilePath(id, QStringLiteral("/tmp/collablan/d.txt")));
+
+        const auto found = repo.findById(id);
+        QVERIFY(found.has_value());
+        QCOMPARE(found->filePath(), QStringLiteral("/tmp/collablan/d.txt"));
+    }
+
+    void testCreatePersistsPeerAddressAndName()
+    {
+        // Migration #015 : permet de regrouper l'historique par
+        // correspondant, independamment de tout compte utilisateur local.
+        database::TransferRepository repo(m_dbManager->database());
+        models::Transfer transfer = makeTransfer(QStringLiteral("photo.jpg"), 2048);
+        transfer.setPeerAddress(QStringLiteral("192.168.1.50"));
+        transfer.setPeerName(QStringLiteral("poste-cuisine"));
+
+        const int id = repo.create(transfer);
+        QVERIFY2(id >= 0, qPrintable(repo.lastError()));
+
+        const auto found = repo.findById(id);
+        QVERIFY(found.has_value());
+        QCOMPARE(found->peerAddress(), QStringLiteral("192.168.1.50"));
+        QCOMPARE(found->peerName(), QStringLiteral("poste-cuisine"));
+    }
+
+    void testCreateWithoutPeerInfoPersistsEmpty()
+    {
+        // Transferts enregistres avant la migration #015 (ou dont le
+        // correspondant n'a pas pu etre resolu) : peer_address/peer_name
+        // doivent rester vides plutot que provoquer un echec d'insertion.
+        database::TransferRepository repo(m_dbManager->database());
+        const int id = repo.create(makeTransfer(QStringLiteral("sans-pair.txt"), 5));
+        QVERIFY2(id >= 0, qPrintable(repo.lastError()));
+
+        const auto found = repo.findById(id);
+        QVERIFY(found.has_value());
+        QVERIFY(found->peerAddress().isEmpty());
+        QVERIFY(found->peerName().isEmpty());
+    }
+
+    void testFindByUserGroupableByPeerAddress()
+    {
+        // Verifie que plusieurs transferts vers le meme correspondant
+        // partagent bien la meme peer_address, condition necessaire au
+        // regroupement cote UI (FileTransferView.qml::buildPeerGroups()).
+        database::TransferRepository repo(m_dbManager->database());
+        models::Transfer first = makeTransfer(QStringLiteral("un.txt"), 1);
+        first.setPeerAddress(QStringLiteral("10.0.0.9"));
+        first.setPeerName(QStringLiteral("laptop-marie"));
+        QVERIFY(repo.create(first) >= 0);
+
+        models::Transfer second = makeTransfer(QStringLiteral("deux.txt"), 2);
+        second.setPeerAddress(QStringLiteral("10.0.0.9"));
+        second.setPeerName(QStringLiteral("laptop-marie"));
+        QVERIFY(repo.create(second) >= 0);
+
+        const auto transfers = repo.findByUser(m_senderId);
+        QCOMPARE(static_cast<int>(transfers.size()), 2);
+        for (const auto &t : transfers) {
+            QCOMPARE(t.peerAddress(), QStringLiteral("10.0.0.9"));
+        }
+    }
 };
 
 QTEST_MAIN(TestTransferRepository)
