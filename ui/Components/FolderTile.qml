@@ -4,12 +4,14 @@ import QtQuick.Layouts
 import Themes
 
 /*
- * FolderTile - tuile "dossier" utilisee pour presenter une categorie
- * (ici : un correspondant de transfert de fichiers) sous forme de dossier
- * contenant des elements, a la maniere des interfaces d'archivage par
- * dossiers (icone de dossier + pastille de comptage + libelle + sous-
- * libelle). Reutilisable partout ou une organisation par dossiers a du
- * sens (Transferts, futurs ecrans de documents partages, etc.).
+ * FolderTile - tuile "dossier" utilisee pour presenter une categorie (ici :
+ * un correspondant de transfert de fichiers) sous forme de dossier, a la
+ * maniere d'un explorateur de fichiers moderne (Windows 11 / Nautilus) :
+ *   - icone de dossier "plat" avec onglet et leger degrade
+ *   - pastille de comptage superposee au coin
+ *   - libelle + sous-libelle centres sous l'icone
+ *   - etat survole (legere elevation) et etat selectionne (voile + bordure
+ *     de la couleur d'accent, comme la selection d'un explorateur)
  */
 Item {
     id: root
@@ -22,16 +24,21 @@ Item {
 
     signal opened()
 
-    implicitWidth: 132
-    implicitHeight: 128
+    implicitWidth: 136
+    implicitHeight: 132
 
+    readonly property bool hovered: mouseArea.containsMouse
+
+    // ---- Fond de la tuile (survol / selection) ----
     Rectangle {
-        id: hoverBg
+        id: tileBg
         anchors.fill: parent
         radius: Theme.radiusMedium
-        color: mouseArea.containsMouse || root.highlighted ? Theme.surfaceHover : "transparent"
+        color: root.highlighted ? Theme.selectionBackground
+               : root.hovered ? Theme.surfaceHover
+               : "transparent"
         border.width: root.highlighted ? 1 : 0
-        border.color: Theme.primary
+        border.color: Theme.selectionBorder
 
         Behavior on color { ColorAnimation { duration: 120 } }
     }
@@ -41,55 +48,86 @@ Item {
         anchors.margins: Theme.spacingSmall
         spacing: 6
 
+        // ---- Icone de dossier ----
         Item {
+            id: iconArea
             Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth: 58
-            Layout.preferredHeight: 46
-            Layout.topMargin: 4
+            Layout.preferredWidth: 64
+            Layout.preferredHeight: 52
+            Layout.topMargin: 6
 
-            // Onglet du dossier.
+            // Legere "elevation" au survol : ombre discrete sous le dossier.
             Rectangle {
-                x: 2
-                y: 0
-                width: 24
-                height: 10
-                radius: 3
-                color: root.accentColor
+                anchors.fill: folderShape
+                anchors.topMargin: 3
+                radius: folderShape.radius
+                color: Theme.shadow
+                opacity: root.hovered ? 0.55 : 0
+                Behavior on opacity { NumberAnimation { duration: 120 } }
             }
 
-            // Corps du dossier.
-            Rectangle {
-                y: 7
-                width: parent.width
-                height: parent.height - 7
-                radius: 7
-                color: root.accentColor
-                opacity: 0.9
+            // Corps du dossier (forme "plate" a onglet, style Explorer moderne).
+            Item {
+                id: folderShape
+                anchors.fill: parent
+                property real radius: 6
+                scale: root.hovered ? 1.04 : 1.0
+                Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
-                // Reflet discret pour un rendu moins plat.
+                // Onglet arriere-plan (partie visible derriere le rabat).
                 Rectangle {
-                    anchors.fill: parent
-                    anchors.margins: 1
-                    radius: parent.radius - 1
-                    color: "transparent"
-                    border.width: 1
-                    border.color: Qt.rgba(1, 1, 1, 0.12)
+                    x: 2
+                    y: 4
+                    width: parent.width * 0.42
+                    height: 10
+                    radius: 3
+                    color: root.accentColor
+                    opacity: 0.75
+                }
+
+                // Corps principal du dossier.
+                Rectangle {
+                    y: 10
+                    width: parent.width
+                    height: parent.height - 10
+                    radius: folderShape.radius
+                    color: root.accentColor
+
+                    // Degrade subtil pour un rendu moins plat (facade "vitree").
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: parent.radius
+                        gradient: Gradient {
+                            GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.16) }
+                            GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.0) }
+                        }
+                    }
+
+                    // Ligne de pli du rabat avant.
+                    Rectangle {
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        height: parent.height * 0.38
+                        radius: folderShape.radius
+                        color: Qt.rgba(1, 1, 1, 0.10)
+                    }
                 }
             }
 
-            // Pastille de comptage (nombre de fichiers dans ce dossier).
+            // Pastille de comptage (nombre d'elements dans ce dossier).
             Rectangle {
                 visible: root.count > 0
-                width: 22
-                height: 22
+                width: 21
+                height: 21
                 radius: 11
                 color: Theme.primary
                 border.width: 2
                 border.color: Theme.surface
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.rightMargin: -8
-                anchors.topMargin: -6
+                anchors.right: folderShape.right
+                anchors.top: folderShape.top
+                anchors.rightMargin: -7
+                anchors.topMargin: -4
 
                 Text {
                     anchors.centerIn: parent

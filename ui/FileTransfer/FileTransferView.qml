@@ -6,23 +6,19 @@ import Themes
 import "../Components"
 
 /*
- * FileTransferView - ecran "FileTransfer" (issue #57).
- *
- * S'appuie sur "transferContext" (core::TransferContext, expose depuis
- * app/main.cpp) qui relie network::TransferService/core::TransferManager
- * a cette vue :
- *  - Selecteur de fichier (FileDialog) + choix du destinataire parmi les
- *    postes decouverts sur le reseau local (issue #9/#17).
- *  - Barre de progression en temps reel pour chaque transfert en cours,
- *    envoi comme reception (transferContext.activeTransfers, mis a jour a
- *    chaque signal transferProgress()).
+ * FileTransferView - Écran "Transfert de fichiers" façon explorateur de
+ * fichiers moderne (Windows 11 / Nautilus) :
+ *   - Barre d'adresse : navigation (retour/actualiser) + fil d'Ariane
+ *     cliquable + recherche + bascule grille/liste
+ *   - Panneau latéral de filtres rapides (Tout, Reçus, Envoyés, Échoués)
+ *   - Vue grille des correspondants (à la racine), chacun étant un "dossier"
+ *   - Vue "Détails" (liste avec en-têtes de colonnes) ou grille d'icônes
+ *     pour les fichiers d'un correspondant
+ *   - Barre d'état fine en bas, comme dans un explorateur natif
  */
 Item {
     id: root
 
-    // Contexte optionnel : permet de charger cette vue dans un contexte de
-    // preview/design sans que "transferContext" soit defini dans le
-    // contexte racine (meme convention que UsersView.qml/model).
     property var context: (typeof transferContext !== "undefined") ? transferContext : null
 
     property string selectedFilePath: ""
@@ -30,11 +26,9 @@ Item {
 
     signal backRequested()
 
-    // Formatte une taille en octets en chaine lisible (Ko/Mo/Go).
+    // ---- fonctions utilitaires ----
     function formatBytes(bytes) {
-        if (!bytes || bytes <= 0) {
-            return "0 Ko"
-        }
+        if (!bytes || bytes <= 0) return "0 Ko"
         const units = ["o", "Ko", "Mo", "Go"]
         let value = bytes
         let unitIndex = 0
@@ -45,31 +39,15 @@ Item {
         return (unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)) + " " + units[unitIndex]
     }
 
-    // Date/heure lisible pour une entree de transfert (ex. "12/07/2026 14:32").
     function formatDate(isoString) {
-        if (!isoString)
-            return ""
+        if (!isoString) return ""
         const d = new Date(isoString)
-        if (isNaN(d.getTime()))
-            return ""
+        if (isNaN(d.getTime())) return ""
         return d.toLocaleString(Qt.locale(), "dd/MM/yyyy HH:mm")
     }
 
-    // Normalise une adresse IP pour le regroupement par correspondant.
-    // Une connexion ENTRANTE (reception) sur le socket serveur, qui ecoute
-    // en double pile IPv4/IPv6, rapporte souvent l'adresse distante sous
-    // forme IPv4-mappee en IPv6 (ex. "::ffff:192.168.1.5"), alors qu'un
-    // envoi SORTANT vers ce meme poste utilise l'adresse IPv4 "nue"
-    // (ex. "192.168.1.5"). Sans normalisation, ces deux formes produisent
-    // 2 cles differentes et donc 2 dossiers distincts pour un seul et
-    // meme correspondant (issue signalee : "2 dossiers differents pour
-    // les memes echanges, un pour l'envoi et un pour la reception").
-    // core::TransferContext::resolvePeerName() applique deja une
-    // comparaison tolerante equivalente cote C++ pour resoudre le nom
-    // affiche ; on applique ici la meme tolerance a la cle de regroupement.
     function normalizePeerAddress(address) {
-        if (!address)
-            return ""
+        if (!address) return ""
         let a = address.trim().toLowerCase()
         const v4MappedPrefix = "::ffff:"
         if (a.indexOf(v4MappedPrefix) === 0) {
@@ -78,11 +56,6 @@ Item {
         return a
     }
 
-    // Regroupe la liste plate activeTransfers par correspondant (adresse IP
-    // comme cle stable, nom affiche quand connu), le correspondant le plus
-    // recemment actif en premier, et au sein de chaque groupe le transfert
-    // le plus recent en premier. Recalcule automatiquement des que
-    // context.activeTransfers change (propriete QML liee, voir plus bas).
     function buildPeerGroups(transfers) {
         const groupsByKey = {}
         const order = []
@@ -108,15 +81,9 @@ Item {
             }
 
             const group = groupsByKey[key]
-            // Prefere le nom des qu'il devient connu (une entree recente
-            // peut avoir un peerName resolu alors qu'une plus ancienne du
-            // meme correspondant ne l'avait pas).
             if (item.peerName && item.peerName.length > 0) {
                 group.peerLabel = item.peerName
             }
-            // Prefere afficher la forme d'adresse la plus lisible
-            // ("192.168.1.5" plutot que "::ffff:192.168.1.5") si aucun nom
-            // n'est encore connu pour ce correspondant.
             if (rawAddress.length > 0 && group.peerAddress.toLowerCase().indexOf("::ffff:") === 0
                     && rawAddress.toLowerCase().indexOf("::ffff:") !== 0) {
                 group.peerAddress = rawAddress
@@ -142,14 +109,26 @@ Item {
         return groups
     }
 
+    // ---- propriétés ----
     property var peerGroups: root.buildPeerGroups(root.context ? root.context.activeTransfers : [])
 
-    // --- Navigation par dossiers -------------------------------------
-    // "" = on est a la racine (grille de dossiers, un par correspondant).
-    // Sinon : peerKey du dossier actuellement ouvert (vue detail = liste
-    // des fichiers echanges avec ce correspondant).
     property string openedPeerKey: ""
     property string searchText: ""
+
+    // Mode d'affichage : "grid" pour la racine, "list" pour les fichiers dans un dossier
+    property string viewMode: "grid"   // "grid" | "list"
+
+    // Filtre rapide (panneau lateral), applique aux fichiers ET aux dossiers.
+    property string activeFilter: "all"   // "all" | "received" | "sent" | "failed"
+
+    function matchesFilter(item) {
+        switch (root.activeFilter) {
+        case "received": return item.direction === qsTr("Réception")
+        case "sent": return item.direction !== qsTr("Réception")
+        case "failed": return item.statusText === qsTr("Échoué")
+        default: return true
+        }
+    }
 
     readonly property var currentGroup: {
         for (let i = 0; i < root.peerGroups.length; i++) {
@@ -159,55 +138,80 @@ Item {
         return null
     }
 
-    // Dossiers (correspondants) filtres par la recherche, a la racine.
+    // Dossiers (correspondants) filtrés : recherche + filtre rapide (un
+    // dossier est conserve s'il contient au moins un element correspondant).
     readonly property var filteredPeerGroups: {
         const q = root.searchText.trim().toLowerCase()
-        if (q.length === 0)
-            return root.peerGroups
         return root.peerGroups.filter(function(g) {
-            return g.peerLabel.toLowerCase().indexOf(q) !== -1
+            if (q.length > 0 && g.peerLabel.toLowerCase().indexOf(q) === -1) return false
+            if (root.activeFilter === "all") return true
+            return g.items.some(root.matchesFilter)
         })
     }
 
-    // Fichiers du dossier ouvert, filtres par la recherche.
     readonly property var filteredCurrentItems: {
-        if (!root.currentGroup)
-            return []
+        if (!root.currentGroup) return []
         const q = root.searchText.trim().toLowerCase()
-        if (q.length === 0)
-            return root.currentGroup.items
         return root.currentGroup.items.filter(function(it) {
-            return it.fileName.toLowerCase().indexOf(q) !== -1
+            if (q.length > 0 && it.fileName.toLowerCase().indexOf(q) === -1) return false
+            return root.matchesFilter(it)
         })
     }
 
-    // Si le correspondant du dossier ouvert disparait (plus aucun
-    // transfert) on revient automatiquement a la grille de dossiers.
+    // Nombre d'elements correspondant au filtre rapide dans un dossier donne
+    // (utilise pour la pastille/sous-titre de la tuile dossier).
+    function filteredCountFor(group) {
+        if (root.activeFilter === "all") return group.items.length
+        return group.items.filter(root.matchesFilter).length
+    }
+
     onPeerGroupsChanged: {
         if (root.openedPeerKey.length > 0 && !root.currentGroup) {
             root.openedPeerKey = ""
         }
     }
 
+    function hasActiveFilters() {
+        return root.searchText.trim().length > 0 || root.activeFilter !== "all"
+    }
+
+    // Couleur/glyphe (toujours des caracteres ASCII/BMP sûrs, jamais d'emoji
+    // astral non garanti) associes a chaque filtre rapide du panneau lateral.
+    function filterIconColor(key) {
+        switch (key) {
+        case "received": return Theme.accent
+        case "sent": return Theme.primary
+        case "failed": return Theme.error
+        default: return Theme.textTertiary
+        }
+    }
+    function filterIconGlyph(key) {
+        switch (key) {
+        case "received": return "\u2193"
+        case "sent": return "\u2191"
+        case "failed": return "!"
+        default: return ""
+        }
+    }
+
+    // ---- fond ----
     Rectangle {
         anchors.fill: parent
         color: Theme.background
     }
 
+    // ---- dialogues ----
     FileDialog {
         id: fileDialog
-        title: qsTr("Choisir un fichier a envoyer")
+        title: qsTr("Choisir un fichier à envoyer")
         onAccepted: {
             root.selectedFilePath = selectedFile.toString()
-            // selectedFile est une URL (file:///...) ; on garde uniquement
-            // le nom pour l'affichage.
             const parts = root.selectedFilePath.split("/")
             root.selectedFileName = parts[parts.length - 1]
         }
     }
 
-    // Message d'erreur transitoire (fichier illisible, adresse invalide,
-    // envoi non demarre...).
+    // ---- bannière d'erreur ----
     Rectangle {
         id: errorBanner
         anchors.top: parent.top
@@ -229,9 +233,7 @@ Item {
             wrapMode: Text.WordWrap
         }
 
-        Behavior on opacity {
-            NumberAnimation { duration: 150 }
-        }
+        Behavior on opacity { NumberAnimation { duration: 150 } }
 
         Timer {
             id: errorTimer
@@ -253,228 +255,111 @@ Item {
         }
     }
 
+    // Petit bouton d'outils rond/carre reutilise dans la barre d'adresse.
+    component ToolbarIconButton: Button {
+        property string glyph: ""
+        implicitWidth: 32
+        implicitHeight: 32
+        background: Rectangle {
+            radius: Theme.radiusSmall
+            color: parent.down ? Theme.surfaceHover : (parent.hovered ? Theme.breadcrumbChipHover : "transparent")
+        }
+        contentItem: Text {
+            text: parent.glyph
+            color: parent.enabled ? Theme.text : Theme.textTertiary
+            font.pixelSize: Theme.fontSizeBody
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+    }
+
+    // ---- layout principal ----
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: Theme.spacingLarge
-        spacing: Theme.spacingMedium
+        spacing: 0
 
-        RowLayout {
+        // =========================================================
+        // Barre d'adresse (navigation + fil d'Ariane + recherche + vue)
+        // =========================================================
+        Rectangle {
             Layout.fillWidth: true
-            spacing: Theme.spacingSmall
+            Layout.preferredHeight: 48
+            color: Theme.addressBarBackground
+            border.width: 1
+            border.color: Theme.border
+            z: 2
 
-            Button {
-                text: qsTr("< Retour")
-                Layout.preferredHeight: 32
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.spacingMedium
+                anchors.rightMargin: Theme.spacingMedium
+                spacing: Theme.spacingSmall
 
-                background: Rectangle {
-                    radius: Theme.radiusSmall
-                    color: parent.hovered ? Theme.surfaceAlt : "transparent"
+                ToolbarIconButton {
+                    glyph: "\u2190"
+                    // Toujours actif : au niveau d'un dossier ouvert, revient a la
+                    // liste des correspondants ; a la racine, quitte l'ecran (signal
+                    // backRequested() ecoute par Main.qml pour revenir au Home).
+                    onClicked: {
+                        if (root.openedPeerKey.length > 0) {
+                            root.openedPeerKey = ""
+                        } else {
+                            root.backRequested()
+                        }
+                    }
+                }
+                ToolbarIconButton {
+                    glyph: "\u21bb"
+                    onClicked: root.peerGroups = root.buildPeerGroups(root.context ? root.context.activeTransfers : [])
+                }
+
+                // ---- Fil d'Ariane, style barre d'adresse ----
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 32
+                    radius: Theme.radiusPill
+                    color: Theme.surfaceAlt
                     border.width: 1
                     border.color: Theme.border
-                }
-
-                contentItem: Text {
-                    text: qsTr("< Retour")
-                    color: Theme.text
-                    font.pixelSize: Theme.fontSizeSmall
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                onClicked: root.backRequested()
-            }
-
-            Label {
-                text: qsTr("Transfert de fichiers")
-                font.pixelSize: Theme.fontSizeHeading
-                font.bold: true
-                font.family: Theme.fontFamily
-                color: Theme.text
-            }
-
-            Item { Layout.fillWidth: true }
-        }
-
-        // Panneau d'envoi : selection du fichier + du destinataire.
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: sendPanel.implicitHeight + Theme.spacingLarge
-            radius: Theme.radiusLarge
-            color: Theme.surface
-            border.color: Theme.border
-            border.width: 1
-
-            ColumnLayout {
-                id: sendPanel
-                anchors.fill: parent
-                anchors.margins: Theme.spacingMedium
-                spacing: Theme.spacingSmall
-
-                Label {
-                    text: qsTr("Envoyer un fichier")
-                    font.pixelSize: Theme.fontSizeBody
-                    font.bold: true
-                    color: Theme.text
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Theme.spacingSmall
-
-                    Button {
-                        text: qsTr("Choisir un fichier...")
-                        Layout.preferredHeight: 36
-
-                        background: Rectangle {
-                            radius: Theme.radiusSmall
-                            color: parent.hovered ? Theme.surfaceAlt : "transparent"
-                            border.width: 1
-                            border.color: Theme.border
-                        }
-
-                        contentItem: Text {
-                            text: qsTr("Choisir un fichier...")
-                            color: Theme.text
-                            font.pixelSize: Theme.fontSizeSmall
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-
-                        onClicked: fileDialog.open()
-                    }
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: root.selectedFileName.length > 0
-                              ? root.selectedFileName
-                              : qsTr("Aucun fichier selectionne")
-                        color: root.selectedFileName.length > 0 ? Theme.text : Theme.textSecondary
-                        elide: Text.ElideMiddle
-                        font.pixelSize: Theme.fontSizeSmall
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Theme.spacingSmall
-
-                    Label {
-                        text: qsTr("Destinataire :")
-                        color: Theme.textSecondary
-                        font.pixelSize: Theme.fontSizeSmall
-                    }
-
-                    ComboBox {
-                        id: recipientCombo
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 36
-                        textRole: "label"
-                        model: {
-                            const peers = root.context ? root.context.availableRecipients() : []
-                            const result = []
-                            for (let i = 0; i < peers.length; ++i) {
-                                result.push({
-                                    label: peers[i].name + " (" + peers[i].address + ")",
-                                    address: peers[i].address,
-                                    port: peers[i].port
-                                })
-                            }
-                            return result
-                        }
-                    }
-
-                    Button {
-                        text: qsTr("Envoyer")
-                        Layout.preferredHeight: 36
-                        enabled: root.selectedFilePath.length > 0
-                                 && recipientCombo.count > 0
-                                 && root.context !== null
-
-                        background: Rectangle {
-                            radius: Theme.radiusSmall
-                            color: parent.enabled ? (parent.hovered ? Theme.primaryHover : Theme.primary)
-                                                   : Theme.surfaceAlt
-                        }
-
-                        contentItem: Text {
-                            text: qsTr("Envoyer")
-                            color: parent.enabled ? Theme.primaryText : Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.bold: true
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-
-                        onClicked: {
-                            const selected = recipientCombo.model[recipientCombo.currentIndex]
-                            if (!selected || !root.context) {
-                                return
-                            }
-
-                            // selectedFilePath est l'URL brute renvoyee par FileDialog
-                            // (ex. "file:///C:/chemin/fichier.ext" sous Windows).
-                            // TransferContext::sendFile() convertit lui-meme cette URL
-                            // en chemin local via QUrl::toLocalFile(), qui gere
-                            // correctement Windows et Linux (contrairement a un
-                            // decoupage regex manuel ici, qui laissait un slash en
-                            // trop devant la lettre de lecteur : "/C:/...").
-                            if (root.context.sendFile(root.selectedFilePath.toString(), selected.address, selected.port)) {
-                                root.selectedFilePath = ""
-                                root.selectedFileName = ""
-                            }
-                        }
-                    }
-                }
-
-                Label {
-                    visible: recipientCombo.count === 0
-                    text: qsTr("Aucun poste detecte pour le moment : ouvrez d'abord \"Postes connectes\".")
-                    color: Theme.textSecondary
-                    font.pixelSize: Theme.fontSizeSmall
-                }
-            }
-        }
-
-        // Suivi des transferts en cours (envoi et reception), issue #57 :
-        // "L'utilisateur voit la progression exacte d'un transfert en cours".
-        //
-        // Organisation par dossiers : a la racine, un dossier par
-        // correspondant (comme un explorateur d'archives) ; on ouvre un
-        // dossier pour voir la liste des fichiers echanges avec lui. Fil
-        // d'Ariane + recherche permettent de naviguer et filtrer, a la
-        // maniere des ecrans d'archivage fournis en reference.
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            radius: Theme.radiusLarge
-            color: Theme.surface
-            border.color: Theme.border
-            border.width: 1
-            clip: true
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: Theme.spacingMedium
-                spacing: Theme.spacingSmall
-
-                // En-tete : fil d'Ariane (Transferts > Correspondant), recherche
-                // et raccourci vers le dossier de reception.
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Theme.spacingSmall
 
                     RowLayout {
-                        spacing: 4
+                        anchors.fill: parent
+                        anchors.leftMargin: Theme.spacingSmall
+                        anchors.rightMargin: Theme.spacingSmall
+                        spacing: 2
 
-                        Label {
-                            text: qsTr("Transferts")
-                            font.pixelSize: Theme.fontSizeBody
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                            color: root.openedPeerKey.length > 0 ? Theme.primary : Theme.text
+                        Rectangle {
+                            id: crumbRootChip
+                            radius: Theme.radiusPill
+                            color: root.openedPeerKey.length > 0 && crumbRootArea.containsMouse ? Theme.breadcrumbChipHover : "transparent"
+                            implicitHeight: 24
+                            implicitWidth: crumbRootLabel.implicitWidth + 20
 
+                            Label {
+                                id: crumbRootLabel
+                                anchors.centerIn: parent
+                                text: qsTr("Transferts")
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.bold: root.openedPeerKey.length === 0
+                                // Toujours une couleur pleine (jamais de texte teinte
+                                // sur fond teinte) : segment courant en texte fort,
+                                // segment cliquable en texte secondaire + soulignement
+                                // au survol pour rester lisible dans les deux themes.
+                                color: root.openedPeerKey.length === 0 ? Theme.text : Theme.textSecondary
+                            }
+                            Rectangle {
+                                visible: root.openedPeerKey.length > 0 && crumbRootArea.containsMouse
+                                anchors.left: crumbRootLabel.left
+                                anchors.right: crumbRootLabel.right
+                                anchors.bottom: crumbRootLabel.bottom
+                                anchors.bottomMargin: -1
+                                height: 1
+                                color: Theme.textSecondary
+                            }
                             MouseArea {
+                                id: crumbRootArea
                                 anchors.fill: parent
+                                hoverEnabled: true
                                 cursorShape: root.openedPeerKey.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                                 enabled: root.openedPeerKey.length > 0
                                 onClicked: root.openedPeerKey = ""
@@ -484,95 +369,481 @@ Item {
                         Label {
                             visible: root.openedPeerKey.length > 0
                             text: "\u203A"
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeBody
+                            color: Theme.textTertiary
+                            font.pixelSize: Theme.fontSizeSmall
                         }
 
-                        Label {
+                        Rectangle {
                             visible: root.openedPeerKey.length > 0
-                            text: root.currentGroup ? root.currentGroup.peerLabel : ""
-                            font.pixelSize: Theme.fontSizeBody
-                            font.bold: true
-                            font.family: Theme.fontFamily
+                            radius: Theme.radiusPill
+                            color: "transparent"
+                            implicitHeight: 24
+                            implicitWidth: crumbPeerLabel.implicitWidth + 12
+                            Layout.maximumWidth: 220
+
+                            Label {
+                                id: crumbPeerLabel
+                                anchors.centerIn: parent
+                                width: parent.implicitWidth - 12
+                                text: root.currentGroup ? root.currentGroup.peerLabel : ""
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.bold: true
+                                color: Theme.text
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+                }
+
+                // ---- Recherche ----
+                Rectangle {
+                    Layout.preferredWidth: 220
+                    Layout.preferredHeight: 32
+                    radius: Theme.radiusPill
+                    color: Theme.surfaceAlt
+                    border.width: 1
+                    border.color: searchField.activeFocus ? Theme.primary : Theme.border
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 6
+                        spacing: 4
+                        Label {
+                            text: "🔍"
+                            font.pixelSize: 12
+                            color: Theme.textSecondary
+                        }
+                        TextField {
+                            id: searchField
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 28
+                            placeholderText: root.openedPeerKey.length > 0
+                                             ? qsTr("Rechercher un fichier...")
+                                             : qsTr("Rechercher un correspondant...")
+                            font.pixelSize: Theme.fontSizeSmall
                             color: Theme.text
-                            elide: Text.ElideRight
+                            placeholderTextColor: Theme.textTertiary
+                            selectionColor: Theme.primary
+                            selectedTextColor: Theme.primaryText
+                            background: Rectangle { color: "transparent" }
+                            text: root.searchText
+                            onTextChanged: root.searchText = text
+                        }
+                        ToolbarIconButton {
+                            glyph: "\u2715"
+                            visible: root.searchText.length > 0
+                            implicitWidth: 22
+                            implicitHeight: 22
+                            onClicked: { searchField.text = ""; root.searchText = "" }
                         }
                     }
+                }
 
-                    Item { Layout.fillWidth: true }
+                // ---- Bascule vue grille / liste ----
+                Rectangle {
+                    Layout.preferredHeight: 32
+                    Layout.preferredWidth: 64
+                    radius: Theme.radiusSmall
+                    color: Theme.surfaceAlt
+                    border.width: 1
+                    border.color: Theme.border
+                    visible: root.openedPeerKey.length > 0
 
-                    TextField {
-                        id: searchField
-                        Layout.preferredWidth: 220
-                        Layout.preferredHeight: 32
-                        placeholderText: root.openedPeerKey.length > 0
-                                         ? qsTr("Rechercher un fichier...")
-                                         : qsTr("Rechercher un correspondant...")
-                        font.pixelSize: Theme.fontSizeSmall
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 2
+                        spacing: 2
+                        ToolbarIconButton {
+                            id: gridToggleBtn
+                            implicitWidth: 28
+                            implicitHeight: 28
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: root.viewMode === "grid" ? Theme.primary : "transparent"
+                            }
+                            contentItem: Item {
+                                readonly property color dotColor: root.viewMode === "grid" ? Theme.primaryText : Theme.text
+                                Grid {
+                                    anchors.centerIn: parent
+                                    columns: 2
+                                    rows: 2
+                                    spacing: 3
+                                    Repeater {
+                                        model: 4
+                                        Rectangle {
+                                            width: 6
+                                            height: 6
+                                            radius: 1
+                                            color: parent.parent.dotColor
+                                        }
+                                    }
+                                }
+                            }
+                            onClicked: root.viewMode = "grid"
+                        }
+                        ToolbarIconButton {
+                            id: listToggleBtn
+                            implicitWidth: 28
+                            implicitHeight: 28
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: root.viewMode === "list" ? Theme.primary : "transparent"
+                            }
+                            contentItem: Item {
+                                readonly property color barColor: root.viewMode === "list" ? Theme.primaryText : Theme.text
+                                Column {
+                                    anchors.centerIn: parent
+                                    spacing: 3
+                                    Repeater {
+                                        model: 3
+                                        Rectangle {
+                                            width: 14
+                                            height: 2
+                                            radius: 1
+                                            color: parent.parent.barColor
+                                        }
+                                    }
+                                }
+                            }
+                            onClicked: root.viewMode = "list"
+                        }
+                    }
+                }
+            }
+        }
+
+        // =========================================================
+        // Panneau d'envoi (compact, sous la barre d'adresse)
+        // =========================================================
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 44
+            color: Theme.surfaceAlt
+            border.width: 1
+            border.color: Theme.border
+            z: 1
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.spacingMedium
+                anchors.rightMargin: Theme.spacingMedium
+                spacing: Theme.spacingSmall
+
+                Label {
+                    text: qsTr("Envoyer :")
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.textSecondary
+                }
+
+                Button {
+                    text: qsTr("Choisir...")
+                    Layout.preferredHeight: 28
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: parent.hovered ? Theme.surface : "transparent"
+                        border.width: 1
+                        border.color: Theme.border
+                    }
+                    contentItem: Text {
+                        text: qsTr("Choisir...")
                         color: Theme.text
-                        text: root.searchText
-                        onTextChanged: root.searchText = text
+                        font.pixelSize: Theme.fontSizeSmall
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: fileDialog.open()
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: root.selectedFileName.length > 0 ? root.selectedFileName : qsTr("Aucun fichier sélectionné")
+                    color: root.selectedFileName.length > 0 ? Theme.text : Theme.textSecondary
+                    elide: Text.ElideMiddle
+                    font.pixelSize: Theme.fontSizeSmall
+                }
+
+                ComboBox {
+                    id: recipientCombo
+                    Layout.preferredWidth: 200
+                    Layout.preferredHeight: 28
+                    textRole: "label"
+                    model: {
+                        const peers = root.context ? root.context.availableRecipients() : []
+                        const result = []
+                        for (let i = 0; i < peers.length; ++i) {
+                            result.push({
+                                label: peers[i].name + " (" + peers[i].address + ")",
+                                address: peers[i].address,
+                                port: peers[i].port
+                            })
+                        }
+                        return result
+                    }
+
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.surface
+                        border.width: 1
+                        border.color: recipientCombo.activeFocus ? Theme.primary : Theme.border
+                    }
+                    contentItem: Text {
+                        leftPadding: 8
+                        rightPadding: 8
+                        text: recipientCombo.displayText.length > 0 ? recipientCombo.displayText : qsTr("Aucun destinataire")
+                        color: recipientCombo.count > 0 ? Theme.text : Theme.textTertiary
+                        font.pixelSize: Theme.fontSizeSmall
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                    }
+                    indicator: Text {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "\u25BE"
+                        color: Theme.textSecondary
+                        font.pixelSize: 12
+                    }
+                    popup: Popup {
+                        y: recipientCombo.height + 2
+                        width: recipientCombo.width
+                        implicitHeight: Math.min(contentItem.implicitHeight, 200)
+                        padding: 4
 
                         background: Rectangle {
                             radius: Theme.radiusSmall
-                            color: Theme.surfaceAlt
+                            color: Theme.surface
                             border.width: 1
-                            border.color: searchField.activeFocus ? Theme.primary : Theme.border
+                            border.color: Theme.border
+                        }
+                        contentItem: ListView {
+                            clip: true
+                            implicitHeight: contentHeight
+                            model: recipientCombo.popup.visible ? recipientCombo.delegateModel : null
+                            currentIndex: recipientCombo.highlightedIndex
                         }
                     }
+                    delegate: ItemDelegate {
+                        width: recipientCombo.width
+                        height: 32
+                        highlighted: recipientCombo.highlightedIndex === index
+                        background: Rectangle {
+                            radius: Theme.radiusSmall
+                            color: parent.highlighted ? Theme.surfaceHover : "transparent"
+                        }
+                        contentItem: Text {
+                            text: modelData.label
+                            color: Theme.text
+                            font.pixelSize: Theme.fontSizeSmall
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
 
-                    // Ouvre directement le dossier ou CollabLAN enregistre
-                    // les fichiers recus, sans depender d'un transfert
-                    // particulier de la liste ci-dessous.
-                    Button {
-                        text: qsTr("Ouvrir le dossier de reception")
-                        onClicked: {
-                            if (root.context && !root.context.openDownloadsFolder()) {
-                                console.warn("Impossible d'ouvrir le dossier de reception")
+                Button {
+                    text: qsTr("Envoyer")
+                    Layout.preferredHeight: 28
+                    enabled: root.selectedFilePath.length > 0 && recipientCombo.count > 0 && root.context !== null
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: parent.enabled ? (parent.hovered ? Theme.primaryHover : Theme.primary) : Theme.surfaceAlt
+                    }
+                    contentItem: Text {
+                        text: qsTr("Envoyer")
+                        color: parent.enabled ? Theme.primaryText : Theme.textSecondary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        const selected = recipientCombo.model[recipientCombo.currentIndex]
+                        if (!selected || !root.context) return
+                        if (root.context.sendFile(root.selectedFilePath.toString(), selected.address, selected.port)) {
+                            root.selectedFilePath = ""
+                            root.selectedFileName = ""
+                        }
+                    }
+                }
+
+                Button {
+                    text: qsTr("📂 Réception")
+                    Layout.preferredHeight: 28
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: parent.hovered ? Theme.surface : "transparent"
+                        border.width: 1
+                        border.color: Theme.border
+                    }
+                    contentItem: Text {
+                        text: qsTr("📂 Réception")
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        if (root.context && !root.context.openDownloadsFolder()) {
+                            console.warn("Impossible d'ouvrir le dossier de réception")
+                        }
+                    }
+                }
+            }
+        }
+
+        // =========================================================
+        // Corps : panneau lateral de filtres + contenu
+        // =========================================================
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 0
+
+            // ---- Panneau lateral (filtres rapides, style "Acces rapide") ----
+            // Utilise les jetons de surface "normaux" (qui suivent Theme.darkMode),
+            // et non les jetons Theme.sidebar* qui sont volontairement fixes en
+            // marine sombre pour la navigation globale de l'appli ailleurs dans
+            // CollabLAN : ce panneau local doit basculer avec le theme clair/sombre.
+            Rectangle {
+                Layout.preferredWidth: 168
+                Layout.fillHeight: true
+                color: Theme.surfaceAlt
+                border.width: 1
+                border.color: Theme.border
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacingSmall
+                    spacing: 2
+
+                    Label {
+                        text: qsTr("ACCÈS RAPIDE")
+                        color: Theme.textTertiary
+                        font.pixelSize: Theme.fontSizeCaption
+                        font.bold: true
+                        Layout.topMargin: 4
+                        Layout.bottomMargin: 4
+                        Layout.leftMargin: 8
+                    }
+
+                    Repeater {
+                        model: [
+                            { key: "all", label: qsTr("Tout") },
+                            { key: "received", label: qsTr("Reçus") },
+                            { key: "sent", label: qsTr("Envoyés") },
+                            { key: "failed", label: qsTr("Échoués") }
+                        ]
+
+                        delegate: Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 34
+                            radius: Theme.radiusSmall
+                            color: root.activeFilter === modelData.key ? Theme.selectionBackground
+                                   : sidebarItemArea.containsMouse ? Theme.surfaceHover
+                                   : "transparent"
+
+                            // Liseré d'accent a gauche pour l'element actif (repere
+                            // visuel supplementaire qui ne depend pas de la couleur
+                            // de fond, donc reste visible dans les deux themes).
+                            Rectangle {
+                                visible: root.activeFilter === modelData.key
+                                anchors.left: parent.left
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                width: 3
+                                radius: 1.5
+                                color: Theme.primary
+                            }
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 8
+                                spacing: 8
+
+                                // Pastille de couleur dessinee (jamais de glyphe de
+                                // police non garanti) : indique la categorie du filtre.
+                                Rectangle {
+                                    width: 16
+                                    height: 16
+                                    radius: 8
+                                    color: root.filterIconColor(modelData.key)
+                                    opacity: modelData.key === "all" ? 0.55 : 1
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: root.filterIconGlyph(modelData.key)
+                                        color: Theme.primaryText
+                                        font.pixelSize: 9
+                                        font.bold: true
+                                    }
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: modelData.label
+                                    color: root.activeFilter === modelData.key ? Theme.primary : Theme.text
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.bold: root.activeFilter === modelData.key
+                                }
+                            }
+
+                            MouseArea {
+                                id: sidebarItemArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.activeFilter = modelData.key
                             }
                         }
                     }
-                }
 
-                // Etat vide (aucun transfert du tout).
+                    Item { Layout.fillHeight: true }
+                }
+            }
+
+            // ---- Zone de contenu principal ----
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: Theme.surface
+                border.width: 1
+                border.color: Theme.border
+                clip: true
+
                 ColumnLayout {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.topMargin: Theme.spacingLarge
-                    visible: root.peerGroups.length === 0
-                    spacing: Theme.spacingSmall
+                    anchors.fill: parent
+                    spacing: 0
 
-                    Label {
-                        Layout.alignment: Qt.AlignHCenter
-                        text: qsTr("Aucun transfert")
-                        color: Theme.textSecondary
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-
-                // --- Vue "racine" : grille de dossiers, un par correspondant ---
-                ScrollView {
-                    id: foldersScroll
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    visible: root.peerGroups.length > 0 && root.openedPeerKey.length === 0
-                    contentWidth: availableWidth
-
-                    // ScrollView n'accepte qu'un seul enfant direct : la
-                    // grille et le message "aucun resultat" sont donc
-                    // regroupes dans un Item.
+                    // ---- Corps (listes/grilles) ----
                     Item {
-                        width: foldersScroll.availableWidth
-                        height: Math.max(foldersGrid.height, root.filteredPeerGroups.length === 0 ? 80 : 0)
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
 
+                        // État vide
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            visible: root.peerGroups.length === 0
+                            spacing: Theme.spacingSmall
+                            Label {
+                                text: qsTr("Aucun transfert")
+                                color: Theme.textSecondary
+                                font.pixelSize: Theme.fontSizeBody
+                            }
+                        }
+
+                        // ---- VUE RACINE : grille de dossiers ----
                         GridView {
                             id: foldersGrid
-                            width: parent.width
-                            height: Math.ceil(model.length / Math.max(1, Math.floor(width / cellWidth))) * cellHeight
-                            interactive: false
-                            cellWidth: 140
-                            cellHeight: 132
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingMedium
+                            visible: root.peerGroups.length > 0 && root.openedPeerKey.length === 0
+                            cellWidth: 150
+                            cellHeight: 144
                             model: root.filteredPeerGroups
+                            clip: true
 
                             add: Transition {
                                 NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
@@ -582,196 +853,398 @@ Item {
                                 width: foldersGrid.cellWidth
                                 height: foldersGrid.cellHeight
                                 label: modelData.peerLabel
-                                count: modelData.items.length
+                                count: root.filteredCountFor(modelData)
                                 accentColor: Theme.colorForName(modelData.peerLabel)
-                                sublabel: modelData.items.length > 0
-                                          ? root.formatDate(modelData.items[0].timestamp)
-                                          : ""
+                                sublabel: modelData.items.length > 0 ? root.formatDate(modelData.items[0].timestamp) : ""
                                 onOpened: root.openedPeerKey = modelData.peerKey
                             }
-                        }
 
-                        // Aucun resultat pour la recherche en cours.
-                        Label {
-                            visible: root.filteredPeerGroups.length === 0
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.top: parent.top
-                            anchors.topMargin: Theme.spacingLarge
-                            text: qsTr("Aucun correspondant ne correspond a \u00ab %1 \u00bb").arg(root.searchText)
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
-                        }
-                    }
-                }
-
-                // --- Vue "dossier ouvert" : fichiers echanges avec ce correspondant ---
-                ListView {
-                    id: filesList
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    spacing: Theme.spacingSmall
-                    clip: true
-                    visible: root.openedPeerKey.length > 0
-                    model: root.filteredCurrentItems
-
-                    add: Transition {
-                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
-                    }
-
-                    header: RowLayout {
-                        width: filesList.width
-                        visible: root.currentGroup !== null
-                        spacing: Theme.spacingSmall
-
-                        Rectangle {
-                            width: 32
-                            height: 32
-                            radius: 16
-                            color: root.currentGroup ? Theme.colorForName(root.currentGroup.peerLabel) : Theme.primary
-
-                            Text {
+                            // Message "aucun résultat"
+                            Label {
+                                visible: root.filteredPeerGroups.length === 0
                                 anchors.centerIn: parent
-                                text: root.currentGroup && root.currentGroup.peerLabel.length > 0
-                                      ? root.currentGroup.peerLabel.charAt(0).toUpperCase() : "?"
-                                color: Theme.primaryText
-                                font.pixelSize: 14
-                                font.bold: true
+                                text: root.searchText.length > 0
+                                      ? qsTr("Aucun correspondant ne correspond à « %1 »").arg(root.searchText)
+                                      : qsTr("Aucun correspondant pour ce filtre")
+                                color: Theme.textSecondary
+                                font.pixelSize: Theme.fontSizeSmall
                             }
                         }
 
-                        Label {
-                            Layout.fillWidth: true
-                            text: root.currentGroup
-                                  ? qsTr("%n fichier(s)", "", root.currentGroup.items.length)
-                                  : ""
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
-                        }
-                    }
-
-                    // Aucun resultat pour la recherche en cours a l'interieur du dossier.
-                    Label {
-                        visible: filesList.count === 0
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.top: parent.top
-                        anchors.topMargin: Theme.spacingLarge
-                        text: qsTr("Aucun fichier ne correspond a \u00ab %1 \u00bb").arg(root.searchText)
-                        color: Theme.textSecondary
-                        font.pixelSize: Theme.fontSizeSmall
-                    }
-
-                    delegate: Rectangle {
-                        width: filesList.width
-                        height: transferDelegate.implicitHeight + Theme.spacingMedium
-                        radius: Theme.radiusMedium
-                        color: Theme.surfaceAlt
-
+                        // ---- VUE DOSSIER OUVERT ----
                         ColumnLayout {
-                            id: transferDelegate
                             anchors.fill: parent
-                            anchors.margins: Theme.spacingSmall
-                            spacing: 4
+                            visible: root.openedPeerKey.length > 0
+                            spacing: 0
 
+                            // En-tête du dossier (avatar + nombre de fichiers)
                             RowLayout {
                                 Layout.fillWidth: true
+                                Layout.margins: Theme.spacingMedium
+                                Layout.bottomMargin: Theme.spacingSmall
                                 spacing: Theme.spacingSmall
 
-                                // Pastille de direction (envoi / reception).
                                 Rectangle {
-                                    width: 22
-                                    height: 22
-                                    radius: 11
-                                    color: modelData.direction === qsTr("Reception") ? Theme.accent : Theme.primary
-
+                                    width: 32
+                                    height: 32
+                                    radius: 16
+                                    color: root.currentGroup ? Theme.colorForName(root.currentGroup.peerLabel) : Theme.primary
                                     Text {
                                         anchors.centerIn: parent
-                                        text: modelData.direction === qsTr("Reception") ? "\u2193" : "\u2191"
+                                        text: root.currentGroup && root.currentGroup.peerLabel.length > 0
+                                              ? root.currentGroup.peerLabel.charAt(0).toUpperCase() : "?"
                                         color: Theme.primaryText
-                                        font.pixelSize: 12
+                                        font.pixelSize: 14
                                         font.bold: true
                                     }
                                 }
-
                                 Label {
                                     Layout.fillWidth: true
-                                    text: modelData.fileName
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.bold: true
-                                    elide: Text.ElideMiddle
-                                }
-
-                                Label {
-                                    text: modelData.statusText
-                                    color: modelData.statusText === qsTr("Echoue") ? Theme.error
-                                           : modelData.statusText === qsTr("Termine") ? Theme.success
-                                           : Theme.textSecondary
-                                    font.pixelSize: Theme.fontSizeSmall
-                                }
-                            }
-
-                            ProgressBar {
-                                id: progressBar
-                                Layout.fillWidth: true
-                                from: 0
-                                to: 100
-                                value: modelData.percent
-
-                                background: Rectangle {
-                                    implicitHeight: 8
-                                    radius: 4
-                                    color: Theme.border
-                                }
-
-                                contentItem: Item {
-                                    implicitHeight: 8
-
-                                    Rectangle {
-                                        width: progressBar.visualPosition * parent.width
-                                        height: parent.height
-                                        radius: 4
-                                        color: modelData.statusText === qsTr("Echoue") ? Theme.error : Theme.primary
-                                    }
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-
-                                Label {
-                                    text: {
-                                        const dateText = root.formatDate(modelData.timestamp)
-                                        if (modelData.statusText === qsTr("Echoue") && modelData.errorString.length > 0) {
-                                            return dateText.length > 0 ? (dateText + " \u2022 " + modelData.errorString) : modelData.errorString
-                                        }
-                                        const sizeText = qsTr("%1 / %2 (%3 %)")
-                                            .arg(root.formatBytes(modelData.bytesTransferred))
-                                            .arg(root.formatBytes(modelData.totalBytes))
-                                            .arg(modelData.percent)
-                                        return dateText.length > 0 ? (dateText + " \u2022 " + sizeText) : sizeText
-                                    }
+                                    text: root.currentGroup ? qsTr("%n fichier(s)", "", root.filteredCurrentItems.length) : ""
                                     color: Theme.textSecondary
                                     font.pixelSize: Theme.fontSizeSmall
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            // Liste ou grille des fichiers
+                            Item {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+
+                                // ---- Vue grille (fichiers en cartes) ----
+                                GridView {
+                                    id: filesGrid
+                                    anchors.fill: parent
+                                    anchors.leftMargin: Theme.spacingMedium
+                                    anchors.rightMargin: Theme.spacingMedium
+                                    visible: root.viewMode === "grid"
+                                    cellWidth: 140
+                                    cellHeight: 128
+                                    model: root.filteredCurrentItems
+                                    clip: true
+
+                                    add: Transition {
+                                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+                                    }
+
+                                    delegate: Rectangle {
+                                        width: filesGrid.cellWidth - 10
+                                        height: filesGrid.cellHeight - 10
+                                        radius: Theme.radiusSmall
+                                        color: fileCardArea.containsMouse ? Theme.surfaceHover : "transparent"
+
+                                        Behavior on color { ColorAnimation { duration: 100 } }
+
+                                        ColumnLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: Theme.spacingSmall
+                                            spacing: 6
+
+                                            FileIcon {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                Layout.topMargin: 2
+                                                size: 40
+                                                received: modelData.direction === qsTr("Réception")
+                                                failed: modelData.statusText === qsTr("Échoué")
+                                                accentColor: modelData.direction === qsTr("Réception") ? Theme.accent : Theme.primary
+                                            }
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: modelData.fileName
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                font.bold: true
+                                                color: Theme.text
+                                                elide: Text.ElideMiddle
+                                                horizontalAlignment: Text.AlignHCenter
+                                            }
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: root.formatBytes(modelData.totalBytes)
+                                                font.pixelSize: Theme.fontSizeCaption
+                                                color: Theme.textSecondary
+                                                horizontalAlignment: Text.AlignHCenter
+                                            }
+                                            ProgressBar {
+                                                id: filesGridProgress
+                                                Layout.fillWidth: true
+                                                from: 0
+                                                to: 100
+                                                value: modelData.percent
+                                                background: Rectangle {
+                                                    implicitHeight: 5
+                                                    radius: 3
+                                                    color: Theme.border
+                                                }
+                                                contentItem: Item {
+                                                    implicitHeight: 5
+                                                    Rectangle {
+                                                        width: filesGridProgress.visualPosition * parent.width
+                                                        height: parent.height
+                                                        radius: 3
+                                                        color: modelData.statusText === qsTr("Échoué") ? Theme.error : Theme.primary
+                                                    }
+                                                }
+                                            }
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: modelData.statusText
+                                                font.pixelSize: Theme.fontSizeCaption
+                                                color: modelData.statusText === qsTr("Échoué") ? Theme.error
+                                                       : modelData.statusText === qsTr("Terminé") ? Theme.success
+                                                       : Theme.textSecondary
+                                                horizontalAlignment: Text.AlignHCenter
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            id: fileCardArea
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                        }
+                                    }
+
+                                    // Message "aucun résultat"
+                                    Label {
+                                        visible: root.filteredCurrentItems.length === 0
+                                        anchors.centerIn: parent
+                                        text: qsTr("Aucun fichier ne correspond à ces critères")
+                                        color: Theme.textSecondary
+                                        font.pixelSize: Theme.fontSizeSmall
+                                    }
                                 }
 
-                                // Visible uniquement une fois le transfert
-                                // termine : avant cela, le fichier de
-                                // destination n'existe pas encore (ou n'est
-                                // pas encore a son emplacement final).
-                                Button {
-                                    text: qsTr("Ouvrir l'emplacement")
-                                    visible: modelData.statusText === qsTr("Termine")
-                                    onClicked: {
-                                        if (root.context && !root.context.openFileLocation(modelData.filePath)) {
-                                            console.warn("Impossible d'ouvrir l'emplacement du fichier")
+                                // ---- Vue liste ("Détails", comme un explorateur) ----
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    visible: root.viewMode === "list"
+                                    spacing: 0
+
+                                    // En-tête de colonnes (barre grise, comme Explorer)
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 32
+                                        color: Theme.listHeaderBackground
+                                        border.width: 1
+                                        border.color: Theme.border
+                                        visible: root.filteredCurrentItems.length > 0
+
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: Theme.spacingMedium
+                                            anchors.rightMargin: Theme.spacingMedium
+                                            spacing: Theme.spacingSmall
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: qsTr("Nom")
+                                                font.bold: true
+                                                color: Theme.textSecondary
+                                                font.pixelSize: Theme.fontSizeCaption
+                                            }
+                                            Label {
+                                                Layout.preferredWidth: 80
+                                                text: qsTr("Taille")
+                                                font.bold: true
+                                                color: Theme.textSecondary
+                                                font.pixelSize: Theme.fontSizeCaption
+                                                horizontalAlignment: Text.AlignRight
+                                            }
+                                            Label {
+                                                Layout.preferredWidth: 60
+                                                text: qsTr("Sens")
+                                                font.bold: true
+                                                color: Theme.textSecondary
+                                                font.pixelSize: Theme.fontSizeCaption
+                                                horizontalAlignment: Text.AlignHCenter
+                                            }
+                                            Label {
+                                                Layout.preferredWidth: 90
+                                                text: qsTr("Statut")
+                                                font.bold: true
+                                                color: Theme.textSecondary
+                                                font.pixelSize: Theme.fontSizeCaption
+                                                horizontalAlignment: Text.AlignHCenter
+                                            }
+                                            Label {
+                                                Layout.preferredWidth: 130
+                                                text: qsTr("Date de modification")
+                                                font.bold: true
+                                                color: Theme.textSecondary
+                                                font.pixelSize: Theme.fontSizeCaption
+                                                horizontalAlignment: Text.AlignRight
+                                            }
+                                            Item { Layout.preferredWidth: 36 }
+                                        }
+                                    }
+
+                                    // Liste déroulante
+                                    ListView {
+                                        id: filesList
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        spacing: 0
+                                        clip: true
+                                        model: root.filteredCurrentItems
+
+                                        add: Transition {
+                                            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+                                        }
+
+                                        delegate: Rectangle {
+                                            width: filesList.width
+                                            height: 42
+                                            color: fileRowArea.containsMouse ? Theme.surfaceHover : "transparent"
+
+                                            Behavior on color { ColorAnimation { duration: 100 } }
+
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.leftMargin: Theme.spacingMedium
+                                                anchors.rightMargin: Theme.spacingMedium
+                                                spacing: Theme.spacingSmall
+
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 8
+                                                    FileIcon {
+                                                        size: 22
+                                                        received: modelData.direction === qsTr("Réception")
+                                                        failed: modelData.statusText === qsTr("Échoué")
+                                                        accentColor: modelData.direction === qsTr("Réception") ? Theme.accent : Theme.primary
+                                                    }
+                                                    Label {
+                                                        Layout.fillWidth: true
+                                                        text: modelData.fileName
+                                                        color: Theme.text
+                                                        font.pixelSize: Theme.fontSizeSmall
+                                                        elide: Text.ElideMiddle
+                                                    }
+                                                }
+                                                Label {
+                                                    Layout.preferredWidth: 80
+                                                    text: root.formatBytes(modelData.totalBytes)
+                                                    color: Theme.textSecondary
+                                                    font.pixelSize: Theme.fontSizeSmall
+                                                    horizontalAlignment: Text.AlignRight
+                                                }
+                                                Label {
+                                                    Layout.preferredWidth: 60
+                                                    text: modelData.direction === qsTr("Réception") ? "\u2193" : "\u2191"
+                                                    color: modelData.direction === qsTr("Réception") ? Theme.accent : Theme.primary
+                                                    font.pixelSize: Theme.fontSizeBody
+                                                    font.bold: true
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                }
+                                                Label {
+                                                    Layout.preferredWidth: 90
+                                                    text: modelData.statusText
+                                                    color: modelData.statusText === qsTr("Échoué") ? Theme.error
+                                                           : modelData.statusText === qsTr("Terminé") ? Theme.success
+                                                           : Theme.textSecondary
+                                                    font.pixelSize: Theme.fontSizeSmall
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                }
+                                                Label {
+                                                    Layout.preferredWidth: 130
+                                                    text: root.formatDate(modelData.timestamp)
+                                                    color: Theme.textSecondary
+                                                    font.pixelSize: Theme.fontSizeSmall
+                                                    horizontalAlignment: Text.AlignRight
+                                                }
+
+                                                Button {
+                                                    Layout.preferredWidth: 30
+                                                    Layout.preferredHeight: 26
+                                                    visible: modelData.statusText === qsTr("Terminé")
+                                                    opacity: fileRowArea.containsMouse ? 1 : 0
+                                                    Behavior on opacity { NumberAnimation { duration: 120 } }
+                                                    background: Rectangle {
+                                                        radius: Theme.radiusSmall
+                                                        color: parent.hovered ? Theme.surface : "transparent"
+                                                        border.width: 0
+                                                    }
+                                                    contentItem: Text {
+                                                        text: "📂"
+                                                        font.pixelSize: 13
+                                                        horizontalAlignment: Text.AlignHCenter
+                                                        verticalAlignment: Text.AlignVCenter
+                                                    }
+                                                    onClicked: {
+                                                        if (root.context && !root.context.openFileLocation(modelData.filePath)) {
+                                                            console.warn("Impossible d'ouvrir l'emplacement du fichier")
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                anchors.bottom: parent.bottom
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                height: 1
+                                                color: Theme.border
+                                                opacity: 0.6
+                                            }
+
+                                            MouseArea {
+                                                id: fileRowArea
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                            }
+                                        }
+
+                                        // Message "aucun résultat"
+                                        Label {
+                                            visible: root.filteredCurrentItems.length === 0
+                                            anchors.centerIn: parent
+                                            text: qsTr("Aucun fichier ne correspond à ces critères")
+                                            color: Theme.textSecondary
+                                            font.pixelSize: Theme.fontSizeSmall
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // =========================================================
+        // Barre d'état inférieure (fine, comme un explorateur natif)
+        // =========================================================
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 26
+            color: Theme.statusBarBackground
+            border.width: 1
+            border.color: Theme.border
+            visible: root.peerGroups.length > 0
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.spacingMedium
+                anchors.rightMargin: Theme.spacingMedium
+                spacing: Theme.spacingMedium
+
+                Label {
+                    text: qsTr("%1 dossier(s)").arg(root.filteredPeerGroups.length)
+                    font.pixelSize: Theme.fontSizeCaption
+                    color: Theme.textSecondary
+                    visible: root.openedPeerKey.length === 0
+                }
+                Label {
+                    text: qsTr("%1 fichier(s)").arg(root.filteredCurrentItems.length)
+                    font.pixelSize: Theme.fontSizeCaption
+                    color: Theme.textSecondary
+                    visible: root.openedPeerKey.length > 0
+                }
+                Item { Layout.fillWidth: true }
+                Label {
+                    text: root.hasActiveFilters() ? qsTr("🔍 Filtres actifs") : ""
+                    font.pixelSize: Theme.fontSizeCaption
+                    color: Theme.primary
                 }
             }
         }

@@ -53,6 +53,24 @@ QtObject {
     readonly property color shadow: darkMode ? "#00000066" : "#1A1D2122"
     readonly property color overlay: darkMode ? "#000000AA" : "#1A1D2166"
 
+    // ---- Jetons "explorateur de fichiers" ---------------------------------
+    // Selection façon Windows/Nautilus : léger voile teinté de la couleur
+    // d'accent, plus marqué au survol, avec une bordure nette.
+    readonly property color selectionBackground: Qt.rgba(primary.r, primary.g, primary.b, 0.14)
+    readonly property color selectionBackgroundHover: Qt.rgba(primary.r, primary.g, primary.b, 0.22)
+    readonly property color selectionBorder: primary
+
+    // Barre d'adresse / fil d'Ariane et en-tête de liste (vue "Détails").
+    readonly property color addressBarBackground: darkMode ? "#1A1C22" : "#FFFFFF"
+    readonly property color breadcrumbChipHover: darkMode ? "#262A32" : "#EEF0F6"
+    readonly property color listHeaderBackground: darkMode ? "#1A1C22" : "#F3F4F9"
+
+    // Barre d'état inférieure (fine, collée en bas, comme un vrai explorateur).
+    readonly property color statusBarBackground: darkMode ? "#12141A" : "#EEF0F6"
+
+    // Ascenseur discret.
+    readonly property color scrollbarThumb: darkMode ? "#3A3F4A" : "#C8CCDA"
+
     readonly property color error: darkMode ? "#FF7A7A" : "#D6455A"
     readonly property color errorMuted: darkMode ? "#3A2229" : "#FCEBEC"
     readonly property color success: darkMode ? "#4ADE80" : "#1FA971"
