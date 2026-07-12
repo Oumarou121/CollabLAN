@@ -24,6 +24,7 @@ class CallHistoryManager;
 class SharedFolderManager;
 namespace sync {
 class SyncEngine;
+class FolderSyncService;
 }
 }
 
@@ -168,6 +169,10 @@ public:
     // (re)indexation + journal SyncOperations, cf. core/Sync/SyncEngine.h).
     core::sync::SyncEngine *syncEngine() const;
 
+    // Expose le FolderSyncService (diffusion réseau temps réel des changements
+    // de dossiers partagés, Releases 4-7).
+    core::sync::FolderSyncService *folderSyncService() const;
+
     // Expose le DatabaseManager pour les services qui en ont besoin (ex: SettingsService).
     database::DatabaseManager *databaseManager() const;
 
@@ -227,7 +232,8 @@ private:
     network::VoiceService *m_voiceService = nullptr;        // parente = this (QObject)
     core::CallHistoryManager *m_callHistoryManager = nullptr; // parente = this (QObject)
     core::SharedFolderManager *m_sharedFolderManager = nullptr; // parente = this (QObject)
-    core::sync::SyncEngine *m_syncEngine = nullptr; // parente = this (QObject)
+    core::sync::SyncEngine *m_syncEngine = nullptr;             // parente = this (QObject)
+    core::sync::FolderSyncService *m_folderSyncService = nullptr; // parente = this (QObject)
 };
 
 #endif // APP_APPLICATION_H

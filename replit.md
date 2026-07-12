@@ -56,6 +56,30 @@ cd build && ctest --output-on-failure
   repository insert code. Proposed as a follow-up task rather than fixed here
   (out of scope for project setup).
 
+## Releases 4–7 — Synchronisation réseau LAN en temps réel
+
+**Nouveau : `core/Sync/FolderSyncService`** (branché dans `app/Application.cpp`)
+
+Protocole dédié sur le canal WebSocket existant (port 12345) :
+- `folder_op` — diffusion d'un changement de fichier (Create/Update/Delete/Rename)
+- `folder_hello` — envoyé à chaque connexion au serveur avec le dernier `op_id` connu
+- `folder_catchup_batch` — réponse du serveur avec les opérations manquées
+- `folder_file_request` — demande de transfert d'un fichier précis (servi via `TransferService`)
+
+Flux Release 5/6 (temps réel) :
+1. `SyncEngine::folderReindexed` → `FolderSyncService::onLocalFolderReindexed`
+2. `FolderSyncService` lit les nouvelles `SyncOperation` via `SyncOperationRepository::getByFolderId`
+3. Broadcast `folder_op` à tous les pairs (SERVER via `broadcastMessage`, CLIENT via `sendMessageToServer`)
+4. Pair récepteur → envoie `folder_file_request` si le fichier est absent/périmé
+5. Propriétaire → `TransferService::sendFile` vers l'IP du demandeur
+
+Flux Release 7 (rattrapage hors-ligne) :
+1. `MessagingService::connected` → `folder_hello` avec `latestId()` local
+2. SERVER reçoit `folder_hello` → `getSinceId` sur tous ses dossiers → `folder_catchup_batch`
+3. CLIENT reçoit `folder_catchup_batch` → demande les fichiers manquants
+
+Tests : `test_foldersyncservice` (10 tests, tous verts).
+
 ## Release 2 / 3 — Détection des changements + Journal de synchronisation
 All C++ components were already implemented. The following gaps were closed:
 

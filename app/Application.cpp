@@ -31,6 +31,7 @@
 #include "AudioService.h"
 #include "Election/ElectionService.h"
 #include "Sync/SyncService.h"
+#include "core/Sync/FolderSyncService.h"
 #include "database/Repositories/ServerElectionRepository.h"
 #include "database/Repositories/SyncLogRepository.h"
 #include "database/Repositories/GroupRepository.h"
@@ -699,6 +700,46 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 return QString();
             });
     }
+
+    // ---------------------------------------------------------------------------
+    // Releases 4-7 : diffusion réseau temps réel des changements de dossiers
+    // FolderSyncService orchestre :
+    //   • Release 4 : protocole dédié (folder_op / folder_hello /
+    //                 folder_catchup_batch / folder_file_request)
+    //   • Release 5/6 : broadcast immédiat à chaque folderReindexed
+    //   • Release 7 : catch-up hors-ligne via folder_hello / catchup_batch
+    // ---------------------------------------------------------------------------
+    m_folderSyncService = new core::sync::FolderSyncService(
+        m_databaseManager.get(), m_sharedFolderManager, this);
+    m_folderSyncService->setMessagingServer(m_messagingServer);
+    m_folderSyncService->setMessagingService(m_messagingService);
+    m_folderSyncService->setTransferService(m_transferService);
+    m_folderSyncService->setDiscoveryService(m_discoveryService);
+    m_folderSyncService->setLocalMachineId(m_discoveryService->localId());
+
+    // Release 5/6 : chaque reindexation locale est diffusée aux pairs.
+    connect(m_syncEngine, &core::sync::SyncEngine::folderReindexed,
+            m_folderSyncService, &core::sync::FolderSyncService::onLocalFolderReindexed);
+
+    // Release 7 : à chaque connexion au serveur, envoie un folder_hello
+    // pour récupérer les opérations manquées (rattrapage hors-ligne).
+    connect(m_messagingService, &network::MessagingService::connected,
+            m_folderSyncService, &core::sync::FolderSyncService::onConnectedToServer);
+
+    // Journal de bord : log des opérations distantes reçues.
+    connect(m_folderSyncService, &core::sync::FolderSyncService::remoteOpReceived,
+            this, [](const QString &folderUuid, const QString &opType,
+                     const QString &relativePath, const QString & /*oldRelPath*/,
+                     const QString &machineId, const QHostAddress & /*addr*/,
+                     quint16 /*transferPort*/) {
+                qDebug() << "[App] Folder op reçu :" << opType << relativePath
+                         << "dans" << folderUuid << "de" << machineId;
+            });
+
+    connect(m_folderSyncService, &core::sync::FolderSyncService::catchupBatchReceived,
+            this, [](const QVector<models::FileSyncOperation> &ops) {
+                qDebug() << "[App] Catch-up batch reçu :" << ops.size() << "opérations";
+            });
 }
 
 core::UserManager *Application::userManager() const
@@ -832,6 +873,11 @@ core::SharedFolderManager *Application::sharedFolderManager() const
 core::sync::SyncEngine *Application::syncEngine() const
 {
     return m_syncEngine;
+}
+
+core::sync::FolderSyncService *Application::folderSyncService() const
+{
+    return m_folderSyncService;
 }
 
 bool Application::shouldWriteSyncLog() const

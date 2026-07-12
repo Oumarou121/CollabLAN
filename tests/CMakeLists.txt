@@ -109,6 +109,10 @@ add_executable(test_sharedfoldermanager UnitTests/test_sharedfoldermanager.cpp)
 target_link_libraries(test_sharedfoldermanager PRIVATE Qt6::Test core database models)
 add_test(NAME test_sharedfoldermanager COMMAND test_sharedfoldermanager)
 
+add_executable(test_foldersyncservice UnitTests/test_foldersyncservice.cpp)
+target_link_libraries(test_foldersyncservice PRIVATE Qt6::Test core database models network)
+add_test(NAME test_foldersyncservice COMMAND test_foldersyncservice)
+
 add_executable(test_syncoperationrepository UnitTests/test_syncoperationrepository.cpp)
 target_link_libraries(test_syncoperationrepository PRIVATE Qt6::Test database models)
 add_test(NAME test_syncoperationrepository COMMAND test_syncoperationrepository)
