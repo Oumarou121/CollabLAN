@@ -1,6 +1,6 @@
 #include "PermissionManager.h"
 #include "DatabaseManager.h"
-#include "Database/Repositories/AuthorizedMachineRepository.h"
+#include "database/Repositories/AuthorizedMachineRepository.h"
 #include "models/AuthorizedMachine.h"
 
 namespace core {

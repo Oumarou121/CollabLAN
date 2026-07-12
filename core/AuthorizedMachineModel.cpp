@@ -1,6 +1,6 @@
 #include "AuthorizedMachineModel.h"
 #include "PermissionManager.h"
-#include "Database/Repositories/AuthorizedMachineRepository.h"
+#include "database/Repositories/AuthorizedMachineRepository.h"
 #include "DatabaseManager.h"
 
 #include <QDateTime>

@@ -1,6 +1,6 @@
 #include "UserManagementModel.h"
 #include "UserManager.h"
-#include "Database/Repositories/UserRepository.h"
+#include "database/Repositories/UserRepository.h"
 #include "DatabaseManager.h"
 
 namespace core {

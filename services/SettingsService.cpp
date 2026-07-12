@@ -1,7 +1,7 @@
 #include "SettingsService.h"
 
 #include "DatabaseManager.h"
-#include "Database/Repositories/SettingsRepository.h"
+#include "database/Repositories/SettingsRepository.h"
 #include "models/Settings.h"
 
 namespace services {

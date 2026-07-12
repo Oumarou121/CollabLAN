@@ -1,6 +1,6 @@
 #include "AuditLogModel.h"
 #include "AuditManager.h"
-#include "Database/Repositories/AuditLogRepository.h"
+#include "database/Repositories/AuditLogRepository.h"
 
 #include <QDateTime>
 #include <QFile>
