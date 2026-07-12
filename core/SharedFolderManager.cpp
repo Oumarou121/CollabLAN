@@ -8,6 +8,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QSet>
 
 namespace core {
@@ -117,27 +118,37 @@ std::optional<models::SharedFolder> SharedFolderManager::getFolder(qint64 folder
     return m_folderRepository.getById(folderId);
 }
 
-int SharedFolderManager::shareFolder(qint64 folderId)
+std::optional<QVector<models::SharedFileChange>> SharedFolderManager::shareFolder(qint64 folderId)
 {
     if (!m_dbManager) {
         m_lastError = SharedFolderManagerError::DatabaseError;
         m_lastErrorString = QStringLiteral("DatabaseManager not set");
-        return -1;
+        return std::nullopt;
     }
 
     const auto folder = m_folderRepository.getById(folderId);
     if (!folder.has_value()) {
         m_lastError = SharedFolderManagerError::InvalidFolder;
         m_lastErrorString = QStringLiteral("Dossier partage introuvable (id=%1)").arg(folderId);
-        return -1;
+        return std::nullopt;
     }
 
     const QDir rootDir(folder->localPath());
     if (!rootDir.exists()) {
         m_lastError = SharedFolderManagerError::InvalidPath;
         m_lastErrorString = QStringLiteral("Le chemin local '%1' n'existe plus").arg(folder->localPath());
-        return -1;
+        return std::nullopt;
     }
+
+    // Etat connu AVANT le scan (utilise pour classifier chaque fichier
+    // trouve en Create/Update, et pour detecter les renommages ci-dessous).
+    const QVector<models::SharedFile> previouslyKnown = m_fileRepository.getByFolderId(folderId);
+    QHash<QString, models::SharedFile> previousByRelativePath;
+    for (const models::SharedFile &file : previouslyKnown) {
+        previousByRelativePath.insert(file.relativePath(), file);
+    }
+
+    QVector<models::SharedFileChange> changes;
 
     // Parcours recursif : chaque fichier trouve est indexe (upsert) avec
     // son chemin RELATIF a la racine du dossier partage (cf. commentaire
@@ -164,28 +175,76 @@ int SharedFolderManager::shareFolder(qint64 folderId)
         file.close();
 
         const QFileInfo info(absolutePath);
+        const QString newHash = QString::fromLatin1(hasher.result().toHex());
+
+        const auto previousIt = previousByRelativePath.constFind(relativePath);
+        const bool existedBefore = (previousIt != previousByRelativePath.constEnd());
+        const bool contentChanged = !existedBefore || previousIt->hash() != newHash;
+
         models::SharedFile sharedFile;
         sharedFile.setFolderId(folderId);
         sharedFile.setRelativePath(relativePath);
-        sharedFile.setHash(QString::fromLatin1(hasher.result().toHex()));
+        sharedFile.setHash(newHash);
         sharedFile.setSize(info.size());
         sharedFile.setLastModified(info.lastModified());
 
-        m_fileRepository.upsert(sharedFile);
+        const auto upserted = m_fileRepository.upsert(sharedFile);
+        if (!upserted.has_value() || !contentChanged) {
+            // Pas d'echec silencieux souhaite ici : upsert() peut echouer
+            // (verrou base, etc), mais on continue les autres fichiers
+            // plutot que d'abandonner toute l'indexation ; simplement pas
+            // de SharedFileChange rapporte pour celui-ci.
+            continue;
+        }
+
+        changes.append(models::SharedFileChange(
+            existedBefore ? models::SyncChangeType::Update : models::SyncChangeType::Create,
+            *upserted));
     }
 
     // Fichiers connus en base mais absents du disque : suppression logique
-    // (tombstone), afin qu'une future synchronisation reseau puisse la
-    // propager plutot que de perdre l'information silencieusement.
-    for (const models::SharedFile &known : m_fileRepository.getByFolderId(folderId)) {
-        if (!seenRelativePaths.contains(known.relativePath())) {
-            m_fileRepository.markDeleted(folderId, known.relativePath());
+    // (tombstone), sauf si le meme contenu (hash) est reapparu sous un
+    // nouveau chemin relatif -- ce cas est alors un renommage/deplacement,
+    // pas une suppression suivie d'une creation independante.
+    QHash<QString, QString> createdPathsByHash; // hash -> relativePath, pour les Create de cette passe
+    for (const models::SharedFileChange &change : changes) {
+        if (change.type() == models::SyncChangeType::Create) {
+            createdPathsByHash.insert(change.file().hash(), change.file().relativePath());
+        }
+    }
+
+    for (const models::SharedFile &known : previouslyKnown) {
+        if (seenRelativePaths.contains(known.relativePath())) {
+            continue; // toujours present, deja traite ci-dessus
+        }
+
+        const auto renamedToIt = createdPathsByHash.constFind(known.hash());
+        if (!known.hash().isEmpty() && renamedToIt != createdPathsByHash.constEnd()) {
+            // Renommage/deplacement detecte : on retire le Create genere
+            // plus haut pour ce nouveau chemin et on le remplace par un
+            // seul changement Rename (ancien -> nouveau chemin relatif).
+            const QString newRelativePath = *renamedToIt;
+            for (int i = 0; i < changes.size(); ++i) {
+                if (changes.at(i).type() == models::SyncChangeType::Create
+                    && changes.at(i).file().relativePath() == newRelativePath) {
+                    changes[i] = models::SharedFileChange(
+                        models::SyncChangeType::Rename, changes.at(i).file(), known.relativePath());
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if (m_fileRepository.markDeleted(folderId, known.relativePath())) {
+            models::SharedFile tombstoned = known;
+            tombstoned.setDeleted(true);
+            changes.append(models::SharedFileChange(models::SyncChangeType::Delete, tombstoned));
         }
     }
 
     const int fileCount = m_fileRepository.count(folderId);
     emit folderShared(folderId, fileCount);
-    return fileCount;
+    return changes;
 }
 
 QVector<models::SharedFile> SharedFolderManager::getFiles(qint64 folderId) const

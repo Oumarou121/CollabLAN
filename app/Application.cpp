@@ -19,6 +19,7 @@
 #include "AuditManager.h"
 #include "CallHistoryManager.h"
 #include "SharedFolderManager.h"
+#include "core/Sync/SyncEngine.h"
 #include "PermissionManager.h"
 #include "Discovery/DiscoveryService.h"
 #include "Discovery/PeersModel.h"
@@ -645,6 +646,21 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // des que m_databaseManager est pret.
     m_sharedFolderManager = new core::SharedFolderManager(m_databaseManager.get(), this);
 
+    // SyncEngine (Release 2 : detection des changements) orchestre toute
+    // (re)indexation d'un dossier partage -- surveillance du systeme de
+    // fichiers (FolderWatcher) + journal des changements (SyncOperations,
+    // migration #018). Cree juste apres m_sharedFolderManager (dont il
+    // depend) et m_discoveryService (dont il tire l'identifiant local a
+    // enregistrer sur chaque SyncOperation, comme TransferService
+    // ci-dessous). start() commence a surveiller les dossiers deja
+    // partages ; toute (re)indexation ulterieure doit passer par
+    // m_syncEngine->reindexFolder() plutot que par
+    // m_sharedFolderManager->shareFolder() directement (cf.
+    // core/SharedFolderContext.cpp).
+    m_syncEngine = new core::sync::SyncEngine(m_sharedFolderManager, m_databaseManager.get(),
+                                               m_discoveryService->localId(), this);
+    m_syncEngine->start();
+
     // Idem pour TransferService : chaque en-tete de transfert envoye doit
     // porter l'UUID local (DiscoveryService::localId()) pour que le
     // destinataire puisse resoudre peer_name par identifiant plutot que
@@ -811,6 +827,11 @@ core::CallHistoryManager *Application::callHistoryManager() const
 core::SharedFolderManager *Application::sharedFolderManager() const
 {
     return m_sharedFolderManager;
+}
+
+core::sync::SyncEngine *Application::syncEngine() const
+{
+    return m_syncEngine;
 }
 
 bool Application::shouldWriteSyncLog() const

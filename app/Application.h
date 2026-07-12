@@ -22,6 +22,9 @@ class AuditManager;
 class PermissionManager;
 class CallHistoryManager;
 class SharedFolderManager;
+namespace sync {
+class SyncEngine;
+}
 }
 
 namespace network {
@@ -161,6 +164,10 @@ public:
     // Expose au bootstrap QML le SharedFolderManager pour le module "Shared Folder".
     core::SharedFolderManager *sharedFolderManager() const;
 
+    // Expose au bootstrap QML le SyncEngine (orchestration de la
+    // (re)indexation + journal SyncOperations, cf. core/Sync/SyncEngine.h).
+    core::sync::SyncEngine *syncEngine() const;
+
     // Expose le DatabaseManager pour les services qui en ont besoin (ex: SettingsService).
     database::DatabaseManager *databaseManager() const;
 
@@ -220,6 +227,7 @@ private:
     network::VoiceService *m_voiceService = nullptr;        // parente = this (QObject)
     core::CallHistoryManager *m_callHistoryManager = nullptr; // parente = this (QObject)
     core::SharedFolderManager *m_sharedFolderManager = nullptr; // parente = this (QObject)
+    core::sync::SyncEngine *m_syncEngine = nullptr; // parente = this (QObject)
 };
 
 #endif // APP_APPLICATION_H

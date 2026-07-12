@@ -10,6 +10,7 @@
 #include "database/Repositories/SharedFileRepository.h"
 #include "models/SharedFolder.h"
 #include "models/SharedFile.h"
+#include "models/SharedFileChange.h"
 
 namespace database {
 class DatabaseManager;
@@ -29,16 +30,20 @@ enum class SharedFolderManagerError {
 /**
  * @brief Gestionnaire des dossiers partages (module "Shared Folder").
  *
- * Responsabilites (phase 2 de la conception fournie) : creer/supprimer/
- * lister des dossiers partages et les enregistrer en base SQLite.
- * Aucune logique reseau ici -- la surveillance du systeme de fichiers
- * (FolderWatcher) et la synchronisation entre postes (SyncEngine,
- * SyncProtocol) sont laissees a une iteration future.
+ * Responsabilites, volontairement limitees au "metier" (cf. doc de
+ * conception, section reorganisation) : creer/supprimer/lister des
+ * dossiers partages et les indexer localement. Aucune logique reseau ni
+ * de journal de synchronisation ici -- la surveillance du systeme de
+ * fichiers (core::sync::FolderWatcher) et l'orchestration (creation de
+ * SyncOperation, future synchronisation reseau) sont la responsabilite de
+ * core::sync::SyncEngine, qui appelle shareFolder() et transforme son
+ * resultat (QVector<models::SharedFileChange>) en journal persiste.
  *
- * shareFolder() effectue neanmoins une indexation locale du contenu du
- * dossier (parcours recursif + hash SHA-256 de chaque fichier) : cette
- * etape reste purement locale (aucun octet n'est envoye sur le reseau)
- * et prepare le terrain pour le futur SyncEngine sans en faire partie.
+ * shareFolder() effectue une indexation locale du contenu du dossier
+ * (parcours recursif + hash SHA-256 de chaque fichier) et RAPPORTE ce qui
+ * a change (nouveau fichier, modification, suppression, renommage) sans
+ * jamais ecrire dans SyncOperations lui-meme : cette etape reste purement
+ * locale (aucun octet n'est envoye sur le reseau).
  */
 class SharedFolderManager : public QObject
 {
@@ -68,9 +73,14 @@ public:
     /// fichier trouve dans SharedFiles (hash SHA-256, taille, date de
     /// derniere modification). Les entrees precedemment indexees dont le
     /// fichier n'existe plus sur le disque sont marquees supprimees
-    /// (tombstone). Retourne le nombre de fichiers indexes, ou -1 en cas
-    /// d'erreur (dossier introuvable/inaccessible).
-    int shareFolder(qint64 folderId);
+    /// (tombstone), sauf si un fichier de meme hash est apparu ailleurs
+    /// sous un autre chemin relatif : ce cas est alors rapporte comme un
+    /// Rename plutot qu'un Delete+Create.
+    ///
+    /// Retourne la liste des changements detectes (vide si le dossier
+    /// n'a pas change depuis la derniere indexation), ou std::nullopt en
+    /// cas d'erreur (dossier introuvable/inaccessible, voir lastError()).
+    std::optional<QVector<models::SharedFileChange>> shareFolder(qint64 folderId);
 
     /// Fichiers actuellement connus (non supprimes) d'un dossier partage.
     QVector<models::SharedFile> getFiles(qint64 folderId) const;
@@ -81,6 +91,9 @@ public:
 signals:
     void folderCreated(const models::SharedFolder &folder);
     void folderRemoved(qint64 folderId);
+    /// fileCount = nombre de fichiers non supprimes APRES l'indexation
+    /// (utilise par l'UI, cf. models::SharedFolderModel::FileCountRole).
+    /// Emis meme si changes() (shareFolder()) est vide.
     void folderShared(qint64 folderId, int fileCount);
 
 private:

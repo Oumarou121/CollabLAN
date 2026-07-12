@@ -226,6 +226,7 @@ int main(int argc, char *argv[])
     // contenu, sans synchronisation reseau -- voir core::SharedFolderManager).
     core::SharedFolderContext *sharedFolderContext = new core::SharedFolderContext(&engine);
     sharedFolderContext->setSharedFolderManager(application.sharedFolderManager());
+    sharedFolderContext->setSyncEngine(application.syncEngine());
     sharedFolderContext->setUserManager(application.userManager());
     engine.rootContext()->setContextProperty("sharedFolderContext", sharedFolderContext);
 

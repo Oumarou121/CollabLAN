@@ -47,13 +47,17 @@ CREATE TABLE IF NOT EXISTS SharedFiles (
 
 CREATE INDEX IF NOT EXISTS idx_shared_files_folder_id ON SharedFiles(folder_id);
 
+-- old_relative_path : uniquement renseigne pour type = 'Rename' (ancien
+-- chemin relatif avant renommage, file_id pointant vers la ligne
+-- SharedFiles *apres* renommage). NULL pour les autres types.
 CREATE TABLE IF NOT EXISTS SyncOperations (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    type         TEXT NOT NULL, -- 'Create' | 'Update' | 'Delete' | 'Rename'
-    file_id      INTEGER NOT NULL REFERENCES SharedFiles(id) ON DELETE CASCADE,
-    version      INTEGER NOT NULL DEFAULT 1,
-    machine_id   TEXT NOT NULL DEFAULT '',
-    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    type               TEXT NOT NULL, -- 'Create' | 'Update' | 'Delete' | 'Rename'
+    file_id            INTEGER NOT NULL REFERENCES SharedFiles(id) ON DELETE CASCADE,
+    old_relative_path  TEXT,
+    version            INTEGER NOT NULL DEFAULT 1,
+    machine_id         TEXT NOT NULL DEFAULT '',
+    created_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_sync_operations_file_id ON SyncOperations(file_id);

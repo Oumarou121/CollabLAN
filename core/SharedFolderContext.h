@@ -7,6 +7,7 @@
 
 #include "SharedFolderManager.h"
 #include "UserManager.h"
+#include "core/Sync/SyncEngine.h"
 #include "models/SharedFolderModel.h"
 
 namespace core {
@@ -15,6 +16,14 @@ namespace core {
  * @brief Wrapper pour exposer le module "Shared Folder" a QML
  * (ui/SharedFolder/SharedFolderView.qml), sur le meme principe que
  * core::TransferContext pour le transfert de fichiers.
+ *
+ * Pour tout ce qui est CRUD pur (creer/supprimer/lister/lire le contenu
+ * deja indexe), on appelle SharedFolderManager directement. En revanche,
+ * toute (re)indexation passe par SyncEngine::reindexFolder() plutot que
+ * par SharedFolderManager::shareFolder() directement, afin que les
+ * changements detectes soient systematiquement journalises
+ * (SyncOperations) -- cf. doc de conception, decoupage
+ * SharedFolderManager (metier) / SyncEngine (orchestration).
  */
 class SharedFolderContext : public QObject
 {
@@ -27,6 +36,7 @@ public:
     ~SharedFolderContext() override;
 
     void setSharedFolderManager(SharedFolderManager *manager);
+    void setSyncEngine(core::sync::SyncEngine *engine);
     void setUserManager(UserManager *manager);
 
     models::SharedFolderModel* folderModel() const { return m_folderModel; }
@@ -56,11 +66,19 @@ public:
     /// relativePath/size/hash/version/lastModified.
     Q_INVOKABLE QVariantList filesForFolder(qint64 folderId) const;
 
+    /// Historique des operations de synchronisation (Create/Update/
+    /// Delete/Rename) d'un dossier, les plus recentes d'abord. Chaque
+    /// element est une QVariantMap type/relativePath/oldRelativePath/
+    /// version/createdAt. Liste vide si SyncEngine n'est pas encore
+    /// disponible (setSyncEngine() pas encore appele).
+    Q_INVOKABLE QVariantList syncHistoryForFolder(qint64 folderId, int limit = 50) const;
+
 signals:
     void errorOccurred(const QString &message);
 
 private:
     SharedFolderManager *m_manager = nullptr;
+    core::sync::SyncEngine *m_syncEngine = nullptr;
     UserManager *m_userManager = nullptr;
     models::SharedFolderModel *m_folderModel = nullptr;
     QString m_lastErrorString;

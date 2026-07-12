@@ -21,6 +21,11 @@ void SharedFolderContext::setSharedFolderManager(SharedFolderManager *manager)
     refresh();
 }
 
+void SharedFolderContext::setSyncEngine(core::sync::SyncEngine *engine)
+{
+    m_syncEngine = engine;
+}
+
 void SharedFolderContext::setUserManager(UserManager *manager)
 {
     m_userManager = manager;
@@ -67,7 +72,14 @@ bool SharedFolderContext::createFolder(const QString &name, const QString &local
     // Indexation locale immediate : l'utilisateur s'attend a voir le
     // nombre de fichiers des la creation, pas seulement au premier clic
     // manuel sur "actualiser" (voir commentaire Q_INVOKABLE createFolder()).
-    m_manager->shareFolder(folder->id());
+    // Passe par SyncEngine (s'il est disponible) plutot que par le
+    // manager directement, afin que les fichiers deja presents soient
+    // aussi journalises comme des SyncOperation de type Create.
+    if (m_syncEngine) {
+        m_syncEngine->reindexFolder(folder->id());
+    } else {
+        m_manager->shareFolder(folder->id());
+    }
     refresh();
     return true;
 }
@@ -99,8 +111,15 @@ bool SharedFolderContext::shareFolder(qint64 folderId)
         return false;
     }
 
-    const int count = m_manager->shareFolder(folderId);
-    if (count < 0) {
+    int changeCount = -1;
+    if (m_syncEngine) {
+        changeCount = m_syncEngine->reindexFolder(folderId);
+    } else {
+        const auto changes = m_manager->shareFolder(folderId);
+        changeCount = changes.has_value() ? changes->size() : -1;
+    }
+
+    if (changeCount < 0) {
         m_lastErrorString = m_manager->lastErrorString();
         emit errorOccurred(m_lastErrorString);
         return false;
@@ -124,6 +143,25 @@ QVariantList SharedFolderContext::filesForFolder(qint64 folderId) const
         entry.insert(QStringLiteral("hash"), file.hash());
         entry.insert(QStringLiteral("version"), file.version());
         entry.insert(QStringLiteral("lastModified"), file.lastModified().toString(Qt::ISODate));
+        result.append(entry);
+    }
+    return result;
+}
+
+QVariantList SharedFolderContext::syncHistoryForFolder(qint64 folderId, int limit) const
+{
+    QVariantList result;
+    if (!m_syncEngine) {
+        return result;
+    }
+
+    for (const models::FileSyncOperation &operation : m_syncEngine->historyForFolder(folderId, limit)) {
+        QVariantMap entry;
+        entry.insert(QStringLiteral("type"), models::syncChangeTypeToString(operation.type()));
+        entry.insert(QStringLiteral("relativePath"), operation.relativePath());
+        entry.insert(QStringLiteral("oldRelativePath"), operation.oldRelativePath());
+        entry.insert(QStringLiteral("version"), operation.version());
+        entry.insert(QStringLiteral("createdAt"), operation.createdAt().toString(Qt::ISODate));
         result.append(entry);
     }
     return result;
