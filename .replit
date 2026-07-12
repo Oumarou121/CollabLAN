@@ -68,3 +68,28 @@ externalPort = 8000
 [[ports]]
 localPort = 30996
 externalPort = 8008
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Build CollabLAN"
+
+[[workflows.workflow]]
+name = "Build CollabLAN"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = """
+mkdir -p build && cd build && cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -5 && ninja -j2 && echo '
+Build complete. Binary: build/app/CollabLAN'"""
+
+[workflows.workflow.metadata]
+outputType = "console"

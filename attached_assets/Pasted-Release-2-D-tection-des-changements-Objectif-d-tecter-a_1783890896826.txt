@@ -1,0 +1,302 @@
+Release 2 — Détection des changements
+
+Objectif :
+
+détecter automatiquement ce qui change dans les dossiers.
+
+Nouveaux composants
+
+FolderWatcher
+
+basé sur
+
+QFileSystemWatcher
+
+Responsabilités
+
+nouveau fichier
+suppression
+renommage
+modification
+nouveau dossier
+
+Lorsque le watcher détecte quelque chose :
+
+FolderWatcher
+
+↓
+
+SharedFolderManager
+
+↓
+
+update SharedFiles
+
+↓
+
+crée SyncOperation
+
+À ce stade
+
+aucun réseau.
+
+Release 3 — Journal de synchronisation
+
+Aujourd'hui tu as une table
+
+SyncOperations
+
+mais elle n'est pas exploitée.
+
+Elle doit devenir le cœur du système.
+
+Par exemple
+
+Operation 501
+
+CREATE
+
+rapport.docx
+
+Version 8
+
+Machine Alice
+
+10:42
+
+ou
+
+DELETE
+
+photo.jpg
+
+ou
+
+RENAME
+
+ancien.docx
+
+↓
+
+nouveau.docx
+
+Cette table servira plus tard à rattraper les PC hors ligne.
+
+Release 4 — Protocole réseau
+
+Créer un vrai protocole.
+
+Par exemple
+
+SYNC_HELLO
+
+SYNC_REQUEST
+
+SYNC_RESPONSE
+
+FILE_CHANGED
+
+FILE_CREATED
+
+FILE_DELETED
+
+FILE_RENAMED
+
+FILE_REQUEST
+
+FILE_DATA
+
+SYNC_DONE
+
+Je recommande de ne pas mélanger ces messages avec ceux du chat ou des appels. Garde un canal ou un type de message dédié à la synchronisation.
+
+Release 5 — Synchronisation initiale
+
+Lorsqu'un nouveau PC rejoint le réseau :
+
+Alice
+
+↓
+
+HELLO
+
+↓
+
+liste des dossiers
+
+↓
+
+liste des fichiers
+
+↓
+
+comparaison des SHA
+
+↓
+
+téléchargement des fichiers manquants
+
+Le SHA-256 que tu calcules aujourd'hui devient alors très utile : si deux fichiers ont le même hash, inutile de les retransférer.
+
+Release 6 — Synchronisation temps réel
+
+Quand Alice crée :
+
+Projet/
+
+    image.png
+
+le flux devient
+
+Watcher
+
+↓
+
+SyncOperation
+
+↓
+
+Broadcast
+
+↓
+
+Bob reçoit
+
+↓
+
+demande image.png
+
+↓
+
+Alice envoie
+
+↓
+
+Bob écrit
+
+↓
+
+SQLite mise à jour
+Release 7 — Reprise après déconnexion
+
+C'est ici que SyncOperations prend tout son sens.
+
+Exemple
+
+Bob était absent.
+
+Pendant ce temps :
+
+CREATE
+
+A
+
+UPDATE
+
+B
+
+DELETE
+
+C
+
+CREATE
+
+D
+
+Bob revient.
+
+Il dit :
+
+Ma dernière opération connue
+
+= 150
+
+Alice répond
+
+Voici les opérations
+
+151
+
+152
+
+153
+
+154
+
+Puis seulement les fichiers nécessaires sont transférés.
+
+Tu évites ainsi de rescanner entièrement le dossier à chaque reconnexion.
+
+Release 8 — Gestion des conflits
+
+Exemple
+
+Alice
+
+rapport.docx
+
+Bob
+
+rapport.docx
+
+Les deux enregistrent presque en même temps.
+
+Le moteur détecte
+
+Version locale
+
+≠
+
+Version distante
+
+Puis
+
+rapport.docx
+
+rapport (Bob).docx
+
+ou bien
+
+Conflit détecté
+Release 9 — Optimisations
+
+Ensuite seulement :
+
+compression
+transfert par blocs
+reprise de téléchargement
+synchronisation parallèle
+permissions
+dossiers en lecture seule
+exclusion de fichiers (*.tmp, *.obj, etc.)
+Ce que je modifierais dans ton architecture actuelle
+
+Tu as placé beaucoup de logique dans SharedFolderManager.
+
+Je lui laisserais uniquement les responsabilités métier :
+
+créer un partage
+supprimer un partage
+indexer un partage
+
+En revanche, je déplacerais toute la logique de synchronisation dans un nouveau composant dédié :
+
+SharedFolderManager
+        │
+        ▼
+SyncEngine
+        │
+        ├── FolderWatcher
+        ├── SyncOperationRepository
+        ├── NetworkManager
+        ├── FileTransferService
+        └── ConflictResolver
+
+Ainsi :
+
+SharedFolderManager ne connaît pas le réseau.
+FolderWatcher ne connaît pas SQLite.
+NetworkManager ne connaît pas le système de fichiers.
+SyncEngine orchestre l'ensemble.
+
+Cette séparation des responsabilités rendra le code plus facile
