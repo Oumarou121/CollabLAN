@@ -3,10 +3,11 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Themes
 import Core
+import "../Components"
 
 /*
  * ChatView - Interface de conversation individuelle
- * Branchée sur MessagingManager via MessagingContext
+ * Branchee sur MessagingManager via MessagingContext
  */
 Item {
     id: root
@@ -29,39 +30,68 @@ Item {
         // Header de la conversation
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 60
-            color: Theme.secondaryBackground
+            Layout.preferredHeight: 64
+            color: Theme.surface
+            border.width: 0
+
+            Rectangle {
+                anchors.bottom: parent.bottom
+                width: parent.width
+                height: 1
+                color: Theme.border
+            }
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 10
-                anchors.rightMargin: 10
-                spacing: 10
+                anchors.leftMargin: Theme.spacingMedium
+                anchors.rightMargin: Theme.spacingMedium
+                spacing: Theme.spacingSmall
 
-                Button {
-                    text: "←"
-                    Layout.preferredWidth: 40
-                    Layout.preferredHeight: 40
-                    background: Rectangle {
-                        color: parent.pressed ? Theme.accentDark : Theme.accent
-                        radius: 5
-                    }
-                    contentItem: Label {
-                        text: parent.text
+                Rectangle {
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    radius: Theme.radiusMedium
+                    color: backArea.containsMouse ? Theme.surfaceHover : "transparent"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u2190"
                         color: Theme.text
-                        font.pixelSize: 20
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
+                        font.pixelSize: 18
                     }
-                    onClicked: root.backRequested()
+
+                    MouseArea {
+                        id: backArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.backRequested()
+                    }
                 }
 
-                Label {
+                Avatar {
+                    name: qsTr("Conversation")
+                    size: 36
+                }
+
+                ColumnLayout {
                     Layout.fillWidth: true
-                    text: "Conversation"
-                    font.pixelSize: 18
-                    font.bold: true
-                    color: Theme.text
+                    spacing: 0
+
+                    Label {
+                        text: qsTr("Conversation")
+                        font.pixelSize: Theme.fontSizeSubheading
+                        font.bold: true
+                        font.family: Theme.fontFamily
+                        color: Theme.text
+                    }
+
+                    Label {
+                        text: qsTr("En ligne")
+                        font.pixelSize: Theme.fontSizeCaption
+                        font.family: Theme.fontFamily
+                        color: Theme.success
+                    }
                 }
             }
         }
@@ -71,50 +101,70 @@ Item {
             id: messageListView
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.margins: 10
-            spacing: 10
+            Layout.margins: Theme.spacingMedium
+            spacing: Theme.spacingSmall
             clip: true
+            verticalLayoutDirection: ListView.TopToBottom
 
             model: messagingContext ? messagingContext.messageModel : null
 
-            delegate: Rectangle {
+            onCountChanged: Qt.callLater(function() { messageListView.positionViewAtEnd() })
+
+            delegate: Item {
+                id: messageDelegate
+                readonly property bool isMine: senderId === root.currentUserId
                 width: messageListView.width
-                height: messageColumn.height + 20
-                color: senderId === root.currentUserId ? Theme.accent : Theme.surface
-                radius: 10
-                anchors.right: senderId === root.currentUserId ? parent.right : undefined
-                anchors.left: senderId === root.currentUserId ? undefined : parent.left
+                height: bubble.height + 4
 
-                Column {
-                    id: messageColumn
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.margins: 10
-                    spacing: 5
+                Row {
+                    anchors.right: messageDelegate.isMine ? parent.right : undefined
+                    anchors.left: messageDelegate.isMine ? undefined : parent.left
+                    width: Math.min(bubbleColumn.implicitWidth + 2 * Theme.spacingMedium,
+                                    messageListView.width * 0.72)
+                    spacing: Theme.spacingXs
 
-                    Label {
+                    Rectangle {
+                        id: bubble
                         width: parent.width
-                        text: messagingContext ? messagingContext.userName(senderId) : ""
-                        visible: senderId !== root.currentUserId
-                        font.pixelSize: 11
-                        font.bold: true
-                        color: Theme.textSecondary
-                    }
+                        height: bubbleColumn.implicitHeight + 2 * Theme.spacingSmall
+                        radius: Theme.radiusLarge
+                        color: messageDelegate.isMine ? Theme.primary : Theme.surface
+                        border.width: messageDelegate.isMine ? 0 : 1
+                        border.color: Theme.border
 
-                    Label {
-                        width: parent.width
-                        text: content
-                        wrapMode: Text.WordWrap
-                        color: Theme.text
-                        font.pixelSize: 14
-                    }
+                        ColumnLayout {
+                            id: bubbleColumn
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingSmall
+                            spacing: 2
 
-                    Label {
-                        text: timestamp ? Qt.formatDateTime(timestamp, "hh:mm:ss") : ""
-                        font.pixelSize: 10
-                        color: Theme.textSecondary
-                        anchors.right: parent.right
+                            Label {
+                                Layout.fillWidth: true
+                                text: messagingContext ? messagingContext.userName(senderId) : ""
+                                visible: !messageDelegate.isMine
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.bold: true
+                                font.family: Theme.fontFamily
+                                color: Theme.colorForName(messagingContext ? messagingContext.userName(senderId) : "")
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: content
+                                wrapMode: Text.WordWrap
+                                color: messageDelegate.isMine ? "#FFFFFF" : Theme.text
+                                font.pixelSize: Theme.fontSizeBody
+                                font.family: Theme.fontFamily
+                            }
+
+                            Label {
+                                Layout.alignment: Qt.AlignRight
+                                text: timestamp ? Qt.formatDateTime(timestamp, "hh:mm") : ""
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.family: Theme.fontFamily
+                                color: messageDelegate.isMine ? "#FFFFFFB0" : Theme.textTertiary
+                            }
+                        }
                     }
                 }
             }
@@ -127,47 +177,72 @@ Item {
         // Zone de saisie de message
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 80
-            color: Theme.secondaryBackground
+            Layout.preferredHeight: 76
+            color: Theme.surface
+
+            Rectangle {
+                anchors.top: parent.top
+                width: parent.width
+                height: 1
+                color: Theme.border
+            }
 
             RowLayout {
                 anchors.fill: parent
-                anchors.margins: 10
-                spacing: 10
+                anchors.margins: Theme.spacingMedium
+                spacing: Theme.spacingSmall
 
                 TextField {
                     id: messageInput
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    placeholderText: "Écrivez votre message..."
+                    Layout.preferredHeight: 44
+                    placeholderText: qsTr("Ecrivez votre message...")
                     color: Theme.text
+                    font.pixelSize: Theme.fontSizeBody
+                    font.family: Theme.fontFamily
+                    leftPadding: Theme.spacingMedium
+                    rightPadding: Theme.spacingMedium
+                    selectByMouse: true
+
                     background: Rectangle {
                         color: Theme.background
-                        radius: 5
-                        border.color: messageInput.activeFocus ? Theme.accent : Theme.border
+                        radius: Theme.radiusPill
+                        border.color: messageInput.activeFocus ? Theme.primary : Theme.border
                         border.width: messageInput.activeFocus ? 2 : 1
+                        Behavior on border.color { ColorAnimation { duration: 100 } }
                     }
+
+                    onAccepted: sendButton.clicked()
                 }
 
-                Button {
-                    Layout.preferredWidth: 80
-                    Layout.preferredHeight: 50
-                    text: "Envoyer"
-                    background: Rectangle {
-                        color: parent.pressed ? Theme.accentDark : Theme.accent
-                        radius: 5
-                    }
-                    contentItem: Label {
-                        text: parent.text
-                        color: Theme.text
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
+                Rectangle {
+                    id: sendButton
+                    Layout.preferredWidth: 44
+                    Layout.preferredHeight: 44
+                    radius: Theme.radiusPill
+                    color: messageInput.text.trim().length > 0
+                           ? (sendArea.pressed ? Theme.primaryHover : Theme.primary)
+                           : Theme.surfaceAlt
+                    Behavior on color { ColorAnimation { duration: 100 } }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u27A4"
+                        color: messageInput.text.trim().length > 0 ? "#FFFFFF" : Theme.textTertiary
+                        font.pixelSize: 16
                     }
 
-                    onClicked: {
-                        if (messageInput.text.trim() !== "" && messagingContext) {
-                            messagingContext.sendMessage(messageInput.text)
-                            messageInput.text = ""
+                    MouseArea {
+                        id: sendArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (messageInput.text.trim() !== "" && messagingContext) {
+                                messagingContext.sendMessage(messageInput.text)
+                                messageInput.text = ""
+                                messageInput.forceActiveFocus()
+                            }
                         }
                     }
                 }
@@ -182,7 +257,7 @@ Item {
         }
     }
 
-    // Charger la conversation au démarrage
+    // Charger la conversation au demarrage
     Component.onCompleted: {
         if (messagingContext && conversationId > 0) {
             messagingContext.setConversation(conversationId)

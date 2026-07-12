@@ -23,9 +23,33 @@ Item {
         anchors.fill: parent
         gradient: Gradient {
             orientation: Gradient.Vertical
-            GradientStop { position: 0.0; color: Theme.background }
-            GradientStop { position: 1.0; color: Theme.surfaceAlt }
+            GradientStop { position: 0.0; color: Theme.darkMode ? "#181B2A" : "#EEF0FB" }
+            GradientStop { position: 1.0; color: Theme.background }
         }
+    }
+
+    // Formes discretes en arriere-plan pour donner du relief sans distraire
+    Rectangle {
+        width: 420
+        height: 420
+        radius: width / 2
+        color: Theme.primary
+        opacity: Theme.darkMode ? 0.10 : 0.07
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.horizontalCenterOffset: -260
+        anchors.top: parent.top
+        anchors.topMargin: -160
+    }
+    Rectangle {
+        width: 320
+        height: 320
+        radius: width / 2
+        color: Theme.primary
+        opacity: Theme.darkMode ? 0.08 : 0.05
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.horizontalCenterOffset: 300
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: -140
     }
 
     ThemeToggleButton {
@@ -37,7 +61,7 @@ Item {
     ColumnLayout {
         anchors.centerIn: parent
         width: Math.min(400, root.width - 2 * Theme.spacingLarge)
-        spacing: Theme.spacingLarge
+        spacing: Theme.spacingXl
 
         // En-tete : logo + titre
         ColumnLayout {
@@ -46,16 +70,16 @@ Item {
 
             Rectangle {
                 Layout.alignment: Qt.AlignHCenter
-                width: 64
-                height: 64
-                radius: 18
+                width: 60
+                height: 60
+                radius: Theme.radiusLarge
                 color: Theme.primary
 
                 Text {
                     anchors.centerIn: parent
                     text: "CL"
                     color: Theme.primaryText
-                    font.pixelSize: 24
+                    font.pixelSize: 22
                     font.bold: true
                     font.family: Theme.fontFamily
                 }
@@ -63,6 +87,7 @@ Item {
 
             Label {
                 Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: Theme.spacingSmall
                 text: "CollabLAN"
                 font.pixelSize: Theme.fontSizeTitle
                 font.bold: true
@@ -74,6 +99,7 @@ Item {
                 Layout.alignment: Qt.AlignHCenter
                 text: qsTr("Collaborez sur votre reseau local")
                 font.pixelSize: Theme.fontSizeSmall
+                font.family: Theme.fontFamily
                 color: Theme.textSecondary
             }
         }
@@ -81,11 +107,11 @@ Item {
         // Carte de connexion, avec une legere ombre portee simulee
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: cardColumn.implicitHeight + 2 * Theme.spacingLarge
+            Layout.preferredHeight: cardColumn.implicitHeight + 2 * Theme.spacingXl
 
             Rectangle {
                 anchors.fill: parent
-                anchors.topMargin: 4
+                anchors.topMargin: 6
                 radius: Theme.radiusLarge
                 color: Theme.shadow
             }
@@ -100,87 +126,100 @@ Item {
                 ColumnLayout {
                     id: cardColumn
                     anchors.fill: parent
-                    anchors.margins: Theme.spacingLarge
-                    spacing: Theme.spacingMedium
+                    anchors.margins: Theme.spacingXl
+                    spacing: Theme.spacingSmall
 
                     Label {
                         text: qsTr("Nom d'utilisateur")
                         font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
                         color: Theme.textSecondary
                     }
 
                     TextField {
                         id: usernameField
                         Layout.fillWidth: true
+                        Layout.preferredHeight: 44
                         placeholderText: qsTr("Votre nom d'utilisateur")
                         selectByMouse: true
+                        color: Theme.text
                         font.pixelSize: Theme.fontSizeBody
+                        font.family: Theme.fontFamily
+                        leftPadding: Theme.spacingMedium
                         onAccepted: passwordField.forceActiveFocus()
 
                         background: Rectangle {
-                            radius: Theme.radiusSmall
+                            radius: Theme.radiusMedium
                             color: Theme.background
-                            border.width: 1
+                            border.width: usernameField.activeFocus ? 2 : 1
                             border.color: usernameField.activeFocus ? Theme.primary : Theme.border
+                            Behavior on border.color { ColorAnimation { duration: 100 } }
                         }
                     }
 
                     Label {
                         text: qsTr("Mot de passe")
                         font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
                         color: Theme.textSecondary
-                        Layout.topMargin: Theme.spacingSmall
+                        Layout.topMargin: Theme.spacingMedium
                     }
 
                     TextField {
                         id: passwordField
                         Layout.fillWidth: true
+                        Layout.preferredHeight: 44
                         placeholderText: qsTr("Votre mot de passe")
                         echoMode: TextInput.Password
                         selectByMouse: true
+                        color: Theme.text
                         font.pixelSize: Theme.fontSizeBody
+                        font.family: Theme.fontFamily
+                        leftPadding: Theme.spacingMedium
                         onAccepted: loginButton.clicked()
 
                         background: Rectangle {
-                            radius: Theme.radiusSmall
+                            radius: Theme.radiusMedium
                             color: Theme.background
-                            border.width: 1
+                            border.width: passwordField.activeFocus ? 2 : 1
                             border.color: passwordField.activeFocus ? Theme.primary : Theme.border
+                            Behavior on border.color { ColorAnimation { duration: 100 } }
                         }
                     }
 
-                    Label {
-                        id: errorLabel
-                        visible: text.length > 0
-                        text: ""
-                        color: Theme.error
-                        font.pixelSize: Theme.fontSizeSmall
-                        wrapMode: Text.WordWrap
+                    RowLayout {
+                        visible: errorLabel.text.length > 0
+                        Layout.topMargin: Theme.spacingSmall
                         Layout.fillWidth: true
+                        spacing: Theme.spacingXs
+
+                        Rectangle {
+                            Layout.preferredWidth: 4
+                            Layout.preferredHeight: errorLabel.implicitHeight
+                            radius: 2
+                            color: Theme.error
+                        }
+
+                        Label {
+                            id: errorLabel
+                            text: ""
+                            color: Theme.error
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: Theme.fontFamily
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
                     }
 
-                    Button {
+                    AppButton {
                         id: loginButton
+                        variant: "primary"
+                        fullWidth: true
+                        Layout.fillWidth: true
+                        Layout.topMargin: Theme.spacingMedium
+                        implicitHeight: 46
                         text: userManager.busy ? qsTr("Connexion...") : qsTr("Se connecter")
                         enabled: !userManager.busy
-                        Layout.fillWidth: true
-                        Layout.topMargin: Theme.spacingSmall
-                        Layout.preferredHeight: 44
-
-                        background: Rectangle {
-                            radius: Theme.radiusSmall
-                            color: loginButton.pressed ? Theme.primaryHover : Theme.primary
-                            opacity: loginButton.enabled ? 1.0 : 0.6
-                        }
-
-                        contentItem: Text {
-                            text: loginButton.text
-                            color: Theme.primaryText
-                            font.pixelSize: Theme.fontSizeBody
-                            font.bold: true
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
 
                         onClicked: {
                             const username = usernameField.text.trim()
@@ -197,6 +236,14 @@ Item {
                     }
                 }
             }
+        }
+
+        Label {
+            Layout.alignment: Qt.AlignHCenter
+            text: qsTr("Connexion securisee sur votre reseau local")
+            font.pixelSize: Theme.fontSizeCaption
+            font.family: Theme.fontFamily
+            color: Theme.textTertiary
         }
     }
 

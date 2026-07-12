@@ -7,11 +7,9 @@ import "../Components"
 /*
  * HomeView - ecran "Home" (issue #6 : navigation de base Login -> Home)
  *
- * Point d'entree apres connexion. Affiche un accueil avec le nom
- * d'utilisateur transmis par LoginView, le bouton de theme et un bouton
- * de deconnexion qui ramene vers Login. La navigation vers les autres
- * modules (Chat, Users, FileTransfer, Call, Settings, Admin) sera ajoutee
- * dans une issue dediee.
+ * Point d'entree apres connexion. Navigation laterale (sidebar) vers les
+ * modules Chat, Users, FileTransfer, Call et Administration, et un
+ * tableau de bord avec acces rapides sous forme de cartes.
  */
 Item {
     id: root
@@ -30,262 +28,254 @@ Item {
         color: Theme.background
     }
 
-    ColumnLayout {
+    RowLayout {
         anchors.fill: parent
         spacing: 0
 
-        // Barre superieure
+        // ---------------------------------------------------------------
+        // Sidebar de navigation
+        // ---------------------------------------------------------------
         Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            color: Theme.surface
-            border.color: Theme.border
-            border.width: 1
+            Layout.preferredWidth: 248
+            Layout.fillHeight: true
+            color: Theme.sidebarBackground
 
-            RowLayout {
+            ColumnLayout {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.spacingLarge
-                anchors.rightMargin: Theme.spacingLarge
-                spacing: Theme.spacingMedium
+                anchors.margins: Theme.spacingMedium
+                spacing: Theme.spacingSmall
 
-                Rectangle {
-                    width: 36
-                    height: 36
-                    radius: 10
-                    color: Theme.primary
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "CL"
-                        color: Theme.primaryText
-                        font.pixelSize: 14
-                        font.bold: true
-                    }
-                }
-
-                Label {
-                    text: qsTr("CollabLAN")
-                    font.pixelSize: Theme.fontSizeHeading
-                    font.bold: true
-                    font.family: Theme.fontFamily
-                    color: Theme.text
-                }
-
-                Item { Layout.fillWidth: true }
-
+                // Logo / marque
                 RowLayout {
+                    Layout.fillWidth: true
+                    Layout.bottomMargin: Theme.spacingLarge
                     spacing: Theme.spacingSmall
 
                     Rectangle {
-                        width: 32
-                        height: 32
-                        radius: 16
-                        color: Theme.surfaceAlt
+                        width: 36
+                        height: 36
+                        radius: Theme.radiusMedium
+                        color: Theme.primary
 
                         Text {
                             anchors.centerIn: parent
-                            text: root.username.length > 0 ? root.username.charAt(0).toUpperCase() : "?"
-                            color: Theme.text
-                            font.pixelSize: Theme.fontSizeSmall
+                            text: "CL"
+                            color: "#FFFFFF"
+                            font.pixelSize: 14
                             font.bold: true
                         }
                     }
 
                     Label {
-                        text: root.username
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeBody
+                        text: qsTr("CollabLAN")
+                        font.pixelSize: Theme.fontSizeHeading
+                        font.bold: true
+                        font.family: Theme.fontFamily
+                        color: Theme.sidebarText
                     }
+
+                    Item { Layout.fillWidth: true }
                 }
 
-                Button {
-                    text: qsTr("Postes connectes")
-                    Layout.leftMargin: Theme.spacingSmall
-                    Layout.preferredHeight: 36
-
-                    background: Rectangle {
-                        radius: Theme.radiusSmall
-                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
-                        border.width: 1
-                        border.color: Theme.border
-                    }
-
-                    contentItem: Text {
-                        text: qsTr("Postes connectes")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
-                    onClicked: root.usersRequested()
+                Label {
+                    text: qsTr("NAVIGATION")
+                    font.pixelSize: Theme.fontSizeCaption
+                    font.bold: true
+                    font.family: Theme.fontFamily
+                    color: Theme.sidebarTextMuted
+                    Layout.bottomMargin: Theme.spacingXs
                 }
 
-                Button {
-                    text: qsTr("Chat")
-                    Layout.leftMargin: Theme.spacingSmall
-                    Layout.preferredHeight: 36
-
-                    background: Rectangle {
-                        radius: Theme.radiusSmall
-                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
-                        border.width: 1
-                        border.color: Theme.border
-                    }
-
-                    contentItem: Text {
-                        text: qsTr("Chat")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
+                SidebarNavItem {
+                    Layout.fillWidth: true
+                    icon: "\u2709"
+                    label: qsTr("Discussions")
                     onClicked: root.chatRequested()
                 }
-
-                Button {
-                    text: qsTr("Transfert fichiers")
-                    Layout.leftMargin: Theme.spacingSmall
-                    Layout.preferredHeight: 36
-
-                    background: Rectangle {
-                        radius: Theme.radiusSmall
-                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
-                        border.width: 1
-                        border.color: Theme.border
-                    }
-
-                    contentItem: Text {
-                        text: qsTr("Transfert fichiers")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
+                SidebarNavItem {
+                    Layout.fillWidth: true
+                    icon: "\u25CE"
+                    label: qsTr("Postes connectes")
+                    onClicked: root.usersRequested()
+                }
+                SidebarNavItem {
+                    Layout.fillWidth: true
+                    icon: "\u21C5"
+                    label: qsTr("Transfert de fichiers")
                     onClicked: root.fileTransferRequested()
                 }
-
-                Button {
-                    text: qsTr("Appel")
-                    Layout.leftMargin: Theme.spacingSmall
-                    Layout.preferredHeight: 36
-
-                    background: Rectangle {
-                        radius: Theme.radiusSmall
-                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
-                        border.width: 1
-                        border.color: Theme.border
-                    }
-
-                    contentItem: Text {
-                        text: qsTr("Appel")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
+                SidebarNavItem {
+                    Layout.fillWidth: true
+                    icon: "\u260E"
+                    label: qsTr("Appel")
                     onClicked: root.callRequested()
                 }
 
-                Button {
-                    text: qsTr("Administration")
-                    Layout.leftMargin: Theme.spacingSmall
-                    Layout.preferredHeight: 36
+                Item { Layout.preferredHeight: Theme.spacingMedium }
 
-                    background: Rectangle {
-                        radius: Theme.radiusSmall
-                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
-                        border.width: 1
-                        border.color: Theme.border
-                    }
+                Label {
+                    text: qsTr("SYSTEME")
+                    font.pixelSize: Theme.fontSizeCaption
+                    font.bold: true
+                    font.family: Theme.fontFamily
+                    color: Theme.sidebarTextMuted
+                    Layout.bottomMargin: Theme.spacingXs
+                }
 
-                    contentItem: Text {
-                        text: qsTr("Administration")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
+                SidebarNavItem {
+                    Layout.fillWidth: true
+                    icon: "\u2699"
+                    label: qsTr("Administration")
                     onClicked: root.adminRequested()
                 }
 
-                ThemeToggleButton {
-                    Layout.leftMargin: Theme.spacingSmall
+                Item { Layout.fillHeight: true }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 1
+                    color: Theme.sidebarBorder
                 }
 
-                Button {
-                    text: qsTr("Se deconnecter")
-                    Layout.leftMargin: Theme.spacingSmall
-                    Layout.preferredHeight: 36
+                // Profil utilisateur + actions rapides (theme / deconnexion)
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spacingSmall
+                    spacing: Theme.spacingSmall
 
-                    background: Rectangle {
-                        radius: Theme.radiusSmall
-                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
-                        border.width: 1
-                        border.color: Theme.border
+                    Avatar {
+                        name: root.username
+                        size: 34
                     }
 
-                    contentItem: Text {
-                        text: qsTr("Se deconnecter")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.username
+                        color: Theme.sidebarText
+                        font.pixelSize: Theme.fontSizeBody
+                        font.family: Theme.fontFamily
+                        elide: Text.ElideRight
                     }
 
-                    onClicked: root.logoutRequested()
+                    ThemeToggleButton {
+                        Layout.preferredWidth: 32
+                        Layout.preferredHeight: 32
+                    }
+
+                    Rectangle {
+                        Layout.preferredWidth: 32
+                        Layout.preferredHeight: 32
+                        radius: Theme.radiusMedium
+                        color: logoutArea.containsMouse ? Theme.sidebarHover : "transparent"
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "\u23FB"
+                            color: Theme.sidebarTextMuted
+                            font.pixelSize: 14
+                        }
+
+                        MouseArea {
+                            id: logoutArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.logoutRequested()
+                        }
+
+                        ToolTip.visible: logoutArea.containsMouse
+                        ToolTip.delay: 400
+                        ToolTip.text: qsTr("Se deconnecter")
+                    }
                 }
             }
         }
 
-        // Contenu principal
+        // ---------------------------------------------------------------
+        // Contenu principal : tableau de bord
+        // ---------------------------------------------------------------
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            ColumnLayout {
+            Flickable {
                 anchors.fill: parent
-                anchors.margins: Theme.spacingLarge
-                spacing: Theme.spacingMedium
+                contentWidth: width
+                contentHeight: contentColumn.implicitHeight + 2 * Theme.spacingXl
+                clip: true
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    radius: Theme.radiusLarge
-                    color: Theme.surface
-                    border.color: Theme.border
-                    border.width: 1
+                ColumnLayout {
+                    id: contentColumn
+                    width: Math.min(parent.width - 2 * Theme.spacingXl, 960)
+                    x: Theme.spacingXl
+                    y: Theme.spacingXl
+                    spacing: Theme.spacingLarge
 
                     ColumnLayout {
-                        anchors.centerIn: parent
-                        spacing: Theme.spacingSmall
-                        width: parent.width * 0.7
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingXs
 
                         Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: qsTr("Bienvenue, %1 !").arg(root.username)
-                            font.pixelSize: Theme.fontSizeHeading
+                            text: qsTr("Bienvenue, %1").arg(root.username)
+                            font.pixelSize: Theme.fontSizeTitle
                             font.bold: true
+                            font.family: Theme.fontFamily
                             color: Theme.text
-                            horizontalAlignment: Text.AlignHCenter
                         }
 
                         Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.fillWidth: true
-                            text: qsTr("Les modules Chat, Users, FileTransfer, Call et Settings seront accessibles ici prochainement.")
-                            color: Theme.textSecondary
+                            text: qsTr("Voici un acces rapide aux modules de votre reseau local.")
                             font.pixelSize: Theme.fontSizeBody
-                            horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.WordWrap
+                            font.family: Theme.fontFamily
+                            color: Theme.textSecondary
+                        }
+                    }
+
+                    GridLayout {
+                        Layout.fillWidth: true
+                        columns: root.width > 760 ? 3 : (root.width > 520 ? 2 : 1)
+                        columnSpacing: Theme.spacingMedium
+                        rowSpacing: Theme.spacingMedium
+
+                        DashboardCard {
+                            Layout.fillWidth: true
+                            icon: "\u2709"
+                            title: qsTr("Discussions")
+                            description: qsTr("Retrouvez vos conversations et groupes.")
+                            onClicked: root.chatRequested()
+                        }
+                        DashboardCard {
+                            Layout.fillWidth: true
+                            icon: "\u25CE"
+                            title: qsTr("Postes connectes")
+                            description: qsTr("Voir qui est present sur le reseau.")
+                            onClicked: root.usersRequested()
+                        }
+                        DashboardCard {
+                            Layout.fillWidth: true
+                            icon: "\u21C5"
+                            title: qsTr("Transfert de fichiers")
+                            description: qsTr("Envoyez et recevez des fichiers.")
+                            onClicked: root.fileTransferRequested()
+                        }
+                        DashboardCard {
+                            Layout.fillWidth: true
+                            icon: "\u260E"
+                            title: qsTr("Appel")
+                            description: qsTr("Demarrez un appel audio.")
+                            onClicked: root.callRequested()
+                        }
+                        DashboardCard {
+                            Layout.fillWidth: true
+                            icon: "\u2699"
+                            title: qsTr("Administration")
+                            description: qsTr("Gerez les utilisateurs et les postes.")
+                            onClicked: root.adminRequested()
                         }
                     }
                 }
             }
         }
     }
+
 }
