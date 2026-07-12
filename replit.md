@@ -56,6 +56,27 @@ cd build && ctest --output-on-failure
   repository insert code. Proposed as a follow-up task rather than fixed here
   (out of scope for project setup).
 
+## Release 8 — Intégration des fichiers reçus + gestion des conflits
+
+**Nouveau dans `core/Sync/FolderSyncService`** :
+
+Quand `TransferService` reçoit un fichier déclenché par un `folder_file_request` :
+
+1. `onTransferStarted` corrèle le `transferKey` avec la `PendingFileTransfer` enregistrée lors du `requestRemoteFile()`.
+2. `onTransferCompleted` appelle `integrateReceivedFile()` qui :
+   - Calcule le SHA-256 du fichier reçu.
+   - **Détection de conflit** : si un fichier local avec un hash différent existe déjà → renomme l'entrant en `nom (machineId_courte).ext` et émet `conflictDetected`.
+   - Copie le fichier vers son chemin cible dans le dossier partagé.
+   - `SharedFileRepository::upsert` → enregistre le fichier dans `SharedFiles`.
+   - `SyncOperationRepository::insert` → journal de la Create/Update.
+   - Émet `fileIntegrated(folderUuid, relativePath, wasConflict)`.
+
+Connexions ajoutées dans `app/Application.cpp` :
+- `TransferService::transferStarted` → `FolderSyncService::onTransferStarted`
+- `TransferService::transferCompleted` → `FolderSyncService::onTransferCompleted`
+
+Tests : 14 tests (10 protocole + 4 intégration/conflit), tous verts.
+
 ## Releases 4–7 — Synchronisation réseau LAN en temps réel
 
 **Nouveau : `core/Sync/FolderSyncService`** (branché dans `app/Application.cpp`)

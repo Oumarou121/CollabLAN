@@ -726,6 +726,14 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_messagingService, &network::MessagingService::connected,
             m_folderSyncService, &core::sync::FolderSyncService::onConnectedToServer);
 
+    // Release 8 : intégration des fichiers reçus dans les dossiers partagés.
+    // transferStarted permet de corréler le transferKey avec la demande en attente ;
+    // transferCompleted déclenche la copie, l'upsert SharedFile et la SyncOperation.
+    connect(m_transferService, &network::TransferService::transferStarted,
+            m_folderSyncService, &core::sync::FolderSyncService::onTransferStarted);
+    connect(m_transferService, &network::TransferService::transferCompleted,
+            m_folderSyncService, &core::sync::FolderSyncService::onTransferCompleted);
+
     // Journal de bord : log des opérations distantes reçues.
     connect(m_folderSyncService, &core::sync::FolderSyncService::remoteOpReceived,
             this, [](const QString &folderUuid, const QString &opType,
@@ -739,6 +747,20 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_folderSyncService, &core::sync::FolderSyncService::catchupBatchReceived,
             this, [](const QVector<models::FileSyncOperation> &ops) {
                 qDebug() << "[App] Catch-up batch reçu :" << ops.size() << "opérations";
+            });
+
+    connect(m_folderSyncService, &core::sync::FolderSyncService::fileIntegrated,
+            this, [](const QString &folderUuid, const QString &relativePath, bool wasConflict) {
+                qDebug() << "[App] Fichier intégré :" << relativePath
+                         << "dans" << folderUuid
+                         << (wasConflict ? "(conflit renommé)" : "");
+            });
+
+    connect(m_folderSyncService, &core::sync::FolderSyncService::conflictDetected,
+            this, [](const QString &folderUuid, const QString &relativePath,
+                     const QString &conflictPath) {
+                qWarning() << "[App] Conflit détecté dans" << folderUuid
+                           << ":" << relativePath << "→" << conflictPath;
             });
 }
 

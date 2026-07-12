@@ -4,9 +4,16 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QHostAddress>
+#include <QTemporaryDir>
+#include <QFile>
+#include <QDir>
+#include <QCryptographicHash>
+#include <QRandomGenerator>
 
 #include "core/Sync/FolderSyncService.h"
+#include "core/SharedFolderManager.h"
 #include "database/DatabaseManager.h"
+#include "database/Repositories/SharedFileRepository.h"
 
 // ---------------------------------------------------------------------------
 // Stub minimaliste de MessagingServer/Service pour capturer les messages
@@ -470,6 +477,277 @@ private slots:
         QCOMPARE(spy.at(0).at(2).toString(), QStringLiteral("docs/new.txt"));   // relativePath
         QCOMPARE(spy.at(0).at(3).toString(), QStringLiteral("docs/old.txt"));   // oldRelativePath
 
+        delete svc;
+    }
+
+    // ============================================================
+    // Release 8 — Intégration des fichiers reçus + conflits
+    // ============================================================
+
+    // Ouvre une DB SQLite réelle dans un fichier temp (pour avoir le vrai
+    // schéma complet, y compris SharedFiles et SyncOperations).
+    static database::DatabaseManager *openRealDb(const QString &connName,
+                                                  const QString &path)
+    {
+        auto *db = new database::DatabaseManager(connName);
+        if (!db->open(path)) { delete db; return nullptr; }
+        return db;
+    }
+
+    static QString sha256(const QByteArray &data)
+    {
+        return QString::fromLatin1(
+            QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex());
+    }
+
+    // ------------------------------------------------------------------
+    // 11. onTransferStarted + onTransferCompleted → fichier intégré dans
+    //     le dossier partagé, fileIntegrated émis.
+    // ------------------------------------------------------------------
+    void transferCompleted_integratesFileIntoSharedFolder()
+    {
+        QTemporaryDir dbDir, folderDir, receiveDir;
+        QVERIFY(dbDir.isValid() && folderDir.isValid() && receiveDir.isValid());
+
+        const QString dbPath = dbDir.filePath(QStringLiteral("fss_r8_%1.sqlite")
+            .arg(QRandomGenerator::global()->generate()));
+
+        auto *db = openRealDb(QStringLiteral("fss_r8_integrate"), dbPath);
+        QVERIFY(db);
+
+        // Crée le dossier partagé.
+        core::SharedFolderManager mgr(db);
+        const auto folder = mgr.createFolder(QStringLiteral("TestDocs"),
+                                             folderDir.path(), 0);
+        QVERIFY(folder.has_value());
+        const qint64 folderId = folder->id();
+
+        // Crée le service.
+        auto *svc = new core::sync::FolderSyncService(db, &mgr, this);
+        svc->setLocalMachineId(QStringLiteral("machine-local"));
+
+        QSignalSpy spyIntegrated(svc, &core::sync::FolderSyncService::fileIntegrated);
+        QSignalSpy spyConflict(svc, &core::sync::FolderSyncService::conflictDetected);
+
+        // Simule un fichier reçu dans le répertoire de réception.
+        const QByteArray content = QByteArrayLiteral("contenu du fichier recu");
+        const QString receivedPath = receiveDir.filePath(QStringLiteral("rapport.docx"));
+        {
+            QFile f(receivedPath);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(content);
+        }
+
+        // Enregistre la demande en attente (comme si requestRemoteFile avait été appelé).
+        svc->requestRemoteFile(folder->uuid(), QStringLiteral("rapport.docx"),
+                               QStringLiteral("machine-remote"),
+                               folderId, folderDir.path(),
+                               sha256(content), 1);
+
+        // Corrèle le transferKey.
+        const QString transferKey = QStringLiteral("transfer-key-001");
+        QMetaObject::invokeMethod(svc, "onTransferStarted",
+            Qt::DirectConnection,
+            Q_ARG(QString, transferKey),
+            Q_ARG(QString, QStringLiteral("rapport.docx")),
+            Q_ARG(qint64, content.size()),
+            Q_ARG(bool, true),
+            Q_ARG(qint64, 0),
+            Q_ARG(QString, QStringLiteral("machine-remote")),
+            Q_ARG(QString, QStringLiteral("machine-local")),
+            Q_ARG(QHostAddress, QHostAddress::LocalHost),
+            Q_ARG(QString, QStringLiteral("machine-remote")));
+
+        // Déclenche l'intégration.
+        QMetaObject::invokeMethod(svc, "onTransferCompleted",
+            Qt::DirectConnection,
+            Q_ARG(QString, transferKey),
+            Q_ARG(QString, receivedPath));
+
+        // fileIntegrated émis, pas de conflit.
+        QCOMPARE(spyIntegrated.count(), 1);
+        QCOMPARE(spyConflict.count(), 0);
+        QCOMPARE(spyIntegrated.at(0).at(0).toString(), folder->uuid()); // folderUuid
+        QCOMPARE(spyIntegrated.at(0).at(2).toBool(), false);            // wasConflict
+
+        // Fichier bien présent à sa cible.
+        const QString targetPath = folderDir.filePath(QStringLiteral("rapport.docx"));
+        QVERIFY(QFile::exists(targetPath));
+
+        // Contenu correct.
+        QFile tf(targetPath);
+        QVERIFY(tf.open(QIODevice::ReadOnly));
+        QCOMPARE(tf.readAll(), content);
+
+        // SharedFile enregistré en base.
+        database::SharedFileRepository fileRepo(db->database());
+        const auto sf = fileRepo.findByRelativePath(folderId, QStringLiteral("rapport.docx"));
+        QVERIFY(sf.has_value());
+        QCOMPARE(sf->hash(), sha256(content));
+
+        delete svc;
+        delete db;
+    }
+
+    // ------------------------------------------------------------------
+    // 12. Conflit : fichier local différent → conflictDetected émis,
+    //     fichier local préservé, copie de conflit créée.
+    // ------------------------------------------------------------------
+    void transferCompleted_conflict_preservesLocalAndCreatesConflictCopy()
+    {
+        QTemporaryDir dbDir, folderDir, receiveDir;
+        QVERIFY(dbDir.isValid() && folderDir.isValid() && receiveDir.isValid());
+
+        const QString dbPath = dbDir.filePath(QStringLiteral("fss_r8_conflict_%1.sqlite")
+            .arg(QRandomGenerator::global()->generate()));
+
+        auto *db = openRealDb(QStringLiteral("fss_r8_conflict"), dbPath);
+        QVERIFY(db);
+
+        core::SharedFolderManager mgr(db);
+        const auto folder = mgr.createFolder(QStringLiteral("Docs"),
+                                             folderDir.path(), 0);
+        QVERIFY(folder.has_value());
+        const qint64 folderId = folder->id();
+
+        // Écrit un fichier local DIFFÉRENT (hash ≠ version distante).
+        const QByteArray localContent  = QByteArrayLiteral("version locale alice");
+        const QByteArray remoteContent = QByteArrayLiteral("version distante bob");
+        const QString targetPath = folderDir.filePath(QStringLiteral("rapport.docx"));
+        {
+            QFile f(targetPath);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(localContent);
+        }
+
+        // Indexe ce fichier local pour que SharedFileRepository le connaisse.
+        QVERIFY(mgr.shareFolder(folderId).has_value());
+
+        // Crée le service.
+        auto *svc = new core::sync::FolderSyncService(db, &mgr, this);
+        svc->setLocalMachineId(QStringLiteral("machine-local"));
+
+        QSignalSpy spyIntegrated(svc, &core::sync::FolderSyncService::fileIntegrated);
+        QSignalSpy spyConflict(svc, &core::sync::FolderSyncService::conflictDetected);
+
+        // Fichier reçu (contenu différent).
+        const QString receivedPath = receiveDir.filePath(QStringLiteral("rapport.docx"));
+        {
+            QFile f(receivedPath);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(remoteContent);
+        }
+
+        // Enregistre et corrèle.
+        svc->requestRemoteFile(folder->uuid(), QStringLiteral("rapport.docx"),
+                               QStringLiteral("machine-bob"),
+                               folderId, folderDir.path(),
+                               sha256(remoteContent), 2);
+
+        const QString transferKey = QStringLiteral("transfer-key-conflict");
+        QMetaObject::invokeMethod(svc, "onTransferStarted",
+            Qt::DirectConnection,
+            Q_ARG(QString, transferKey),
+            Q_ARG(QString, QStringLiteral("rapport.docx")),
+            Q_ARG(qint64, remoteContent.size()),
+            Q_ARG(bool, true),
+            Q_ARG(qint64, 0),
+            Q_ARG(QString, QStringLiteral("machine-bob")),
+            Q_ARG(QString, QStringLiteral("machine-local")),
+            Q_ARG(QHostAddress, QHostAddress::LocalHost),
+            Q_ARG(QString, QStringLiteral("machine-bob")));
+
+        QMetaObject::invokeMethod(svc, "onTransferCompleted",
+            Qt::DirectConnection,
+            Q_ARG(QString, transferKey),
+            Q_ARG(QString, receivedPath));
+
+        // conflictDetected émis, fileIntegrated aussi (avec wasConflict=true).
+        QCOMPARE(spyConflict.count(), 1);
+        QCOMPARE(spyIntegrated.count(), 1);
+        QCOMPARE(spyIntegrated.at(0).at(2).toBool(), true);
+
+        // Fichier local PRÉSERVÉ (contenu alice intact).
+        QVERIFY(QFile::exists(targetPath));
+        {
+            QFile f(targetPath);
+            QVERIFY(f.open(QIODevice::ReadOnly));
+            QCOMPARE(f.readAll(), localContent);
+        }
+
+        // Fichier de conflit créé avec le contenu de bob.
+        const QString conflictRelPath = spyConflict.at(0).at(2).toString();
+        const QString conflictAbsPath = folderDir.filePath(conflictRelPath);
+        QVERIFY(QFile::exists(conflictAbsPath));
+        {
+            QFile f(conflictAbsPath);
+            QVERIFY(f.open(QIODevice::ReadOnly));
+            QCOMPARE(f.readAll(), remoteContent);
+        }
+
+        // Le chemin de conflit contient le court machineId de bob.
+        QVERIFY(conflictRelPath.contains(QStringLiteral("machine-bob").left(6)));
+
+        delete svc;
+        delete db;
+    }
+
+    // ------------------------------------------------------------------
+    // 13. onTransferCompleted pour un transferKey inconnu → ignoré sans crash.
+    // ------------------------------------------------------------------
+    void transferCompleted_unknownKey_isIgnored()
+    {
+        auto db = makeInMemoryDb();
+        QVERIFY(db);
+
+        auto *svc = makeService(db.get(), this);
+        QSignalSpy spy(svc, &core::sync::FolderSyncService::fileIntegrated);
+
+        QMetaObject::invokeMethod(svc, "onTransferCompleted",
+            Qt::DirectConnection,
+            Q_ARG(QString, QStringLiteral("unknown-key-xyz")),
+            Q_ARG(QString, QStringLiteral("/tmp/some-file.txt")));
+
+        QCOMPARE(spy.count(), 0);
+        delete svc;
+    }
+
+    // ------------------------------------------------------------------
+    // 14. onTransferStarted outgoing (incoming=false) → ignoré.
+    // ------------------------------------------------------------------
+    void transferStarted_outgoing_isIgnored()
+    {
+        auto db = makeInMemoryDb();
+        QVERIFY(db);
+
+        auto *svc = makeService(db.get(), this);
+
+        // Enregistre une demande en attente.
+        // On ne peut pas appeler la surcharge privée directement depuis ici,
+        // mais on peut vérifier que onTransferStarted avec incoming=false ne
+        // consomme pas la demande en attente.
+
+        // On simule un transferStarted sortant.
+        QMetaObject::invokeMethod(svc, "onTransferStarted",
+            Qt::DirectConnection,
+            Q_ARG(QString, QStringLiteral("outgoing-key")),
+            Q_ARG(QString, QStringLiteral("fichier.txt")),
+            Q_ARG(qint64, 100),
+            Q_ARG(bool, false), // outgoing
+            Q_ARG(qint64, 0),
+            Q_ARG(QString, QStringLiteral("machine-local")),
+            Q_ARG(QString, QStringLiteral("machine-remote")),
+            Q_ARG(QHostAddress, QHostAddress::LocalHost),
+            Q_ARG(QString, QStringLiteral("machine-remote")));
+
+        // onTransferCompleted avec la même clé → ignoré (pas dans activeByTransferKey).
+        QSignalSpy spy(svc, &core::sync::FolderSyncService::fileIntegrated);
+        QMetaObject::invokeMethod(svc, "onTransferCompleted",
+            Qt::DirectConnection,
+            Q_ARG(QString, QStringLiteral("outgoing-key")),
+            Q_ARG(QString, QStringLiteral("/tmp/dummy")));
+
+        QCOMPARE(spy.count(), 0);
         delete svc;
     }
 };

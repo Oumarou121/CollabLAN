@@ -101,6 +101,25 @@ bool SharedFileRepository::markDeleted(qint64 folderId, const QString &relativeP
     return query.numRowsAffected() > 0;
 }
 
+bool SharedFileRepository::renameFile(qint64 folderId,
+                                       const QString &oldPath,
+                                       const QString &newPath)
+{
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "UPDATE SharedFiles SET relative_path = :new_path "
+        "WHERE folder_id = :folder_id AND relative_path = :old_path"));
+    query.bindValue(QStringLiteral(":new_path"),   newPath);
+    query.bindValue(QStringLiteral(":folder_id"),  folderId);
+    query.bindValue(QStringLiteral(":old_path"),   oldPath);
+
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    return query.numRowsAffected() > 0;
+}
+
 std::optional<models::SharedFile> SharedFileRepository::getById(qint64 fileId) const
 {
     QSqlQuery query(m_db);

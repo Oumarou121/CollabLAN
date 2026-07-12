@@ -37,6 +37,11 @@ public:
     /// puisse propager la suppression aux autres postes.
     bool markDeleted(qint64 folderId, const QString &relativePath);
 
+    /// Renomme/deplace un fichier en base (Rename recu d'un pair distant).
+    /// Met a jour relative_path de oldPath vers newPath dans le meme dossier.
+    /// Retourne false si la ligne oldPath n'existe pas.
+    bool renameFile(qint64 folderId, const QString &oldPath, const QString &newPath);
+
     std::optional<models::SharedFile> getById(qint64 fileId) const;
     std::optional<models::SharedFile> findByRelativePath(qint64 folderId, const QString &relativePath) const;
 

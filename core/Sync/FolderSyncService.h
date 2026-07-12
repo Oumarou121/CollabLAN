@@ -5,8 +5,10 @@
 #include <QString>
 #include <QHostAddress>
 #include <QVector>
+#include <QHash>
 
 #include "database/Repositories/SyncOperationRepository.h"
+#include "database/Repositories/SharedFileRepository.h"
 #include "models/FileSyncOperation.h"
 #include "models/SharedFolder.h"
 #include "models/SharedFile.h"
@@ -30,7 +32,7 @@ namespace core::sync {
 
 /**
  * @brief Diffusion réseau en temps réel des opérations de synchronisation
- *        de dossiers partagés (Releases 4–7 du cahier des charges).
+ *        de dossiers partagés (Releases 4–8 du cahier des charges).
  *
  * Release 4 — Protocole dédié
  *   Quatre types de messages JSON distincts des messages de chat/groupe :
@@ -55,6 +57,17 @@ namespace core::sync {
  *   répond avec toutes les opérations postérieures (folder_catchup_batch).
  *   Le CLIENT applique le batch et demande les fichiers manquants.
  *
+ * Release 8 — Intégration des fichiers reçus + gestion des conflits
+ *   Quand TransferService complète un transfert déclenché par un
+ *   folder_file_request, ce service :
+ *     1. Déplace le fichier reçu vers son chemin cible dans le dossier partagé.
+ *     2. Détecte un éventuel conflit (hash local ≠ hash reçu, mêmes noms).
+ *     3. En cas de conflit, renomme le fichier reçu en
+ *        "nom (MachineId_courte).ext" et émet conflictDetected().
+ *     4. Enregistre le fichier dans SharedFiles (upsert) et crée une
+ *        FileSyncOperation de type Create/Update dans SyncOperations.
+ *     5. Émet fileIntegrated() pour rafraîchir l'UI.
+ *
  * Séparation des responsabilités : ce service ne touche jamais au réseau
  * vocal, à la messagerie textuelle ni à l'élection de serveur.
  */
@@ -74,7 +87,8 @@ public:
     /// Branche le MessagingService local (envoi côté CLIENT vers le SERVER actif).
     void setMessagingService(network::MessagingService *service);
 
-    /// Nécessaire pour servir les folder_file_request reçus de pairs.
+    /// Nécessaire pour servir les folder_file_request reçus de pairs et pour
+    /// corréler les transferts entrants avec les demandes en attente.
     void setTransferService(network::TransferService *transfer);
 
     /// Nécessaire pour résoudre l'adresse IP d'un pair à partir de son machineId.
@@ -86,11 +100,30 @@ public:
     /**
      * @brief Envoie un folder_file_request pour un fichier distant.
      *
-     * Utile pour que l'Application déclenche manuellement la récupération
-     * d'un fichier (ex. après catchupBatchReceived).
+     * Enregistre également la demande en attente pour que onTransferStarted()
+     * puisse corréler le transfert entrant avec le bon dossier/chemin.
+     *
+     * @param folderUuid      UUID du dossier partagé cible.
+     * @param relativePath    Chemin relatif du fichier dans le dossier.
+     * @param ownerMachineId  machineId du pair qui possède le fichier.
      */
     void requestRemoteFile(const QString &folderUuid, const QString &relativePath,
                            const QString &ownerMachineId);
+
+    /**
+     * @brief Surcharge enrichie : enregistre aussi la PendingFileTransfer pour
+     *        que onTransferStarted/onTransferCompleted intègrent le fichier
+     *        automatiquement dans le dossier partagé (Release 8).
+     *
+     * @param folderId        ID local du dossier (0 = désactive l'intégration).
+     * @param localFolderPath Chemin absolu de la racine du dossier partagé.
+     * @param incomingHash    SHA-256 annoncé dans folder_op (peut être vide).
+     * @param incomingVersion Version annoncée dans folder_op (0 = inconnu).
+     */
+    void requestRemoteFile(const QString &folderUuid, const QString &relativePath,
+                           const QString &ownerMachineId, qint64 folderId,
+                           const QString &localFolderPath, const QString &incomingHash,
+                           int incomingVersion);
 
 signals:
     /**
@@ -113,6 +146,34 @@ signals:
      */
     void catchupBatchReceived(const QVector<models::FileSyncOperation> &ops);
 
+    /**
+     * @brief Émis quand un fichier reçu a été intégré avec succès dans le
+     *        dossier partagé et enregistré dans SharedFiles (Release 8).
+     *
+     * @param folderUuid    UUID du dossier partagé.
+     * @param relativePath  Chemin relatif du fichier intégré (dans le dossier).
+     * @param wasConflict   true si un conflit a été détecté (le fichier reçu a
+     *                      été renommé, voir conflictDetected).
+     */
+    void fileIntegrated(const QString &folderUuid,
+                        const QString &relativePath,
+                        bool wasConflict);
+
+    /**
+     * @brief Émis quand un conflit de version est détecté lors de l'intégration
+     *        d'un fichier reçu (Release 8).
+     *
+     * Le fichier reçu a été renommé en conflictPath pour préserver les deux
+     * versions. Le fichier local n'est pas modifié.
+     *
+     * @param folderUuid    UUID du dossier partagé.
+     * @param relativePath  Chemin relatif du fichier en conflit.
+     * @param conflictPath  Chemin relatif du fichier renommé (copie en conflit).
+     */
+    void conflictDetected(const QString &folderUuid,
+                          const QString &relativePath,
+                          const QString &conflictPath);
+
 public slots:
     /**
      * @brief À connecter sur SyncEngine::folderReindexed.
@@ -127,11 +188,37 @@ public slots:
      */
     void onConnectedToServer();
 
+    /**
+     * @brief À connecter sur TransferService::transferStarted (Release 8).
+     * Corrèle le transferKey avec la PendingFileTransfer correspondante.
+     */
+    void onTransferStarted(const QString &transferKey, const QString &fileName,
+                           qint64 fileSize, bool incoming, qint64 resumeOffset,
+                           const QString &senderUuid, const QString &recipientUuid,
+                           const QHostAddress &peerAddress, const QString &peerMachineId);
+
+    /**
+     * @brief À connecter sur TransferService::transferCompleted (Release 8).
+     * Intègre le fichier reçu dans le dossier partagé (copie, upsert, SyncOp).
+     */
+    void onTransferCompleted(const QString &transferKey, const QString &filePath);
+
 private slots:
     void onServerMessageReceived(const QString &message, const QHostAddress &senderAddress);
     void onClientMessageReceived(const QString &message);
 
 private:
+    /// Demande de fichier en attente de réception (Release 8).
+    struct PendingFileTransfer {
+        QString folderUuid;
+        QString relativePath;   ///< Chemin relatif dans le dossier partagé.
+        qint64  folderId = 0;   ///< ID local du dossier.
+        QString localFolderPath; ///< Chemin absolu de la racine du dossier.
+        QString ownerMachineId;  ///< machineId du pair émetteur.
+        QString incomingHash;    ///< Hash annoncé dans folder_op (peut être vide).
+        int     incomingVersion = 0;
+    };
+
     /// Diffuse un message JSON à tous les clients connectés (côté SERVER)
     /// ou l'envoie au serveur actif (côté CLIENT).
     void broadcastMessage(const QString &json);
@@ -149,7 +236,27 @@ private:
     QJsonObject buildFolderOpJson(const models::FileSyncOperation &op,
                                   const models::SharedFolder &folder) const;
 
+    /**
+     * @brief Intègre un fichier reçu dans le dossier partagé (Release 8).
+     *
+     * 1. Calcule le hash SHA-256 du fichier source.
+     * 2. Détecte un éventuel conflit (fichier local ≠ version reçue).
+     * 3. Crée les répertoires parents si nécessaire.
+     * 4. Copie le fichier (avec renommage si conflit).
+     * 5. Upsert SharedFile + insert FileSyncOperation.
+     * 6. Émet fileIntegrated() (et conflictDetected() si applicable).
+     */
+    void integrateReceivedFile(const PendingFileTransfer &pending, const QString &sourcePath);
+
+    /// Calcule le SHA-256 hex d'un fichier sur disque. Retourne "" en cas d'erreur.
+    static QString computeHash(const QString &filePath);
+
+    /// Génère un chemin de conflit, ex: "Docs/rapport (abc123).docx".
+    static QString makeConflictPath(const QString &relativePath, const QString &shortMachineId);
+
+
     database::SyncOperationRepository m_repository;
+    database::SharedFileRepository m_fileRepository;
     core::SharedFolderManager *m_folderManager = nullptr;
     network::MessagingServer *m_messagingServer = nullptr;
     network::MessagingService *m_messagingService = nullptr;
@@ -158,9 +265,16 @@ private:
     QString m_machineId;
 
     /// Curseur de diffusion : dernier op_id déjà broadcasté.
-    /// Initialisé à latestId() pour ne pas re-diffuser les opérations
-    /// des sessions précédentes au démarrage.
     qint64 m_lastBroadcastOpId = 0;
+
+    // Release 8 — suivi des demandes de fichiers en attente.
+    // Clé : "<ownerMachineId>::<fileName>" → PendingFileTransfer
+    // (indexé par le basename du fichier tel qu'annoncé par TransferService).
+    QHash<QString, PendingFileTransfer> m_pendingByKey;
+
+    // Clé : transferKey (UUID) → PendingFileTransfer
+    // (construit lors de onTransferStarted pour une corrélation O(1)).
+    QHash<QString, PendingFileTransfer> m_activeByTransferKey;
 };
 
 } // namespace core::sync

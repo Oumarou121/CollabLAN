@@ -1,2 +1,3 @@
 - [SQLite migrations need manual idempotency](sqlite-migration-idempotency.md) — SQLite has no `ADD COLUMN IF NOT EXISTS`; guard ALTER TABLE migrations in app code, not just SQL.
 - [Qt AUTOMOC requires headers in target sources](qt-automoc-core-headers.md) — core/CMakeLists.txt originally only globbed *.cpp; new Q_OBJECT headers must also be globbed to trigger AUTOMOC.
+- [FolderSyncService transfer correlation](foldersync-transfer-correlation.md) — pending file requests keyed by ownerMachineId::fileName; private static methods can't be tested via QMetaObject::invokeMethod.

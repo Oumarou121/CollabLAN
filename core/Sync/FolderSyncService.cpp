@@ -15,16 +15,19 @@
 #include <QJsonArray>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QDateTime>
+#include <QCryptographicHash>
 
 namespace core::sync {
 
 namespace {
 
-// Noms des types de messages (distingués du chat par le champ "type").
-constexpr const char *kTypeFolderOp        = "folder_op";
-constexpr const char *kTypeFolderHello     = "folder_hello";
-constexpr const char *kTypeCatchupBatch    = "folder_catchup_batch";
-constexpr const char *kTypeFileRequest     = "folder_file_request";
+constexpr const char *kTypeFolderOp       = "folder_op";
+constexpr const char *kTypeFolderHello    = "folder_hello";
+constexpr const char *kTypeCatchupBatch   = "folder_catchup_batch";
+constexpr const char *kTypeFileRequest    = "folder_file_request";
 
 } // namespace
 
@@ -33,10 +36,9 @@ FolderSyncService::FolderSyncService(database::DatabaseManager *dbManager,
                                       QObject *parent)
     : QObject(parent)
     , m_repository(dbManager ? dbManager->database() : QSqlDatabase())
+    , m_fileRepository(dbManager ? dbManager->database() : QSqlDatabase())
     , m_folderManager(folderManager)
 {
-    // Initialise le curseur à latestId() pour ne pas re-diffuser les
-    // opérations déjà présentes en base avant ce démarrage.
     m_lastBroadcastOpId = m_repository.latestId();
 }
 
@@ -48,9 +50,7 @@ FolderSyncService::~FolderSyncService() = default;
 
 void FolderSyncService::setMessagingServer(network::MessagingServer *server)
 {
-    if (m_messagingServer == server) {
-        return;
-    }
+    if (m_messagingServer == server) return;
     m_messagingServer = server;
     if (m_messagingServer) {
         connect(m_messagingServer, &network::MessagingServer::messageReceived,
@@ -60,9 +60,7 @@ void FolderSyncService::setMessagingServer(network::MessagingServer *server)
 
 void FolderSyncService::setMessagingService(network::MessagingService *service)
 {
-    if (m_messagingService == service) {
-        return;
-    }
+    if (m_messagingService == service) return;
     m_messagingService = service;
     if (m_messagingService) {
         connect(m_messagingService, &network::MessagingService::messageReceived,
@@ -113,21 +111,21 @@ QJsonObject FolderSyncService::buildFolderOpJson(const models::FileSyncOperation
                                                   const models::SharedFolder &folder) const
 {
     QJsonObject obj;
-    obj[QStringLiteral("type")]             = QString::fromLatin1(kTypeFolderOp);
-    obj[QStringLiteral("folder_uuid")]      = folder.uuid();
-    obj[QStringLiteral("folder_name")]      = folder.name();
-    obj[QStringLiteral("op_type")]          = models::syncChangeTypeToString(op.type());
-    obj[QStringLiteral("relative_path")]    = op.relativePath();
+    obj[QStringLiteral("type")]              = QString::fromLatin1(kTypeFolderOp);
+    obj[QStringLiteral("folder_uuid")]       = folder.uuid();
+    obj[QStringLiteral("folder_name")]       = folder.name();
+    obj[QStringLiteral("op_type")]           = models::syncChangeTypeToString(op.type());
+    obj[QStringLiteral("relative_path")]     = op.relativePath();
     obj[QStringLiteral("old_relative_path")] = op.oldRelativePath();
-    obj[QStringLiteral("version")]          = op.version();
-    obj[QStringLiteral("machine_id")]       = op.machineId();
-    obj[QStringLiteral("op_id")]            = op.id();
+    obj[QStringLiteral("version")]           = op.version();
+    obj[QStringLiteral("machine_id")]        = op.machineId();
+    obj[QStringLiteral("op_id")]             = op.id();
 
-    const quint16 transferPort = m_transferService ? m_transferService->port()
-                                                   : network::TransferService::defaultPort();
+    const quint16 transferPort = m_transferService
+        ? m_transferService->port()
+        : network::TransferService::defaultPort();
     obj[QStringLiteral("transfer_port")] = static_cast<int>(transferPort);
 
-    // Enrichit avec hash/taille (info denormalisée depuis SharedFiles).
     const auto files = m_folderManager ? m_folderManager->getFiles(folder.id())
                                        : QVector<models::SharedFile>();
     for (const auto &f : files) {
@@ -143,34 +141,21 @@ QJsonObject FolderSyncService::buildFolderOpJson(const models::FileSyncOperation
 
 void FolderSyncService::onLocalFolderReindexed(qint64 folderId, int changeCount)
 {
-    if (!m_folderManager || changeCount <= 0) {
-        return;
-    }
+    if (!m_folderManager || changeCount <= 0) return;
 
     const auto folderOpt = m_folderManager->getFolder(folderId);
-    if (!folderOpt.has_value()) {
-        return;
-    }
+    if (!folderOpt.has_value()) return;
     const models::SharedFolder &folder = *folderOpt;
 
-    // Récupère les changeCount opérations les plus récentes du dossier
-    // (relativePath hydraté via JOIN). On ne diffuse que celles dont
-    // l'id > m_lastBroadcastOpId pour éviter les doublons.
     const auto ops = m_repository.getByFolderId(folderId, changeCount);
-    // ops est trié décroissant (plus récent en premier) : on accumule
-    // et on rebroadcast dans l'ordre chronologique (plus ancien d'abord).
     QVector<models::FileSyncOperation> newOps;
     for (const auto &op : ops) {
-        if (op.id() <= m_lastBroadcastOpId) {
-            break; // les suivants sont encore plus anciens
-        }
-        newOps.prepend(op); // remet dans l'ordre croissant
+        if (op.id() <= m_lastBroadcastOpId) break;
+        newOps.prepend(op);
     }
 
     for (const auto &op : newOps) {
-        if (op.id() > m_lastBroadcastOpId) {
-            m_lastBroadcastOpId = op.id();
-        }
+        if (op.id() > m_lastBroadcastOpId) m_lastBroadcastOpId = op.id();
         const QString json = QString::fromUtf8(
             QJsonDocument(buildFolderOpJson(op, folder)).toJson(QJsonDocument::Compact));
         broadcastMessage(json);
@@ -186,56 +171,46 @@ void FolderSyncService::onLocalFolderReindexed(qint64 folderId, int changeCount)
 void FolderSyncService::onConnectedToServer()
 {
     const qint64 lastOpId = m_repository.latestId();
-
     QJsonObject hello;
     hello[QStringLiteral("type")]        = QString::fromLatin1(kTypeFolderHello);
     hello[QStringLiteral("machine_id")]  = m_machineId;
     hello[QStringLiteral("last_op_id")] = lastOpId;
-
     const QString json = QString::fromUtf8(QJsonDocument(hello).toJson(QJsonDocument::Compact));
     sendMessageToServer(json);
     qDebug() << "[FolderSync] folder_hello envoyé, last_op_id =" << lastOpId;
 }
 
 // ---------------------------------------------------------------------------
-// Réception des messages (côté SERVER et côté CLIENT)
+// Réception des messages
 // ---------------------------------------------------------------------------
 
 void FolderSyncService::onServerMessageReceived(const QString &message,
                                                  const QHostAddress &senderAddress)
 {
     const QJsonDocument doc = QJsonDocument::fromJson(message.toUtf8());
-    if (!doc.isObject()) {
-        return;
-    }
+    if (!doc.isObject()) return;
     const QJsonObject obj = doc.object();
     const QString type = obj[QStringLiteral("type")].toString();
 
-    if (type == QString::fromLatin1(kTypeFolderOp)) {
+    if (type == QString::fromLatin1(kTypeFolderOp))
         handleFolderOp(obj, senderAddress);
-    } else if (type == QString::fromLatin1(kTypeFolderHello)) {
+    else if (type == QString::fromLatin1(kTypeFolderHello))
         handleFolderHello(obj);
-    } else if (type == QString::fromLatin1(kTypeFileRequest)) {
+    else if (type == QString::fromLatin1(kTypeFileRequest))
         handleFolderFileRequest(obj, senderAddress);
-    }
-    // kTypeCatchupBatch n'est jamais émis par un CLIENT vers le SERVER.
 }
 
 void FolderSyncService::onClientMessageReceived(const QString &message)
 {
     const QJsonDocument doc = QJsonDocument::fromJson(message.toUtf8());
-    if (!doc.isObject()) {
-        return;
-    }
+    if (!doc.isObject()) return;
     const QJsonObject obj = doc.object();
     const QString type = obj[QStringLiteral("type")].toString();
 
-    if (type == QString::fromLatin1(kTypeFolderOp)) {
+    if (type == QString::fromLatin1(kTypeFolderOp))
         handleFolderOp(obj, QHostAddress());
-    } else if (type == QString::fromLatin1(kTypeCatchupBatch)) {
+    else if (type == QString::fromLatin1(kTypeCatchupBatch))
         handleFolderCatchupBatch(obj);
-    }
-    // folder_hello / folder_file_request ne sont jamais envoyés par le SERVER au CLIENT.
 }
 
 // ---------------------------------------------------------------------------
@@ -245,39 +220,30 @@ void FolderSyncService::onClientMessageReceived(const QString &message)
 void FolderSyncService::handleFolderOp(const QJsonObject &obj,
                                         const QHostAddress &senderAddress)
 {
-    const QString folderUuid     = obj[QStringLiteral("folder_uuid")].toString();
-    const QString opType         = obj[QStringLiteral("op_type")].toString();
-    const QString relativePath   = obj[QStringLiteral("relative_path")].toString();
-    const QString oldRelPath     = obj[QStringLiteral("old_relative_path")].toString();
-    const QString machineId      = obj[QStringLiteral("machine_id")].toString();
-    const QString fileHash       = obj[QStringLiteral("file_hash")].toString();
-    const int version            = obj[QStringLiteral("version")].toInt();
-    const quint16 transferPort   = static_cast<quint16>(obj[QStringLiteral("transfer_port")].toInt(
-                                        static_cast<int>(network::TransferService::defaultPort())));
+    const QString folderUuid   = obj[QStringLiteral("folder_uuid")].toString();
+    const QString opType       = obj[QStringLiteral("op_type")].toString();
+    const QString relativePath = obj[QStringLiteral("relative_path")].toString();
+    const QString oldRelPath   = obj[QStringLiteral("old_relative_path")].toString();
+    const QString machineId    = obj[QStringLiteral("machine_id")].toString();
+    const QString fileHash     = obj[QStringLiteral("file_hash")].toString();
+    const int version          = obj[QStringLiteral("version")].toInt();
+    const quint16 transferPort = static_cast<quint16>(
+        obj[QStringLiteral("transfer_port")].toInt(
+            static_cast<int>(network::TransferService::defaultPort())));
 
-    // Ignore les opérations émises par ce poste lui-même.
-    if (machineId == m_machineId) {
-        return;
-    }
+    if (machineId == m_machineId) return;
 
-    qDebug() << "[FolderSync] Reçu folder_op" << opType << relativePath
-             << "depuis" << machineId;
+    qDebug() << "[FolderSync] Reçu folder_op" << opType << relativePath << "de" << machineId;
 
     emit remoteOpReceived(folderUuid, opType, relativePath, oldRelPath,
                           machineId, senderAddress, transferPort);
 
-    // Release 6 — Pour Create/Update : demander le fichier si on possède
-    // ce dossier localement mais pas (ou pas la bonne version de) ce fichier.
     if ((opType == QStringLiteral("Create") || opType == QStringLiteral("Update"))
         && m_folderManager)
     {
-        // Cherche le dossier par UUID parmi les dossiers locaux.
         const auto folders = m_folderManager->getFolders();
         for (const auto &folder : folders) {
-            if (folder.uuid() != folderUuid) {
-                continue;
-            }
-            // Dossier trouvé localement : vérifier si le fichier est à jour.
+            if (folder.uuid() != folderUuid) continue;
             bool needsUpdate = true;
             if (!fileHash.isEmpty()) {
                 const auto files = m_folderManager->getFiles(folder.id());
@@ -290,7 +256,9 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
                 }
             }
             if (needsUpdate) {
-                requestRemoteFile(folderUuid, relativePath, machineId);
+                requestRemoteFile(folderUuid, relativePath, machineId,
+                                  folder.id(), folder.localPath(),
+                                  fileHash, version);
             }
             break;
         }
@@ -299,35 +267,21 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
 
 void FolderSyncService::handleFolderHello(const QJsonObject &obj)
 {
-    // Release 7 — Réponse côté SERVER : envoie les opérations depuis last_op_id.
-    if (!m_folderManager) {
-        return;
-    }
-
+    if (!m_folderManager) return;
     const qint64 lastOpId = static_cast<qint64>(obj[QStringLiteral("last_op_id")].toDouble());
-    const quint16 selfTransferPort = m_transferService ? m_transferService->port()
-                                                       : network::TransferService::defaultPort();
+    const quint16 selfPort = m_transferService ? m_transferService->port()
+                                               : network::TransferService::defaultPort();
 
     QJsonArray opsArray;
     const auto folders = m_folderManager->getFolders();
     for (const auto &folder : folders) {
-        // N'envoie que les opérations issues de dossiers dont CE poste est l'origine.
-        if (!folder.isLocalOrigin()) {
-            continue;
-        }
-
-        // getByFolderId trie décroissant (plus récent d'abord) ; on s'arrête
-        // dès qu'on atteint un op_id <= lastOpId.
+        if (!folder.isLocalOrigin()) continue;
         const auto ops = m_repository.getByFolderId(folder.id(), 500);
         for (const auto &op : ops) {
-            if (op.id() <= lastOpId) {
-                break;
-            }
+            if (op.id() <= lastOpId) break;
             QJsonObject opObj = buildFolderOpJson(op, folder);
-            // buildFolderOpJson inclut déjà folder_uuid, folder_name, etc.
-            // On remplace "type" par le champ interne du batch (pas "folder_op").
             opObj.remove(QStringLiteral("type"));
-            opObj[QStringLiteral("transfer_port")] = static_cast<int>(selfTransferPort);
+            opObj[QStringLiteral("transfer_port")] = static_cast<int>(selfPort);
             opsArray.append(opObj);
         }
     }
@@ -335,26 +289,21 @@ void FolderSyncService::handleFolderHello(const QJsonObject &obj)
     QJsonObject batch;
     batch[QStringLiteral("type")]       = QString::fromLatin1(kTypeCatchupBatch);
     batch[QStringLiteral("operations")] = opsArray;
-
     const QString json = QString::fromUtf8(
         QJsonDocument(batch).toJson(QJsonDocument::Compact));
     broadcastMessage(json);
-    qDebug() << "[FolderSync] folder_catchup_batch envoyé :" << opsArray.size() << "opérations";
+    qDebug() << "[FolderSync] folder_catchup_batch envoyé :" << opsArray.size() << "ops";
 }
 
 void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
 {
     const QJsonArray opsArray = obj[QStringLiteral("operations")].toArray();
-    if (opsArray.isEmpty()) {
-        return;
-    }
+    if (opsArray.isEmpty()) return;
 
     QVector<models::FileSyncOperation> ops;
     ops.reserve(opsArray.size());
     for (const auto &value : opsArray) {
-        if (!value.isObject()) {
-            continue;
-        }
+        if (!value.isObject()) continue;
         const QJsonObject opObj = value.toObject();
 
         models::FileSyncOperation op;
@@ -366,52 +315,49 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
         op.setMachineId(opObj[QStringLiteral("machine_id")].toString());
         ops.append(op);
 
-        // Auto-demande du fichier pour Create/Update (même logique que handleFolderOp).
         const QString folderUuid   = opObj[QStringLiteral("folder_uuid")].toString();
         const QString opType       = opObj[QStringLiteral("op_type")].toString();
         const QString relativePath = opObj[QStringLiteral("relative_path")].toString();
         const QString machineId    = opObj[QStringLiteral("machine_id")].toString();
+        const QString fileHash     = opObj[QStringLiteral("file_hash")].toString();
+        const int version          = opObj[QStringLiteral("version")].toInt();
+
         if ((opType == QStringLiteral("Create") || opType == QStringLiteral("Update"))
             && machineId != m_machineId && m_folderManager)
         {
             const auto folders = m_folderManager->getFolders();
             for (const auto &folder : folders) {
                 if (folder.uuid() == folderUuid) {
-                    requestRemoteFile(folderUuid, relativePath, machineId);
+                    requestRemoteFile(folderUuid, relativePath, machineId,
+                                      folder.id(), folder.localPath(),
+                                      fileHash, version);
                     break;
                 }
             }
         }
     }
 
-    qDebug() << "[FolderSync] folder_catchup_batch reçu :" << ops.size() << "opérations";
+    qDebug() << "[FolderSync] folder_catchup_batch reçu :" << ops.size() << "ops";
     emit catchupBatchReceived(ops);
 }
 
 void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
                                                  const QHostAddress &senderAddress)
 {
-    if (!m_transferService || !m_folderManager) {
-        return;
-    }
+    if (!m_transferService || !m_folderManager) return;
 
-    const QString folderUuid        = obj[QStringLiteral("folder_uuid")].toString();
-    const QString relativePath      = obj[QStringLiteral("relative_path")].toString();
+    const QString folderUuid         = obj[QStringLiteral("folder_uuid")].toString();
+    const QString relativePath       = obj[QStringLiteral("relative_path")].toString();
     const QString requesterMachineId = obj[QStringLiteral("requester_machine_id")].toString();
-    const quint16 requesterPort     = static_cast<quint16>(
-                                          obj[QStringLiteral("requester_transfer_port")].toInt(
-                                              static_cast<int>(network::TransferService::defaultPort())));
+    const quint16 requesterPort      = static_cast<quint16>(
+        obj[QStringLiteral("requester_transfer_port")].toInt(
+            static_cast<int>(network::TransferService::defaultPort())));
 
-    // Résolution de l'adresse du pair : préférence au senderAddress (connexion
-    // directe), sinon on cherche via DiscoveryService par machineId.
     QHostAddress targetAddress = senderAddress;
     if ((targetAddress.isNull() || targetAddress == QHostAddress::Any) && m_discoveryService) {
         const auto peers = m_discoveryService->peers();
         for (const auto &peer : peers) {
-            if (peer.id == requesterMachineId) {
-                targetAddress = peer.address;
-                break;
-            }
+            if (peer.id == requesterMachineId) { targetAddress = peer.address; break; }
         }
     }
     if (targetAddress.isNull()) {
@@ -419,54 +365,248 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
         return;
     }
 
-    // Trouve le dossier et le chemin absolu du fichier demandé.
     const auto folders = m_folderManager->getFolders();
     for (const auto &folder : folders) {
-        if (folder.uuid() != folderUuid || !folder.isLocalOrigin()) {
-            continue;
-        }
-        const QString absPath = QDir::cleanPath(folder.localPath() + QDir::separator() + relativePath);
+        if (folder.uuid() != folderUuid || !folder.isLocalOrigin()) continue;
+        const QString absPath = QDir::cleanPath(
+            folder.localPath() + QDir::separator() + relativePath);
         if (!QFile::exists(absPath)) {
             qWarning() << "[FolderSync] folder_file_request : fichier introuvable :" << absPath;
             return;
         }
-
         const bool ok = m_transferService->sendFile(
-            targetAddress, requesterPort, absPath,
-            m_machineId, requesterMachineId);
-        if (!ok) {
+            targetAddress, requesterPort, absPath, m_machineId, requesterMachineId);
+        if (!ok)
             qWarning() << "[FolderSync] sendFile échoué pour" << absPath;
-        } else {
+        else
             qDebug() << "[FolderSync] Envoi de" << relativePath << "vers" << targetAddress;
-        }
         return;
     }
-
-    qWarning() << "[FolderSync] folder_file_request : dossier" << folderUuid << "introuvable localement";
+    qWarning() << "[FolderSync] folder_file_request : dossier" << folderUuid << "introuvable";
 }
 
 // ---------------------------------------------------------------------------
-// API publique : demande de fichier distant
+// API publique : demande de fichier distant (surcharge publique simple)
 // ---------------------------------------------------------------------------
 
 void FolderSyncService::requestRemoteFile(const QString &folderUuid,
                                            const QString &relativePath,
                                            const QString &ownerMachineId)
 {
-    const quint16 myTransferPort = m_transferService ? m_transferService->port()
-                                                     : network::TransferService::defaultPort();
+    // Version sans métadonnées : la PendingFileTransfer ne contiendra pas folderId
+    // ni localFolderPath → integrateReceivedFile ne sera pas appelé.
+    requestRemoteFile(folderUuid, relativePath, ownerMachineId,
+                      0, QString(), QString(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Release 8 — Suivi des demandes + intégration des fichiers reçus
+// ---------------------------------------------------------------------------
+
+void FolderSyncService::requestRemoteFile(const QString &folderUuid,
+                                           const QString &relativePath,
+                                           const QString &ownerMachineId,
+                                           qint64 folderId,
+                                           const QString &localFolderPath,
+                                           const QString &incomingHash,
+                                           int incomingVersion)
+{
+    const quint16 myPort = m_transferService ? m_transferService->port()
+                                             : network::TransferService::defaultPort();
 
     QJsonObject req;
     req[QStringLiteral("type")]                    = QString::fromLatin1(kTypeFileRequest);
     req[QStringLiteral("folder_uuid")]             = folderUuid;
     req[QStringLiteral("relative_path")]           = relativePath;
     req[QStringLiteral("requester_machine_id")]    = m_machineId;
-    req[QStringLiteral("requester_transfer_port")] = static_cast<int>(myTransferPort);
+    req[QStringLiteral("requester_transfer_port")] = static_cast<int>(myPort);
     req[QStringLiteral("owner_machine_id")]        = ownerMachineId;
 
     const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
     broadcastMessage(json);
-    qDebug() << "[FolderSync] Demande de fichier :" << relativePath << "depuis" << ownerMachineId;
+
+    // Enregistre la demande en attente pour corréler avec TransferService.
+    if (folderId > 0 && !localFolderPath.isEmpty()) {
+        const QString fileName = QFileInfo(relativePath).fileName();
+        const QString pendingKey = ownerMachineId + QStringLiteral("::") + fileName;
+
+        PendingFileTransfer pending;
+        pending.folderUuid       = folderUuid;
+        pending.relativePath     = relativePath;
+        pending.folderId         = folderId;
+        pending.localFolderPath  = localFolderPath;
+        pending.ownerMachineId   = ownerMachineId;
+        pending.incomingHash     = incomingHash;
+        pending.incomingVersion  = incomingVersion;
+        m_pendingByKey.insert(pendingKey, pending);
+    }
+
+    qDebug() << "[FolderSync] Demande de fichier :" << relativePath << "de" << ownerMachineId;
+}
+
+void FolderSyncService::onTransferStarted(const QString &transferKey,
+                                           const QString &fileName,
+                                           qint64 /*fileSize*/,
+                                           bool incoming,
+                                           qint64 /*resumeOffset*/,
+                                           const QString &/*senderUuid*/,
+                                           const QString &/*recipientUuid*/,
+                                           const QHostAddress &/*peerAddress*/,
+                                           const QString &peerMachineId)
+{
+    if (!incoming) return; // On ne s'occupe que des réceptions.
+
+    // Cherche une demande en attente dont l'expéditeur et le nom de fichier
+    // correspondent à ce transfert entrant.
+    const QString pendingKey = peerMachineId + QStringLiteral("::") + fileName;
+    const auto it = m_pendingByKey.find(pendingKey);
+    if (it == m_pendingByKey.end()) return;
+
+    // Corrèle : associe le transferKey à la PendingFileTransfer.
+    m_activeByTransferKey.insert(transferKey, it.value());
+    m_pendingByKey.erase(it);
+
+    qDebug() << "[FolderSync] Transfert" << transferKey << "corrélé à" << fileName;
+}
+
+void FolderSyncService::onTransferCompleted(const QString &transferKey,
+                                             const QString &filePath)
+{
+    const auto it = m_activeByTransferKey.find(transferKey);
+    if (it == m_activeByTransferKey.end()) return; // Pas un transfert folder-sync.
+
+    const PendingFileTransfer pending = it.value();
+    m_activeByTransferKey.erase(it);
+
+    integrateReceivedFile(pending, filePath);
+}
+
+// ---------------------------------------------------------------------------
+// Intégration d'un fichier reçu (Release 8)
+// ---------------------------------------------------------------------------
+
+QString FolderSyncService::computeHash(const QString &filePath)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) return QString();
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    if (!hasher.addData(&file)) return QString();
+    return QString::fromLatin1(hasher.result().toHex());
+}
+
+QString FolderSyncService::makeConflictPath(const QString &relativePath,
+                                             const QString &shortMachineId)
+{
+    const QFileInfo fi(relativePath);
+    const QString baseName  = fi.completeBaseName();
+    const QString suffix    = fi.suffix();
+    const QString dir       = fi.path(); // "" or "Docs" etc.
+
+    const QString conflictName = suffix.isEmpty()
+        ? QStringLiteral("%1 (%2)").arg(baseName, shortMachineId)
+        : QStringLiteral("%1 (%2).%3").arg(baseName, shortMachineId, suffix);
+
+    return (dir.isEmpty() || dir == QStringLiteral("."))
+        ? conflictName
+        : dir + QStringLiteral("/") + conflictName;
+}
+
+void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending,
+                                               const QString &sourcePath)
+{
+    // 1. Hash du fichier reçu.
+    const QString receivedHash = computeHash(sourcePath);
+    if (receivedHash.isEmpty()) {
+        qWarning() << "[FolderSync] Impossible de hasher" << sourcePath;
+        return;
+    }
+
+    // 2. Chemin cible absolu.
+    const QString targetAbsPath = QDir::cleanPath(
+        pending.localFolderPath + QDir::separator() + pending.relativePath);
+
+    // 3. Détection de conflit (Release 8).
+    bool wasConflict = false;
+    QString effectiveRelativePath = pending.relativePath;
+
+    const auto existing = m_fileRepository.findByRelativePath(
+        pending.folderId, pending.relativePath);
+
+    if (existing.has_value()
+        && !existing->hash().isEmpty()
+        && existing->hash() != receivedHash
+        && QFile::exists(targetAbsPath))
+    {
+        // Conflit : une version locale différente existe déjà.
+        // On renomme le fichier reçu plutôt que d'écraser.
+        const QString shortId = pending.ownerMachineId.left(6);
+        effectiveRelativePath = makeConflictPath(pending.relativePath, shortId);
+        const QString conflictAbsPath = QDir::cleanPath(
+            pending.localFolderPath + QDir::separator() + effectiveRelativePath);
+
+        // Crée les répertoires parents si nécessaire.
+        QDir().mkpath(QFileInfo(conflictAbsPath).absolutePath());
+
+        if (!QFile::copy(sourcePath, conflictAbsPath)) {
+            qWarning() << "[FolderSync] Copie conflit échouée vers" << conflictAbsPath;
+            return;
+        }
+
+        wasConflict = true;
+        qWarning() << "[FolderSync] Conflit détecté :" << pending.relativePath
+                   << "→" << effectiveRelativePath;
+        emit conflictDetected(pending.folderUuid, pending.relativePath, effectiveRelativePath);
+    }
+    else
+    {
+        // Pas de conflit : copie normale vers le chemin cible.
+        // Crée les répertoires parents si nécessaire.
+        QDir().mkpath(QFileInfo(targetAbsPath).absolutePath());
+
+        // Supprime l'ancienne version si elle existe (update).
+        if (QFile::exists(targetAbsPath)) {
+            QFile::remove(targetAbsPath);
+        }
+
+        if (!QFile::copy(sourcePath, targetAbsPath)) {
+            qWarning() << "[FolderSync] Copie échouée vers" << targetAbsPath;
+            return;
+        }
+    }
+
+    // 4. Infos du fichier final sur disque.
+    const QString finalAbsPath = QDir::cleanPath(
+        pending.localFolderPath + QDir::separator() + effectiveRelativePath);
+    const QFileInfo fi(finalAbsPath);
+
+    // 5. Upsert SharedFile.
+    models::SharedFile sharedFile(0, pending.folderId, effectiveRelativePath);
+    sharedFile.setHash(receivedHash);
+    sharedFile.setSize(fi.size());
+    sharedFile.setLastModified(fi.lastModified());
+    // Version : utilise la version annoncée si disponible, sinon incrémente.
+    sharedFile.setVersion(pending.incomingVersion > 0 ? pending.incomingVersion : 1);
+    sharedFile.setDeleted(false);
+
+    const auto upserted = m_fileRepository.upsert(sharedFile);
+    if (!upserted.has_value()) {
+        qWarning() << "[FolderSync] upsert SharedFile échoué pour" << effectiveRelativePath;
+        return;
+    }
+
+    // 6. Insert FileSyncOperation.
+    const bool isUpdate = existing.has_value() && !wasConflict;
+    models::FileSyncOperation op;
+    op.setType(isUpdate ? models::SyncChangeType::Update : models::SyncChangeType::Create);
+    op.setFileId(upserted->id());
+    op.setRelativePath(effectiveRelativePath);
+    op.setVersion(upserted->version());
+    op.setMachineId(pending.ownerMachineId);
+    m_repository.insert(op);
+
+    qDebug() << "[FolderSync] Fichier intégré :" << effectiveRelativePath
+             << (wasConflict ? "(conflit)" : "");
+    emit fileIntegrated(pending.folderUuid, effectiveRelativePath, wasConflict);
 }
 
 } // namespace core::sync
