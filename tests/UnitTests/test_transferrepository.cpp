@@ -13,14 +13,14 @@ class TestTransferRepository : public QObject
 private:
     QTemporaryDir m_tempDir;
     database::DatabaseManager *m_dbManager = nullptr;
-    int m_senderId = -1;
-    int m_recipientId = -1;
+    QString m_senderUuid;
+    QString m_recipientUuid;
 
     models::Transfer makeTransfer(const QString &fileName, qint64 size) const
     {
         models::Transfer transfer;
-        transfer.setSenderId(m_senderId);
-        transfer.setRecipientId(m_recipientId);
+        transfer.setSenderUuid(m_senderUuid);
+        transfer.setRecipientUuid(m_recipientUuid);
         transfer.setFileName(fileName);
         transfer.setFileSize(size);
         transfer.setStatus(models::TransferStatus::Pending);
@@ -42,15 +42,19 @@ private slots:
         sender.setName(QStringLiteral("sender"));
         sender.setPasswordHash(QStringLiteral("hash"));
         sender.setPasswordSalt(QStringLiteral("salt"));
-        m_senderId = userRepo.create(sender);
-        QVERIFY(m_senderId >= 0);
+        const int senderId = userRepo.create(sender);
+        QVERIFY(senderId >= 0);
+        m_senderUuid = userRepo.findById(senderId)->uuid();
+        QVERIFY(!m_senderUuid.isEmpty());
 
         models::User recipient;
         recipient.setName(QStringLiteral("recipient"));
         recipient.setPasswordHash(QStringLiteral("hash"));
         recipient.setPasswordSalt(QStringLiteral("salt"));
-        m_recipientId = userRepo.create(recipient);
-        QVERIFY(m_recipientId >= 0);
+        const int recipientId = userRepo.create(recipient);
+        QVERIFY(recipientId >= 0);
+        m_recipientUuid = userRepo.findById(recipientId)->uuid();
+        QVERIFY(!m_recipientUuid.isEmpty());
     }
 
     void cleanup()
@@ -71,8 +75,8 @@ private slots:
         QCOMPARE(found->fileName(), QStringLiteral("rapport.pdf"));
         QCOMPARE(found->fileSize(), static_cast<qint64>(123456));
         QCOMPARE(found->status(), models::TransferStatus::Pending);
-        QCOMPARE(found->senderId(), m_senderId);
-        QCOMPARE(found->recipientId(), m_recipientId);
+        QCOMPARE(found->senderUuid(), m_senderUuid);
+        QCOMPARE(found->recipientUuid(), m_recipientUuid);
     }
 
     void testFindByIdMissingReturnsNullopt()
@@ -100,10 +104,10 @@ private slots:
         QVERIFY(repo.create(makeTransfer(QStringLiteral("a.txt"), 10)) >= 0);
         QVERIFY(repo.create(makeTransfer(QStringLiteral("b.txt"), 20)) >= 0);
 
-        const auto senderTransfers = repo.findByUser(m_senderId);
+        const auto senderTransfers = repo.findByUser(m_senderUuid);
         QCOMPARE(static_cast<int>(senderTransfers.size()), 2);
 
-        const auto recipientTransfers = repo.findByUser(m_recipientId);
+        const auto recipientTransfers = repo.findByUser(m_recipientUuid);
         QCOMPARE(static_cast<int>(recipientTransfers.size()), 2);
     }
 
@@ -117,16 +121,14 @@ private slots:
         QVERIFY(!repo.findById(id).has_value());
     }
 
-    void testCreateWithUnknownUserIdsPersists()
+    void testCreateWithUnknownUserUuidsPersists()
     {
-        // Migration #012 : un transfert vers/depuis un poste LAN sans
-        // compte utilisateur associe (id inconnu, represente par -1) doit
-        // pouvoir etre enregistre au lieu d'echouer la contrainte de cle
-        // etrangere (c'etait le bug empechant tout historique reseau).
+        // Migration #017 : un transfert vers/depuis un poste LAN sans
+        // compte utilisateur associe (uuid inconnu, chaine vide) doit
+        // pouvoir etre enregistre sans contrainte de cle etrangere
+        // (c'etait le bug empechant tout historique reseau, migration #012).
         database::TransferRepository repo(m_dbManager->database());
         models::Transfer transfer;
-        transfer.setSenderId(-1);
-        transfer.setRecipientId(-1);
         transfer.setFileName(QStringLiteral("depuis-le-lan.bin"));
         transfer.setFileSize(42);
         transfer.setStatus(models::TransferStatus::Completed);
@@ -136,8 +138,8 @@ private slots:
 
         const auto found = repo.findById(id);
         QVERIFY(found.has_value());
-        QCOMPARE(found->senderId(), -1);
-        QCOMPARE(found->recipientId(), -1);
+        QVERIFY(found->senderUuid().isEmpty());
+        QVERIFY(found->recipientUuid().isEmpty());
     }
 
     void testUpdateFilePathPersists()
@@ -203,7 +205,7 @@ private slots:
         second.setPeerName(QStringLiteral("laptop-marie"));
         QVERIFY(repo.create(second) >= 0);
 
-        const auto transfers = repo.findByUser(m_senderId);
+        const auto transfers = repo.findByUser(m_senderUuid);
         QCOMPARE(static_cast<int>(transfers.size()), 2);
         for (const auto &t : transfers) {
             QCOMPARE(t.peerAddress(), QStringLiteral("10.0.0.9"));

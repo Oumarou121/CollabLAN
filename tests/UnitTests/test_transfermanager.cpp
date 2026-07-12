@@ -32,8 +32,8 @@ private:
     QTemporaryDir m_sourceDir;
     QTemporaryDir m_destDir;
     QString m_dbPath;
-    int m_senderId = -1;
-    int m_recipientId = -1;
+    QString m_senderUuid;
+    QString m_recipientUuid;
 
 private slots:
     void init()
@@ -53,15 +53,19 @@ private slots:
         sender.setName(QStringLiteral("alice"));
         sender.setPasswordHash(QStringLiteral("hash"));
         sender.setPasswordSalt(QStringLiteral("salt"));
-        m_senderId = userRepo.create(sender);
-        QVERIFY(m_senderId >= 0);
+        const int senderId = userRepo.create(sender);
+        QVERIFY(senderId >= 0);
+        m_senderUuid = userRepo.findById(senderId)->uuid();
+        QVERIFY(!m_senderUuid.isEmpty());
 
         models::User recipient;
         recipient.setName(QStringLiteral("bob"));
         recipient.setPasswordHash(QStringLiteral("hash"));
         recipient.setPasswordSalt(QStringLiteral("salt"));
-        m_recipientId = userRepo.create(recipient);
-        QVERIFY(m_recipientId >= 0);
+        const int recipientId = userRepo.create(recipient);
+        QVERIFY(recipientId >= 0);
+        m_recipientUuid = userRepo.findById(recipientId)->uuid();
+        QVERIFY(!m_recipientUuid.isEmpty());
 
         setup.close();
     }
@@ -94,7 +98,7 @@ private slots:
             QSignalSpy statusChanged(&manager, &core::TransferManager::transferStatusChanged);
             QSignalSpy completed(&transferService, &network::TransferService::transferCompleted);
 
-            QVERIFY(manager.sendFile(QHostAddress::LocalHost, 23470, sourcePath, m_senderId, m_recipientId));
+            QVERIFY(manager.sendFile(QHostAddress::LocalHost, 23470, sourcePath, m_senderUuid, m_recipientUuid));
 
             // Deux transferCompleted attendus : le socket expediteur ET le
             // socket destinataire (TransferService envoie et recoit ici
@@ -114,10 +118,10 @@ private slots:
                 QCOMPARE(args.at(1).value<models::TransferStatus>(), models::TransferStatus::Completed);
             }
 
-            const auto history = manager.userTransfers(m_recipientId);
+            const auto history = manager.userTransfers(m_recipientUuid);
             QVERIFY(!history.empty());
             for (const auto &t : history) {
-                if (t.recipientId() == m_recipientId && t.senderId() == m_senderId) {
+                if (t.recipientUuid() == m_recipientUuid && t.senderUuid() == m_senderUuid) {
                     recordedIncomingId = t.id();
                 }
             }
@@ -150,27 +154,27 @@ private slots:
             QVERIFY(reloaded.has_value());
             QCOMPARE(reloaded->fileName(), QStringLiteral("note.txt"));
             QCOMPARE(reloaded->status(), models::TransferStatus::Completed);
-            QCOMPARE(reloaded->senderId(), m_senderId);
-            QCOMPARE(reloaded->recipientId(), m_recipientId);
+            QCOMPARE(reloaded->senderUuid(), m_senderUuid);
+            QCOMPARE(reloaded->recipientUuid(), m_recipientUuid);
             QVERIFY(!reloaded->filePath().isEmpty());
 
-            const auto userHistory = repoAfterRestart.findByUser(m_recipientId);
+            const auto userHistory = repoAfterRestart.findByUser(m_recipientUuid);
             QVERIFY(!userHistory.empty());
 
             dbManager.close();
         }
     }
 
-    void transferWithoutValidUserIdsIsStillPersisted()
+    void transferWithoutValidUserUuidsIsStillPersisted()
     {
         // Avant la migration #012, sender_id/recipient_id etaient NOT NULL
-        // REFERENCES Users(id) : un id inconnu (-1, cas courant d'un envoi
-        // vers un poste LAN sans compte utilisateur associe) violait la
-        // contrainte de cle etrangere et l'INSERT echouait silencieusement,
-        // privant l'utilisateur de tout historique pour ce transfert. Ces
-        // colonnes sont desormais nullables : le transfert doit toujours
-        // apparaitre dans l'historique, avec un id "inconnu" represente
-        // par -1 (voir TransferRepository::transferFromQuery()).
+        // REFERENCES Users(id) : un id inconnu violait la contrainte de
+        // cle etrangere et l'INSERT echouait silencieusement, privant
+        // l'utilisateur de tout historique pour ce transfert. La migration
+        // #017 a remplace ces colonnes par sender_uuid/recipient_uuid, sans
+        // contrainte : le transfert doit toujours apparaitre dans
+        // l'historique, avec un uuid "inconnu" represente par une chaine
+        // vide (voir TransferRepository::transferFromQuery()).
         const QString sourcePath = m_sourceDir.filePath(QStringLiteral("anonymous.txt"));
         {
             QFile file(sourcePath);
@@ -191,7 +195,7 @@ private slots:
         manager.setTransferService(&transferService);
 
         QSignalSpy completed(&transferService, &network::TransferService::transferCompleted);
-        QVERIFY(manager.sendFile(QHostAddress::LocalHost, 23471, sourcePath, /*senderId=*/-1, /*recipientId=*/-1));
+        QVERIFY(manager.sendFile(QHostAddress::LocalHost, 23471, sourcePath, /*senderUuid=*/QString(), /*recipientUuid=*/QString()));
         QVERIFY(completed.wait(5000));
         if (completed.count() < 2) {
             QVERIFY(completed.wait(5000));
@@ -201,8 +205,8 @@ private slots:
         bool found = false;
         for (const auto &t : history) {
             if (t.fileName() == QStringLiteral("anonymous.txt")) {
-                QCOMPARE(t.senderId(), -1);
-                QCOMPARE(t.recipientId(), -1);
+                QVERIFY(t.senderUuid().isEmpty());
+                QVERIFY(t.recipientUuid().isEmpty());
                 found = true;
             }
         }

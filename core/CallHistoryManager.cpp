@@ -63,9 +63,14 @@ QString CallHistoryManager::resolvePeerName(const QHostAddress &peerAddress) con
     if (!m_discoveryService) {
         return QString();
     }
+    // Voir TransferManager::resolvePeerName() pour l'explication complete :
+    // operator== compare en mode StrictConversion et ne reconnait pas
+    // "::ffff:192.168.1.1" (adresse IPv4-mappee, frequente sur les appels
+    // entrants) comme egale a "192.168.1.1" (adresse stockee par
+    // DiscoveryService). On compare donc en mode TolerantConversion.
     const QList<network::DiscoveredPeer> peers = m_discoveryService->peers();
     for (const network::DiscoveredPeer &peer : peers) {
-        if (peer.address == peerAddress) {
+        if (peer.address.isEqual(peerAddress, QHostAddress::TolerantConversion)) {
             return peer.name;
         }
     }

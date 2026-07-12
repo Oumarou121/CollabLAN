@@ -68,6 +68,13 @@ public:
     /// core::TransferManager pour renseigner l'expediteur d'un transfert.
     std::optional<int> currentUserId() const;
 
+    /// UUID (Users.uuid, migration #010) de l'utilisateur actuellement
+    /// authentifie, ou chaine vide si personne n'est connecte. Utilise
+    /// par ex. par core::TransferContext pour renseigner senderUuid d'un
+    /// transfert (voir migration #017 : sender_id/recipient_id entiers
+    /// remplaces par sender_uuid/recipient_uuid).
+    QString currentUserUuid() const;
+
     // --- API C++ (administration) ---------------------------------------
 
     /**
@@ -151,6 +158,7 @@ private:
     QString m_currentUsername;
     bool m_currentUserIsAdmin = false;
     std::optional<int> m_currentUserId;
+    QString m_currentUserUuid;
 
     UserManagerError m_lastError = UserManagerError::None;
 };

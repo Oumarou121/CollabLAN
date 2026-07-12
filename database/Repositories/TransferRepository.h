@@ -32,7 +32,7 @@ public:
 
     std::optional<models::Transfer> findById(int id) const;
     std::vector<models::Transfer> findAll() const;
-    std::vector<models::Transfer> findByUser(int userId) const;
+    std::vector<models::Transfer> findByUser(const QString &userUuid) const;
 
     /**
      * @brief Met a jour uniquement le statut d'un transfert.

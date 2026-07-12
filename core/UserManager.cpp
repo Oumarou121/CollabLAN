@@ -45,6 +45,7 @@ bool UserManager::login(const QString &username, const QString &password)
     m_currentUsername = user->name();
     m_currentUserIsAdmin = user->isAdmin();
     m_currentUserId = user->id();
+    m_currentUserUuid = user->uuid();
     m_authenticated = true;
     setBusy(false);
     emit authenticationChanged();
@@ -57,6 +58,7 @@ void UserManager::logout()
     if (m_currentUserId.has_value()) {
         m_userRepository.updateStatus(*m_currentUserId, models::UserStatus::Offline);
         m_currentUserId.reset();
+        m_currentUserUuid.clear();
     }
 
     if (!m_authenticated) {
@@ -86,6 +88,11 @@ bool UserManager::isCurrentUserAdmin() const
 std::optional<int> UserManager::currentUserId() const
 {
     return m_currentUserId;
+}
+
+QString UserManager::currentUserUuid() const
+{
+    return m_currentUserUuid;
 }
 
 bool UserManager::isBusy() const

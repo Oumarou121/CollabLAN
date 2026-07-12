@@ -94,7 +94,7 @@ private slots:
         QSignalSpy sender1Progress(sender1.get(), &TransferService::transferProgress);
 
         QVERIFY(sender1->sendFile(QHostAddress::LocalHost, receiverPort, sourcePath,
-                                   /*senderId=*/1, /*recipientId=*/2));
+                                   /*senderUuid=*/QStringLiteral("1"), /*recipientUuid=*/QStringLiteral("2")));
 
         // Attend que le transfert ait progresse au-dela d'un tiers du
         // fichier avant de simuler la coupure, pour etre sur d'interrompre
@@ -139,7 +139,7 @@ private slots:
         QSignalSpy sender2Progress(sender2.get(), &TransferService::transferProgress);
 
         QVERIFY(sender2->sendFile(QHostAddress::LocalHost, receiverPort, sourcePath,
-                                   /*senderId=*/1, /*recipientId=*/2));
+                                   /*senderUuid=*/QStringLiteral("1"), /*recipientUuid=*/QStringLiteral("2")));
 
         QVERIFY(sender2Completed.wait(15000));
         QCOMPARE(sender2Failed.count(), 0);

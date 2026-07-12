@@ -102,8 +102,9 @@ signals:
 
 private slots:
     void onTransferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
-                            bool incoming, qint64 resumeOffset, int senderId, int recipientId,
-                            const QHostAddress &peerAddress);
+                            bool incoming, qint64 resumeOffset, const QString &senderUuid,
+                            const QString &recipientUuid, const QHostAddress &peerAddress,
+                            const QString &peerMachineId);
     void onTransferProgress(const QString &transferKey, qint64 bytesTransferred, qint64 totalBytes);
     void onTransferCompleted(const QString &transferKey, const QString &filePath);
     void onTransferFailed(const QString &transferKey, const QString &errorString);
@@ -112,10 +113,15 @@ private:
     int indexOfTransfer(const QString &transferKey) const;
     static int percentOf(qint64 bytesTransferred, qint64 totalBytes);
 
-    /// Resout le nom affichable d'un correspondant a partir de son
-    /// adresse IP, via m_peersModel (poste actuellement decouvert sur le
-    /// reseau local). Retourne une chaine vide si non resolu.
-    QString resolvePeerName(const QHostAddress &peerAddress) const;
+    /// Resout le nom affichable d'un correspondant. Priorite a
+    /// peerMachineId (UUID DiscoveryService::localId(), transmis dans
+    /// l'en-tete de transfert - voir network::TransferService::encodeHeader()) :
+    /// contrairement a l'adresse IP, il reste valide meme si la machine a
+    /// plusieurs interfaces reseau. Repli sur peerAddress (comparaison
+    /// tolerante aux adresses IPv4-mappees en IPv6) si peerMachineId est
+    /// vide, via m_peersModel (poste actuellement decouvert sur le reseau
+    /// local). Retourne une chaine vide si non resolu.
+    QString resolvePeerName(const QHostAddress &peerAddress, const QString &peerMachineId) const;
 
     /// Reconstruit activeTransfers() a partir de l'historique persiste
     /// (core::TransferManager::allTransfers()), pour que l'historique

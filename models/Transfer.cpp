@@ -26,15 +26,15 @@ TransferStatus transferStatusFromString(const QString &value)
 Transfer::Transfer() = default;
 
 Transfer::Transfer(int id,
-                    int senderId,
-                    int recipientId,
+                    QString senderUuid,
+                    QString recipientUuid,
                     QString fileName,
                     qint64 fileSize,
                     TransferStatus status,
                     QDateTime createdAt)
     : m_id(id)
-    , m_senderId(senderId)
-    , m_recipientId(recipientId)
+    , m_senderUuid(std::move(senderUuid))
+    , m_recipientUuid(std::move(recipientUuid))
     , m_fileName(std::move(fileName))
     , m_fileSize(fileSize)
     , m_status(status)
@@ -47,11 +47,11 @@ Transfer::~Transfer() = default;
 int Transfer::id() const { return m_id; }
 void Transfer::setId(int id) { m_id = id; }
 
-int Transfer::senderId() const { return m_senderId; }
-void Transfer::setSenderId(int senderId) { m_senderId = senderId; }
+QString Transfer::senderUuid() const { return m_senderUuid; }
+void Transfer::setSenderUuid(const QString &senderUuid) { m_senderUuid = senderUuid; }
 
-int Transfer::recipientId() const { return m_recipientId; }
-void Transfer::setRecipientId(int recipientId) { m_recipientId = recipientId; }
+QString Transfer::recipientUuid() const { return m_recipientUuid; }
+void Transfer::setRecipientUuid(const QString &recipientUuid) { m_recipientUuid = recipientUuid; }
 
 QString Transfer::fileName() const { return m_fileName; }
 void Transfer::setFileName(const QString &fileName) { m_fileName = fileName; }
@@ -68,6 +68,9 @@ void Transfer::setPeerAddress(const QString &peerAddress) { m_peerAddress = peer
 QString Transfer::peerName() const { return m_peerName; }
 void Transfer::setPeerName(const QString &peerName) { m_peerName = peerName; }
 
+QString Transfer::peerMachineId() const { return m_peerMachineId; }
+void Transfer::setPeerMachineId(const QString &peerMachineId) { m_peerMachineId = peerMachineId; }
+
 TransferStatus Transfer::status() const { return m_status; }
 void Transfer::setStatus(TransferStatus status) { m_status = status; }
 
@@ -76,9 +79,9 @@ void Transfer::setCreatedAt(const QDateTime &createdAt) { m_createdAt = createdA
 
 bool Transfer::isValid() const
 {
-    // senderId/recipientId peuvent legitimement etre inconnus (-1) pour un
+    // senderUuid/recipientUuid peuvent legitimement etre vides pour un
     // transfert LAN vers/depuis un poste sans compte utilisateur associe
-    // (migration #012) : seuls le nom et la taille du fichier sont requis.
+    // (migration #017) : seuls le nom et la taille du fichier sont requis.
     return !m_fileName.isEmpty() && m_fileSize >= 0;
 }
 

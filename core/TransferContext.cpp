@@ -80,22 +80,44 @@ void TransferContext::setUserManager(UserManager *manager)
     m_userManager = manager;
 
     // Refait le calcul Envoi/Reception de l'historique deja charge
-    // (base sur senderId == utilisateur courant), potentiellement
+    // (base sur senderUuid == utilisateur courant), potentiellement
     // indetermine si setUserManager() est appele apres setTransferManager().
     loadHistory();
 }
 
-QString TransferContext::resolvePeerName(const QHostAddress &peerAddress) const
+QString TransferContext::resolvePeerName(const QHostAddress &peerAddress, const QString &peerMachineId) const
 {
-    if (!m_peersModel || peerAddress.isNull()) {
+    if (!m_peersModel) {
         return QString();
     }
 
     const int rows = m_peersModel->rowCount();
+
+    // Priorite a l'UUID (voir la documentation de resolvePeerName() dans
+    // TransferContext.h) : insensible a l'interface reseau empruntee,
+    // contrairement a l'adresse IP.
+    if (!peerMachineId.isEmpty()) {
+        for (int row = 0; row < rows; ++row) {
+            const QModelIndex idx = m_peersModel->index(row, 0);
+            const QString peerId = m_peersModel->data(idx, network::PeersModel::IdRole).toString();
+            if (peerId == peerMachineId) {
+                return m_peersModel->data(idx, network::PeersModel::NameRole).toString();
+            }
+        }
+    }
+
+    if (peerAddress.isNull()) {
+        return QString();
+    }
     for (int row = 0; row < rows; ++row) {
         const QModelIndex idx = m_peersModel->index(row, 0);
         const QString address = m_peersModel->data(idx, network::PeersModel::AddressRole).toString();
-        if (QHostAddress(address) == peerAddress) {
+        // Comparaison tolerante (QHostAddress::isEqual + TolerantConversion) :
+        // operator== compare par defaut en mode StrictConversion, qui ne
+        // reconnait pas "::ffff:192.168.1.1" (adresse IPv4-mappee, souvent
+        // rapportee par QTcpSocket::peerAddress() sur une connexion
+        // entrante en double pile) comme egale a "192.168.1.1".
+        if (QHostAddress(address).isEqual(peerAddress, QHostAddress::TolerantConversion)) {
             return m_peersModel->data(idx, network::PeersModel::NameRole).toString();
         }
     }
@@ -156,14 +178,14 @@ bool TransferContext::sendFile(const QString &filePath, const QString &address, 
     const quint16 port = portHint > 0 ? static_cast<quint16>(portHint)
                                        : network::TransferService::defaultPort();
 
-    // senderId identifie l'utilisateur courant dans l'historique persiste
-    // (issue #55) ; recipientId n'est pas resolvable a partir d'un poste
-    // reseau (aucun compte utilisateur associe a un pair decouvert), donc
-    // laisse a -1 (inconnu) plutot que de deviner un identifiant errone.
-    const int senderId = m_userManager && m_userManager->currentUserId().has_value()
-                              ? m_userManager->currentUserId().value()
-                              : -1;
-    const int recipientId = -1;
+    // senderUuid identifie l'utilisateur courant dans l'historique persiste
+    // (issue #55, migration #017) ; recipientUuid n'est pas resolvable a
+    // partir d'un poste reseau (aucun compte utilisateur associe a un pair
+    // decouvert), donc laisse vide plutot que de deviner un identifiant
+    // errone (voir peer_machine_id, migration #016, pour l'identification
+    // fiable du poste lui-meme).
+    const QString senderUuid = m_userManager ? m_userManager->currentUserUuid() : QString();
+    const QString recipientUuid;
 
     // TransferService::transferStarted() (qui alimente activeTransfers)
     // n'est emis qu'une fois la connexion TCP etablie, de maniere
@@ -173,7 +195,7 @@ bool TransferContext::sendFile(const QString &filePath, const QString &address, 
     const QString fileName = info.fileName();
     m_pendingSendFilePaths[fileName].append(localPath);
 
-    const bool started = m_transferManager->sendFile(host, port, localPath, senderId, recipientId);
+    const bool started = m_transferManager->sendFile(host, port, localPath, senderUuid, recipientUuid);
     if (!started) {
         QStringList &pending = m_pendingSendFilePaths[fileName];
         pending.removeOne(localPath);
@@ -207,11 +229,12 @@ int TransferContext::percentOf(qint64 bytesTransferred, qint64 totalBytes)
 }
 
 void TransferContext::onTransferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
-                                         bool incoming, qint64 resumeOffset, int senderId, int recipientId,
-                                         const QHostAddress &peerAddress)
+                                         bool incoming, qint64 resumeOffset, const QString &senderUuid,
+                                         const QString &recipientUuid, const QHostAddress &peerAddress,
+                                         const QString &peerMachineId)
 {
-    Q_UNUSED(senderId)
-    Q_UNUSED(recipientId)
+    Q_UNUSED(senderUuid)
+    Q_UNUSED(recipientUuid)
 
     QVariantMap entry;
     entry[QStringLiteral("transferKey")] = transferKey;
@@ -223,7 +246,7 @@ void TransferContext::onTransferStarted(const QString &transferKey, const QStrin
     entry[QStringLiteral("percent")] = percentOf(resumeOffset, fileSize);
     entry[QStringLiteral("errorString")] = QString();
     entry[QStringLiteral("peerAddress")] = peerAddress.isNull() ? QString() : peerAddress.toString();
-    entry[QStringLiteral("peerName")] = resolvePeerName(peerAddress);
+    entry[QStringLiteral("peerName")] = resolvePeerName(peerAddress, peerMachineId);
     entry[QStringLiteral("timestamp")] = QDateTime::currentDateTime().toString(Qt::ISODate);
 
     // Pour un envoi, le chemin local est deja connu (voir sendFile()) ;
@@ -346,8 +369,8 @@ void TransferContext::loadHistory()
 QVariantMap TransferContext::entryFromHistory(const models::Transfer &transfer) const
 {
     QString direction = tr("Reception");
-    if (m_userManager && m_userManager->currentUserId().has_value()
-        && transfer.senderId() == m_userManager->currentUserId().value()) {
+    if (m_userManager && !m_userManager->currentUserUuid().isEmpty()
+        && transfer.senderUuid() == m_userManager->currentUserUuid()) {
         direction = tr("Envoi");
     }
 

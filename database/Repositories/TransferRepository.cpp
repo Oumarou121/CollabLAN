@@ -17,18 +17,20 @@ models::Transfer TransferRepository::transferFromQuery(const QSqlQuery &query) c
 {
     models::Transfer transfer;
     transfer.setId(query.value(QStringLiteral("id")).toInt());
-    // sender_id/recipient_id sont nullables depuis la migration #012 (poste
-    // reseau sans compte utilisateur associe) : NULL est restitue comme -1,
-    // le sentinel "inconnu" deja utilise partout ailleurs dans le code.
-    const QVariant senderId = query.value(QStringLiteral("sender_id"));
-    transfer.setSenderId(senderId.isNull() ? -1 : senderId.toInt());
-    const QVariant recipientId = query.value(QStringLiteral("recipient_id"));
-    transfer.setRecipientId(recipientId.isNull() ? -1 : recipientId.toInt());
+    // sender_uuid/recipient_uuid (migration #017, colonnes sender_id/
+    // recipient_id supprimees) : chaine vide si NULL, un poste reseau
+    // sans compte utilisateur associe n'a pas d'UUID a restituer.
+    transfer.setSenderUuid(query.value(QStringLiteral("sender_uuid")).toString());
+    transfer.setRecipientUuid(query.value(QStringLiteral("recipient_uuid")).toString());
     transfer.setFileName(query.value(QStringLiteral("file_name")).toString());
     transfer.setFileSize(query.value(QStringLiteral("file_size")).toLongLong());
     transfer.setFilePath(query.value(QStringLiteral("file_path")).toString());
     transfer.setPeerAddress(query.value(QStringLiteral("peer_address")).toString());
     transfer.setPeerName(query.value(QStringLiteral("peer_name")).toString());
+    // peer_machine_id (migration #016) : identifiant le plus fiable du
+    // correspondant, present pour la quasi-totalite des transferts LAN via
+    // decouverte contrairement a sender_id/recipient_id.
+    transfer.setPeerMachineId(query.value(QStringLiteral("peer_machine_id")).toString());
     transfer.setStatus(models::transferStatusFromString(query.value(QStringLiteral("status")).toString()));
     transfer.setCreatedAt(query.value(QStringLiteral("created_at")).toDateTime());
     return transfer;
@@ -38,23 +40,17 @@ int TransferRepository::create(const models::Transfer &transfer)
 {
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
-        "INSERT INTO Transfers (sender_id, recipient_id, file_name, file_size, file_path, "
-        "peer_address, peer_name, status) "
-        "VALUES (:sender_id, :recipient_id, :file_name, :file_size, :file_path, "
-        ":peer_address, :peer_name, :status)"));
-    // -1 (ou toute valeur <= 0) signifie "inconnu" (voir models::Transfer) :
-    // on le stocke en NULL plutot que -1 pour respecter la contrainte de
-    // cle etrangere REFERENCES Users(id), qui n'a pas de ligne id = -1.
-    if (transfer.senderId() > 0) {
-        query.bindValue(QStringLiteral(":sender_id"), transfer.senderId());
-    } else {
-        query.bindValue(QStringLiteral(":sender_id"), QVariant());
-    }
-    if (transfer.recipientId() > 0) {
-        query.bindValue(QStringLiteral(":recipient_id"), transfer.recipientId());
-    } else {
-        query.bindValue(QStringLiteral(":recipient_id"), QVariant());
-    }
+        "INSERT INTO Transfers (sender_uuid, recipient_uuid, file_name, file_size, file_path, "
+        "peer_address, peer_name, peer_machine_id, status) "
+        "VALUES (:sender_uuid, :recipient_uuid, :file_name, :file_size, :file_path, "
+        ":peer_address, :peer_name, :peer_machine_id, :status)"));
+    // Chaine vide signifie "inconnu" (voir models::Transfer) : on le
+    // stocke en NULL, aucune contrainte de cle etrangere sur ces colonnes
+    // (meme logique que peer_address/peer_name, migration #017).
+    query.bindValue(QStringLiteral(":sender_uuid"),
+                     transfer.senderUuid().isEmpty() ? QVariant() : QVariant(transfer.senderUuid()));
+    query.bindValue(QStringLiteral(":recipient_uuid"),
+                     transfer.recipientUuid().isEmpty() ? QVariant() : QVariant(transfer.recipientUuid()));
     query.bindValue(QStringLiteral(":file_name"), transfer.fileName());
     query.bindValue(QStringLiteral(":file_size"), transfer.fileSize());
     query.bindValue(QStringLiteral(":file_path"),
@@ -63,6 +59,8 @@ int TransferRepository::create(const models::Transfer &transfer)
                      transfer.peerAddress().isEmpty() ? QVariant() : QVariant(transfer.peerAddress()));
     query.bindValue(QStringLiteral(":peer_name"),
                      transfer.peerName().isEmpty() ? QVariant() : QVariant(transfer.peerName()));
+    query.bindValue(QStringLiteral(":peer_machine_id"),
+                     transfer.peerMachineId().isEmpty() ? QVariant() : QVariant(transfer.peerMachineId()));
     query.bindValue(QStringLiteral(":status"), models::transferStatusToString(transfer.status()));
 
     if (!query.exec()) {
@@ -102,14 +100,14 @@ std::vector<models::Transfer> TransferRepository::findAll() const
     return transfers;
 }
 
-std::vector<models::Transfer> TransferRepository::findByUser(int userId) const
+std::vector<models::Transfer> TransferRepository::findByUser(const QString &userUuid) const
 {
     std::vector<models::Transfer> transfers;
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
-        "SELECT * FROM Transfers WHERE sender_id = :user_id OR recipient_id = :user_id "
+        "SELECT * FROM Transfers WHERE sender_uuid = :user_uuid OR recipient_uuid = :user_uuid "
         "ORDER BY created_at DESC"));
-    query.bindValue(QStringLiteral(":user_id"), userId);
+    query.bindValue(QStringLiteral(":user_uuid"), userUuid);
 
     if (!query.exec()) {
         m_lastError = query.lastError().text();

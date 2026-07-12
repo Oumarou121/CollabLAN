@@ -32,8 +32,8 @@ class Transfer {
 public:
     Transfer();
     Transfer(int id,
-              int senderId,
-              int recipientId,
+              QString senderUuid,
+              QString recipientUuid,
               QString fileName,
               qint64 fileSize,
               TransferStatus status,
@@ -43,11 +43,18 @@ public:
     int id() const;
     void setId(int id);
 
-    int senderId() const;
-    void setSenderId(int senderId);
+    /// UUID (Users.uuid, migration #017) de l'expediteur, vide si inconnu
+    /// (poste LAN sans compte utilisateur associe). Remplace l'ancien
+    /// senderId entier (colonne sender_id, supprimee).
+    QString senderUuid() const;
+    void setSenderUuid(const QString &senderUuid);
 
-    int recipientId() const;
-    void setRecipientId(int recipientId);
+    /// UUID (Users.uuid, migration #017) du destinataire, vide si inconnu.
+    /// Remplace l'ancien recipientId entier (colonne recipient_id,
+    /// supprimee) : voir peerMachineId() pour identifier fiablement un
+    /// correspondant LAN sans compte utilisateur.
+    QString recipientUuid() const;
+    void setRecipientUuid(const QString &recipientUuid);
 
     QString fileName() const;
     void setFileName(const QString &fileName);
@@ -64,8 +71,8 @@ public:
     /// Adresse IP du correspondant (l'autre poste de l'echange), vide si
     /// inconnue (transfert enregistre avant la migration #015). Permet de
     /// regrouper l'historique par correspondant independamment de tout
-    /// compte utilisateur local associe (senderId/recipientId restent -1
-    /// pour un poste LAN sans compte, voir migration #012).
+    /// compte utilisateur local associe (senderUuid/recipientUuid restent vides
+    /// pour un poste LAN sans compte, voir migrations #012 et #017).
     QString peerAddress() const;
     void setPeerAddress(const QString &peerAddress);
 
@@ -74,6 +81,13 @@ public:
     /// decouvert), fige a cet instant. Vide si non resolu.
     QString peerName() const;
     void setPeerName(const QString &peerName);
+
+    /// UUID stable du pair (DiscoveryService::localId(), migration #016),
+    /// vide si inconnu. Contrairement a senderUuid()/recipientUuid() (comptes
+    /// Users locaux, souvent -1 en P2P LAN) et a peerAddress() (IP non
+    /// stable), c'est l'identifiant le plus fiable du correspondant.
+    QString peerMachineId() const;
+    void setPeerMachineId(const QString &peerMachineId);
 
     TransferStatus status() const;
     void setStatus(TransferStatus status);
@@ -85,13 +99,14 @@ public:
 
 private:
     int m_id = -1;
-    int m_senderId = -1;
-    int m_recipientId = -1;
+    QString m_senderUuid = QStringLiteral("");
+    QString m_recipientUuid = QStringLiteral("");
     QString m_fileName = QStringLiteral("");
     qint64 m_fileSize = 0;
     QString m_filePath = QStringLiteral("");
     QString m_peerAddress = QStringLiteral("");
     QString m_peerName = QStringLiteral("");
+    QString m_peerMachineId = QStringLiteral("");
     TransferStatus m_status = TransferStatus::Pending;
     QDateTime m_createdAt;
 };

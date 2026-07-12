@@ -637,6 +637,14 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     if (m_transferManager) {
         m_transferManager->setDiscoveryService(m_discoveryService);
     }
+
+    // Idem pour TransferService : chaque en-tete de transfert envoye doit
+    // porter l'UUID local (DiscoveryService::localId()) pour que le
+    // destinataire puisse resoudre peer_name par identifiant plutot que
+    // par adresse IP (voir TransferManager::resolvePeerName()).
+    if (m_transferService) {
+        m_transferService->setLocalMachineId(m_discoveryService->localId());
+    }
 }
 
 core::UserManager *Application::userManager() const

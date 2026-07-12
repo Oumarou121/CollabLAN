@@ -57,13 +57,13 @@ public:
     /// Envoie un fichier a un pair et enregistre le transfert (statut
     /// initial "in_progress") en base. Voir network::TransferService::sendFile().
     bool sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
-                  int senderId, int recipientId);
+                  const QString &senderUuid, const QString &recipientUuid);
 
     /// Historique complet des transferts (tous utilisateurs), le plus recent en premier.
     std::vector<models::Transfer> allTransfers() const;
 
     /// Historique des transferts (envoyes ou recus) d'un utilisateur donne.
-    std::vector<models::Transfer> userTransfers(int userId) const;
+    std::vector<models::Transfer> userTransfers(const QString &userUuid) const;
 
     /// Recupere un transfert par son id en base.
     std::optional<models::Transfer> transfer(int id) const;
@@ -78,13 +78,18 @@ signals:
 
 private slots:
     void onNetworkTransferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
-                                   bool incoming, qint64 resumeOffset, int senderId, int recipientId,
-                                   const QHostAddress &peerAddress);
+                                   bool incoming, qint64 resumeOffset, const QString &senderUuid,
+                                   const QString &recipientUuid, const QHostAddress &peerAddress,
+                                   const QString &peerMachineId);
     void onNetworkTransferCompleted(const QString &transferKey, const QString &filePath);
     void onNetworkTransferFailed(const QString &transferKey, const QString &errorString);
 
 private:
-    QString resolvePeerName(const QHostAddress &peerAddress) const;
+    QString resolvePeerName(const QHostAddress &peerAddress, const QString &peerMachineId) const;
+    /// Retrouve l'UUID DiscoveryService::localId() d'un pair par son
+    /// adresse (utilise quand peerMachineId n'est pas transmis directement,
+    /// ex. cote envoi - voir onNetworkTransferStarted()).
+    QString resolvePeerMachineId(const QHostAddress &peerAddress) const;
 
     database::TransferRepository m_repository;
     network::TransferService *m_transferService = nullptr;
