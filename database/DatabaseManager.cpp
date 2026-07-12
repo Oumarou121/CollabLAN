@@ -223,6 +223,17 @@ bool DatabaseManager::applyMigrationFile(const QString &filePath)
     for (const QString &statement : splitStatements(sqlScript)) {
         QSqlQuery query(db);
         if (!query.exec(statement)) {
+            // SQLite n'a pas de "ADD COLUMN IF NOT EXISTS" : certaines
+            // migrations ajoutent une colonne qui peut deja exister
+            // (schema deja a jour). On ignore ce cas precis plutot que
+            // de faire echouer toute l'ouverture de la base.
+            const bool isAddColumn = statement.contains(QStringLiteral("ADD COLUMN"), Qt::CaseInsensitive);
+            const bool isDuplicateColumn = query.lastError().text().contains(
+                QStringLiteral("duplicate column name"), Qt::CaseInsensitive);
+            if (isAddColumn && isDuplicateColumn) {
+                continue;
+            }
+
             m_lastError = QStringLiteral("Echec de la migration %1 : %2")
                                .arg(QFileInfo(filePath).fileName(), query.lastError().text());
             db.rollback();

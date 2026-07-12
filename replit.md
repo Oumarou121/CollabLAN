@@ -33,18 +33,28 @@ cd build && ctest --output-on-failure
 ```
 
 ## Status
-- Project builds cleanly (217/217 targets) after fixing a case-sensitivity bug:
-  several `#include "Database/Repositories/..."` paths didn't match the actual
-  lowercase `database/Repositories/` directory. This worked on the original
-  (likely case-insensitive Windows/macOS) dev machine but failed on Linux;
-  fixed by lowercasing the includes.
-- 20/26 test binaries pass. 6 fail on pre-existing app bugs unrelated to the
-  Replit environment: `test_databasemanager`, `test_messagingmanager`,
+- Project builds cleanly (all targets, app + 26 test binaries) after fixing a
+  case-sensitivity bug: several `#include "Database/Repositories/..."` paths
+  didn't match the actual lowercase `database/Repositories/` directory. This
+  worked on the original (likely case-insensitive Windows/macOS) dev machine
+  but failed on Linux; fixed by lowercasing the includes.
+- Fixed a DB-init bug that blocked the app from ever starting on a fresh
+  install: migration `019_add_shared_folders_uuid_column.sql` unconditionally
+  ran `ALTER TABLE SharedFolders ADD COLUMN uuid`, but migration 018 already
+  creates that column, so 019 always failed with "duplicate column name" and
+  `DatabaseManager::open()` returned false on every run. SQLite has no
+  `ADD COLUMN IF NOT EXISTS`, so `DatabaseManager::applyMigrationFile()` now
+  treats a "duplicate column name" error on an `ADD COLUMN` statement as a
+  no-op instead of aborting the migration. Verified the app binary starts
+  cleanly end-to-end (DB opens/migrates, TLS cert loads, messaging/transfer/
+  voice services bind their ports) via `QT_QPA_PLATFORM=offscreen`.
+- 20/26 test binaries pass. 6 fail on pre-existing app/test bugs unrelated to
+  Replit setup: `test_databasemanager` (two tests assert a stale expected
+  schema version of 11; migrations now produce 20), `test_messagingmanager`,
   `test_groupmanager`, `test_messagerepository`, `test_grouprepository`,
   `test_synclogrepository` — mostly SQL "Parameter count mismatch" errors in
-  repository insert code and a stale expected schema version in the DB
-  manager tests (expects 11, migrations now produce 18). These look like bugs
-  in the app code / test suite, not Replit setup issues.
+  repository insert code. Proposed as a follow-up task rather than fixed here
+  (out of scope for project setup).
 
 ## User preferences
 None recorded yet.

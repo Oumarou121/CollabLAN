@@ -1,0 +1,1 @@
+- [SQLite migrations need manual idempotency](sqlite-migration-idempotency.md) — SQLite has no `ADD COLUMN IF NOT EXISTS`; guard ALTER TABLE migrations in app code, not just SQL.
