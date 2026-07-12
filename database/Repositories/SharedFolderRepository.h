@@ -43,6 +43,11 @@ public:
     /// Dossiers partages appartenant a un utilisateur donne.
     QVector<models::SharedFolder> getByOwnerId(qint64 ownerId) const;
 
+    /// Dossiers partages pour lesquels folderIds contient l'id (utilise
+    /// par SharedFolderManager::getAccessibleFolders() pour recuperer en
+    /// une fois les dossiers accordes explicitement via SharedFolderAccess).
+    QVector<models::SharedFolder> getByIds(const QVector<qint64> &folderIds) const;
+
     QString lastError() const;
 
 private:

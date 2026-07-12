@@ -41,6 +41,22 @@ public:
     bool isActive() const { return m_isActive; }
     void setIsActive(bool isActive) { m_isActive = isActive; }
 
+    /// UUID DiscoveryService::localId() de la machine qui possede
+    /// reellement les fichiers de ce dossier (migration 020). Vide pour
+    /// un dossier cree sur CE poste (ce poste EST l'origine) ; non vide
+    /// pour un dossier dont on n'a recu que les metadonnees (uuid, nom...)
+    /// via SyncLog/diffusion temps reel (issues A1/A2) -- son local_path
+    /// n'a alors aucun sens sur ce poste, et toute recuperation de
+    /// contenu doit passer par une demande de transfert a cette machine
+    /// (issue A3).
+    QString originMachineId() const { return m_originMachineId; }
+    void setOriginMachineId(const QString &originMachineId) { m_originMachineId = originMachineId; }
+
+    /// true si ce poste possede reellement le contenu de ce dossier
+    /// (createur local), false si ce n'est qu'une replique de metadonnees
+    /// recue d'un autre poste.
+    bool isLocalOrigin() const { return m_originMachineId.isEmpty(); }
+
 private:
     qint64 m_id = 0;
     QString m_uuid;
@@ -49,6 +65,7 @@ private:
     qint64 m_ownerId = 0;
     QDateTime m_createdAt;
     bool m_isActive = true;
+    QString m_originMachineId;
 };
 
 } // namespace models

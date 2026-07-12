@@ -25,6 +25,7 @@ models::SharedFolder SharedFolderRepository::folderFromQuery(const QSqlQuery &qu
     folder.setOwnerId(ownerId.isNull() ? 0 : ownerId.toLongLong());
     folder.setCreatedAt(query.value(QStringLiteral("created_at")).toDateTime());
     folder.setIsActive(query.value(QStringLiteral("is_active")).toInt() != 0);
+    folder.setOriginMachineId(query.value(QStringLiteral("origin_machine_id")).toString());
     return folder;
 }
 
@@ -36,8 +37,8 @@ std::optional<models::SharedFolder> SharedFolderRepository::insert(const models:
 
     QSqlQuery query(m_db);
     if (!query.prepare(QStringLiteral(
-        "INSERT INTO SharedFolders (uuid, name, local_path, owner_id, is_active) "
-        "VALUES (:uuid, :name, :local_path, :owner_id, :is_active)"))) {
+        "INSERT INTO SharedFolders (uuid, name, local_path, owner_id, is_active, origin_machine_id) "
+        "VALUES (:uuid, :name, :local_path, :owner_id, :is_active, :origin_machine_id)"))) {
         // Si prepare() echoue (ex: schema en base desynchronise du code,
         // colonne manquante...), on remonte l'erreur ici plutot que de
         // laisser bindValue()/exec() produire un message trompeur du
@@ -51,6 +52,8 @@ std::optional<models::SharedFolder> SharedFolderRepository::insert(const models:
     query.bindValue(QStringLiteral(":owner_id"),
                      folder.ownerId() > 0 ? QVariant(folder.ownerId()) : QVariant());
     query.bindValue(QStringLiteral(":is_active"), folder.isActive() ? 1 : 0);
+    query.bindValue(QStringLiteral(":origin_machine_id"),
+                     folder.originMachineId().isEmpty() ? QVariant(QVariant::String) : folder.originMachineId());
 
     if (!query.exec()) {
         m_lastError = query.lastError().text();
@@ -146,6 +149,37 @@ QVector<models::SharedFolder> SharedFolderRepository::getByOwnerId(qint64 ownerI
         "SELECT * FROM SharedFolders WHERE owner_id = :owner_id AND is_active = 1 "
         "ORDER BY created_at DESC"));
     query.bindValue(QStringLiteral(":owner_id"), ownerId);
+
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return folders;
+    }
+    while (query.next()) {
+        folders.append(folderFromQuery(query));
+    }
+    return folders;
+}
+
+QVector<models::SharedFolder> SharedFolderRepository::getByIds(const QVector<qint64> &folderIds) const
+{
+    QVector<models::SharedFolder> folders;
+    if (folderIds.isEmpty()) {
+        return folders;
+    }
+
+    QStringList placeholders;
+    placeholders.reserve(folderIds.size());
+    for (int i = 0; i < folderIds.size(); ++i) {
+        placeholders << QStringLiteral(":id%1").arg(i);
+    }
+
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "SELECT * FROM SharedFolders WHERE is_active = 1 AND id IN (%1) ORDER BY created_at DESC")
+        .arg(placeholders.join(QStringLiteral(", "))));
+    for (int i = 0; i < folderIds.size(); ++i) {
+        query.bindValue(placeholders.at(i), folderIds.at(i));
+    }
 
     if (!query.exec()) {
         m_lastError = query.lastError().text();
