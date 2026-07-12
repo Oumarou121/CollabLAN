@@ -1,0 +1,440 @@
+Nouvelle fonctionnalité : Shared Folder
+CollabLAN
+│
+├── Network
+├── Chat
+├── Call
+├── File Transfer
+├── Shared Folder      <-- Nouveau module
+└── Database
+Phase 1 — Concevoir le modèle de données
+
+Ne pas commencer par le code.
+
+Créer les entités.
+
+SharedFolder
+Id
+Name
+LocalPath
+OwnerId
+CreatedAt
+IsActive
+SharedFile
+Id
+FolderId
+RelativePath
+Hash
+Size
+LastModified
+Version
+Deleted
+
+Le RelativePath est important.
+
+Exemple
+
+Projet/
+
+    rapport.docx
+    image.png
+    Docs/
+        cahier.pdf
+
+Dans la base
+
+rapport.docx
+
+image.png
+
+Docs/cahier.pdf
+SyncOperation
+
+Historique.
+
+Id
+
+Type
+(Create)
+
+(Update)
+
+(Delete)
+
+(Rename)
+
+FileId
+
+Version
+
+MachineId
+
+Date
+
+Cette table permettra à un PC qui revient en ligne de récupérer toutes les opérations manquées.
+
+Phase 2 — Gestionnaire des dossiers
+
+Créer
+
+SharedFolderManager
+
+Responsabilités
+
+créer un dossier partagé
+supprimer
+charger les dossiers
+enregistrer dans SQLite
+
+Interface
+
+createFolder()
+
+removeFolder()
+
+getFolders()
+
+shareFolder()
+
+Aucune logique réseau ici.
+
+Phase 3 — Surveillance des dossiers
+
+Créer
+
+FolderWatcher
+
+Utiliser
+
+QFileSystemWatcher
+
+Il écoute
+
+Create
+
+Delete
+
+Rename
+
+Modify
+
+Il ne fait qu'émettre des événements.
+
+Exemple
+
+FileCreated
+
+FileDeleted
+
+FileChanged
+
+DirectoryCreated
+
+Aucun transfert ici.
+
+Phase 4 — Détection des changements
+
+Créer
+
+SyncEngine
+
+C'est le cerveau.
+
+Il reçoit
+
+FolderWatcher
+
+↓
+
+évènement
+
+↓
+
+analyse
+
+↓
+
+mise à jour SQLite
+
+↓
+
+création SyncOperation
+
+↓
+
+notification réseau
+Phase 5 — Communication réseau
+
+Créer
+
+SyncProtocol
+
+Définir les messages.
+
+Exemple
+
+HELLO
+
+SYNC_REQUEST
+
+SYNC_RESPONSE
+
+FILE_INFO
+
+FILE_REQUEST
+
+FILE_CHUNK
+
+DELETE_FILE
+
+RENAME_FILE
+
+SYNC_FINISHED
+
+Tous les messages JSON.
+
+Exemple
+
+{
+  "type":"FILE_CREATED",
+  "folder":"Projet",
+  "path":"Docs/test.pdf",
+  "version":4
+}
+Phase 6 — Synchronisation initiale
+
+Quand un PC rejoint le réseau
+
+Découverte UDP
+
+↓
+
+Connexion TCP
+
+↓
+
+HELLO
+
+↓
+
+Liste des dossiers
+
+↓
+
+Comparaison
+
+↓
+
+Téléchargement des fichiers manquants
+Phase 7 — Synchronisation en temps réel
+
+Alice
+
+Ajoute
+
+rapport.docx
+
+Flow
+
+FolderWatcher
+
+↓
+
+SyncEngine
+
+↓
+
+SQLite
+
+↓
+
+Broadcast
+
+↓
+
+Autres PC
+
+↓
+
+Download
+
+↓
+
+Écriture disque
+Phase 8 — Transfert des fichiers
+
+Ne jamais envoyer directement le fichier entier.
+
+Créer
+
+FileTransferService
+
+qui découpe
+
+Chunk
+
+64 Ko
+
+ou
+
+256 Ko
+
+Comme cela
+
+Chunk1
+
+Chunk2
+
+Chunk3
+
+...
+
+ChunkN
+
+Permet
+
+reprise
+barre de progression
+gros fichiers
+Phase 9 — Gestion des conflits
+
+Créer
+
+ConflictResolver
+
+Exemple
+
+Alice
+
+modifie
+
+rapport.docx
+
+↓
+
+Bob
+
+modifie
+
+rapport.docx
+
+Détecter
+
+Version locale
+
+≠
+
+Version distante
+
+Créer
+
+rapport.docx
+
+rapport (Bob).docx
+
+Plus tard tu pourras faire mieux.
+
+Phase 10 — Historique
+
+Créer
+
+SyncHistoryService
+
+Il garde
+
+Qui
+
+Quand
+
+Quel fichier
+
+Créé
+
+Supprimé
+
+Renommé
+
+Modifié
+
+Très utile pour le débogage.
+
+Phase 11 — Interface
+
+Ajouter
+
+Shared Folders
+
+Dans la fenêtre principale.
+
+Chaque dossier affiche
+
+📁 Projet
+
+12 utilisateurs
+
+254 fichiers
+
+Synchronisé
+
+✔
+
+Au clic
+
+Projet
+
+├── Docs
+├── Images
+├── Sources
+└── README.md
+Phase 12 — Permissions (plus tard)
+
+Aujourd'hui
+
+Tout le monde
+Lecture/Écriture
+
+Plus tard
+
+Lecture seule
+
+Lecture/Écriture
+
+Administrateur
+Phase 13 — Optimisations
+
+Lorsque tu modifies un gros fichier
+
+2 Go
+
+Ne pas renvoyer
+
+2 Go
+
+Mais seulement
+
+Bloc modifié
+
+Comme le font Dropbox ou Syncthing. Ce sera une évolution.
+
+Architecture finale
+UI
+│
+├── SharedFolderPage
+│
+├── SharedFolderManager
+│
+├── FolderWatcher
+│
+├── SyncEngine
+│
+├── ConflictResolver
+│
+├── SyncHistoryService
+│
+├── FileTransferService
+│
+├── SyncProtocol
+│
+├── NetworkManager
+│
+└── SQLite
