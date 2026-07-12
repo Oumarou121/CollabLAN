@@ -126,8 +126,40 @@ synchronisés comme n'importe quel fichier utilisateur. Ajout d'un filtre
 Tests : 2 nouveaux cas dans `test_foldersyncservice` (Delete et Rename
 distants appliqués correctement) + 1 nouveau cas dans
 `test_sharedfoldermanager` (fichiers techniques exclus de l'indexation).
-33/33 tests des deux suites passent ; suite complète toujours à 25/31 (mêmes
-6 échecs préexistants, aucune régression).
+
+## Correction des 6 derniers échecs de tests — suite complète à 31/31
+
+Les 6 échecs préexistants (`test_databasemanager`, `test_messagingmanager`,
+`test_groupmanager`, `test_messagerepository`, `test_grouprepository`,
+`test_synclogrepository`) n'étaient **pas** des bugs applicatifs : le code
+de production (`MessageRepository`, `GroupRepository`, `GroupManager`)
+fonctionne correctement contre une base migrée normalement. Deux causes
+racines distinctes, toutes deux côté tests :
+
+1. **Schémas de table ad hoc obsolètes.** Plusieurs tests recréent
+   `Messages`/`Groups`/`Conversations` à la main (`CREATE TABLE` en dur)
+   plutôt que de laisser `DatabaseManager` appliquer les vraies migrations.
+   Ces schémas maison avaient été écrits avant l'ajout des colonnes
+   `uuid` (migration 011) et `conversation_id` (migration 004) : `query.
+   prepare()` échouait alors silencieusement (colonne inconnue), et
+   `exec()` renvoyait "Parameter count mismatch" — un message trompeur qui
+   masque la vraie cause (colonne manquante, pas un problème de binding).
+   Corrigé en alignant chaque `CREATE TABLE` de test sur le schéma réel.
+2. **Attentes obsolètes dans `test_synclogrepository`.** Les payloads JSON
+   de test utilisaient encore des identifiants locaux (`senderId`,
+   `conversationId`, `ownerId`, `memberIds`) alors que
+   `SyncLogRepository::applyMessageEntry/applyGroupEntry` résolvent
+   désormais tout par uuid stable inter-poste (`senderUuid`,
+   `conversationUuid`, `ownerUuid`, `memberUuids`) depuis la migration 011.
+   Corrigé : payloads réécrits en uuid, utilisateur de test seedé avec un
+   uuid, assertions relogées sur les uuid stables plutôt que sur des id
+   locaux supposés (l'AUTOINCREMENT local ne coïncide jamais avec l'id de
+   la machine d'origine, par design).
+3. **Version de schéma figée dans `test_databasemanager`.** `schemaVersion()`
+   compte les fichiers `*.sql` appliqués ; le test attendait encore 11
+   alors que 21 migrations existent désormais. Mis à jour à 21.
+
+Suite complète : **31/31 tests passent**, aucune régression.
 
 ## Release 2 / 3 — Détection des changements + Journal de synchronisation
 All C++ components were already implemented. The following gaps were closed:

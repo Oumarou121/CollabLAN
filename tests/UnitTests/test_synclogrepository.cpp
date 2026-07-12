@@ -33,7 +33,13 @@ private:
         m_repository = std::make_unique<SyncLogRepository>(m_dbManager->database());
 
         QSqlQuery seedUser(m_dbManager->database());
-        QVERIFY(seedUser.exec(QStringLiteral("INSERT INTO Users (id, name, password_hash, password_salt) VALUES (1, 'phase4-user', 'hash', 'salt')")));
+        // uuid renseigne : SyncLogRepository::applyMessageEntry/applyGroupEntry
+        // resolvent l'expediteur/le proprietaire par uuid (cf. migration 011),
+        // jamais par id local, puisque celui-ci n'a aucune raison de coincider
+        // entre deux machines.
+        QVERIFY(seedUser.exec(QStringLiteral(
+            "INSERT INTO Users (id, name, password_hash, password_salt, uuid) "
+            "VALUES (1, 'phase4-user', 'hash', 'salt', 'user-uuid-1')")));
     }
 
     models::SyncLogEntry makeEntry(const QString &uuid, int epoch, qint64 lamport,
@@ -45,7 +51,10 @@ private:
         const qint64 messageId = 1000 + lamport;
         entry.setRecordUuid(QString::number(messageId));
         entry.setOperation(models::SyncOperation::Insert);
-        entry.setPayloadJson(QStringLiteral(R"json({"id":"%1","conversationId":"500","senderId":"1","content":"hello","timestamp":"2026-01-01T00:00:00Z","isRead":false})json").arg(messageId));
+        // senderUuid/conversationUuid : applyMessageEntry resout l'expediteur
+        // et la conversation par uuid, pas par id local (cf. migration 011).
+        entry.setPayloadJson(QStringLiteral(
+            R"json({"senderUuid":"user-uuid-1","conversationUuid":"conv-uuid-1","content":"hello","timestamp":"2026-01-01T00:00:00Z","isRead":false})json"));
         entry.setLamportClock(lamport);
         entry.setEpoch(epoch);
         entry.setOriginMachineId(originMachineId);
@@ -127,9 +136,14 @@ private slots:
         models::SyncLogEntry group;
         group.setEntryUuid(QStringLiteral("uuid-group"));
         group.setTableName(QStringLiteral("Groups"));
-        group.setRecordUuid(QStringLiteral("42"));
+        group.setRecordUuid(QStringLiteral("group-uuid-42"));
         group.setOperation(models::SyncOperation::Insert);
-        group.setPayloadJson(QStringLiteral(R"json({"id":"42","name":"Secours","ownerId":"1","conversationId":"77","memberIds":["1"]})json"));
+        // ownerUuid/conversationUuid/memberUuids : applyGroupEntry resout le
+        // proprietaire et les membres par uuid, jamais par id local
+        // (cf. migration 011). La conversation est creee a la volee par
+        // ensureConversationByUuid si conv-uuid-group n'existe pas encore.
+        group.setPayloadJson(QStringLiteral(
+            R"json({"name":"Secours","ownerUuid":"user-uuid-1","conversationUuid":"conv-uuid-group","memberUuids":["user-uuid-1"]})json"));
         group.setLamportClock(21);
         group.setEpoch(7);
         group.setOriginMachineId(QStringLiteral("temp-server"));
@@ -137,19 +151,29 @@ private slots:
 
         QCOMPARE(m_repository->applyBatch({message, group}), 2);
 
+        // Les ids locaux (AUTOINCREMENT) n'ont aucune raison de coincider
+        // avec ceux de la machine d'origine : on retrouve les lignes par
+        // leur uuid stable (entry.recordUuid()), comme le fait le code de
+        // reconciliation lui-meme.
         QSqlQuery messageQuery(m_dbManager->database());
-        QVERIFY(messageQuery.exec(QStringLiteral("SELECT content FROM Messages WHERE id = 1020")));
+        QVERIFY(messageQuery.exec(QStringLiteral("SELECT content FROM Messages WHERE uuid = '1020'")));
         QVERIFY(messageQuery.next());
         QCOMPARE(messageQuery.value(0).toString(), QStringLiteral("hello"));
 
         QSqlQuery groupQuery(m_dbManager->database());
-        QVERIFY(groupQuery.exec(QStringLiteral("SELECT name, conversation_id FROM Groups WHERE id = 42")));
+        QVERIFY(groupQuery.exec(QStringLiteral(
+            "SELECT g.name, c.uuid FROM Groups g "
+            "JOIN Conversations c ON c.id = g.conversation_id "
+            "WHERE g.uuid = 'group-uuid-42'")));
         QVERIFY(groupQuery.next());
         QCOMPARE(groupQuery.value(0).toString(), QStringLiteral("Secours"));
-        QCOMPARE(groupQuery.value(1).toLongLong(), static_cast<qint64>(77));
+        QCOMPARE(groupQuery.value(1).toString(), QStringLiteral("conv-uuid-group"));
 
         QSqlQuery memberQuery(m_dbManager->database());
-        QVERIFY(memberQuery.exec(QStringLiteral("SELECT 1 FROM GroupMembers WHERE group_id = 42 AND user_id = 1")));
+        QVERIFY(memberQuery.exec(QStringLiteral(
+            "SELECT 1 FROM GroupMembers gm "
+            "JOIN Groups g ON g.id = gm.group_id "
+            "WHERE g.uuid = 'group-uuid-42' AND gm.user_id = 1")));
         QVERIFY(memberQuery.next());
     }
     void highestLamportClockTracksMax()

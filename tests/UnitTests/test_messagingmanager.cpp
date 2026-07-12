@@ -42,6 +42,11 @@ private:
             "participant2_id INTEGER)"
         )));
         QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS Messages")));
+        // Schema aligne sur celui produit par les migrations reelles
+        // (003_update_messages_table + 011_add_sync_uuid_columns) : la
+        // colonne uuid est requise par MessageRepository::insert(), sans
+        // elle query.prepare() echoue silencieusement ("Parameter count
+        // mismatch") faute de colonne correspondante.
         QVERIFY(query.exec(QStringLiteral(
             "CREATE TABLE Messages ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -49,7 +54,8 @@ private:
             "senderId INTEGER NOT NULL, "
             "content TEXT NOT NULL, "
             "timestamp TEXT, "
-            "is_read INTEGER DEFAULT 0)"
+            "is_read INTEGER DEFAULT 0, "
+            "uuid TEXT)"
         )));
 
         // Creer deux utilisateurs de test

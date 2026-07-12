@@ -32,12 +32,18 @@ private:
         QSqlDatabase db = m_dbManager->database();
         QSqlQuery query(db);
         QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS Groups")));
+        // Schema aligne sur celui produit par les migrations reelles
+        // (004_link_groups_to_conversations + 011_add_sync_uuid_columns) :
+        // la colonne uuid est requise par GroupRepository::insert(), sans
+        // elle query.prepare() echoue silencieusement ("Parameter count
+        // mismatch") faute de colonne correspondante.
         QVERIFY(query.exec(QStringLiteral(
             "CREATE TABLE Groups ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "name TEXT NOT NULL, "
             "owner_id INTEGER NOT NULL, "
-            "conversation_id INTEGER)"
+            "conversation_id INTEGER, "
+            "uuid TEXT)"
         )));
         QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS GroupMembers")));
         QVERIFY(query.exec(QStringLiteral(
@@ -50,13 +56,20 @@ private:
         // (type='group') pour chaque groupe : la table doit exister ici
         // aussi (elle vient normalement de la migration 002).
         QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS Conversations")));
+        // Schema aligne sur celui produit par les migrations reelles
+        // (002_add_conversations_table + 011_add_sync_uuid_columns) : la
+        // colonne uuid est requise par GroupManager::createGroup() (INSERT
+        // INTO Conversations (type, name, uuid) ...), sans elle
+        // query.prepare() echoue silencieusement ("Parameter count
+        // mismatch") faute de colonne correspondante.
         QVERIFY(query.exec(QStringLiteral(
             "CREATE TABLE Conversations ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "type TEXT NOT NULL DEFAULT 'individual', "
             "name TEXT NOT NULL, "
             "participant1_id INTEGER, "
-            "participant2_id INTEGER)"
+            "participant2_id INTEGER, "
+            "uuid TEXT)"
         )));
 
         // Creer trois utilisateurs de test

@@ -28,11 +28,18 @@ private:
         QSqlDatabase db = m_dbManager->database();
         QSqlQuery query(db);
         QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS Groups")));
+        // Schema aligne sur celui produit par les migrations reelles
+        // (004_link_groups_to_conversations + 011_add_sync_uuid_columns) :
+        // conversation_id et uuid sont requises par GroupRepository::insert(),
+        // sans elles query.prepare() echoue silencieusement ("Parameter
+        // count mismatch") faute de colonnes correspondantes.
         QVERIFY(query.exec(QStringLiteral(
             "CREATE TABLE Groups ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "name TEXT NOT NULL, "
-            "owner_id INTEGER NOT NULL)"
+            "owner_id INTEGER NOT NULL, "
+            "conversation_id INTEGER, "
+            "uuid TEXT)"
         )));
         QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS GroupMembers")));
         QVERIFY(query.exec(QStringLiteral(
