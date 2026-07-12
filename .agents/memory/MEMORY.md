@@ -1,0 +1,1 @@
+- [Ninja + __FILE__ relative paths](cmake-ninja-file-macro.md) — code relying on `__FILE__` for runtime path lookups breaks under CMake+Ninja on this platform since it expands to a relative path, not absolute.
