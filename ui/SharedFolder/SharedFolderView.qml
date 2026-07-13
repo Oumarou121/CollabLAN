@@ -28,6 +28,7 @@ Item {
     property string openedFolderUuid: ""
     property var openedFolderName: ""
     property var openedFolderId: -1
+    property bool openedFolderIsLocalOrigin: true
     property var currentFiles: []
     property var currentSyncHistory: []
     property bool showHistory: false
@@ -49,9 +50,10 @@ Item {
         return (unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)) + " " + units[unitIndex]
     }
 
-    function openFolder(folderId, name) {
+    function openFolder(folderId, name, isLocalOrigin = true) {
         root.openedFolderId = folderId
         root.openedFolderName = name
+        root.openedFolderIsLocalOrigin = isLocalOrigin
         root.showHistory = false
         root.conflictedFiles = {}   // reset des conflits a l'ouverture
         root.refreshFiles()
@@ -384,6 +386,109 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    // ---- dialogue de définition du chemin local pour dossiers distants ----
+    Dialog {
+        id: setLocalPathDialog
+        title: qsTr("Définir le dossier local — %1").arg(setLocalPathDialog.targetFolderName)
+        modal: true
+        anchors.centerIn: parent
+        width: 420
+        height: 280
+        standardButtons: Dialog.NoButton
+
+        property int targetFolderId: -1
+        property string targetFolderName: ""
+        property string localPath: ""
+
+        onOpened: {
+            setLocalPathDialog.localPath = ""
+        }
+
+        background: Rectangle {
+            radius: Theme.radiusMedium
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.border
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: Theme.spacingMedium
+
+            Label {
+                text: qsTr("Ce dossier partagé provient d'un autre poste.\nChoisissez le dossier local où les fichiers seront téléchargés.")
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            Label {
+                text: qsTr("Dossier local")
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeSmall
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacingSmall
+
+                Label {
+                    Layout.fillWidth: true
+                    text: setLocalPathDialog.localPath.length > 0 ? setLocalPathDialog.localPath : qsTr("Aucun dossier sélectionné")
+                    color: setLocalPathDialog.localPath.length > 0 ? Theme.text : Theme.textTertiary
+                    elide: Text.ElideMiddle
+                    font.pixelSize: Theme.fontSizeSmall
+                }
+                AppButton {
+                    text: qsTr("Parcourir…")
+                    variant: "secondary"
+                    onClicked: remoteFolderPickerDialog.open()
+                }
+            }
+
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacingSmall
+
+                AppButton {
+                    text: qsTr("Annuler")
+                    variant: "secondary"
+                    Layout.fillWidth: true
+                    onClicked: setLocalPathDialog.close()
+                }
+                AppButton {
+                    text: qsTr("Définir")
+                    variant: "primary"
+                    Layout.fillWidth: true
+                    enabled: setLocalPathDialog.localPath.length > 0
+                    onClicked: {
+                        if (root.context && setLocalPathDialog.targetFolderId >= 0) {
+                            if (root.context.setFolderLocalPath(setLocalPathDialog.targetFolderId, setLocalPathDialog.localPath)) {
+                                setLocalPathDialog.close()
+                                root.openFolder(setLocalPathDialog.targetFolderId, setLocalPathDialog.targetFolderName, false)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    FolderDialog {
+        id: remoteFolderPickerDialog
+        title: qsTr("Choisir le dossier local")
+        onAccepted: {
+            let path = decodeURIComponent(selectedFolder.toString())
+            path = path.replace(/^file:\/\//, "")
+            if (/^\/[A-Za-z]:/.test(path)) {
+                path = path.substring(1)
+            }
+            setLocalPathDialog.localPath = path
         }
     }
 
@@ -818,6 +923,7 @@ Item {
 
                 AppButton {
                     visible: root.openedFolderId >= 0
+                    enabled: root.openedFolderIsLocalOrigin
                     text: qsTr("Réindexer")
                     variant: "secondary"
                     onClicked: {
@@ -873,7 +979,20 @@ Item {
                         label: model.name
                         sublabel: model.fileCount === 1 ? qsTr("1 fichier") : qsTr("%1 fichiers").arg(model.fileCount)
                         count: model.fileCount
-                        onOpened: root.openFolder(model.folderId, model.name)
+                        onOpened: {
+                            if (!model.isLocalOrigin) {
+                                // Si le localPath est déjà défini, ouvrir directement le dossier
+                                if (model.localPath && model.localPath.length > 0) {
+                                    root.openFolder(model.folderId, model.name, false)
+                                } else {
+                                    setLocalPathDialog.targetFolderId = model.folderId
+                                    setLocalPathDialog.targetFolderName = model.name
+                                    setLocalPathDialog.open()
+                                }
+                            } else {
+                                root.openFolder(model.folderId, model.name, true)
+                            }
+                        }
 
                         MouseArea {
                             anchors.fill: parent
@@ -965,7 +1084,7 @@ Item {
                                     font.bold: true
                                 }
                                 HoverHandler { id: badgeHover }
-                                ToolTip.visible: badgeHover.containsMouse
+                                ToolTip.visible: badgeHover.hovered
                                 ToolTip.text: qsTr("Conflit → %1").arg(fileRow.conflictPath)
                             }
 

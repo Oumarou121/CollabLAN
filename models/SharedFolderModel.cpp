@@ -17,6 +17,7 @@ QHash<int, QByteArray> SharedFolderModel::roleNames() const
     roles[OwnerIdRole] = "ownerId";
     roles[FileCountRole] = "fileCount";
     roles[IsActiveRole] = "isActive";
+    roles[IsLocalOriginRole] = "isLocalOrigin";
     return roles;
 }
 
@@ -49,6 +50,8 @@ QVariant SharedFolderModel::data(const QModelIndex &index, int role) const
         return m_fileCounts.value(folder.id(), 0);
     case IsActiveRole:
         return folder.isActive();
+    case IsLocalOriginRole:
+        return folder.isLocalOrigin();
     default:
         return QVariant();
     }

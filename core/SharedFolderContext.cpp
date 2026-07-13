@@ -54,6 +54,11 @@ void SharedFolderContext::setSyncEngine(core::sync::SyncEngine *engine)
 void SharedFolderContext::setUserManager(UserManager *manager)
 {
     m_userManager = manager;
+    if (m_userManager) {
+        // Rafraîchir l'UI après login réussi (pour mettre à jour currentUserId)
+        connect(m_userManager, &UserManager::loginSucceeded,
+                this, [this]() { refresh(); });
+    }
 }
 
 void SharedFolderContext::setFolderSyncService(core::sync::FolderSyncService *svc)
@@ -316,6 +321,33 @@ bool SharedFolderContext::changePermission(qint64 folderId, qint64 userId, bool 
     }
 
     return grantAccess(folderId, userId, allowWrite);
+}
+
+bool SharedFolderContext::setFolderLocalPath(qint64 folderId, const QString &localPath)
+{
+    if (!m_manager) {
+        m_lastErrorString = QStringLiteral("Module Shared Folder non disponible");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    if (!m_manager->updateFolderLocalPath(folderId, localPath)) {
+        m_lastErrorString = m_manager->lastErrorString();
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    // Après avoir défini le localPath, déclencher un resync pour récupérer les fichiers
+    // depuis le propriétaire du dossier distant
+    if (m_folderSyncService) {
+        const auto folder = m_manager->getFolder(folderId);
+        if (folder.has_value() && !folder->isLocalOrigin()) {
+            m_folderSyncService->requestFolderResync(folder->uuid());
+        }
+    }
+
+    refresh();
+    return true;
 }
 
 QVariantList SharedFolderContext::syncHistoryForFolder(qint64 folderId, int limit) const

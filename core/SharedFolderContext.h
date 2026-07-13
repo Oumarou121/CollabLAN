@@ -117,6 +117,12 @@ public:
     /// @return true si la mise a jour a reussi.
     Q_INVOKABLE bool changePermission(qint64 folderId, qint64 userId, bool allowWrite);
 
+    /// Définit le chemin local d'un dossier distant pour permettre la réception
+    /// des fichiers. Nécessaire avant de pouvoir synchroniser le contenu d'un
+    /// dossier partagé reçu d'un autre poste.
+    /// @return true si la mise à jour a reussi (voir lastErrorString() sinon).
+    Q_INVOKABLE bool setFolderLocalPath(qint64 folderId, const QString &localPath);
+
 signals:
     void errorOccurred(const QString &message);
 

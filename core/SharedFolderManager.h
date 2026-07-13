@@ -142,6 +142,11 @@ public:
     std::optional<models::SharedFolder> registerRemoteFolder(const QString &uuid, const QString &name,
                                                                qint64 ownerId, const QString &originMachineId);
 
+    /// Met à jour le chemin local d'un dossier distant pour permettre la réception
+    /// des fichiers. Nécessaire avant de pouvoir synchroniser le contenu d'un
+    /// dossier partagé reçu d'un autre poste.
+    bool updateFolderLocalPath(qint64 folderId, const QString &localPath);
+
     SharedFolderManagerError lastError() const { return m_lastError; }
     QString lastErrorString() const { return m_lastErrorString; }
 

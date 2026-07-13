@@ -444,4 +444,39 @@ std::optional<models::SharedFolder> SharedFolderManager::registerRemoteFolder(co
     return inserted;
 }
 
+bool SharedFolderManager::updateFolderLocalPath(qint64 folderId, const QString &localPath)
+{
+    if (!m_dbManager) {
+        m_lastError = SharedFolderManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral("DatabaseManager non disponible");
+        return false;
+    }
+
+    const auto folder = m_folderRepository.getById(folderId);
+    if (!folder.has_value()) {
+        m_lastError = SharedFolderManagerError::InvalidFolder;
+        m_lastErrorString = QStringLiteral("Dossier introuvable");
+        return false;
+    }
+
+    // Vérifier que le chemin existe et est un dossier
+    const QDir dir(localPath);
+    if (!dir.exists()) {
+        m_lastError = SharedFolderManagerError::InvalidPath;
+        m_lastErrorString = QStringLiteral("Le chemin n'existe pas : %1").arg(localPath);
+        return false;
+    }
+
+    models::SharedFolder updated = *folder;
+    updated.setLocalPath(localPath);
+
+    if (!m_folderRepository.update(updated)) {
+        m_lastError = SharedFolderManagerError::DatabaseError;
+        m_lastErrorString = m_folderRepository.lastError();
+        return false;
+    }
+
+    return true;
+}
+
 } // namespace core

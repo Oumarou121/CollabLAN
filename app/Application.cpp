@@ -751,15 +751,32 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     m_folderSyncService->setTransferService(m_transferService);
     m_folderSyncService->setDiscoveryService(m_discoveryService);
     m_folderSyncService->setLocalMachineId(m_discoveryService->localId());
+    m_folderSyncService->setUserManager(m_userManager);
     if (m_userManager) {
         if (const auto uid = m_userManager->currentUserId(); uid.has_value()) {
             m_folderSyncService->setLocalUserId(*uid);
         }
+        // Connecter loginSucceeded pour mettre à jour m_localUserId après connexion
+        // (initialize() s'exécute avant le login, donc currentUserId() est nullopt à ce stade)
+        connect(m_userManager, &core::UserManager::loginSucceeded,
+                this, [this]() {
+                    if (const auto uid = m_userManager->currentUserId(); uid.has_value()) {
+                        m_folderSyncService->setLocalUserId(*uid);
+                    }
+                });
     }
 
     // Release 5/6 : chaque reindexation locale est diffusée aux pairs.
     connect(m_syncEngine, &core::sync::SyncEngine::folderReindexed,
             m_folderSyncService, &core::sync::FolderSyncService::onLocalFolderReindexed);
+
+    // Connecter folderCreated pour démarrer la surveillance des dossiers locaux
+    connect(m_sharedFolderManager, &core::SharedFolderManager::folderCreated,
+            m_syncEngine, &core::sync::SyncEngine::onFolderCreated);
+
+    // Connecter folderRemoved pour arrêter la surveillance
+    connect(m_sharedFolderManager, &core::SharedFolderManager::folderRemoved,
+            m_syncEngine, &core::sync::SyncEngine::onFolderRemoved);
 
     // Issue A1/A2 : un acces accorde (creation de dossier partage avec
     // utilisateurs choisis, ou partage ulterieur) est annonce aux autres

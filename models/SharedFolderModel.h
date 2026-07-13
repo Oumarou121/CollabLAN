@@ -24,7 +24,8 @@ public:
         LocalPathRole,
         OwnerIdRole,
         FileCountRole,
-        IsActiveRole
+        IsActiveRole,
+        IsLocalOriginRole
     };
 
     explicit SharedFolderModel(QObject *parent = nullptr);

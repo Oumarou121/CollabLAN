@@ -62,14 +62,18 @@ public:
     /// plus recentes d'abord (pour affichage dans l'UI).
     QVector<models::FileSyncOperation> historyForFolder(qint64 folderId, int limit = 100) const;
 
+public slots:
+    /// Appelé quand un dossier partagé est créé (pour démarrer la surveillance)
+    void onFolderCreated(const models::SharedFolder &folder);
+    /// Appelé quand un dossier partagé est supprimé (pour arrêter la surveillance)
+    void onFolderRemoved(qint64 folderId);
+
 signals:
     /// Emis apres chaque reindexFolder() reussi (meme si aucun changement
     /// n'a ete detecte), avec le nombre de changements journalises.
     void folderReindexed(qint64 folderId, int changeCount);
 
 private slots:
-    void onFolderCreated(const models::SharedFolder &folder);
-    void onFolderRemoved(qint64 folderId);
     void onWatcherChangesDetected(qint64 folderId);
 
 private:

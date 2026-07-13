@@ -68,14 +68,9 @@ void SyncEngine::onFolderCreated(const models::SharedFolder &folder)
         return;
     }
 
-    // Le contenu initial n'est pas encore indexe a cet instant (le
-    // dossier vient d'etre cree en base) -- reindexFolder() se chargera
-    // de la premiere indexation ET de commencer a le surveiller (via
-    // refreshWatchedFiles() en fin de reindexFolder()); on demarre ici la
-    // surveillance de la racine pour ne rien manquer entre la creation et
-    // le premier reindexFolder() explicite (appele par
-    // SharedFolderContext::createFolder()).
-    m_watcher.watchFolder(folder.id(), folder.localPath(), QStringList());
+    // Indexer le contenu initial du dossier pour que les fichiers soient
+    // disponibles pour le resync (folder_resync_request)
+    reindexFolder(folder.id());
 }
 
 void SyncEngine::onFolderRemoved(qint64 folderId)
@@ -92,6 +87,18 @@ int SyncEngine::reindexFolder(qint64 folderId)
 {
     if (!m_folderManager) {
         return -1;
+    }
+
+    const auto folder = m_folderManager->getFolder(folderId);
+    if (!folder.has_value()) {
+        return -1;
+    }
+
+    // Un dossier distant (localPath vide) ne peut pas être réindexé
+    // car il n'y a pas de contenu local à scanner.
+    if (folder->localPath().isEmpty()) {
+        qDebug() << "[SyncEngine] reindexFolder ignoré : dossier distant sans localPath" << folder->name();
+        return 0;
     }
 
     const auto changes = m_folderManager->shareFolder(folderId);

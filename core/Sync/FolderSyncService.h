@@ -25,6 +25,7 @@ class DiscoveryService;
 
 namespace core {
 class SharedFolderManager;
+class UserManager;
 }
 
 namespace database {
@@ -105,6 +106,10 @@ public:
     /// révoqués et nettoyer les données locales du dossier en conséquence.
     void setLocalUserId(qint64 userId);
 
+    /// Nécessaire pour inclure user_uuid dans les messages folder_op
+    /// (pour la vérification des permissions effectivePermission).
+    void setUserManager(core::UserManager *userManager);
+
     /**
      * @brief Annonce aux autres machines qu'un acces a ete accorde sur un
      *        dossier partage (a connecter sur SharedFolderManager::accessGranted,
@@ -133,6 +138,16 @@ public:
      * borner la portee de cette version -- cf. mémoire du projet.
      */
     void announceAccessRevoked(qint64 folderId, qint64 userId);
+
+    /**
+     * @brief Demande un resync d'un dossier distant pour récupérer son contenu.
+     *
+     * Envoie un message folder_resync_request au propriétaire du dossier pour
+     * récupérer toutes les opérations de synchronisation et télécharger les fichiers.
+     *
+     * @param folderUuid UUID du dossier distant à resynchroniser.
+     */
+    void requestFolderResync(const QString &folderUuid);
 
     /**
      * @brief Envoie un folder_file_request pour un fichier distant.
@@ -368,6 +383,7 @@ private:
     database::SharedFolderAccessRepository m_accessRepository;
     database::UserRepository m_userRepository;
     core::SharedFolderManager *m_folderManager = nullptr;
+    core::UserManager *m_userManager = nullptr;
     qint64 m_localUserId = 0; ///< Utilisateur courant (setLocalUserId).
     network::MessagingServer *m_messagingServer = nullptr;
     network::MessagingService *m_messagingService = nullptr;
