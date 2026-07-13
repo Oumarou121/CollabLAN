@@ -56,7 +56,18 @@ void SharedFolderContext::refresh()
         return;
     }
 
-    const QVector<models::SharedFolder> folders = m_manager->getFolders();
+    // Filtre par acces (proprietaire + acces explicitement accordes) plutot
+    // que getFolders() (TOUS les dossiers, sans aucune restriction) : un
+    // dossier partage ne doit etre visible que par les utilisateurs choisis
+    // a sa creation (ou a qui l'acces a ete accorde ensuite), pas par tout
+    // compte local sans distinction.
+    qint64 currentUserId = 0;
+    if (m_userManager) {
+        if (const auto id = m_userManager->currentUserId(); id.has_value()) {
+            currentUserId = *id;
+        }
+    }
+    const QVector<models::SharedFolder> folders = m_manager->getAccessibleFolders(currentUserId);
     m_folderModel->setFolders(folders);
 
     QHash<qint64, int> counts;
@@ -66,7 +77,8 @@ void SharedFolderContext::refresh()
     m_folderModel->setFileCounts(counts);
 }
 
-bool SharedFolderContext::createFolder(const QString &name, const QString &localPath)
+bool SharedFolderContext::createFolder(const QString &name, const QString &localPath,
+                                        const QVariantList &authorizedUserIds, bool allowWrite)
 {
     if (!m_manager) {
         m_lastErrorString = QStringLiteral("Module Shared Folder non disponible");
@@ -81,7 +93,15 @@ bool SharedFolderContext::createFolder(const QString &name, const QString &local
         }
     }
 
-    const auto folder = m_manager->createFolder(name, localPath, ownerId);
+    QVector<qint64> userIds;
+    userIds.reserve(authorizedUserIds.size());
+    for (const QVariant &value : authorizedUserIds) {
+        userIds.append(value.toLongLong());
+    }
+    const auto permission = allowWrite ? models::SharedFolderPermission::Write
+                                        : models::SharedFolderPermission::Read;
+
+    const auto folder = m_manager->createFolder(name, localPath, ownerId, userIds, permission);
     if (!folder.has_value()) {
         m_lastErrorString = m_manager->lastErrorString();
         emit errorOccurred(m_lastErrorString);
@@ -165,6 +185,30 @@ QVariantList SharedFolderContext::filesForFolder(qint64 folderId) const
         result.append(entry);
     }
     return result;
+}
+
+QVariantList SharedFolderContext::availableUsers() const
+{
+    QVariantList list;
+    if (!m_userManager) {
+        return list;
+    }
+
+    qint64 currentId = 0;
+    if (const auto id = m_userManager->currentUserId(); id.has_value()) {
+        currentId = *id;
+    }
+
+    for (const auto &user : m_userManager->allUsers()) {
+        if (user.id() == currentId) {
+            continue; // on ne se propose pas soi-meme (acces proprietaire implicite)
+        }
+        QVariantMap entry;
+        entry.insert(QStringLiteral("userId"), static_cast<qint64>(user.id()));
+        entry.insert(QStringLiteral("username"), user.name());
+        list.append(entry);
+    }
+    return list;
 }
 
 QVariantList SharedFolderContext::syncHistoryForFolder(qint64 folderId, int limit) const

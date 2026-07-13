@@ -159,6 +159,7 @@ Item {
         modal: true
         anchors.centerIn: parent
         width: 420
+        height: 560
         standardButtons: Dialog.NoButton
 
         property string localPath: ""
@@ -166,6 +167,21 @@ Item {
         onOpened: {
             nameField.text = ""
             localPath = ""
+            allowWriteCheckBox.checked = true
+            reloadUsers()
+        }
+
+        function reloadUsers() {
+            availableUsersModel.clear()
+            if (!root.context) return
+            const users = root.context.availableUsers()
+            for (let i = 0; i < users.length; ++i) {
+                availableUsersModel.append({
+                    userId: users[i].userId,
+                    username: users[i].username,
+                    selected: false
+                })
+            }
         }
 
         background: Rectangle {
@@ -221,6 +237,69 @@ Item {
                 }
             }
 
+            Label {
+                text: qsTr("Partager avec")
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeSmall
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 160
+                radius: Theme.radiusSmall
+                color: Theme.surfaceAlt
+                border.width: 1
+                border.color: Theme.border
+
+                ListView {
+                    id: usersListView
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacingSmall
+                    clip: true
+                    spacing: 4
+                    model: ListModel { id: availableUsersModel }
+
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                    delegate: RowLayout {
+                        width: usersListView.width
+                        spacing: Theme.spacingSmall
+
+                        CheckBox {
+                            checked: selected
+                            onCheckedChanged: availableUsersModel.setProperty(index, "selected", checked)
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: username
+                            color: Theme.text
+                            font.pixelSize: Theme.fontSizeSmall
+                        }
+                    }
+                }
+
+                Label {
+                    anchors.centerIn: parent
+                    visible: availableUsersModel.count === 0
+                    text: qsTr("Aucun autre utilisateur")
+                    color: Theme.textTertiary
+                    font.pixelSize: Theme.fontSizeSmall
+                }
+            }
+
+            CheckBox {
+                id: allowWriteCheckBox
+                text: qsTr("Autoriser la modification (lecture/écriture)")
+                checked: true
+                contentItem: Label {
+                    text: allowWriteCheckBox.text
+                    leftPadding: allowWriteCheckBox.indicator.width + Theme.spacingSmall
+                    verticalAlignment: Text.AlignVCenter
+                    color: Theme.text
+                    font.pixelSize: Theme.fontSizeSmall
+                }
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: Theme.spacingSmall
@@ -239,7 +318,14 @@ Item {
                     enabled: nameField.text.trim().length > 0 && createDialog.localPath.length > 0
                     onClicked: {
                         if (!root.context) return
-                        if (root.context.createFolder(nameField.text.trim(), createDialog.localPath)) {
+                        var selectedUserIds = []
+                        for (var i = 0; i < availableUsersModel.count; i++) {
+                            if (availableUsersModel.get(i).selected) {
+                                selectedUserIds.push(availableUsersModel.get(i).userId)
+                            }
+                        }
+                        if (root.context.createFolder(nameField.text.trim(), createDialog.localPath,
+                                                       selectedUserIds, allowWriteCheckBox.checked)) {
                             createDialog.close()
                         }
                     }

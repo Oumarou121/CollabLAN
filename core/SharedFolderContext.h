@@ -52,8 +52,22 @@ public:
     /// depuis l'UI, "creer" et "partager" ne font qu'un, la distinction
     /// createFolder()/shareFolder() servant surtout a SharedFolderManager
     /// (ex: reindexer un dossier deja partage sans le recreer).
+    ///
+    /// authorizedUserIds : userId (qint64, cf. availableUsers()) des
+    /// utilisateurs a qui accorder l'acces immediatement -- sans cela, le
+    /// dossier cree n'est visible que par son proprietaire (cf. refresh()).
+    /// allowWrite : true = acces en ecriture pour tous les utilisateurs
+    /// choisis, false = lecture seule (pas de granularite par utilisateur
+    /// pour cette 1ere version, cf. core::SharedFolderManager::createFolder()).
     /// @return true si la creation a reussi (voir lastErrorString() sinon).
-    Q_INVOKABLE bool createFolder(const QString &name, const QString &localPath);
+    Q_INVOKABLE bool createFolder(const QString &name, const QString &localPath,
+                                   const QVariantList &authorizedUserIds, bool allowWrite);
+
+    /// Utilisateurs locaux a qui l'on peut accorder l'acces a un dossier
+    /// partage (tous sauf l'utilisateur courant), sur le meme principe que
+    /// core::MessagingContext::availableUsers() -- chaque element est une
+    /// QVariantMap userId/username.
+    Q_INVOKABLE QVariantList availableUsers() const;
 
     Q_INVOKABLE bool removeFolder(qint64 folderId);
 

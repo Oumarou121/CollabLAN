@@ -28,6 +28,7 @@ constexpr const char *kTypeFolderOp       = "folder_op";
 constexpr const char *kTypeFolderHello    = "folder_hello";
 constexpr const char *kTypeCatchupBatch   = "folder_catchup_batch";
 constexpr const char *kTypeFileRequest    = "folder_file_request";
+constexpr const char *kTypeAccessGranted  = "folder_access_granted";
 
 } // namespace
 
@@ -37,6 +38,8 @@ FolderSyncService::FolderSyncService(database::DatabaseManager *dbManager,
     : QObject(parent)
     , m_repository(dbManager ? dbManager->database() : QSqlDatabase())
     , m_fileRepository(dbManager ? dbManager->database() : QSqlDatabase())
+    , m_accessRepository(dbManager ? dbManager->database() : QSqlDatabase())
+    , m_userRepository(dbManager ? dbManager->database() : QSqlDatabase())
     , m_folderManager(folderManager)
 {
     m_lastBroadcastOpId = m_repository.latestId();
@@ -168,6 +171,41 @@ void FolderSyncService::onLocalFolderReindexed(qint64 folderId, int changeCount)
 // Release 7 — Connexion au serveur : envoi du folder_hello
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Annonce d'un acces accorde (creation de dossier partage visible par
+// d'autres utilisateurs -- meme poste ou autre machine du LAN)
+// ---------------------------------------------------------------------------
+
+void FolderSyncService::announceAccessGranted(qint64 folderId, qint64 userId,
+                                               models::SharedFolderPermission permission)
+{
+    if (!m_folderManager) return;
+
+    const auto folder = m_folderManager->getFolder(folderId);
+    if (!folder.has_value()) return;
+
+    const auto owner = m_userRepository.findById(static_cast<int>(folder->ownerId()));
+    const auto grantedUser = m_userRepository.findById(static_cast<int>(userId));
+    if (!owner.has_value() || !grantedUser.has_value()) {
+        qWarning() << "[FolderSync] announceAccessGranted : proprietaire ou utilisateur introuvable, annonce annulee";
+        return;
+    }
+
+    QJsonObject obj;
+    obj[QStringLiteral("type")]              = QString::fromLatin1(kTypeAccessGranted);
+    obj[QStringLiteral("folder_uuid")]       = folder->uuid();
+    obj[QStringLiteral("folder_name")]       = folder->name();
+    obj[QStringLiteral("owner_uuid")]        = owner->uuid();
+    obj[QStringLiteral("user_uuid")]         = grantedUser->uuid();
+    obj[QStringLiteral("permission")]        = models::sharedFolderPermissionToString(permission);
+    obj[QStringLiteral("origin_machine_id")] = m_machineId;
+
+    const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+    broadcastMessage(json);
+    qDebug() << "[FolderSync] Annonce d'acces diffusée : dossier" << folder->name()
+             << "-> utilisateur" << grantedUser->name();
+}
+
 void FolderSyncService::onConnectedToServer()
 {
     const qint64 lastOpId = m_repository.latestId();
@@ -198,6 +236,19 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
         handleFolderHello(obj);
     else if (type == QString::fromLatin1(kTypeFileRequest))
         handleFolderFileRequest(obj, senderAddress);
+    else if (type == QString::fromLatin1(kTypeAccessGranted)) {
+        handleFolderAccessGranted(obj);
+        // Relais vers les autres clients connectes : ce message peut nous
+        // parvenir d'un CLIENT (via MessagingService -> serveur), qui ne
+        // peut pas rejoindre directement les autres clients. Le SERVER
+        // (hub, cf. doc de conception) doit donc le rediffuser. Sans danger
+        // de boucle : handleFolderAccessGranted() s'auto-protege via
+        // origin_machine_id == m_machineId, et un client ne rediffuse
+        // jamais (seul onServerMessageReceived le fait).
+        if (m_messagingServer && m_messagingServer->isRunning()) {
+            m_messagingServer->broadcastMessage(message);
+        }
+    }
 }
 
 void FolderSyncService::onClientMessageReceived(const QString &message)
@@ -211,6 +262,8 @@ void FolderSyncService::onClientMessageReceived(const QString &message)
         handleFolderOp(obj, QHostAddress());
     else if (type == QString::fromLatin1(kTypeCatchupBatch))
         handleFolderCatchupBatch(obj);
+    else if (type == QString::fromLatin1(kTypeAccessGranted))
+        handleFolderAccessGranted(obj);
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +465,48 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
         return;
     }
     qWarning() << "[FolderSync] folder_file_request : dossier" << folderUuid << "introuvable";
+}
+
+void FolderSyncService::handleFolderAccessGranted(const QJsonObject &obj)
+{
+    if (!m_folderManager) return;
+
+    const QString originMachineId = obj[QStringLiteral("origin_machine_id")].toString();
+    if (originMachineId == m_machineId) return; // notre propre annonce (deja appliquee localement)
+
+    const QString userUuid = obj[QStringLiteral("user_uuid")].toString();
+    const auto grantedUser = m_userRepository.findByUuid(userUuid);
+    if (!grantedUser.has_value()) {
+        // Utilisateur inconnu sur ce poste (cas normal : la plupart des
+        // machines du LAN n'hebergent pas tous les comptes) -- rien a
+        // faire ici, ce poste n'est simplement pas destinataire.
+        return;
+    }
+
+    const QString ownerUuid = obj[QStringLiteral("owner_uuid")].toString();
+    const auto owner = m_userRepository.findByUuid(ownerUuid);
+    if (!owner.has_value()) {
+        qWarning() << "[FolderSync] folder_access_granted : proprietaire" << ownerUuid << "inconnu localement, annonce ignoree";
+        return;
+    }
+
+    const QString folderUuid = obj[QStringLiteral("folder_uuid")].toString();
+    auto folder = m_folderManager->getFolderByUuid(folderUuid);
+    if (!folder.has_value()) {
+        folder = m_folderManager->registerRemoteFolder(
+            folderUuid, obj[QStringLiteral("folder_name")].toString(), owner->id(), originMachineId);
+        if (!folder.has_value()) {
+            qWarning() << "[FolderSync] folder_access_granted : echec de l'enregistrement du dossier" << folderUuid;
+            return;
+        }
+    }
+
+    const auto permission = models::stringToSharedFolderPermission(obj[QStringLiteral("permission")].toString())
+        .value_or(models::SharedFolderPermission::Read);
+    m_folderManager->grantAccess(folder->id(), grantedUser->id(), owner->id(), permission);
+
+    qDebug() << "[FolderSync] Dossier partagé reçu :" << folder->name()
+             << "-> accès accordé à" << grantedUser->name();
 }
 
 // ---------------------------------------------------------------------------

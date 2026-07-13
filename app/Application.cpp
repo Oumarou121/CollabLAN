@@ -721,6 +721,14 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_syncEngine, &core::sync::SyncEngine::folderReindexed,
             m_folderSyncService, &core::sync::FolderSyncService::onLocalFolderReindexed);
 
+    // Issue A1/A2 : un acces accorde (creation de dossier partage avec
+    // utilisateurs choisis, ou partage ulterieur) est annonce aux autres
+    // machines du LAN -- sans ce connect, un dossier cree n'est jamais
+    // propagé au-dela du poste createur (cf. core::SharedFolderManager::
+    // createFolder(), core::sync::FolderSyncService::announceAccessGranted()).
+    connect(m_sharedFolderManager, &core::SharedFolderManager::accessGranted,
+            m_folderSyncService, &core::sync::FolderSyncService::announceAccessGranted);
+
     // Release 7 : à chaque connexion au serveur, envoie un folder_hello
     // pour récupérer les opérations manquées (rattrapage hors-ligne).
     connect(m_messagingService, &network::MessagingService::connected,

@@ -9,9 +9,12 @@
 
 #include "database/Repositories/SyncOperationRepository.h"
 #include "database/Repositories/SharedFileRepository.h"
+#include "database/Repositories/SharedFolderAccessRepository.h"
+#include "database/Repositories/UserRepository.h"
 #include "models/FileSyncOperation.h"
 #include "models/SharedFolder.h"
 #include "models/SharedFile.h"
+#include "models/SharedFolderPermission.h"
 
 namespace network {
 class MessagingServer;
@@ -96,6 +99,22 @@ public:
 
     /// Identifiant local (DiscoveryService::localId()) inclus dans chaque message.
     void setLocalMachineId(const QString &machineId);
+
+    /**
+     * @brief Annonce aux autres machines qu'un acces a ete accorde sur un
+     *        dossier partage (a connecter sur SharedFolderManager::accessGranted,
+     *        cf. app/Application.cpp).
+     *
+     * Diffuse un message "folder_access_granted" contenant l'uuid/nom du
+     * dossier, l'uuid du proprietaire et l'uuid de l'utilisateur autorise.
+     * Cote receveur (handleFolderAccessGranted()), si l'utilisateur autorise
+     * existe localement (meme poste, cas multi-comptes), le dossier est
+     * enregistre en metadonnees seules (registerRemoteFolder(), pas de
+     * contenu) s'il n'existe pas deja, puis l'acces est accorde localement.
+     * Ainsi une creation de dossier partage devient visible sur les autres
+     * machines du LAN sans attendre une premiere synchronisation de fichiers.
+     */
+    void announceAccessGranted(qint64 folderId, qint64 userId, models::SharedFolderPermission permission);
 
     /**
      * @brief Envoie un folder_file_request pour un fichier distant.
@@ -230,6 +249,7 @@ private:
     void handleFolderHello(const QJsonObject &obj);
     void handleFolderCatchupBatch(const QJsonObject &obj);
     void handleFolderFileRequest(const QJsonObject &obj, const QHostAddress &senderAddress);
+    void handleFolderAccessGranted(const QJsonObject &obj);
 
     /**
      * @brief Applique localement une suppression distante (folder_op Delete).
@@ -278,6 +298,8 @@ private:
 
     database::SyncOperationRepository m_repository;
     database::SharedFileRepository m_fileRepository;
+    database::SharedFolderAccessRepository m_accessRepository;
+    database::UserRepository m_userRepository;
     core::SharedFolderManager *m_folderManager = nullptr;
     network::MessagingServer *m_messagingServer = nullptr;
     network::MessagingService *m_messagingService = nullptr;

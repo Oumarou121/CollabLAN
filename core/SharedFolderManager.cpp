@@ -60,6 +60,7 @@ SharedFolderManager::SharedFolderManager(database::DatabaseManager *dbManager, Q
     , m_dbManager(dbManager)
     , m_folderRepository(dbManager ? dbManager->database() : QSqlDatabase())
     , m_fileRepository(dbManager ? dbManager->database() : QSqlDatabase())
+    , m_accessRepository(dbManager ? dbManager->database() : QSqlDatabase())
 {
 }
 
@@ -67,7 +68,9 @@ SharedFolderManager::~SharedFolderManager()
 {
 }
 
-std::optional<models::SharedFolder> SharedFolderManager::createFolder(const QString &name, const QString &localPath, qint64 ownerId)
+std::optional<models::SharedFolder> SharedFolderManager::createFolder(const QString &name, const QString &localPath, qint64 ownerId,
+                                                                        const QVector<qint64> &authorizedUserIds,
+                                                                        models::SharedFolderPermission permission)
 {
     if (!m_dbManager) {
         m_lastError = SharedFolderManagerError::DatabaseError;
@@ -113,6 +116,15 @@ std::optional<models::SharedFolder> SharedFolderManager::createFolder(const QStr
     }
 
     emit folderCreated(*inserted);
+
+    // Accorde immediatement l'acces aux utilisateurs choisis a la creation
+    // (cf. commentaire createFolder() dans le .h). Le proprietaire n'a pas
+    // besoin d'une ligne SharedFolderAccess (acces implicite total).
+    for (const qint64 userId : authorizedUserIds) {
+        if (userId == ownerId) continue;
+        grantAccess(inserted->id(), userId, ownerId, permission);
+    }
+
     return inserted;
 }
 
@@ -304,6 +316,92 @@ QVector<models::SharedFile> SharedFolderManager::getFiles(qint64 folderId) const
         return {};
     }
     return m_fileRepository.getByFolderId(folderId);
+}
+
+std::optional<models::SharedFolder> SharedFolderManager::getFolderByUuid(const QString &uuid) const
+{
+    if (!m_dbManager) {
+        return std::nullopt;
+    }
+    return m_folderRepository.findByUuid(uuid);
+}
+
+QVector<models::SharedFolder> SharedFolderManager::getAccessibleFolders(qint64 userId) const
+{
+    if (!m_dbManager) {
+        return {};
+    }
+
+    QVector<models::SharedFolder> result = m_folderRepository.getByOwnerId(userId);
+
+    QVector<qint64> grantedFolderIds;
+    for (const models::SharedFolderAccess &access : m_accessRepository.listForUser(userId)) {
+        grantedFolderIds.append(access.folderId());
+    }
+    if (!grantedFolderIds.isEmpty()) {
+        result += m_folderRepository.getByIds(grantedFolderIds);
+    }
+
+    return result;
+}
+
+bool SharedFolderManager::grantAccess(qint64 folderId, qint64 userId, qint64 grantedBy,
+                                       models::SharedFolderPermission permission)
+{
+    if (!m_dbManager) {
+        return false;
+    }
+
+    const auto access = m_accessRepository.grant(folderId, userId, permission, grantedBy);
+    if (!access.has_value()) {
+        return false;
+    }
+
+    emit accessGranted(folderId, userId, permission);
+    return true;
+}
+
+bool SharedFolderManager::revokeAccess(qint64 folderId, qint64 userId)
+{
+    if (!m_dbManager) {
+        return false;
+    }
+    return m_accessRepository.revoke(folderId, userId);
+}
+
+QVector<models::SharedFolderAccess> SharedFolderManager::accessForFolder(qint64 folderId) const
+{
+    if (!m_dbManager) {
+        return {};
+    }
+    return m_accessRepository.listForFolder(folderId);
+}
+
+std::optional<models::SharedFolder> SharedFolderManager::registerRemoteFolder(const QString &uuid, const QString &name,
+                                                                                qint64 ownerId, const QString &originMachineId)
+{
+    if (!m_dbManager) {
+        return std::nullopt;
+    }
+
+    const auto existing = m_folderRepository.findByUuid(uuid);
+    if (existing.has_value()) {
+        return existing; // deja connu localement (idempotent)
+    }
+
+    models::SharedFolder folder(0, name, QString());
+    folder.setUuid(uuid);
+    folder.setOwnerId(ownerId);
+    folder.setIsActive(true);
+    folder.setOriginMachineId(originMachineId);
+
+    const auto inserted = m_folderRepository.insert(folder);
+    if (!inserted.has_value()) {
+        return std::nullopt;
+    }
+
+    emit folderCreated(*inserted);
+    return inserted;
 }
 
 } // namespace core
