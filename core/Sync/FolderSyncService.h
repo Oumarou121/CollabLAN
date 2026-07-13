@@ -251,6 +251,14 @@ private:
     void handleFolderFileRequest(const QJsonObject &obj, const QHostAddress &senderAddress);
     void handleFolderAccessGranted(const QJsonObject &obj);
 
+    /// Construit le JSON d'une annonce "folder_access_granted" pour un
+    /// acces donne (utilise par announceAccessGranted() pour la diffusion
+    /// immediate ET par handleFolderHello() pour le rattrapage hors-ligne,
+    /// cf. SharedFolderAccessRepository::getSinceId()). std::nullopt si le
+    /// dossier/proprietaire/beneficiaire ne peut pas etre resolu.
+    std::optional<QJsonObject> buildAccessGrantedJson(qint64 folderId, qint64 userId,
+                                                        models::SharedFolderPermission permission) const;
+
     /**
      * @brief Applique localement une suppression distante (folder_op Delete).
      *

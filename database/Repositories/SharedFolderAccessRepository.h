@@ -49,6 +49,16 @@ public:
     /// explicite -- n'inclut PAS les dossiers dont userId est proprietaire.
     QVector<models::SharedFolderAccess> listForUser(qint64 userId) const;
 
+    /// Acces dont id() > sinceId, tries par id croissant -- utilise par
+    /// core::sync::FolderSyncService pour le rattrapage hors-ligne des
+    /// annonces de partage (folder_hello / folder_catchup_batch), sur le
+    /// meme principe que SyncOperationRepository::getSinceId().
+    QVector<models::SharedFolderAccess> getSinceId(qint64 sinceId, int limit = 500) const;
+
+    /// Plus grand id connu (0 si aucun acces) : sert de "curseur" pour un
+    /// poste qui revient en ligne (cf. getSinceId()).
+    qint64 latestId() const;
+
     QString lastError() const;
 
 private:

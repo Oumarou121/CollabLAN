@@ -137,6 +137,35 @@ QVector<models::SharedFolderAccess> SharedFolderAccessRepository::listForUser(qi
     return result;
 }
 
+QVector<models::SharedFolderAccess> SharedFolderAccessRepository::getSinceId(qint64 sinceId, int limit) const
+{
+    QVector<models::SharedFolderAccess> result;
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "SELECT * FROM SharedFolderAccess WHERE id > :since_id ORDER BY id ASC LIMIT :limit"));
+    query.bindValue(QStringLiteral(":since_id"), sinceId);
+    query.bindValue(QStringLiteral(":limit"), limit);
+
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return result;
+    }
+    while (query.next()) {
+        result.append(accessFromQuery(query));
+    }
+    return result;
+}
+
+qint64 SharedFolderAccessRepository::latestId() const
+{
+    QSqlQuery query(m_db);
+    if (!query.exec(QStringLiteral("SELECT MAX(id) FROM SharedFolderAccess")) || !query.next()) {
+        m_lastError = query.lastError().text();
+        return 0;
+    }
+    return query.value(0).toLongLong();
+}
+
 QString SharedFolderAccessRepository::lastError() const
 {
     return m_lastError;

@@ -3,3 +3,4 @@
 - [FolderSyncService transfer correlation](foldersync-transfer-correlation.md) — pending file requests keyed by ownerMachineId::fileName; private static methods can't be tested via QMetaObject::invokeMethod.
 - [FolderSyncService receiver-side completeness](foldersync-receiver-completeness.md) — handleFolderOp (live) and handleFolderCatchupBatch (catch-up) both branch per op-type; mirror changes in both or one path silently lags.
 - ["Parameter count mismatch" really means unknown column](sql-parameter-count-mismatch.md) — Qt/SQLite reports this misleading error when prepare() silently fails on a missing column; check schema before binding code.
+- [Shared folder access grants and propagation](shared-folder-access-propagation.md) — grants piggyback folder creation onto one network message; offline catch-up mirrors the folder_hello/op_id cursor pattern.

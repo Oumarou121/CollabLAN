@@ -176,19 +176,18 @@ void FolderSyncService::onLocalFolderReindexed(qint64 folderId, int changeCount)
 // d'autres utilisateurs -- meme poste ou autre machine du LAN)
 // ---------------------------------------------------------------------------
 
-void FolderSyncService::announceAccessGranted(qint64 folderId, qint64 userId,
-                                               models::SharedFolderPermission permission)
+std::optional<QJsonObject> FolderSyncService::buildAccessGrantedJson(qint64 folderId, qint64 userId,
+                                                                      models::SharedFolderPermission permission) const
 {
-    if (!m_folderManager) return;
+    if (!m_folderManager) return std::nullopt;
 
     const auto folder = m_folderManager->getFolder(folderId);
-    if (!folder.has_value()) return;
+    if (!folder.has_value()) return std::nullopt;
 
     const auto owner = m_userRepository.findById(static_cast<int>(folder->ownerId()));
     const auto grantedUser = m_userRepository.findById(static_cast<int>(userId));
     if (!owner.has_value() || !grantedUser.has_value()) {
-        qWarning() << "[FolderSync] announceAccessGranted : proprietaire ou utilisateur introuvable, annonce annulee";
-        return;
+        return std::nullopt;
     }
 
     QJsonObject obj;
@@ -199,23 +198,37 @@ void FolderSyncService::announceAccessGranted(qint64 folderId, qint64 userId,
     obj[QStringLiteral("user_uuid")]         = grantedUser->uuid();
     obj[QStringLiteral("permission")]        = models::sharedFolderPermissionToString(permission);
     obj[QStringLiteral("origin_machine_id")] = m_machineId;
+    return obj;
+}
 
-    const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+void FolderSyncService::announceAccessGranted(qint64 folderId, qint64 userId,
+                                               models::SharedFolderPermission permission)
+{
+    const auto obj = buildAccessGrantedJson(folderId, userId, permission);
+    if (!obj.has_value()) {
+        qWarning() << "[FolderSync] announceAccessGranted : proprietaire ou utilisateur introuvable, annonce annulee";
+        return;
+    }
+
+    const QString json = QString::fromUtf8(QJsonDocument(*obj).toJson(QJsonDocument::Compact));
     broadcastMessage(json);
-    qDebug() << "[FolderSync] Annonce d'acces diffusée : dossier" << folder->name()
-             << "-> utilisateur" << grantedUser->name();
+    qDebug() << "[FolderSync] Annonce d'acces diffusée : dossier" << (*obj)[QStringLiteral("folder_name")].toString()
+             << "-> utilisateur uuid" << (*obj)[QStringLiteral("user_uuid")].toString();
 }
 
 void FolderSyncService::onConnectedToServer()
 {
     const qint64 lastOpId = m_repository.latestId();
+    const qint64 lastAccessId = m_accessRepository.latestId();
     QJsonObject hello;
-    hello[QStringLiteral("type")]        = QString::fromLatin1(kTypeFolderHello);
-    hello[QStringLiteral("machine_id")]  = m_machineId;
-    hello[QStringLiteral("last_op_id")] = lastOpId;
+    hello[QStringLiteral("type")]          = QString::fromLatin1(kTypeFolderHello);
+    hello[QStringLiteral("machine_id")]    = m_machineId;
+    hello[QStringLiteral("last_op_id")]    = lastOpId;
+    hello[QStringLiteral("last_access_id")] = lastAccessId;
     const QString json = QString::fromUtf8(QJsonDocument(hello).toJson(QJsonDocument::Compact));
     sendMessageToServer(json);
-    qDebug() << "[FolderSync] folder_hello envoyé, last_op_id =" << lastOpId;
+    qDebug() << "[FolderSync] folder_hello envoyé, last_op_id =" << lastOpId
+             << "last_access_id =" << lastAccessId;
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +349,7 @@ void FolderSyncService::handleFolderHello(const QJsonObject &obj)
 {
     if (!m_folderManager) return;
     const qint64 lastOpId = static_cast<qint64>(obj[QStringLiteral("last_op_id")].toDouble());
+    const qint64 lastAccessId = static_cast<qint64>(obj[QStringLiteral("last_access_id")].toDouble());
     const quint16 selfPort = m_transferService ? m_transferService->port()
                                                : network::TransferService::defaultPort();
 
@@ -353,13 +367,34 @@ void FolderSyncService::handleFolderHello(const QJsonObject &obj)
         }
     }
 
+    // Rattrapage hors-ligne des annonces de partage (issue "share pas reçu
+    // si le SERVER etait hors-ligne au moment du grantAccess") : le SERVER
+    // rejoue tous les acces qu'IL connait localement (accordes par lui-meme
+    // OU deja reçus/appliques via handleFolderAccessGranted pendant qu'il
+    // etait en ligne) et qui sont plus recents que le curseur du CLIENT qui
+    // se connecte. Cela couvre le cas ou le CLIENT (ou le SERVER) etait
+    // hors-ligne au moment de l'annonce initiale -- des qu'il se reconnecte,
+    // il rattrape les acces manques sans qu'une nouvelle action de partage
+    // soit necessaire.
+    QJsonArray accessArray;
+    for (const auto &access : m_accessRepository.getSinceId(lastAccessId, 500)) {
+        const auto accessJson = buildAccessGrantedJson(access.folderId(), access.userId(), access.permission());
+        if (accessJson.has_value()) {
+            QJsonObject entry = *accessJson;
+            entry.remove(QStringLiteral("type"));
+            accessArray.append(entry);
+        }
+    }
+
     QJsonObject batch;
-    batch[QStringLiteral("type")]       = QString::fromLatin1(kTypeCatchupBatch);
-    batch[QStringLiteral("operations")] = opsArray;
+    batch[QStringLiteral("type")]         = QString::fromLatin1(kTypeCatchupBatch);
+    batch[QStringLiteral("operations")]   = opsArray;
+    batch[QStringLiteral("access_grants")] = accessArray;
     const QString json = QString::fromUtf8(
         QJsonDocument(batch).toJson(QJsonDocument::Compact));
     broadcastMessage(json);
-    qDebug() << "[FolderSync] folder_catchup_batch envoyé :" << opsArray.size() << "ops";
+    qDebug() << "[FolderSync] folder_catchup_batch envoyé :" << opsArray.size() << "ops,"
+             << accessArray.size() << "access_grants";
 }
 
 void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
@@ -421,6 +456,19 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
 
     qDebug() << "[FolderSync] folder_catchup_batch reçu :" << ops.size() << "ops";
     emit catchupBatchReceived(ops);
+
+    // Rattrapage des annonces de partage manquees (cf. handleFolderHello()) :
+    // chaque entree est traitee exactement comme une annonce temps reel
+    // (handleFolderAccessGranted() est idempotent -- registerRemoteFolder()
+    // et grantAccess() le sont deja).
+    const QJsonArray accessArray = obj[QStringLiteral("access_grants")].toArray();
+    for (const auto &value : accessArray) {
+        if (!value.isObject()) continue;
+        handleFolderAccessGranted(value.toObject());
+    }
+    if (!accessArray.isEmpty()) {
+        qDebug() << "[FolderSync] folder_catchup_batch : " << accessArray.size() << "access_grants rattrapés";
+    }
 }
 
 void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
