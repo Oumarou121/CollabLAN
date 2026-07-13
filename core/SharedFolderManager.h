@@ -124,7 +124,10 @@ public:
 
     /// Revoque l'acces d'un utilisateur a un dossier partage (no-op si
     /// aucun acces n'existait -- idempotent, cf. SharedFolderAccessRepository::revoke()).
-    bool revokeAccess(qint64 folderId, qint64 userId);
+    /// broadcastNetwork=false doit etre utilise quand la revocation provient
+    /// deja d'un message reseau (cf. FolderSyncService::handleFolderAccessRevoked()),
+    /// pour eviter de rediffuser indefiniment le meme evenement entre pairs.
+    bool revokeAccess(qint64 folderId, qint64 userId, bool broadcastNetwork = true);
 
     /// Liste des acces explicitement accordes sur un dossier (n'inclut PAS
     /// le proprietaire, qui a un acces implicite total).
@@ -164,6 +167,9 @@ signals:
     /// saura qu'a la prochaine action de partage sur ce dossier -- limitation
     /// acceptee pour borner la portee de cette 1ere version).
     void accessRevoked(qint64 folderId, qint64 userId);
+    /// Emis a chaque acces revoque pour le rafraîchissement UI local.
+    /// Toujours émis, même quand l'accès est révoqué suite à un message réseau.
+    void accessRevokedLocal(qint64 folderId, qint64 userId);
 
 private:
     database::DatabaseManager *m_dbManager = nullptr;

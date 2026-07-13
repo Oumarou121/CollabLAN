@@ -50,6 +50,9 @@ public slots:
     /// Appelé lorsqu'un dossier partagé est créé.
     void onFolderCreated(const QString &folderName, const QString &ownerName);
 
+    /// Appelé lorsqu'un accès à un dossier partagé est révoqué.
+    void onFolderAccessRevoked(const QString &folderName);
+
 signals:
     /// Emis lorsqu'une notification doit être affichée (toast) et/ou
     /// sonorisee par l'UI. category identifie le type d'evenement

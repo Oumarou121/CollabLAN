@@ -371,7 +371,7 @@ bool SharedFolderManager::grantAccess(qint64 folderId, qint64 userId, qint64 gra
     return true;
 }
 
-bool SharedFolderManager::revokeAccess(qint64 folderId, qint64 userId)
+bool SharedFolderManager::revokeAccess(qint64 folderId, qint64 userId, bool broadcastNetwork)
 {
     if (!m_dbManager) {
         return false;
@@ -379,7 +379,25 @@ bool SharedFolderManager::revokeAccess(qint64 folderId, qint64 userId)
     if (!m_accessRepository.revoke(folderId, userId)) {
         return false;
     }
-    emit accessRevoked(folderId, userId);
+
+    // Toujours émettre accessRevokedLocal pour le rafraîchissement UI
+    QMetaObject::invokeMethod(this, [this, folderId, userId]() {
+        emit accessRevokedLocal(folderId, userId);
+    }, Qt::QueuedConnection);
+
+    // Émettre accessRevoked pour la diffusion réseau UNIQUEMENT si cette
+    // revocation est locale (pas issue d'un message reseau deja recu) --
+    // sinon FolderSyncService::announceAccessRevoked() rediffuse l'evenement
+    // avec un nouvel origin_machine_id, et chaque pair qui le recoit rappelle
+    // revokeAccess() a son tour : boucle de rediffusion infinie entre pairs
+    // (et notifications repetees) des qu'au moins deux pairs partagent encore
+    // le dossier.
+    if (broadcastNetwork) {
+        QMetaObject::invokeMethod(this, [this, folderId, userId]() {
+            emit accessRevoked(folderId, userId);
+        }, Qt::QueuedConnection);
+    }
+
     return true;
 }
 

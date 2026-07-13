@@ -465,6 +465,11 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                     m_audioService->playMessageSound();
                 } else if (category == QStringLiteral("transfer")) {
                     m_audioService->playTransferSound();
+                } else if (category == QStringLiteral("folder")) {
+                    // Partage de dossier ET revocation d'acces : meme son que
+                    // "message" (aucun son dedie "folder" n'existe dans
+                    // AudioService pour l'instant).
+                    m_audioService->playMessageSound();
                 }
                 // "connection"/"disconnection" : toast silencieux (pas de son
                 // dedie ; playCallSound() est reserve aux appels entrants).
@@ -767,13 +772,42 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             m_folderSyncService, &core::sync::FolderSyncService::announceAccessRevoked);
 
     // Notifier quand un dossier partagé est créé
-    connect(m_sharedFolderManager, &core::SharedFolderManager::folderCreated,
-            this, [this](const models::SharedFolder &folder) {
+    //
+    // NB : on ne peut pas se contenter d'ecouter folderCreated() : ce signal
+    // n'est (re)emis que lorsque SharedFolderManager::registerRemoteFolder()
+    // insere une NOUVELLE ligne SharedFolder. Si le dossier etait deja connu
+    // localement (metadonnees recues via un folder_hello/catchup anterieur,
+    // avant meme que cet utilisateur ait l'acces), grantAccess() ne re-emet
+    // pas folderCreated -> aucune notification n'etait envoyee alors que
+    // l'acces est bien nouveau pour lui. On notifie donc plutot sur
+    // accessGrantedLocal(), qui est TOUJOURS emis, filtre sur l'utilisateur
+    // local.
+    connect(m_sharedFolderManager, &core::SharedFolderManager::accessGrantedLocal,
+            this, [this](qint64 folderId, qint64 userId) {
+                if (!m_userManager->currentUserId().has_value()
+                    || static_cast<qint64>(*m_userManager->currentUserId()) != userId) {
+                    return;
+                }
+                const auto folder = m_sharedFolderManager->getFolder(folderId);
+                if (!folder.has_value()) return;
                 const auto users = m_userManager->allUsers();
                 auto it = std::find_if(users.begin(), users.end(),
-                    [folder](const models::User &u) { return u.id() == folder.ownerId(); });
+                    [&folder](const models::User &u) { return u.id() == folder->ownerId(); });
                 if (it != users.end()) {
-                    m_notificationManager->onFolderCreated(folder.name(), it->name());
+                    m_notificationManager->onFolderCreated(folder->name(), it->name());
+                }
+            });
+
+    // Notifier quand l'accès à un dossier partagé est révoqué
+    connect(m_sharedFolderManager, &core::SharedFolderManager::accessRevokedLocal,
+            this, [this](qint64 folderId, qint64 userId) {
+                // Ne notifier que si c'est l'utilisateur local qui est révoqué
+                if (m_userManager->currentUserId().has_value()
+                    && static_cast<qint64>(*m_userManager->currentUserId()) == userId) {
+                    const auto folder = m_sharedFolderManager->getFolder(folderId);
+                    if (folderId > 0 && folder.has_value()) {
+                        m_notificationManager->onFolderAccessRevoked(folder->name());
+                    }
                 }
             });
 

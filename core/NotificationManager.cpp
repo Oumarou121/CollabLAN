@@ -104,4 +104,16 @@ void NotificationManager::onFolderCreated(const QString &folderName, const QStri
     emit notificationRequested(title, message, QStringLiteral("folder"));
 }
 
+void NotificationManager::onFolderAccessRevoked(const QString &folderName)
+{
+    if (!m_notificationsEnabled) {
+        return;
+    }
+
+    const QString title = QStringLiteral("Accès révoqué");
+    const QString message = QStringLiteral("Votre accès au dossier \"%1\" a été révoqué").arg(folderName);
+
+    emit notificationRequested(title, message, QStringLiteral("folder"));
+}
+
 } // namespace core

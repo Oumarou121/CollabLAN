@@ -744,6 +744,9 @@ void FolderSyncService::handleFolderAccessGranted(const QJsonObject &obj)
     // recevoir l'acces a ce dossier distant, on ne peut pas attendre une
     // hypothetique reconnexion : on demande immediatement au proprietaire un
     // rattrapage cible pour CE dossier, sans attendre folder_hello.
+    qDebug() << "[FolderSync] Vérification resync request: m_localUserId=" << m_localUserId
+             << "grantedUser->id()=" << grantedUser->id()
+             << "folder->isLocalOrigin()=" << folder->isLocalOrigin();
     if (m_localUserId > 0
         && static_cast<qint64>(grantedUser->id()) == m_localUserId
         && !folder->isLocalOrigin()) {
@@ -756,16 +759,23 @@ void FolderSyncService::handleFolderAccessGranted(const QJsonObject &obj)
         broadcastMessage(json);
         qDebug() << "[FolderSync] folder_resync_request envoyé pour récupérer le contenu de"
                  << folder->name();
+    } else {
+        qDebug() << "[FolderSync] folder_resync_request NON envoyé (conditions non remplies)";
     }
 }
 
 void FolderSyncService::handleFolderResyncRequest(const QJsonObject &obj)
 {
+    qDebug() << "[FolderSync] handleFolderResyncRequest appelé";
     if (!m_folderManager) return;
 
     const QString folderUuid         = obj[QStringLiteral("folder_uuid")].toString();
     const QString requesterMachineId = obj[QStringLiteral("requester_machine_id")].toString();
     const qint64 sinceOpId = static_cast<qint64>(obj[QStringLiteral("since_op_id")].toDouble());
+
+    qDebug() << "[FolderSync] folder_resync_request: folderUuid=" << folderUuid
+             << "requesterMachineId=" << requesterMachineId
+             << "sinceOpId=" << sinceOpId;
 
     if (folderUuid.isEmpty() || requesterMachineId.isEmpty() || requesterMachineId == m_machineId)
         return;
@@ -773,7 +783,14 @@ void FolderSyncService::handleFolderResyncRequest(const QJsonObject &obj)
     const auto folder = m_folderManager->getFolderByUuid(folderUuid);
     // Seul le propriétaire (origine locale du dossier) peut répondre : c'est
     // la seule machine à détenir le contenu réel sur disque.
-    if (!folder.has_value() || !folder->isLocalOrigin()) return;
+    if (!folder.has_value()) {
+        qDebug() << "[FolderSync] folder_resync_request: dossier introuvable";
+        return;
+    }
+    if (!folder->isLocalOrigin()) {
+        qDebug() << "[FolderSync] folder_resync_request: dossier non local (nous ne sommes pas le propriétaire)";
+        return;
+    }
 
     if (effectivePermission(*folder, requesterMachineId) == models::SharedFolderPermission::None) {
         qDebug() << "[FolderSync] folder_resync_request refusé (accès révoqué) pour" << requesterMachineId
@@ -835,8 +852,11 @@ void FolderSyncService::handleFolderAccessRevoked(const QJsonObject &obj)
                  << "a été révoqué — nettoyage local en cours";
         cleanupRevokedFolder(*folder); // supprime aussi l'accès via removeFolder
     } else {
-        // Un autre utilisateur a été révoqué ; on met simplement à jour la DB locale.
-        m_folderManager->revokeAccess(folder->id(), revokedUser->id());
+        // Un autre utilisateur a été révoqué ; on met simplement à jour la DB
+        // locale, SANS rediffuser (broadcastNetwork=false) : cet évènement
+        // provient déjà du réseau, le rediffuser créerait une boucle infinie
+        // entre pairs (cf. commentaire dans SharedFolderManager::revokeAccess()).
+        m_folderManager->revokeAccess(folder->id(), revokedUser->id(), false);
         qDebug() << "[FolderSync] Révocation reçue : dossier" << folder->name()
                  << "-> utilisateur" << revokedUser->name();
     }
