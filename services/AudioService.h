@@ -20,6 +20,10 @@ class AudioService : public QObject
 {
     Q_OBJECT
 
+    // Proprietes bindables depuis QML (SettingsView).
+    Q_PROPERTY(bool soundEnabled READ isSoundEnabled WRITE setSoundEnabled NOTIFY soundEnabledChanged)
+    Q_PROPERTY(qreal volume READ volume WRITE setVolume NOTIFY volumeChanged)
+
 public:
     /// Types d'evenements notifiables pouvant declencher un son.
     enum class EventType {
@@ -33,7 +37,7 @@ public:
     ~AudioService() override;
 
     /// Active ou desactive globalement la lecture des sons.
-    void setSoundEnabled(bool enabled) { m_soundEnabled = enabled; }
+    void setSoundEnabled(bool enabled);
     bool isSoundEnabled() const { return m_soundEnabled; }
 
     /// Regle le volume de lecture (0.0 a 1.0) applique a tous les sons.
@@ -54,6 +58,10 @@ public slots:
     /// playCallSound()) : a appeler des que l'appel entrant est traite
     /// (decroche, refuse, raccroche par l'appelant, timeout...).
     void stopCallSound();
+
+signals:
+    void soundEnabledChanged();
+    void volumeChanged();
 
 private:
     void loadSound(EventType type, const QString &resourcePath);

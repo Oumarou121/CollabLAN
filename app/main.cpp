@@ -15,6 +15,7 @@
 #include "SharedFolderContext.h"
 #include "CallContext.h"
 #include "NotificationManager.h"
+#include "AudioService.h"
 #include "AuditLogModel.h"
 #include "AuditManager.h"
 #include "CallHistoryManager.h"
@@ -148,6 +149,9 @@ int main(int argc, char *argv[])
     // Brancher ToastHost.qml (Main.qml) sur les evenements notifiables
     // (message, transfert, connexion/deconnexion - issue #58).
     engine.rootContext()->setContextProperty("notificationManager", static_cast<QObject*>(application.notificationManager()));
+    // Expose AudioService en QML pour que SettingsView puisse lire/modifier
+    // soundEnabled et volume sans passer par Application (issue #56).
+    engine.rootContext()->setContextProperty("audioService", static_cast<QObject*>(application.audioService()));
     // Brancher SettingsView.qml (priority_weight/timeout) et l'indicateur de
     // role dans Main.qml sur ElectionService (HYBRID_SERVER_FAILOVER.md
     // section 9, etape 5).

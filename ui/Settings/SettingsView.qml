@@ -235,6 +235,105 @@ Item {
             color: Theme.textSecondary
         }
 
+        // --- Sons et notifications -------------------------------------------
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: audioColumn.implicitHeight + Theme.spacingMedium * 2
+            radius: Theme.radiusMedium
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.border
+
+            ColumnLayout {
+                id: audioColumn
+                anchors.fill: parent
+                anchors.margins: Theme.spacingMedium
+                spacing: Theme.spacingMedium
+
+                Label {
+                    text: qsTr("Sons & notifications")
+                    color: Theme.text
+                    font.pixelSize: Theme.fontSizeHeading
+                    font.bold: true
+                }
+
+                // --- Activation globale des sons ---
+                RowLayout {
+                    spacing: Theme.spacingMedium
+                    Label {
+                        text: qsTr("Sons activés")
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                        Layout.fillWidth: true
+                    }
+                    Switch {
+                        id: soundSwitch
+                        checked: (typeof audioService !== "undefined") && audioService.soundEnabled
+                        onCheckedChanged: {
+                            if (typeof audioService !== "undefined")
+                                audioService.soundEnabled = checked
+                        }
+                        // Resynchronise si le backend change la valeur depuis le C++.
+                        Connections {
+                            target: (typeof audioService !== "undefined") ? audioService : null
+                            function onSoundEnabledChanged() {
+                                if (typeof audioService !== "undefined")
+                                    soundSwitch.checked = audioService.soundEnabled
+                            }
+                        }
+                    }
+                }
+
+                // --- Volume -----------------------------------------------
+                ColumnLayout {
+                    enabled: soundSwitch.checked
+                    opacity: soundSwitch.checked ? 1.0 : 0.4
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingSmall
+
+                    Behavior on opacity { NumberAnimation { duration: 120 } }
+
+                    RowLayout {
+                        spacing: Theme.spacingSmall
+                        Label {
+                            text: qsTr("Volume")
+                            color: Theme.text
+                            font.pixelSize: Theme.fontSizeSmall
+                        }
+                        Item { Layout.fillWidth: true }
+                        Label {
+                            text: Math.round(volumeSlider.value * 100) + " %"
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontSizeSmall
+                        }
+                    }
+
+                    Slider {
+                        id: volumeSlider
+                        from: 0.0
+                        to: 1.0
+                        stepSize: 0.05
+                        value: (typeof audioService !== "undefined") ? audioService.volume : 1.0
+                        Layout.fillWidth: true
+
+                        onMoved: {
+                            if (typeof audioService !== "undefined")
+                                audioService.volume = value
+                        }
+
+                        Connections {
+                            target: (typeof audioService !== "undefined") ? audioService : null
+                            function onVolumeChanged() {
+                                if (typeof audioService !== "undefined"
+                                        && Math.abs(volumeSlider.value - audioService.volume) > 0.01)
+                                    volumeSlider.value = audioService.volume
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Item { Layout.fillHeight: true }
     }
 }

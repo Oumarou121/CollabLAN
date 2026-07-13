@@ -89,12 +89,24 @@ void AudioService::loadSound(EventType type, const QString &resourcePath)
     m_sounds.insert(type, effect);
 }
 
+void AudioService::setSoundEnabled(bool enabled)
+{
+    if (m_soundEnabled == enabled)
+        return;
+    m_soundEnabled = enabled;
+    emit soundEnabledChanged();
+}
+
 void AudioService::setVolume(qreal volume)
 {
-    m_volume = qBound(0.0, volume, 1.0);
+    const qreal clamped = qBound(0.0, volume, 1.0);
+    if (qFuzzyCompare(m_volume, clamped))
+        return;
+    m_volume = clamped;
     for (auto *effect : std::as_const(m_sounds)) {
         effect->setVolume(m_volume);
     }
+    emit volumeChanged();
 }
 
 void AudioService::playSound(services::AudioService::EventType type)
