@@ -228,6 +228,7 @@ int main(int argc, char *argv[])
     sharedFolderContext->setSharedFolderManager(application.sharedFolderManager());
     sharedFolderContext->setSyncEngine(application.syncEngine());
     sharedFolderContext->setUserManager(application.userManager());
+    sharedFolderContext->setFolderSyncService(application.folderSyncService());
     engine.rootContext()->setContextProperty("sharedFolderContext", sharedFolderContext);
 
     engine.load(QUrl(QStringLiteral("qrc:/ui/Main.qml")));

@@ -32,6 +32,11 @@ Item {
     property var currentSyncHistory: []
     property bool showHistory: false
 
+    // Ensemble des chemins relatifs en conflit pour le dossier actuellement ouvert.
+    // Clé: relativePath  Valeur: chemin du fichier de conflit renommé.
+    // Réinitialisé à l'ouverture d'un nouveau dossier.
+    property var conflictedFiles: ({})
+
     function formatBytes(bytes) {
         if (!bytes || bytes <= 0) return "0 o"
         const units = ["o", "Ko", "Mo", "Go"]
@@ -48,6 +53,7 @@ Item {
         root.openedFolderId = folderId
         root.openedFolderName = name
         root.showHistory = false
+        root.conflictedFiles = {}   // reset des conflits a l'ouverture
         root.refreshFiles()
         root.refreshHistory()
     }
@@ -108,6 +114,46 @@ Item {
         }
     }
 
+    // ---- bannière de conflit (Release 8) ----
+    // Affichée quand FolderSyncService détecte qu'un fichier reçu entre en
+    // conflit avec un fichier local de même nom mais de contenu différent.
+    Rectangle {
+        id: conflictBanner
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: conflictLabel.implicitHeight + Theme.spacingMedium
+        color: "#C07000"   // ambre — distinct de la bannière d'erreur rouge
+        visible: opacity > 0
+        opacity: 0
+        z: 11              // au-dessus de la bannière d'erreur (z=10)
+
+        Label {
+            id: conflictLabel
+            anchors.centerIn: parent
+            width: parent.width - Theme.spacingLarge
+            color: "#FFFFFF"
+            font.pixelSize: Theme.fontSizeSmall
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+        }
+
+        Behavior on opacity { NumberAnimation { duration: 150 } }
+
+        Timer {
+            id: conflictTimer
+            interval: 6000
+            onTriggered: conflictBanner.opacity = 0
+        }
+
+        function show(relativePath, conflictPath) {
+            conflictLabel.text = qsTr("⚠ Conflit : « %1 » reçu en conflit → renommé « %2 »")
+                .arg(relativePath).arg(conflictPath)
+            opacity = 1
+            conflictTimer.restart()
+        }
+    }
+
     // ---- bannière d'erreur ----
     Rectangle {
         id: errorBanner
@@ -149,6 +195,13 @@ Item {
         target: root.context
         function onErrorOccurred(message) {
             errorBanner.show(message)
+        }
+        function onConflictDetected(folderUuid, relativePath, conflictPath) {
+            // Enregistre le conflit (badge sur la ligne) et affiche la banniere.
+            const updated = Object.assign({}, root.conflictedFiles)
+            updated[relativePath] = conflictPath
+            root.conflictedFiles = updated
+            conflictBanner.show(relativePath, conflictPath)
         }
     }
 
@@ -877,33 +930,75 @@ Item {
                 }
 
                 delegate: Rectangle {
+                    id: fileRow
                     width: filesListView.width
-                    height: 36
+                    height: hasConflict ? 52 : 36
                     color: fileMouseArea.containsMouse ? Theme.surfaceHover : "transparent"
 
-                    RowLayout {
+                    // true si ce fichier a un conflit en attente de résolution
+                    readonly property bool hasConflict: root.conflictedFiles.hasOwnProperty(modelData.relativePath)
+                    readonly property string conflictPath: hasConflict ? root.conflictedFiles[modelData.relativePath] : ""
+
+                    ColumnLayout {
                         anchors.fill: parent
                         anchors.leftMargin: Theme.spacingSmall
                         anchors.rightMargin: Theme.spacingSmall
+                        spacing: 1
 
-                        Label {
+                        RowLayout {
                             Layout.fillWidth: true
-                            text: modelData.relativePath
-                            color: Theme.text
-                            font.pixelSize: Theme.fontSizeSmall
+                            Layout.fillHeight: true
+                            spacing: Theme.spacingSmall
+
+                            // Badge conflit — icône ⚠ ambrée sur la gauche du nom
+                            Rectangle {
+                                visible: fileRow.hasConflict
+                                width: 20
+                                height: 20
+                                radius: 10
+                                color: "#C07000"
+                                Label {
+                                    anchors.centerIn: parent
+                                    text: "⚠"
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                }
+                                ToolTip.visible: badgeHover.containsMouse
+                                ToolTip.text: qsTr("Conflit → %1").arg(fileRow.conflictPath)
+                                HoverHandler { id: badgeHover }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: modelData.relativePath
+                                color: fileRow.hasConflict ? "#C07000" : Theme.text
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.bold: fileRow.hasConflict
+                                elide: Text.ElideMiddle
+                            }
+                            Label {
+                                Layout.preferredWidth: 90
+                                text: root.formatBytes(modelData.size)
+                                color: Theme.textSecondary
+                                font.pixelSize: Theme.fontSizeSmall
+                            }
+                            Label {
+                                Layout.preferredWidth: 60
+                                text: "v" + modelData.version
+                                color: Theme.textSecondary
+                                font.pixelSize: Theme.fontSizeSmall
+                            }
+                        }
+
+                        // Sous-ligne : chemin du fichier de conflit renommé
+                        Label {
+                            visible: fileRow.hasConflict
+                            Layout.fillWidth: true
+                            text: qsTr("→ copie en conflit : %1").arg(fileRow.conflictPath)
+                            color: "#C07000"
+                            font.pixelSize: Theme.fontSizeCaption
                             elide: Text.ElideMiddle
-                        }
-                        Label {
-                            Layout.preferredWidth: 90
-                            text: root.formatBytes(modelData.size)
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
-                        }
-                        Label {
-                            Layout.preferredWidth: 60
-                            text: "v" + modelData.version
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
                         }
                     }
 

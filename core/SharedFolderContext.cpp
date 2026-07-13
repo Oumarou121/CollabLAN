@@ -50,6 +50,17 @@ void SharedFolderContext::setUserManager(UserManager *manager)
     m_userManager = manager;
 }
 
+void SharedFolderContext::setFolderSyncService(core::sync::FolderSyncService *svc)
+{
+    m_folderSyncService = svc;
+    if (m_folderSyncService) {
+        // Retransmet conflictDetected a QML pour que SharedFolderView puisse
+        // afficher un badge ou une banniere sans connaitre FolderSyncService.
+        connect(m_folderSyncService, &core::sync::FolderSyncService::conflictDetected,
+                this, &SharedFolderContext::conflictDetected);
+    }
+}
+
 void SharedFolderContext::refresh()
 {
     if (!m_manager) {

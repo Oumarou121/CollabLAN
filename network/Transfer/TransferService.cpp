@@ -9,6 +9,7 @@
 #include <QStandardPaths>
 #include <QUuid>
 #include <QDebug>
+#include <QByteArray>
 
 namespace network {
 
@@ -16,47 +17,57 @@ const QByteArray TransferService::kMagic = QByteArrayLiteral("CLFT");
 
 namespace {
 
-// Serialise (fileName, fileSize, senderUuid, recipientUuid, senderMachineId)
-// dans un QByteArray auto-suffisant, utilise a la fois pour l'envoi et la
-// reception. senderUuid/recipientUuid permettent a core::TransferManager
-// d'enregistrer l'historique du transfert en base (issue #55).
-// senderMachineId (UUID DiscoveryService::localId() de l'expediteur) permet
-// de resoudre peer_name cote destinataire par identifiant plutot que par
-// adresse IP : sur une machine multi-interfaces, l'annonce UDP de
-// decouverte et la connexion TCP entrante du transfert peuvent emprunter
-// deux interfaces (donc deux adresses IP) differentes, ce qu'aucune
-// comparaison d'adresses ne peut resoudre correctement.
+// Serialise (fileName, fileSize, senderUuid, recipientUuid, senderMachineId,
+// compressionFlags) dans un QByteArray auto-suffisant.
+//
+// compressionFlags est un octet dont les bits signifient :
+//   bit 0 (0x01) : compression zlib (qCompress/qUncompress) activee.
+//
+// Le champ est facultatif du point de vue des anciens recepteurs : un
+// destinataire plus ancien (sans connaissance de compressionFlags) lira
+// senderMachineId puis s'arretera la ; les octets supplementaires sont
+// ignores car le payload est encadre par sa taille (frameOf()). Un ancien
+// expediteur qui n'emet pas compressionFlags est traite comme 0x00 par
+// decodeHeader() (pas de compression).
 QByteArray encodeHeader(const QString &fileName, qint64 fileSize, const QString &senderUuid,
-                         const QString &recipientUuid, const QString &senderMachineId)
+                         const QString &recipientUuid, const QString &senderMachineId,
+                         quint8 compressionFlags = 0)
 {
     QByteArray payload;
     QDataStream stream(&payload, QIODevice::WriteOnly);
     stream.setVersion(QDataStream::Qt_6_0);
     stream << fileName << static_cast<qint64>(fileSize)
            << senderUuid << recipientUuid
-           << senderMachineId;
+           << senderMachineId
+           << compressionFlags;
     return payload;
 }
 
 bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize,
-                   QString *senderUuid, QString *recipientUuid, QString *senderMachineId)
+                   QString *senderUuid, QString *recipientUuid, QString *senderMachineId,
+                   quint8 *compressionFlags = nullptr)
 {
     QDataStream stream(payload);
     stream.setVersion(QDataStream::Qt_6_0);
     stream >> *fileName >> *fileSize >> *senderUuid >> *recipientUuid;
     if (stream.status() != QDataStream::Ok) {
         senderMachineId->clear();
+        if (compressionFlags) *compressionFlags = 0;
         return false;
     }
-    // senderMachineId a ete ajoute apres la premiere version du protocole :
-    // un en-tete plus ancien (sans ce champ) laisse simplement le stream a
-    // sec ici sans que cela remette en cause la validite des champs deja
-    // lus ci-dessus ; on retombe alors sur une chaine vide (voir
-    // TransferManager::resolvePeerName(), qui utilise l'adresse IP en
-    // repli dans ce cas).
+    // senderMachineId : champ optionnel ajoute apres la v1 du protocole.
     stream >> *senderMachineId;
     if (stream.status() != QDataStream::Ok) {
         senderMachineId->clear();
+        if (compressionFlags) *compressionFlags = 0;
+        return true; // champs obligatoires presents, optionnels absents = OK
+    }
+    // compressionFlags : champ optionnel ajoute apres senderMachineId.
+    if (compressionFlags) {
+        stream >> *compressionFlags;
+        if (stream.status() != QDataStream::Ok) {
+            *compressionFlags = 0;
+        }
     }
     return true;
 }
@@ -185,7 +196,7 @@ quint16 TransferService::port() const
 
 qint64 TransferService::blockSize()
 {
-    return kBlockSize;
+    return kDefaultBlockSize;
 }
 
 quint16 TransferService::defaultPort()
@@ -201,6 +212,25 @@ void TransferService::setReceiveDirectory(const QString &dir)
 void TransferService::setLocalMachineId(const QString &machineId)
 {
     m_localMachineId = machineId;
+}
+
+void TransferService::setCompressionEnabled(bool enabled)
+{
+    m_compressionEnabled = enabled;
+}
+
+void TransferService::setBlockSize(quint32 bytes)
+{
+    if (bytes == 0) {
+        qWarning() << "TransferService::setBlockSize: taille invalide (0) ; conserve" << m_blockSize;
+        return;
+    }
+    m_blockSize = bytes;
+}
+
+quint32 TransferService::currentBlockSize() const
+{
+    return m_blockSize;
 }
 
 void TransferService::setPeerFolderNameResolver(
@@ -275,8 +305,10 @@ void TransferService::onClientSocketConnected()
     emit transferStarted(state.transferKey, info.fileName(), state.fileSize, false, 0,
                           state.senderUuid, state.recipientUuid, socket->peerAddress(), QString());
 
+    const quint8 compressionFlags = m_compressionEnabled ? 0x01 : 0x00;
     const QByteArray header = encodeHeader(info.fileName(), state.fileSize, state.senderUuid,
-                                            state.recipientUuid, m_localMachineId);
+                                            state.recipientUuid, m_localMachineId,
+                                            compressionFlags);
     socket->write(frameOf(header));
     // La reponse (resumeOffset) arrive de facon asynchrone dans
     // onClientSocketReadyRead ; voir state.resumeOffsetReceived.
@@ -383,14 +415,18 @@ void TransferService::sendNextBlock(QTcpSocket *socket)
         return;
     }
 
-    const QByteArray chunk = state.file->read(kBlockSize);
-    if (chunk.isEmpty() && state.bytesSent < state.fileSize) {
+    const QByteArray raw = state.file->read(static_cast<qint64>(m_blockSize));
+    if (raw.isEmpty() && state.bytesSent < state.fileSize) {
         finishSend(socket, false, QStringLiteral("Erreur de lecture du fichier"));
         return;
     }
 
+    // Compression optionnelle : compresse le bloc avec zlib avant l'encadrage.
+    // Le recepteur sait qu'il faut decompresser grace au champ compressionFlags
+    // negocie dans l'en-tete (state.compressionEnabled cote recepteur).
+    const QByteArray chunk = m_compressionEnabled ? qCompress(raw) : raw;
     socket->write(frameOf(chunk));
-    state.bytesSent += chunk.size();
+    state.bytesSent += raw.size();   // bytesSent compte les octets non compresses
     state.waitingForAck = true;
 
     emit transferProgress(state.transferKey, state.bytesSent, state.fileSize);
@@ -488,7 +524,8 @@ void TransferService::onServerSocketReadyRead()
             QString senderUuid;
             QString recipientUuid;
             QString senderMachineId;
-            if (!decodeHeader(payload, &fileName, &fileSize, &senderUuid, &recipientUuid, &senderMachineId)
+            quint8 compressionFlags = 0;
+            if (!decodeHeader(payload, &fileName, &fileSize, &senderUuid, &recipientUuid, &senderMachineId, &compressionFlags)
                 || fileSize < 0) {
                 finishReceive(socket, false, QStringLiteral("En-tete de transfert invalide"));
                 return;
@@ -501,6 +538,7 @@ void TransferService::onServerSocketReadyRead()
             state.senderUuid = senderUuid;
             state.recipientUuid = recipientUuid;
             state.senderMachineId = senderMachineId;
+            state.compressionEnabled = (compressionFlags & 0x01) != 0;
             state.headerParsed = true;
 
             const QString dir = receiveDirectory();
@@ -571,12 +609,17 @@ void TransferService::onServerSocketReadyRead()
             continue;
         }
 
-        // Bloc de donnees.
-        if (state.file->write(payload) != payload.size()) {
+        // Bloc de donnees : decompresse si l'expediteur a active la compression.
+        const QByteArray data = state.compressionEnabled ? qUncompress(payload) : payload;
+        if (state.compressionEnabled && data.isEmpty()) {
+            finishReceive(socket, false, QStringLiteral("Erreur de decompression du bloc"));
+            return;
+        }
+        if (state.file->write(data) != data.size()) {
             finishReceive(socket, false, QStringLiteral("Erreur d'ecriture disque"));
             return;
         }
-        state.bytesReceived += payload.size();
+        state.bytesReceived += data.size();
         emit transferProgress(state.transferKey, state.bytesReceived, state.fileSize);
 
         socket->write(QByteArray(1, kAckByte));

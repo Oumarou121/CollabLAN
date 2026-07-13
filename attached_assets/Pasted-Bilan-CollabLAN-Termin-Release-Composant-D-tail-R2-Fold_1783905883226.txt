@@ -1,0 +1,30 @@
+Bilan — CollabLAN
+✅ Terminé
+Release	Composant	Détail
+R2	FolderWatcher	QFileSystemWatcher + debounce 500 ms
+R3	SyncEngine	Reindex, FileSyncOperation, folderReindexed
+R4–7	FolderSyncService	folder_op, folder_hello, folder_catchup_batch, folder_file_request sur WS port 12345
+R8	Intégration fichiers reçus	onTransferCompleted → copie + upsert + conflit rapport (bob123).docx
+R9 (partielle)	Filtres d'exclusion	.tmp, .obj, .git/, ~$*, .DS_Store, etc. dans shareFolder()
+R9 (partielle)	Delete/Rename distants	applyRemoteDelete (supprime disque + markDeleted) et applyRemoteRename (QFile::rename + renameFile en base)
+UI accès	Manage-access dialog	Cette session : ajout d'utilisateur post-création, bascule permission Read↔Write, confirmation inline avant révocation
+Suite de tests : 25/31 verts ; 6 échecs pré-existants inchangés (test_databasemanager, test_messagingmanager, test_groupmanager, test_messagerepository, test_grouprepository, test_synclogrepository).
+
+🔲 Reste à faire
+Priorité	Sujet	Notes
+1	Fix 6 tests en échec (Task #2)	Migrations SQLite manquantes ou schéma désynchronisé dans les fixtures de ces tests
+2	Release 9 — Compression	Négocier Content-Encoding: zstd/lz4 sur le canal de transfert
+3	Release 9 — Blocs + reprise	Chunking + curseur de reprise dans TransferService
+4	Release 9 — Dossiers lecture seule	permission == Read → pas de folder_file_request entrant accepté
+5	UI R8 — badge conflit	conflictDetected signal → badge visuel sur la tuile/fichier dans SharedFolderView
+6	Tests Delete/Rename distants	Couvrir applyRemoteDelete/applyRemoteRename dans test_foldersyncservice.cpp
+Ce qui a été livré cette session — Manage-access UI
+Backend (SharedFolderContext.h/.cpp) — deux nouveaux Q_INVOKABLE :
+
+grantAccess(folderId, userId, allowWrite) — grant post-création, diffusé via accessGranted → announceAccessGranted déjà câblé dans Application.cpp
+changePermission(folderId, userId, allowWrite) — revoke + re-grant atomique
+QML (manageAccessDialog) — trois nouvelles fonctionnalités :
+
+Confirmation inline avant révocation — bandeau rouge « Révoquer l'accès de « X » ? / Annuler / Confirmer » au lieu d'une action immédiate
+Bascule permission — bouton « → Lecture » / « → Écriture » sur chaque ligne
+Section « Ajouter un utilisateur » — ComboBox filtrant les utilisateurs pas encore dans la liste + checkbox Écriture + bouton Ajouter

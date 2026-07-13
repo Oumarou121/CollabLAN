@@ -8,6 +8,7 @@
 #include "SharedFolderManager.h"
 #include "UserManager.h"
 #include "core/Sync/SyncEngine.h"
+#include "core/Sync/FolderSyncService.h"
 #include "models/SharedFolderModel.h"
 
 namespace core {
@@ -38,6 +39,9 @@ public:
     void setSharedFolderManager(SharedFolderManager *manager);
     void setSyncEngine(core::sync::SyncEngine *engine);
     void setUserManager(UserManager *manager);
+
+    /// Branche FolderSyncService pour que conflictDetected soit retransmis a QML.
+    void setFolderSyncService(core::sync::FolderSyncService *svc);
 
     models::SharedFolderModel* folderModel() const { return m_folderModel; }
     QString lastErrorString() const { return m_lastErrorString; }
@@ -116,6 +120,22 @@ public:
 signals:
     void errorOccurred(const QString &message);
 
+    /**
+     * @brief Retransmis depuis FolderSyncService::conflictDetected (Release 8).
+     *
+     * Emis quand un fichier recu depuis le reseau entre en conflit avec un
+     * fichier local de meme nom mais de contenu different : le fichier recu
+     * a ete renomme en conflictPath. L'UI peut afficher un badge ou une
+     * banniere pour alerter l'utilisateur.
+     *
+     * @param folderUuid   UUID du dossier concerne.
+     * @param relativePath Chemin relatif du fichier en conflit (version locale).
+     * @param conflictPath Chemin relatif de la copie renommee (version recue).
+     */
+    void conflictDetected(const QString &folderUuid,
+                          const QString &relativePath,
+                          const QString &conflictPath);
+
     /// Emis apres chaque reindexation reussie (qu'elle soit declenchee par
     /// FolderWatcher ou par l'utilisateur via shareFolder()), avec le nombre
     /// de changements journalises dans SyncOperations.  L'UI (SharedFolderView
@@ -128,6 +148,7 @@ private:
     SharedFolderManager *m_manager = nullptr;
     core::sync::SyncEngine *m_syncEngine = nullptr;
     UserManager *m_userManager = nullptr;
+    core::sync::FolderSyncService *m_folderSyncService = nullptr;
     models::SharedFolderModel *m_folderModel = nullptr;
     QString m_lastErrorString;
 };

@@ -137,7 +137,10 @@ private slots:
     void onClientSocketErrorOccurred();
 
 private:
-    static constexpr quint32 kBlockSize = 64 * 1024;      ///< Taille max d'un bloc (64 Ko).
+    /// Taille de bloc par defaut : 256 Ko, adaptee aux debits LAN (100 Mbps–1 Gbps).
+    /// Valeur modifiable via setBlockSize() pour les environnements a faible debit ou
+    /// pour les tests unitaires (petites valeurs pour exercer plusieurs blocs rapidement).
+    static constexpr quint32 kDefaultBlockSize = 256 * 1024;
     static constexpr quint16 kDefaultPort = 12346;        ///< Port TCP par defaut (voir defaultPort()).
     static constexpr char kAckByte = 0x01;                ///< Octet d'accuse de reception.
     static const QByteArray kMagic;                       ///< Signature d'en-tete du protocole.
@@ -153,10 +156,11 @@ private:
         qint64 bytesReceived = 0;
         QString senderUuid;
         QString recipientUuid;
-        QString senderMachineId;   ///< UUID DiscoveryService::localId() de l'expediteur (voir encodeHeader()).
+        QString senderMachineId;    ///< UUID DiscoveryService::localId() de l'expediteur (voir encodeHeader()).
+        bool compressionEnabled = false; ///< true si l'expediteur a active la compression zlib (compressionFlags & 0x01).
         QFile *file = nullptr;
-        QString destinationPath;   ///< Chemin final (une fois le transfert termine).
-        QString partialPath;       ///< Fichier temporaire "<nom>.part" pendant le transfert.
+        QString destinationPath;    ///< Chemin final (une fois le transfert termine).
+        QString partialPath;        ///< Fichier temporaire "<nom>.part" pendant le transfert.
         qint64 pendingBlockSize = -1; ///< Taille du bloc en cours d'attente (-1 = attend l'entete de bloc).
     };
 
@@ -184,7 +188,9 @@ private:
     QHash<QTcpSocket*, ReceiveState> m_receiveStates;
     QHash<QTcpSocket*, SendState> m_sendStates;
     QString m_receiveDirOverride;
-    QString m_localMachineId;   ///< UUID DiscoveryService::localId() local, transmis dans l'en-tete (voir encodeHeader()).
+    QString m_localMachineId;        ///< UUID DiscoveryService::localId() local, transmis dans l'en-tete (voir encodeHeader()).
+    bool m_compressionEnabled = false; ///< Voir setCompressionEnabled().
+    quint32 m_blockSize = kDefaultBlockSize; ///< Voir setBlockSize().
     std::function<QString(const QHostAddress &, const QString &)> m_peerFolderNameResolver;
 
 public:
@@ -197,6 +203,34 @@ public:
     /// resoudre peer_name par UUID plutot que par adresse IP (voir
     /// transferStarted()). A appeler avant tout sendFile().
     void setLocalMachineId(const QString &machineId);
+
+    /**
+     * @brief Active ou desactive la compression zlib (via qCompress/qUncompress)
+     * sur les blocs de donnees envoyes.
+     *
+     * Quand active, chaque bloc est compresse avant d'etre encadre et transmis ;
+     * le destinataire decompresse automatiquement (l'information est negociee
+     * dans l'en-tete du protocole via le champ compressionFlags).  Actif par
+     * defaut a false : les fichiers texte sur un LAN rapide bénéficient
+     * rarement de la compression (le LAN est plus rapide que le CPU de
+     * compression/decompression).  Utile pour les connexions a faible debit ou
+     * les fichiers fortement compressibles.
+     */
+    void setCompressionEnabled(bool enabled);
+
+    /**
+     * @brief Modifie la taille des blocs envoyes (en octets).  Doit etre
+     * appele avant sendFile().
+     *
+     * La taille par defaut est kDefaultBlockSize (256 Ko), adaptee aux LAN
+     * 100 Mbps–1 Gbps.  Reduire la taille (ex. 16 Ko) diminue la latence
+     * de chaque acquittement et peut ameliorer la reactivite sur des liens
+     * a faible debit ou pour les tests.
+     */
+    void setBlockSize(quint32 bytes);
+
+    /// Taille de bloc actuellement configuree (voir setBlockSize()).
+    quint32 currentBlockSize() const;
 
     /// Fonction de resolution du nom de dossier utilise pour regrouper,
     /// cote reception, tous les fichiers recus d'un meme correspondant
