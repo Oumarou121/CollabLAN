@@ -1001,6 +1001,35 @@ Item {
                                             anchors.fill: parent
                                             hoverEnabled: true
                                         }
+
+                                        Button {
+                                            anchors.top: parent.top
+                                            anchors.right: parent.right
+                                            anchors.margins: 2
+                                            width: 22
+                                            height: 22
+                                            visible: modelData.statusText === qsTr("Échoué") && modelData.direction === qsTr("Envoi")
+                                            opacity: fileCardArea.containsMouse ? 1 : 0
+                                            Behavior on opacity { NumberAnimation { duration: 120 } }
+                                            background: Rectangle {
+                                                radius: width / 2
+                                                color: parent.hovered ? Theme.surface : Theme.surfaceHover
+                                                border.width: 0
+                                            }
+                                            contentItem: Text {
+                                                text: "↻"
+                                                font.pixelSize: 13
+                                                horizontalAlignment: Text.AlignHCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                            ToolTip.visible: hovered
+                                            ToolTip.text: qsTr("Réessayer")
+                                            onClicked: {
+                                                if (root.context && !root.context.retryTransfer(modelData.transferKey)) {
+                                                    console.warn("Impossible de relancer le transfert")
+                                                }
+                                            }
+                                        }
                                     }
 
                                     // Message "aucun résultat"
@@ -1152,6 +1181,31 @@ Item {
                                                     horizontalAlignment: Text.AlignRight
                                                 }
 
+                                                Button {
+                                                    Layout.preferredWidth: 30
+                                                    Layout.preferredHeight: 26
+                                                    visible: modelData.statusText === qsTr("Échoué") && modelData.direction === qsTr("Envoi")
+                                                    opacity: fileRowArea.containsMouse ? 1 : 0
+                                                    Behavior on opacity { NumberAnimation { duration: 120 } }
+                                                    background: Rectangle {
+                                                        radius: Theme.radiusSmall
+                                                        color: parent.hovered ? Theme.surface : "transparent"
+                                                        border.width: 0
+                                                    }
+                                                    contentItem: Text {
+                                                        text: "↻"
+                                                        font.pixelSize: 15
+                                                        horizontalAlignment: Text.AlignHCenter
+                                                        verticalAlignment: Text.AlignVCenter
+                                                    }
+                                                    ToolTip.visible: hovered
+                                                    ToolTip.text: qsTr("Réessayer")
+                                                    onClicked: {
+                                                        if (root.context && !root.context.retryTransfer(modelData.transferKey)) {
+                                                            console.warn("Impossible de relancer le transfert")
+                                                        }
+                                                    }
+                                                }
                                                 Button {
                                                     Layout.preferredWidth: 30
                                                     Layout.preferredHeight: 26

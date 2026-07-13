@@ -78,6 +78,27 @@ public:
     Q_INVOKABLE bool sendFile(const QString &filePath, const QString &address, int portHint = -1);
 
     /**
+     * @brief Relance un envoi precedemment echoue (transferKey issu de
+     * activeTransfers), en reutilisant le meme fichier local et le meme
+     * destinataire.
+     *
+     * Ne fait rien de plus qu'appeler sendFile() a nouveau : la reprise a
+     * l'octet pres (issue #54) est entierement geree par
+     * network::TransferService cote protocole (le destinataire reconnait
+     * le fichier ".part" partiel deja present et n'en redemande que la
+     * suite) - aucune logique de "curseur" supplementaire n'est necessaire
+     * ici, seulement un point d'entree pour la relancer manuellement
+     * depuis l'UI (Release 9), la reprise automatique existante ne se
+     * declenchant jusqu'ici que si le code appelant refait lui-meme un
+     * sendFile() identique.
+     *
+     * Echoue (transferRejected emis) si le transfert n'est pas un envoi
+     * en echec, ou si le fichier local/le destinataire ne sont plus
+     * connus (transfert d'un envoi trop ancien, fichier deplace...).
+     */
+    Q_INVOKABLE bool retryTransfer(const QString &transferKey);
+
+    /**
      * @brief Ouvre l'explorateur de fichiers a l'emplacement de filePath,
      * en selectionnant le fichier si possible (sinon le dossier parent
      * s'il existe encore, sinon le dossier de reception par defaut).
@@ -122,6 +143,13 @@ private:
     /// vide, via m_peersModel (poste actuellement decouvert sur le reseau
     /// local). Retourne une chaine vide si non resolu.
     QString resolvePeerName(const QHostAddress &peerAddress, const QString &peerMachineId) const;
+
+    /// Port TCP actuellement annonce par le pair a peerAddress (via
+    /// m_peersModel), utilise par retryTransfer() pour reprendre au bon
+    /// port meme s'il a change depuis l'echec initial. -1 si le pair
+    /// n'est plus decouvert (retryTransfer() retombe alors sur
+    /// network::TransferService::defaultPort(), comme sendFile()).
+    int resolvePeerPort(const QString &peerAddress) const;
 
     /// Reconstruit activeTransfers() a partir de l'historique persiste
     /// (core::TransferManager::allTransfers()), pour que l'historique

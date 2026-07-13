@@ -208,6 +208,74 @@ bool TransferContext::sendFile(const QString &filePath, const QString &address, 
     return started;
 }
 
+bool TransferContext::retryTransfer(const QString &transferKey)
+{
+    const int index = indexOfTransfer(transferKey);
+    if (index < 0) {
+        emit transferRejected(tr("Transfert introuvable."));
+        return false;
+    }
+
+    const QVariantMap entry = m_activeTransfers.at(index).toMap();
+
+    // Seul un ENVOI en echec peut etre relance : nous avons toujours le
+    // fichier local dans ce cas. Une RECEPTION echouee ne peut etre
+    // relancee que par l'expediteur (aucune action locale possible).
+    if (entry.value(QStringLiteral("statusText")).toString() != tr("Échoué")) {
+        emit transferRejected(tr("Seul un transfert en echec peut etre relance."));
+        return false;
+    }
+    if (entry.value(QStringLiteral("direction")).toString() != tr("Envoi")) {
+        emit transferRejected(tr("Seul l'expediteur peut relancer ce transfert."));
+        return false;
+    }
+
+    const QString filePath = entry.value(QStringLiteral("filePath")).toString();
+    const QString peerAddress = entry.value(QStringLiteral("peerAddress")).toString();
+    if (filePath.isEmpty() || peerAddress.isEmpty()) {
+        emit transferRejected(tr("Impossible de relancer : fichier ou destinataire inconnu."));
+        return false;
+    }
+
+    // Reprend le port actuellement annonce par le pair (peut avoir changé
+    // depuis l'echec initial) ; sendFile() retombe sur le port par defaut
+    // si le pair n'est plus decouvert (portHint <= 0), comme pour un
+    // nouvel envoi classique.
+    const int portHint = resolvePeerPort(peerAddress);
+
+    // sendFile() revalide fichier/adresse et delegue a
+    // TransferManager::sendFile() -> network::TransferService::sendFile(),
+    // qui reconnait automatiquement le ".part" partiel deja recu cote
+    // destinataire et reprend a partir du dernier octet confirme (voir la
+    // documentation de retryTransfer() dans TransferContext.h).
+    return sendFile(filePath, peerAddress, portHint);
+}
+
+int TransferContext::resolvePeerPort(const QString &peerAddress) const
+{
+    if (!m_peersModel || peerAddress.isEmpty()) {
+        return -1;
+    }
+
+    const QHostAddress target(peerAddress);
+    if (target.isNull()) {
+        return -1;
+    }
+
+    const int rows = m_peersModel->rowCount();
+    for (int row = 0; row < rows; ++row) {
+        const QModelIndex idx = m_peersModel->index(row, 0);
+        const QString address = m_peersModel->data(idx, network::PeersModel::AddressRole).toString();
+        // Comparaison tolerante : voir resolvePeerName() ci-dessus pour le
+        // detail (adresses IPv4-mappees en IPv6 sur connexion entrante).
+        if (QHostAddress(address).isEqual(target, QHostAddress::TolerantConversion)) {
+            const int port = m_peersModel->data(idx, network::PeersModel::TransferPortRole).toInt();
+            return port > 0 ? port : -1;
+        }
+    }
+    return -1;
+}
+
 int TransferContext::indexOfTransfer(const QString &transferKey) const
 {
     for (int i = 0; i < m_activeTransfers.size(); ++i) {
@@ -239,7 +307,7 @@ void TransferContext::onTransferStarted(const QString &transferKey, const QStrin
     QVariantMap entry;
     entry[QStringLiteral("transferKey")] = transferKey;
     entry[QStringLiteral("fileName")] = fileName;
-    entry[QStringLiteral("direction")] = incoming ? tr("Reception") : tr("Envoi");
+    entry[QStringLiteral("direction")] = incoming ? tr("Réception") : tr("Envoi");
     entry[QStringLiteral("statusText")] = tr("En cours");
     entry[QStringLiteral("bytesTransferred")] = resumeOffset;
     entry[QStringLiteral("totalBytes")] = fileSize;
@@ -316,7 +384,7 @@ void TransferContext::onTransferCompleted(const QString &transferKey, const QStr
     }
 
     QVariantMap entry = m_activeTransfers.at(index).toMap();
-    entry[QStringLiteral("statusText")] = tr("Termine");
+    entry[QStringLiteral("statusText")] = tr("Terminé");
     entry[QStringLiteral("percent")] = 100;
     entry[QStringLiteral("bytesTransferred")] = entry.value(QStringLiteral("totalBytes"));
     // filePath est le chemin final ecrit par TransferService : pour une
@@ -340,7 +408,7 @@ void TransferContext::onTransferFailed(const QString &transferKey, const QString
     }
 
     QVariantMap entry = m_activeTransfers.at(index).toMap();
-    entry[QStringLiteral("statusText")] = tr("Echoue");
+    entry[QStringLiteral("statusText")] = tr("Échoué");
     entry[QStringLiteral("errorString")] = errorString;
     m_activeTransfers[index] = entry;
 
@@ -368,7 +436,7 @@ void TransferContext::loadHistory()
 
 QVariantMap TransferContext::entryFromHistory(const models::Transfer &transfer) const
 {
-    QString direction = tr("Reception");
+    QString direction = tr("Réception");
     if (m_userManager && !m_userManager->currentUserUuid().isEmpty()
         && transfer.senderUuid() == m_userManager->currentUserUuid()) {
         direction = tr("Envoi");
@@ -378,14 +446,14 @@ QVariantMap TransferContext::entryFromHistory(const models::Transfer &transfer) 
     qint64 bytesTransferred = 0;
     switch (transfer.status()) {
     case models::TransferStatus::Completed:
-        statusText = tr("Termine");
+        statusText = tr("Terminé");
         bytesTransferred = transfer.fileSize();
         break;
     case models::TransferStatus::Failed:
-        statusText = tr("Echoue");
+        statusText = tr("Échoué");
         break;
     case models::TransferStatus::Cancelled:
-        statusText = tr("Annule");
+        statusText = tr("Annulé");
         break;
     case models::TransferStatus::InProgress:
     case models::TransferStatus::Pending:
