@@ -617,12 +617,16 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
     for (const auto &folder : folders) {
         if (folder.uuid() != folderUuid || !folder.isLocalOrigin()) continue;
 
-        // ── Vérification d'accès ───────────────────────────────────────────
-        // Refuser le transfert si le demandeur n'a aucune permission sur ce
-        // dossier (accès révoqué ou jamais accordé).
+        // ── Vérification d'accès (Release 9 — dossiers en lecture seule) ───
+        // Le contenu réel des fichiers n'est transféré qu'aux pairs ayant un
+        // accès Write : Read ne permet que de voir les métadonnées/la liste
+        // des fichiers (cf. SharedFolderManager, doc de conception), pas de
+        // récupérer les octets. None (révoqué ou jamais accordé) est refusé
+        // pour la même raison -- canWrite() couvre les deux cas en un seul
+        // test (None et Read renvoient tous deux false).
         const auto perm = effectivePermission(folder, requesterMachineId);
-        if (perm == models::SharedFolderPermission::None) {
-            qWarning() << "[FolderSync] folder_file_request : accès refusé pour"
+        if (!models::canWrite(perm)) {
+            qWarning() << "[FolderSync] folder_file_request : accès refusé (lecture seule ou révoqué) pour"
                        << requesterMachineId << "sur le dossier" << folder.name();
             return;
         }

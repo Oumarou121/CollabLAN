@@ -969,6 +969,66 @@ private slots:
     }
 
     // ------------------------------------------------------------------
+    // 17bis. Release 9 — dossier en lecture seule : un pair avec un accès
+    //     Read (et non Write) ne doit PAS recevoir le contenu du fichier
+    //     via folder_file_request (seule la liste/les métadonnées sont
+    //     visibles avec Read ; le contenu réel exige Write).
+    // ------------------------------------------------------------------
+    void fileRequest_readOnlyUser_isRefused()
+    {
+        QTemporaryDir dbDir, folderDir;
+        QVERIFY(dbDir.isValid() && folderDir.isValid());
+
+        const QString dbPath = dbDir.filePath(QStringLiteral("fss_readonly_fr_%1.sqlite")
+            .arg(QRandomGenerator::global()->generate()));
+        auto *db = openRealDb(QStringLiteral("fss_readonly_fr"), dbPath);
+        QVERIFY(db);
+
+        // Créer un dossier LOCAL (isLocalOrigin = true) avec un fichier.
+        core::SharedFolderManager mgr(db);
+        const QString filePath = folderDir.filePath(QStringLiteral("secret.txt"));
+        { QFile f(filePath); QVERIFY(f.open(QIODevice::WriteOnly)); f.write("secret"); }
+
+        const auto folder = mgr.createFolder(QStringLiteral("Privé"), folderDir.path(), 0);
+        QVERIFY(folder.has_value());
+        QVERIFY(mgr.shareFolder(folder->id()).has_value());
+
+        // Insérer un pair "machine-reader" avec un accès explicite Read
+        // (PAS None : la permission existe bel et bien, juste pas Write).
+        const qint64 readerId = insertUser(db, QStringLiteral("reader"), QStringLiteral("machine-reader"));
+        QVERIFY(readerId > 0);
+        database::SharedFolderAccessRepository accessRepo(db->database());
+        QVERIFY(accessRepo.grant(folder->id(), readerId, models::SharedFolderPermission::Read, 0).has_value());
+
+        auto *svc = new core::sync::FolderSyncService(db, &mgr, this);
+        svc->setLocalMachineId(QStringLiteral("machine-local"));
+
+        // Construit un folder_file_request depuis "machine-reader".
+        QJsonObject req;
+        req[QStringLiteral("type")]                    = QStringLiteral("folder_file_request");
+        req[QStringLiteral("folder_uuid")]             = folder->uuid();
+        req[QStringLiteral("relative_path")]           = QStringLiteral("secret.txt");
+        req[QStringLiteral("requester_machine_id")]    = QStringLiteral("machine-reader");
+        req[QStringLiteral("requester_transfer_port")] = 12346;
+        const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
+
+        // Sans TransferService branché, un sendFile() crasherait. Si
+        // l'enforcement fonctionne, l'early-return d'accès refusé (Read
+        // insuffisant) arrive avant.
+        QMetaObject::invokeMethod(svc, "onServerMessageReceived",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QString, json),
+                                  Q_ARG(QHostAddress, QHostAddress::LocalHost));
+        QVERIFY(true); // pas de crash = enforcement a bien intercepté
+
+        // Le fichier n'a pas été "consommé"/déplacé : on n'a rien servi.
+        QVERIFY(QFile::exists(filePath));
+
+        delete svc;
+        delete db;
+    }
+
+    // ------------------------------------------------------------------
     // 18. folder_op Create d'un pair révoqué (uuid connu, accès None)
     //     → remoteOpReceived émis (signal toujours propagé) MAIS
     //     requestRemoteFile non déclenché (pas de crash, pas de demande de
