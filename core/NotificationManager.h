@@ -47,6 +47,9 @@ public slots:
     /// que l'on cree soi-meme (pas de notification pour sa propre action).
     void onGroupCreated(const models::Group &group);
 
+    /// Appelé lorsqu'un dossier partagé est créé.
+    void onFolderCreated(const QString &folderName, const QString &ownerName);
+
 signals:
     /// Emis lorsqu'une notification doit être affichée (toast) et/ou
     /// sonorisee par l'UI. category identifie le type d'evenement

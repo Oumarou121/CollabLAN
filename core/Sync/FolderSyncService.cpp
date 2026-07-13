@@ -30,6 +30,7 @@ constexpr const char *kTypeCatchupBatch   = "folder_catchup_batch";
 constexpr const char *kTypeFileRequest    = "folder_file_request";
 constexpr const char *kTypeAccessGranted  = "folder_access_granted";
 constexpr const char *kTypeAccessRevoked  = "folder_access_revoked";
+constexpr const char *kTypeResyncRequest  = "folder_resync_request";
 
 } // namespace
 
@@ -333,17 +334,43 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
         // Relais vers les autres clients connectes : ce message peut nous
         // parvenir d'un CLIENT (via MessagingService -> serveur), qui ne
         // peut pas rejoindre directement les autres clients. Le SERVER
-        // (hub, cf. doc de conception) doit donc le rediffuser. Sans danger
-        // de boucle : handleFolderAccessGranted() s'auto-protege via
-        // origin_machine_id == m_machineId, et un client ne rediffuse
-        // jamais (seul onServerMessageReceived le fait).
-        if (m_messagingServer && m_messagingServer->isRunning()) {
+        // (hub, cf. doc de conception) doit donc le rediffuser.
+        //
+        // ATTENTION boucle : l'ancien commentaire affirmait que
+        // handleFolderAccessGranted() suffisait a proteger contre les
+        // boucles via son test origin_machine_id == m_machineId. C'est FAUX
+        // : ce test ne protege que l'EFFET local (ne pas re-appliquer sa
+        // propre annonce), pas la RE-DIFFUSION reseau ci-dessous, qui etait
+        // inconditionnelle. Des que deux machines sont connectees l'une a
+        // l'autre (chacune server + client de l'autre, cf. topologie
+        // mesh/re-election), le message repart indefiniment dans les deux
+        // sens (observe en pratique : rafale infinie de folder_access_granted
+        // dans les logs, qui finit par saturer/faire planter la connexion
+        // avant que les vrais folder_op/folder_file_request ne passent).
+        //
+        // On ne relaie donc que si l'annonce ne vient pas de nous-memes.
+        const QString originMachineId = obj[QStringLiteral("origin_machine_id")].toString();
+        if (originMachineId != m_machineId
+            && m_messagingServer && m_messagingServer->isRunning()) {
             m_messagingServer->broadcastMessage(message);
         }
     }
     else if (type == QString::fromLatin1(kTypeAccessRevoked)) {
         handleFolderAccessRevoked(obj);
-        if (m_messagingServer && m_messagingServer->isRunning()) {
+        // Meme correctif anti-boucle que pour kTypeAccessGranted ci-dessus.
+        const QString originMachineId = obj[QStringLiteral("origin_machine_id")].toString();
+        if (originMachineId != m_machineId
+            && m_messagingServer && m_messagingServer->isRunning()) {
+            m_messagingServer->broadcastMessage(message);
+        }
+    }
+    else if (type == QString::fromLatin1(kTypeResyncRequest)) {
+        handleFolderResyncRequest(obj);
+        // Relais vers les autres clients (le proprietaire du dossier peut
+        // etre un autre client de ce hub, pas nous) ; meme garde anti-boucle.
+        const QString requesterMachineId = obj[QStringLiteral("requester_machine_id")].toString();
+        if (requesterMachineId != m_machineId
+            && m_messagingServer && m_messagingServer->isRunning()) {
             m_messagingServer->broadcastMessage(message);
         }
     }
@@ -364,6 +391,8 @@ void FolderSyncService::onClientMessageReceived(const QString &message)
         handleFolderAccessGranted(obj);
     else if (type == QString::fromLatin1(kTypeAccessRevoked))
         handleFolderAccessRevoked(obj);
+    else if (type == QString::fromLatin1(kTypeResyncRequest))
+        handleFolderResyncRequest(obj);
 }
 
 // ---------------------------------------------------------------------------
@@ -509,6 +538,29 @@ void FolderSyncService::handleFolderHello(const QJsonObject &obj)
 void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
 {
     const QJsonArray opsArray = obj[QStringLiteral("operations")].toArray();
+
+    // Rattrapage des annonces de partage manquees (cf. handleFolderHello()) :
+    // chaque entree est traitee exactement comme une annonce temps reel
+    // (handleFolderAccessGranted() est idempotent -- registerRemoteFolder()
+    // et grantAccess() le sont deja).
+    //
+    // IMPORTANT : ce traitement doit avoir lieu AVANT la boucle sur
+    // `operations` ci-dessous. Sur une machine qui decouvre ce dossier
+    // partage pour la premiere fois, le dossier n'existe pas encore
+    // localement tant que registerRemoteFolder() (declenche ici) n'a pas
+    // ete appele -- si on traite les operations en premier, la recherche
+    // "folder.uuid() != folderUuid" ne trouve jamais de correspondance et
+    // chaque Create/Update/Delete/Rename est silencieusement ignore, sans
+    // le moindre avertissement (aucun fichier n'est alors jamais demande).
+    const QJsonArray accessArray = obj[QStringLiteral("access_grants")].toArray();
+    for (const auto &value : accessArray) {
+        if (!value.isObject()) continue;
+        handleFolderAccessGranted(value.toObject());
+    }
+    if (!accessArray.isEmpty()) {
+        qDebug() << "[FolderSync] folder_catchup_batch : " << accessArray.size() << "access_grants rattrapés";
+    }
+
     if (opsArray.isEmpty()) return;
 
     QVector<models::FileSyncOperation> ops;
@@ -574,19 +626,6 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
 
     qDebug() << "[FolderSync] folder_catchup_batch reçu :" << ops.size() << "ops";
     emit catchupBatchReceived(ops);
-
-    // Rattrapage des annonces de partage manquees (cf. handleFolderHello()) :
-    // chaque entree est traitee exactement comme une annonce temps reel
-    // (handleFolderAccessGranted() est idempotent -- registerRemoteFolder()
-    // et grantAccess() le sont deja).
-    const QJsonArray accessArray = obj[QStringLiteral("access_grants")].toArray();
-    for (const auto &value : accessArray) {
-        if (!value.isObject()) continue;
-        handleFolderAccessGranted(value.toObject());
-    }
-    if (!accessArray.isEmpty()) {
-        qDebug() << "[FolderSync] folder_catchup_batch : " << accessArray.size() << "access_grants rattrapés";
-    }
 }
 
 void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
@@ -685,10 +724,89 @@ void FolderSyncService::handleFolderAccessGranted(const QJsonObject &obj)
 
     const auto permission = models::stringToSharedFolderPermission(obj[QStringLiteral("permission")].toString())
         .value_or(models::SharedFolderPermission::Read);
-    m_folderManager->grantAccess(folder->id(), grantedUser->id(), owner->id(), permission);
+    // Ne pas diffuser sur le réseau (broadcastNetwork = false) pour éviter la boucle
+    // (le message a déjà été reçu et traité via le réseau)
+    m_folderManager->grantAccess(folder->id(), grantedUser->id(), owner->id(), permission, false);
 
     qDebug() << "[FolderSync] Dossier partagé reçu :" << folder->name()
              << "-> accès accordé à" << grantedUser->name();
+
+    // announceAccessGranted() ne diffuse que les METADONNEES du dossier
+    // (uuid/nom/permission) : aucun contenu n'est pousse a ce stade. Le seul
+    // mecanisme qui envoie le contenu existant est le folder_catchup_batch
+    // construit par handleFolderHello(), qui ne se declenche qu'a la
+    // (re)connexion (onConnectedToServer()). Resultat observe : si l'acces
+    // est accorde alors que le beneficiaire est deja connecte (cas normal
+    // d'un partage "live"), le dossier apparait cote destinataire mais reste
+    // vide indefiniment, tant qu'aucune reconnexion ne survient.
+    //
+    // Si c'est NOUS (l'utilisateur local de cette machine) qui venons de
+    // recevoir l'acces a ce dossier distant, on ne peut pas attendre une
+    // hypothetique reconnexion : on demande immediatement au proprietaire un
+    // rattrapage cible pour CE dossier, sans attendre folder_hello.
+    if (m_localUserId > 0
+        && static_cast<qint64>(grantedUser->id()) == m_localUserId
+        && !folder->isLocalOrigin()) {
+        QJsonObject req;
+        req[QStringLiteral("type")]                = QString::fromLatin1(kTypeResyncRequest);
+        req[QStringLiteral("folder_uuid")]          = folder->uuid();
+        req[QStringLiteral("requester_machine_id")] = m_machineId;
+        req[QStringLiteral("since_op_id")]          = 0;
+        const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
+        broadcastMessage(json);
+        qDebug() << "[FolderSync] folder_resync_request envoyé pour récupérer le contenu de"
+                 << folder->name();
+    }
+}
+
+void FolderSyncService::handleFolderResyncRequest(const QJsonObject &obj)
+{
+    if (!m_folderManager) return;
+
+    const QString folderUuid         = obj[QStringLiteral("folder_uuid")].toString();
+    const QString requesterMachineId = obj[QStringLiteral("requester_machine_id")].toString();
+    const qint64 sinceOpId = static_cast<qint64>(obj[QStringLiteral("since_op_id")].toDouble());
+
+    if (folderUuid.isEmpty() || requesterMachineId.isEmpty() || requesterMachineId == m_machineId)
+        return;
+
+    const auto folder = m_folderManager->getFolderByUuid(folderUuid);
+    // Seul le propriétaire (origine locale du dossier) peut répondre : c'est
+    // la seule machine à détenir le contenu réel sur disque.
+    if (!folder.has_value() || !folder->isLocalOrigin()) return;
+
+    if (effectivePermission(*folder, requesterMachineId) == models::SharedFolderPermission::None) {
+        qDebug() << "[FolderSync] folder_resync_request refusé (accès révoqué) pour" << requesterMachineId
+                 << "sur le dossier" << folder->name();
+        return;
+    }
+
+    const quint16 selfPort = m_transferService ? m_transferService->port()
+                                               : network::TransferService::defaultPort();
+
+    QJsonArray opsArray;
+    const auto ops = m_repository.getByFolderId(folder->id(), 500);
+    for (const auto &op : ops) {
+        if (op.id() <= sinceOpId) break;
+        QJsonObject opObj = buildFolderOpJson(op, *folder);
+        opObj.remove(QStringLiteral("type"));
+        opObj[QStringLiteral("transfer_port")] = static_cast<int>(selfPort);
+        opsArray.append(opObj);
+    }
+
+    if (opsArray.isEmpty()) return; // dossier déjà vide, rien à rattraper
+
+    // Réutilise le format folder_catchup_batch existant : le destinataire
+    // (handleFolderCatchupBatch) sait déjà demander chaque fichier manquant
+    // via requestRemoteFile() pour chaque opération Create/Update reçue.
+    QJsonObject batch;
+    batch[QStringLiteral("type")]          = QString::fromLatin1(kTypeCatchupBatch);
+    batch[QStringLiteral("operations")]    = opsArray;
+    batch[QStringLiteral("access_grants")] = QJsonArray(); // déjà géré par folder_access_granted
+    const QString json = QString::fromUtf8(QJsonDocument(batch).toJson(QJsonDocument::Compact));
+    broadcastMessage(json);
+    qDebug() << "[FolderSync] folder_resync_request : rattrapage ciblé envoyé pour" << folder->name()
+             << "(" << opsArray.size() << "opération(s)) vers" << requesterMachineId;
 }
 
 void FolderSyncService::handleFolderAccessRevoked(const QJsonObject &obj)

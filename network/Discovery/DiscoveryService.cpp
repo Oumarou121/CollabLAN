@@ -95,6 +95,17 @@ QString DiscoveryService::localId() const
     return m_localId;
 }
 
+void DiscoveryService::setLocalId(const QString &id)
+{
+    if (id.isEmpty()) return;
+    if (m_running) {
+        qWarning() << "[Discovery] setLocalId() ignoré : DiscoveryService déjà démarré avec"
+                   << m_localId;
+        return;
+    }
+    m_localId = id;
+}
+
 QString DiscoveryService::localName() const
 {
     return m_localName;

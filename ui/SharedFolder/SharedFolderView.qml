@@ -661,7 +661,7 @@ Item {
                     checked: true
                     contentItem: Label {
                         text: addWriteCheckBox.text
-                        leftPadding: addWriteCheckBox.indicator.width + Theme.spacingXSmall
+                        leftPadding: addWriteCheckBox.indicator.width + Theme.spacingXs
                         verticalAlignment: Text.AlignVCenter
                         color: Theme.text
                         font.pixelSize: Theme.fontSizeSmall
@@ -964,9 +964,9 @@ Item {
                                     font.pixelSize: 11
                                     font.bold: true
                                 }
+                                HoverHandler { id: badgeHover }
                                 ToolTip.visible: badgeHover.containsMouse
                                 ToolTip.text: qsTr("Conflit → %1").arg(fileRow.conflictPath)
-                                HoverHandler { id: badgeHover }
                             }
 
                             Label {

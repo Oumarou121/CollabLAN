@@ -346,7 +346,7 @@ QVector<models::SharedFolder> SharedFolderManager::getAccessibleFolders(qint64 u
 }
 
 bool SharedFolderManager::grantAccess(qint64 folderId, qint64 userId, qint64 grantedBy,
-                                       models::SharedFolderPermission permission)
+                                       models::SharedFolderPermission permission, bool broadcastNetwork)
 {
     if (!m_dbManager) {
         return false;
@@ -357,7 +357,17 @@ bool SharedFolderManager::grantAccess(qint64 folderId, qint64 userId, qint64 gra
         return false;
     }
 
-    emit accessGranted(folderId, userId, permission);
+    // Toujours émettre accessGrantedLocal pour le rafraîchissement UI
+    QMetaObject::invokeMethod(this, [this, folderId, userId]() {
+        emit accessGrantedLocal(folderId, userId);
+    }, Qt::QueuedConnection);
+
+    if (broadcastNetwork) {
+        // Émettre accessGranted pour la diffusion réseau
+        QMetaObject::invokeMethod(this, [this, folderId, userId, permission]() {
+            emit accessGranted(folderId, userId, permission);
+        }, Qt::QueuedConnection);
+    }
     return true;
 }
 
@@ -393,7 +403,15 @@ std::optional<models::SharedFolder> SharedFolderManager::registerRemoteFolder(co
         return existing; // deja connu localement (idempotent)
     }
 
-    models::SharedFolder folder(0, name, QString());
+    // QString() (constructeur par defaut) est une chaine NULLE (isNull() ==
+    // true), pas une chaine vide -- QSqlQuery::bindValue() la lie alors
+    // comme un vrai NULL SQL plutot que '', ce qui viole la contrainte
+    // "local_path TEXT NOT NULL" (migration 018) et fait echouer insert()
+    // silencieusement pour TOUT dossier distant. Un dossier partage
+    // replique depuis un autre poste n'a pas de contenu reel sur ce
+    // disque (cf. migration 020) : local_path doit donc etre une chaine
+    // VIDE, pas nulle.
+    models::SharedFolder folder(0, name, QStringLiteral(""));
     folder.setUuid(uuid);
     folder.setOwnerId(ownerId);
     folder.setIsActive(true);

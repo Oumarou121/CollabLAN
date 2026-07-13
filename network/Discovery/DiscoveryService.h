@@ -63,6 +63,32 @@ public:
     /// Identifiant local unique (genere aleatoirement au premier demarrage).
     QString localId() const;
 
+    /**
+     * @brief Remplace l'identifiant local auto-genere par une valeur persistee.
+     *
+     * Par defaut, m_localId est un QUuid::createUuid() genere a CHAQUE
+     * lancement du processus (jamais sauvegarde nulle part) : deux lancements
+     * successifs de CollabLAN.exe sur la MEME machine obtiennent donc deux
+     * identites reseau totalement differentes. Consequence concrete : tout
+     * ce qui correle des donnees par machine_id a travers un redemarrage
+     * casse silencieusement -- notamment FolderSyncService, qui journalise
+     * le machine_id dans SyncOperations (FileSyncOperation::machineId()) et
+     * s'en sert pour retrouver la demande de fichier en attente une fois le
+     * transfert arrive (PendingFileTransfer::ownerMachineId). Si la machine
+     * proprietaire du dossier a redemarre entre-temps, son ancien machine_id
+     * (celui enregistre dans les operations historiques) ne correspond plus
+     * a son identite actuelle : la correlation echoue, TransferService reçoit
+     * bien les octets mais FolderSyncService ne les integre jamais dans le
+     * dossier partage (cf. onTransferStarted()/onTransferCompleted()).
+     *
+     * A appeler (par Application, avant start()) avec un identifiant relu
+     * (ou cree une seule fois) depuis la table Settings de la base locale,
+     * pour que l'identite reste stable tant que --db pointe vers le meme
+     * fichier (ce qui correspond exactement a "la meme machine simulee"
+     * dans les tests multi-instances sur un seul poste).
+     */
+    void setLocalId(const QString &id);
+
     /// Nom annonce aux autres postes (hostname de la machine par defaut).
     QString localName() const;
     void setLocalName(const QString &name);

@@ -42,6 +42,11 @@ void SyncEngine::watchFolder(qint64 folderId)
     if (!folder.has_value()) {
         return;
     }
+    // Voir le commentaire dans onFolderCreated() : un dossier distant n'a
+    // pas de local_path reel a surveiller.
+    if (!folder->isLocalOrigin()) {
+        return;
+    }
 
     QStringList relativePaths;
     for (const models::SharedFile &file : m_folderManager->getFiles(folderId)) {
@@ -52,6 +57,17 @@ void SyncEngine::watchFolder(qint64 folderId)
 
 void SyncEngine::onFolderCreated(const models::SharedFolder &folder)
 {
+    // Un dossier distant (replique depuis un autre poste, cf. migration 020
+    // et SharedFolderManager::registerRemoteFolder()) n'a pas de contenu
+    // reel sur CE disque : son local_path est une chaine vide. Tenter de le
+    // surveiller (QFileSystemWatcher::addPath("")) produit l'avertissement
+    // Qt "Empty filename passed to function" et ne sert a rien -- seul le
+    // proprietaire (origine locale) doit etre surveille pour detecter les
+    // changements a diffuser.
+    if (!folder.isLocalOrigin()) {
+        return;
+    }
+
     // Le contenu initial n'est pas encore indexe a cet instant (le
     // dossier vient d'etre cree en base) -- reindexFolder() se chargera
     // de la premiere indexation ET de commencer a le surveiller (via

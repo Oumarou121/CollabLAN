@@ -26,6 +26,9 @@ void SharedFolderContext::setSharedFolderManager(SharedFolderManager *manager)
     if (m_manager) {
         connect(m_manager, &SharedFolderManager::folderShared,
                 this, [this](qint64, int) { refresh(); });
+        // Rafraîchir l'UI quand un accès est accordé localement (toujours émis)
+        connect(m_manager, &SharedFolderManager::accessGrantedLocal,
+                this, [this](qint64, qint64) { refresh(); });
     }
 
     refresh();

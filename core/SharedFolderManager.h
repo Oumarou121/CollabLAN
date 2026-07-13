@@ -115,10 +115,12 @@ public:
     QVector<models::SharedFolder> getAccessibleFolders(qint64 userId) const;
 
     /// Accorde (ou met a jour) l'acces d'un utilisateur a un dossier partage.
-    /// Emet accessGranted() en cas de succes (ecoute par FolderSyncService
-    /// pour diffuser l'annonce reseau, cf. createFolder()).
+    /// Emet toujours accessGranted() pour le rafraîchissement UI.
+    /// broadcastNetwork contrôle si FolderSyncService doit diffuser l'annonce
+    /// reseau (pour éviter les boucles quand l'accès est accordé suite à un message réseau).
     bool grantAccess(qint64 folderId, qint64 userId, qint64 grantedBy,
-                      models::SharedFolderPermission permission = models::SharedFolderPermission::Write);
+                      models::SharedFolderPermission permission = models::SharedFolderPermission::Write,
+                      bool broadcastNetwork = true);
 
     /// Revoque l'acces d'un utilisateur a un dossier partage (no-op si
     /// aucun acces n'existait -- idempotent, cf. SharedFolderAccessRepository::revoke()).
@@ -151,6 +153,9 @@ signals:
     /// core::sync::FolderSyncService y est connecte (cf. app/Application.cpp)
     /// pour diffuser l'annonce "folder_access_granted" aux autres machines.
     void accessGranted(qint64 folderId, qint64 userId, models::SharedFolderPermission permission);
+    /// Emis a chaque acces accorde pour le rafraîchissement UI local.
+    /// Toujours émis, même quand broadcastNetwork est false (accès accordé via réseau).
+    void accessGrantedLocal(qint64 folderId, qint64 userId);
 
     /// Emis a chaque acces revoque (revokeAccess()). core::sync::FolderSyncService
     /// y est connecte pour diffuser "folder_access_revoked" aux autres machines

@@ -15,7 +15,9 @@ NotificationManager::~NotificationManager()
 
 void NotificationManager::onMessageReceived(const models::Message &message)
 {
+    qDebug() << "[NotificationManager] onMessageReceived called, enabled:" << m_notificationsEnabled;
     if (!m_notificationsEnabled) {
+        qDebug() << "[NotificationManager] Notifications disabled, skipping";
         return;
     }
 
@@ -23,6 +25,7 @@ void NotificationManager::onMessageReceived(const models::Message &message)
     const QString title = QStringLiteral("Nouveau message");
     const QString notificationMessage = message.content();
 
+    qDebug() << "[NotificationManager] Emitting notificationRequested for message:" << notificationMessage;
     emit notificationRequested(title, notificationMessage, QStringLiteral("message"));
 }
 
@@ -87,6 +90,18 @@ void NotificationManager::onGroupCreated(const models::Group &group)
     const QString message = QStringLiteral("Vous avez ete ajoute au groupe \"%1\"").arg(group.name());
 
     emit notificationRequested(title, message, QStringLiteral("group"));
+}
+
+void NotificationManager::onFolderCreated(const QString &folderName, const QString &ownerName)
+{
+    if (!m_notificationsEnabled) {
+        return;
+    }
+
+    const QString title = QStringLiteral("Nouveau dossier partagé");
+    const QString message = QStringLiteral("\"%1\" a partagé le dossier \"%2\" avec vous").arg(ownerName, folderName);
+
+    emit notificationRequested(title, message, QStringLiteral("folder"));
 }
 
 } // namespace core

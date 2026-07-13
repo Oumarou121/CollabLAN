@@ -270,6 +270,20 @@ private:
     void handleFolderAccessGranted(const QJsonObject &obj);
     void handleFolderAccessRevoked(const QJsonObject &obj);
 
+    /**
+     * @brief Traite un "folder_resync_request" : un pair qui vient de
+     *        recevoir un accès à ce dossier (folder_access_granted) demande
+     *        immédiatement le contenu existant, sans attendre une future
+     *        reconnexion (cf. handleFolderAccessGranted()).
+     *
+     * Ne répond que si CE poste est l'origine locale du dossier (seul le
+     * propriétaire détient le contenu réel) et que le demandeur a toujours
+     * un accès valide. Répond en réutilisant le format folder_catchup_batch
+     * existant, limité aux opérations de ce dossier plus récentes que
+     * since_op_id.
+     */
+    void handleFolderResyncRequest(const QJsonObject &obj);
+
     /// Construit le JSON d'une annonce "folder_access_granted" pour un
     /// acces donne (utilise par announceAccessGranted() pour la diffusion
     /// immediate ET par handleFolderHello() pour le rattrapage hors-ligne,

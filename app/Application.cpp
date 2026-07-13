@@ -9,8 +9,11 @@
 #include <QSqlQuery>
 #include <QVariantMap>
 #include <QVariantList>
+#include <algorithm>
 
 #include "DatabaseManager.h"
+#include "database/Repositories/SettingsRepository.h"
+#include "models/Settings.h"
 #include "UserManager.h"
 #include "MessagingManager.h"
 #include "GroupManager.h"
@@ -586,6 +589,33 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // Demarre la decouverte reseau (issue #9) et branche le modele QML
     // (PeersModel) qui alimentera UsersView.qml en temps reel (issue #17).
     m_discoveryService = new network::DiscoveryService(this);
+
+    // Remplace l'identifiant ephemere auto-genere (QUuid::createUuid() a
+    // chaque lancement, cf. DiscoveryService::DiscoveryService()) par une
+    // valeur relue (ou creee une seule fois) dans la table Settings LOCALE
+    // (donc stable tant que --db pointe vers le meme fichier -- exactement
+    // ce qui distingue deux "machines" simulees sur un seul poste de test).
+    //
+    // Sans ce correctif, FolderSyncService perd la correlation
+    // ownerMachineId/peerMachineId de chaque PendingFileTransfer des qu'une
+    // machine redemarre : les fichiers demandes via un rattrapage
+    // (folder_hello / folder_resync_request) sont bien transferes par
+    // TransferService, mais ne sont jamais integres au dossier partage
+    // (onTransferStarted() ne retrouve pas la demande en attente) -- ils
+    // n'apparaissent nulle part dans SharedFolderView, alors que le
+    // transfert reseau lui-meme a reussi.
+    if (m_databaseManager) {
+        database::SettingsRepository settingsRepository(m_databaseManager->database());
+        const QString kMachineIdKey = QStringLiteral("local_machine_id");
+        const auto existing = settingsRepository.findByKey(kMachineIdKey);
+        if (existing.has_value() && !existing->value().toString().isEmpty()) {
+            m_discoveryService->setLocalId(existing->value().toString());
+        } else {
+            const QString newId = m_discoveryService->localId();
+            settingsRepository.save(models::Settings(kMachineIdKey, newId));
+        }
+    }
+
     m_discoveryService->setPermissionManager(m_permissionManager);
     m_discoveryService->setTransferPort(static_cast<quint16>(messagingServerPort + 1));
     m_discoveryService->setSignalingPort(static_cast<quint16>(messagingServerPort + 2));
@@ -735,6 +765,17 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             m_folderSyncService, &core::sync::FolderSyncService::announceAccessGranted);
     connect(m_sharedFolderManager, &core::SharedFolderManager::accessRevoked,
             m_folderSyncService, &core::sync::FolderSyncService::announceAccessRevoked);
+
+    // Notifier quand un dossier partagé est créé
+    connect(m_sharedFolderManager, &core::SharedFolderManager::folderCreated,
+            this, [this](const models::SharedFolder &folder) {
+                const auto users = m_userManager->allUsers();
+                auto it = std::find_if(users.begin(), users.end(),
+                    [folder](const models::User &u) { return u.id() == folder.ownerId(); });
+                if (it != users.end()) {
+                    m_notificationManager->onFolderCreated(folder.name(), it->name());
+                }
+            });
 
     // Release 7 : à chaque connexion au serveur, envoie un folder_hello
     // pour récupérer les opérations manquées (rattrapage hors-ligne).
