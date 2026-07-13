@@ -29,6 +29,7 @@ constexpr const char *kTypeFolderHello    = "folder_hello";
 constexpr const char *kTypeCatchupBatch   = "folder_catchup_batch";
 constexpr const char *kTypeFileRequest    = "folder_file_request";
 constexpr const char *kTypeAccessGranted  = "folder_access_granted";
+constexpr const char *kTypeAccessRevoked  = "folder_access_revoked";
 
 } // namespace
 
@@ -216,6 +217,32 @@ void FolderSyncService::announceAccessGranted(qint64 folderId, qint64 userId,
              << "-> utilisateur uuid" << (*obj)[QStringLiteral("user_uuid")].toString();
 }
 
+void FolderSyncService::announceAccessRevoked(qint64 folderId, qint64 userId)
+{
+    if (!m_folderManager) return;
+
+    // A la difference de announceAccessGranted(), la ligne SharedFolderAccess
+    // a deja ete supprimee quand ce slot est appele (connecte sur
+    // SharedFolderManager::accessRevoked, emis APRES le revoke() DB) : on ne
+    // peut donc pas relire la permission, mais on n'en a pas besoin pour
+    // notifier une revocation.
+    const auto folder = m_folderManager->getFolder(folderId);
+    if (!folder.has_value()) return;
+    const auto revokedUser = m_userRepository.findById(static_cast<int>(userId));
+    if (!revokedUser.has_value()) return;
+
+    QJsonObject obj;
+    obj[QStringLiteral("type")]              = QString::fromLatin1(kTypeAccessRevoked);
+    obj[QStringLiteral("folder_uuid")]       = folder->uuid();
+    obj[QStringLiteral("user_uuid")]         = revokedUser->uuid();
+    obj[QStringLiteral("origin_machine_id")] = m_machineId;
+
+    const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+    broadcastMessage(json);
+    qDebug() << "[FolderSync] Annonce de révocation diffusée : dossier" << folder->name()
+             << "-> utilisateur" << revokedUser->name();
+}
+
 void FolderSyncService::onConnectedToServer()
 {
     const qint64 lastOpId = m_repository.latestId();
@@ -262,6 +289,12 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
             m_messagingServer->broadcastMessage(message);
         }
     }
+    else if (type == QString::fromLatin1(kTypeAccessRevoked)) {
+        handleFolderAccessRevoked(obj);
+        if (m_messagingServer && m_messagingServer->isRunning()) {
+            m_messagingServer->broadcastMessage(message);
+        }
+    }
 }
 
 void FolderSyncService::onClientMessageReceived(const QString &message)
@@ -277,6 +310,8 @@ void FolderSyncService::onClientMessageReceived(const QString &message)
         handleFolderCatchupBatch(obj);
     else if (type == QString::fromLatin1(kTypeAccessGranted))
         handleFolderAccessGranted(obj);
+    else if (type == QString::fromLatin1(kTypeAccessRevoked))
+        handleFolderAccessRevoked(obj);
 }
 
 // ---------------------------------------------------------------------------
@@ -555,6 +590,26 @@ void FolderSyncService::handleFolderAccessGranted(const QJsonObject &obj)
 
     qDebug() << "[FolderSync] Dossier partagé reçu :" << folder->name()
              << "-> accès accordé à" << grantedUser->name();
+}
+
+void FolderSyncService::handleFolderAccessRevoked(const QJsonObject &obj)
+{
+    if (!m_folderManager) return;
+
+    const QString originMachineId = obj[QStringLiteral("origin_machine_id")].toString();
+    if (originMachineId == m_machineId) return; // notre propre annonce (deja appliquee localement)
+
+    const QString userUuid = obj[QStringLiteral("user_uuid")].toString();
+    const auto revokedUser = m_userRepository.findByUuid(userUuid);
+    if (!revokedUser.has_value()) return; // utilisateur inconnu sur ce poste
+
+    const QString folderUuid = obj[QStringLiteral("folder_uuid")].toString();
+    const auto folder = m_folderManager->getFolderByUuid(folderUuid);
+    if (!folder.has_value()) return; // dossier inconnu sur ce poste
+
+    m_folderManager->revokeAccess(folder->id(), revokedUser->id());
+    qDebug() << "[FolderSync] Révocation reçue : dossier" << folder->name()
+             << "-> utilisateur" << revokedUser->name();
 }
 
 // ---------------------------------------------------------------------------

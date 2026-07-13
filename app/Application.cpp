@@ -728,6 +728,8 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // createFolder(), core::sync::FolderSyncService::announceAccessGranted()).
     connect(m_sharedFolderManager, &core::SharedFolderManager::accessGranted,
             m_folderSyncService, &core::sync::FolderSyncService::announceAccessGranted);
+    connect(m_sharedFolderManager, &core::SharedFolderManager::accessRevoked,
+            m_folderSyncService, &core::sync::FolderSyncService::announceAccessRevoked);
 
     // Release 7 : à chaque connexion au serveur, envoie un folder_hello
     // pour récupérer les opérations manquées (rattrapage hors-ligne).

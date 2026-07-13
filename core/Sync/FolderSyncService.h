@@ -117,6 +117,19 @@ public:
     void announceAccessGranted(qint64 folderId, qint64 userId, models::SharedFolderPermission permission);
 
     /**
+     * @brief Annonce aux autres machines qu'un acces a ete revoque sur un
+     *        dossier partage (a connecter sur SharedFolderManager::accessRevoked,
+     *        cf. app/Application.cpp).
+     *
+     * Contrairement aux grants, ceci n'est PAS rattrapé hors-ligne (pas de
+     * journal des revocations passees) : si le destinataire est deconnecte
+     * au moment de l'annonce, il continuera de voir le dossier jusqu'a la
+     * prochaine action de partage sur ce dossier. Limitation acceptee pour
+     * borner la portee de cette version -- cf. mémoire du projet.
+     */
+    void announceAccessRevoked(qint64 folderId, qint64 userId);
+
+    /**
      * @brief Envoie un folder_file_request pour un fichier distant.
      *
      * Enregistre également la demande en attente pour que onTransferStarted()
@@ -250,6 +263,7 @@ private:
     void handleFolderCatchupBatch(const QJsonObject &obj);
     void handleFolderFileRequest(const QJsonObject &obj, const QHostAddress &senderAddress);
     void handleFolderAccessGranted(const QJsonObject &obj);
+    void handleFolderAccessRevoked(const QJsonObject &obj);
 
     /// Construit le JSON d'une annonce "folder_access_granted" pour un
     /// acces donne (utilise par announceAccessGranted() pour la diffusion

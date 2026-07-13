@@ -211,6 +211,51 @@ QVariantList SharedFolderContext::availableUsers() const
     return list;
 }
 
+QVariantList SharedFolderContext::accessForFolder(qint64 folderId) const
+{
+    QVariantList result;
+    if (!m_manager) {
+        return result;
+    }
+
+    // allUsers() est appele une seule fois puis indexe par id : evite un
+    // aller-retour DB par acces (listes courtes en pratique, mais pas la
+    // peine de refaire une recherche a chaque tour de boucle).
+    QHash<qint64, QString> usernamesById;
+    if (m_userManager) {
+        for (const auto &user : m_userManager->allUsers()) {
+            usernamesById.insert(user.id(), user.name());
+        }
+    }
+
+    for (const models::SharedFolderAccess &access : m_manager->accessForFolder(folderId)) {
+        QVariantMap entry;
+        entry.insert(QStringLiteral("userId"), access.userId());
+        entry.insert(QStringLiteral("username"), usernamesById.value(access.userId(), QStringLiteral("(utilisateur supprimé)")));
+        entry.insert(QStringLiteral("permission"), models::sharedFolderPermissionToString(access.permission()));
+        result.append(entry);
+    }
+    return result;
+}
+
+bool SharedFolderContext::revokeAccess(qint64 folderId, qint64 userId)
+{
+    if (!m_manager) {
+        m_lastErrorString = QStringLiteral("Module Shared Folder non disponible");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    if (!m_manager->revokeAccess(folderId, userId)) {
+        m_lastErrorString = m_manager->lastErrorString();
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    refresh();
+    return true;
+}
+
 QVariantList SharedFolderContext::syncHistoryForFolder(qint64 folderId, int limit) const
 {
     QVariantList result;

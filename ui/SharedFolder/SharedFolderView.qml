@@ -334,6 +334,128 @@ Item {
         }
     }
 
+    // ---- dialogue de gestion des accès (voir/révoquer) ----
+    Dialog {
+        id: manageAccessDialog
+        title: qsTr("Gérer les accès — %1").arg(manageAccessDialog.targetFolderName)
+        modal: true
+        anchors.centerIn: parent
+        width: 420
+        height: 420
+        standardButtons: Dialog.NoButton
+
+        property int targetFolderId: -1
+        property string targetFolderName: ""
+        property var grants: []
+
+        onOpened: manageAccessDialog.reload()
+
+        function reload() {
+            if (root.context && manageAccessDialog.targetFolderId >= 0) {
+                manageAccessDialog.grants = root.context.accessForFolder(manageAccessDialog.targetFolderId)
+            } else {
+                manageAccessDialog.grants = []
+            }
+        }
+
+        background: Rectangle {
+            radius: Theme.radiusMedium
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.border
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: Theme.spacingMedium
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Utilisateurs ayant accès à ce dossier partagé.")
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeSmall
+                wrapMode: Text.WordWrap
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+
+                ListView {
+                    id: grantsListView
+                    anchors.fill: parent
+                    spacing: 4
+                    model: manageAccessDialog.grants
+
+                    delegate: Rectangle {
+                        width: grantsListView.width
+                        height: 44
+                        radius: Theme.radiusSmall
+                        color: Theme.surfaceAlt
+                        border.width: 1
+                        border.color: Theme.border
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: Theme.spacingSmall
+                            anchors.rightMargin: Theme.spacingSmall
+                            spacing: Theme.spacingSmall
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 0
+                                Label {
+                                    text: modelData.username
+                                    color: Theme.text
+                                    font.pixelSize: Theme.fontSizeSmall
+                                }
+                                Label {
+                                    text: modelData.permission === "Write" ? qsTr("Lecture/écriture") : qsTr("Lecture seule")
+                                    color: Theme.textTertiary
+                                    font.pixelSize: Theme.fontSizeCaption
+                                }
+                            }
+
+                            AppButton {
+                                text: qsTr("Révoquer")
+                                variant: "danger"
+                                onClicked: {
+                                    if (root.context) {
+                                        root.context.revokeAccess(manageAccessDialog.targetFolderId, modelData.userId)
+                                        manageAccessDialog.reload()
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Label {
+                        visible: grantsListView.count === 0
+                        anchors.centerIn: parent
+                        text: qsTr("Ce dossier n'est partagé avec aucun autre utilisateur.")
+                        color: Theme.textTertiary
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        width: parent.width - Theme.spacingLarge
+                        font.pixelSize: Theme.fontSizeSmall
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacingSmall
+                Item { Layout.fillWidth: true }
+                AppButton {
+                    text: qsTr("Fermer")
+                    variant: "ghost"
+                    onClicked: manageAccessDialog.close()
+                }
+            }
+        }
+    }
+
     // ---- dialogue de confirmation de suppression ----
     Dialog {
         id: removeConfirmDialog
@@ -461,6 +583,17 @@ Item {
                             root.refreshFiles()
                             root.refreshHistory()
                         }
+                    }
+                }
+
+                AppButton {
+                    visible: root.openedFolderId >= 0
+                    text: qsTr("Gérer les accès")
+                    variant: "secondary"
+                    onClicked: {
+                        manageAccessDialog.targetFolderId = root.openedFolderId
+                        manageAccessDialog.targetFolderName = root.openedFolderName
+                        manageAccessDialog.open()
                     }
                 }
 

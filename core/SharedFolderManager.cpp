@@ -366,7 +366,11 @@ bool SharedFolderManager::revokeAccess(qint64 folderId, qint64 userId)
     if (!m_dbManager) {
         return false;
     }
-    return m_accessRepository.revoke(folderId, userId);
+    if (!m_accessRepository.revoke(folderId, userId)) {
+        return false;
+    }
+    emit accessRevoked(folderId, userId);
+    return true;
 }
 
 QVector<models::SharedFolderAccess> SharedFolderManager::accessForFolder(qint64 folderId) const

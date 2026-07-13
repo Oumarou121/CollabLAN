@@ -152,6 +152,14 @@ signals:
     /// pour diffuser l'annonce "folder_access_granted" aux autres machines.
     void accessGranted(qint64 folderId, qint64 userId, models::SharedFolderPermission permission);
 
+    /// Emis a chaque acces revoque (revokeAccess()). core::sync::FolderSyncService
+    /// y est connecte pour diffuser "folder_access_revoked" aux autres machines
+    /// (contrairement aux grants, les revocations ne sont PAS rattrapees hors-ligne :
+    /// si le destinataire etait deconnecte au moment de la revocation, il ne le
+    /// saura qu'a la prochaine action de partage sur ce dossier -- limitation
+    /// acceptee pour borner la portee de cette 1ere version).
+    void accessRevoked(qint64 folderId, qint64 userId);
+
 private:
     database::DatabaseManager *m_dbManager = nullptr;
     database::SharedFolderRepository m_folderRepository;

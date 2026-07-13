@@ -87,6 +87,19 @@ public:
     /// disponible (setSyncEngine() pas encore appele).
     Q_INVOKABLE QVariantList syncHistoryForFolder(qint64 folderId, int limit = 50) const;
 
+    /// Utilisateurs a qui l'acces a ce dossier a ete explicitement accorde
+    /// (le proprietaire n'apparait pas : son acces est implicite, cf.
+    /// core::SharedFolderManager::createFolder()). Chaque element est une
+    /// QVariantMap userId/username/permission ("Read"/"Write") -- utilise
+    /// par le dialogue "Gérer les accès" (ui/SharedFolder/SharedFolderView.qml).
+    Q_INVOKABLE QVariantList accessForFolder(qint64 folderId) const;
+
+    /// Retire l'acces d'un utilisateur a un dossier partage. Diffuse aux
+    /// autres machines (cf. core::sync::FolderSyncService::announceAccessRevoked(),
+    /// connecte sur SharedFolderManager::accessRevoked dans app/Application.cpp).
+    /// @return true si la revocation a reussi (voir lastErrorString() sinon).
+    Q_INVOKABLE bool revokeAccess(qint64 folderId, qint64 userId);
+
 signals:
     void errorOccurred(const QString &message);
 
