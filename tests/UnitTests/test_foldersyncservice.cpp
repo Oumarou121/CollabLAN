@@ -1075,12 +1075,12 @@ private slots:
         svc->setLocalUserId(localUserId); // nous sommes l'utilisateur révoqué
 
         // Vérifier que le dossier existe bien avant la révocation.
-        QVERIFY(mgr.getFolderByUuid(QStringLiteral("uuid-remote-folder")).has_value());
+        QVERIFY(mgr.getFolderByUuid(folder->uuid()).has_value());
 
         // Injecter le message folder_access_revoked depuis "machine-owner".
         QJsonObject obj;
         obj[QStringLiteral("type")]              = QStringLiteral("folder_access_revoked");
-        obj[QStringLiteral("folder_uuid")]       = QStringLiteral("uuid-remote-folder");
+        obj[QStringLiteral("folder_uuid")]       = folder->uuid();
         obj[QStringLiteral("user_uuid")]         = QStringLiteral("machine-local"); // notre uuid
         obj[QStringLiteral("origin_machine_id")] = QStringLiteral("machine-owner");
         const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
@@ -1090,7 +1090,7 @@ private slots:
                                   Q_ARG(QString, json));
 
         // Le dossier doit avoir été supprimé de la base locale.
-        QVERIFY(!mgr.getFolderByUuid(QStringLiteral("uuid-remote-folder")).has_value());
+        QVERIFY(!mgr.getFolderByUuid(folder->uuid()).has_value());
 
         delete svc;
         delete db;
