@@ -334,28 +334,34 @@ Item {
         }
     }
 
-    // ---- dialogue de gestion des accès (voir/révoquer) ----
+    // ---- dialogue de gestion des accès (voir / révoquer / ajouter) ----
     Dialog {
         id: manageAccessDialog
         title: qsTr("Gérer les accès — %1").arg(manageAccessDialog.targetFolderName)
         modal: true
         anchors.centerIn: parent
-        width: 420
-        height: 420
+        width: 460
+        height: 560
         standardButtons: Dialog.NoButton
 
-        property int targetFolderId: -1
+        property int    targetFolderId: -1
         property string targetFolderName: ""
-        property var grants: []
+        property var    grants: []          // QVariantList {userId, username, permission}
+
+        // ---- état révocation en attente ----
+        property int    pendingRevokeUserId: -1
+        property string pendingRevokeUsername: ""
 
         onOpened: manageAccessDialog.reload()
 
         function reload() {
+            manageAccessDialog.pendingRevokeUserId = -1
             if (root.context && manageAccessDialog.targetFolderId >= 0) {
                 manageAccessDialog.grants = root.context.accessForFolder(manageAccessDialog.targetFolderId)
             } else {
                 manageAccessDialog.grants = []
             }
+            addUserCombo.reloadCandidates()
         }
 
         background: Rectangle {
@@ -369,17 +375,60 @@ Item {
             anchors.fill: parent
             spacing: Theme.spacingMedium
 
+            // ── Section « utilisateurs actuels » ──────────────────────────
             Label {
-                Layout.fillWidth: true
-                text: qsTr("Utilisateurs ayant accès à ce dossier partagé.")
+                text: qsTr("Accès accordés")
                 color: Theme.textSecondary
                 font.pixelSize: Theme.fontSizeSmall
-                wrapMode: Text.WordWrap
+                font.bold: true
+            }
+
+            // Bandeau de confirmation de révocation (inline, sans popup)
+            Rectangle {
+                id: revokeConfirmBanner
+                Layout.fillWidth: true
+                height: 52
+                radius: Theme.radiusSmall
+                color: "#fff5f5"
+                border.color: Theme.error
+                border.width: 1
+                visible: manageAccessDialog.pendingRevokeUserId >= 0
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: Theme.spacingSmall
+                    anchors.rightMargin: Theme.spacingSmall
+                    spacing: Theme.spacingSmall
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Révoquer l'accès de « %1 » ?").arg(manageAccessDialog.pendingRevokeUsername)
+                        color: Theme.error
+                        font.pixelSize: Theme.fontSizeSmall
+                        wrapMode: Text.WordWrap
+                    }
+                    AppButton {
+                        text: qsTr("Annuler")
+                        variant: "ghost"
+                        onClicked: manageAccessDialog.pendingRevokeUserId = -1
+                    }
+                    AppButton {
+                        text: qsTr("Confirmer")
+                        variant: "danger"
+                        onClicked: {
+                            if (root.context) {
+                                root.context.revokeAccess(manageAccessDialog.targetFolderId,
+                                                          manageAccessDialog.pendingRevokeUserId)
+                                manageAccessDialog.reload()
+                            }
+                        }
+                    }
+                }
             }
 
             ScrollView {
                 Layout.fillWidth: true
-                Layout.fillHeight: true
+                Layout.preferredHeight: 180
                 clip: true
 
                 ListView {
@@ -390,7 +439,7 @@ Item {
 
                     delegate: Rectangle {
                         width: grantsListView.width
-                        height: 44
+                        height: 48
                         radius: Theme.radiusSmall
                         color: Theme.surfaceAlt
                         border.width: 1
@@ -402,6 +451,7 @@ Item {
                             anchors.rightMargin: Theme.spacingSmall
                             spacing: Theme.spacingSmall
 
+                            // Nom + permission (cliquable pour basculer Read↔Write)
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 0
@@ -409,22 +459,42 @@ Item {
                                     text: modelData.username
                                     color: Theme.text
                                     font.pixelSize: Theme.fontSizeSmall
+                                    font.bold: true
                                 }
                                 Label {
-                                    text: modelData.permission === "Write" ? qsTr("Lecture/écriture") : qsTr("Lecture seule")
+                                    text: modelData.permission === "Write"
+                                          ? qsTr("Lecture / écriture")
+                                          : qsTr("Lecture seule")
                                     color: Theme.textTertiary
                                     font.pixelSize: Theme.fontSizeCaption
                                 }
                             }
 
+                            // Bouton bascule Read ↔ Write
+                            AppButton {
+                                text: modelData.permission === "Write"
+                                      ? qsTr("→ Lecture")
+                                      : qsTr("→ Écriture")
+                                variant: "secondary"
+                                onClicked: {
+                                    if (root.context) {
+                                        const newWrite = (modelData.permission !== "Write")
+                                        root.context.changePermission(
+                                            manageAccessDialog.targetFolderId,
+                                            modelData.userId,
+                                            newWrite)
+                                        manageAccessDialog.reload()
+                                    }
+                                }
+                            }
+
+                            // Bouton révoquer (avec confirmation inline)
                             AppButton {
                                 text: qsTr("Révoquer")
                                 variant: "danger"
                                 onClicked: {
-                                    if (root.context) {
-                                        root.context.revokeAccess(manageAccessDialog.targetFolderId, modelData.userId)
-                                        manageAccessDialog.reload()
-                                    }
+                                    manageAccessDialog.pendingRevokeUserId   = modelData.userId
+                                    manageAccessDialog.pendingRevokeUsername = modelData.username
                                 }
                             }
                         }
@@ -442,6 +512,126 @@ Item {
                     }
                 }
             }
+
+            // ── Séparateur ────────────────────────────────────────────────
+            Rectangle {
+                Layout.fillWidth: true
+                height: 1
+                color: Theme.border
+            }
+
+            // ── Section « ajouter un utilisateur » ────────────────────────
+            Label {
+                text: qsTr("Ajouter un utilisateur")
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeSmall
+                font.bold: true
+            }
+
+            RowLayout {
+                id: addUserCombo
+                Layout.fillWidth: true
+                spacing: Theme.spacingSmall
+
+                // Liste des candidats = tous les utilisateurs pas encore dans grants
+                property var candidates: []
+                property int selectedUserId: -1
+                property string selectedUsername: ""
+
+                function reloadCandidates() {
+                    if (!root.context) { candidates = []; return }
+                    const all = root.context.availableUsers()
+                    const grantedIds = {}
+                    for (let i = 0; i < manageAccessDialog.grants.length; ++i) {
+                        grantedIds[manageAccessDialog.grants[i].userId] = true
+                    }
+                    const filtered = []
+                    for (let j = 0; j < all.length; ++j) {
+                        if (!grantedIds[all[j].userId]) filtered.push(all[j])
+                    }
+                    candidates = filtered
+                    candidateModel.clear()
+                    for (let k = 0; k < filtered.length; ++k) {
+                        candidateModel.append(filtered[k])
+                    }
+                    addUserComboBox.currentIndex = -1
+                    addUserCombo.selectedUserId  = -1
+                    addUserCombo.selectedUsername = ""
+                }
+
+                ComboBox {
+                    id: addUserComboBox
+                    Layout.fillWidth: true
+                    model: ListModel { id: candidateModel }
+                    textRole: "username"
+                    currentIndex: -1
+                    displayText: currentIndex < 0 ? qsTr("Choisir un utilisateur…") : currentText
+
+                    background: Rectangle {
+                        radius: Theme.radiusSmall
+                        color: Theme.surfaceAlt
+                        border.width: 1
+                        border.color: addUserComboBox.activeFocus ? Theme.primary : Theme.border
+                    }
+
+                    contentItem: Label {
+                        leftPadding: Theme.spacingSmall
+                        text: addUserComboBox.displayText
+                        color: addUserComboBox.currentIndex < 0 ? Theme.textTertiary : Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                    }
+
+                    onCurrentIndexChanged: {
+                        if (currentIndex >= 0 && currentIndex < candidateModel.count) {
+                            addUserCombo.selectedUserId  = candidateModel.get(currentIndex).userId
+                            addUserCombo.selectedUsername = candidateModel.get(currentIndex).username
+                        } else {
+                            addUserCombo.selectedUserId  = -1
+                            addUserCombo.selectedUsername = ""
+                        }
+                    }
+
+                    Label {
+                        visible: candidateModel.count === 0
+                        anchors.centerIn: parent
+                        text: qsTr("Tous les utilisateurs ont déjà accès")
+                        color: Theme.textTertiary
+                        font.pixelSize: Theme.fontSizeSmall
+                    }
+                }
+
+                CheckBox {
+                    id: addWriteCheckBox
+                    text: qsTr("Écriture")
+                    checked: true
+                    contentItem: Label {
+                        text: addWriteCheckBox.text
+                        leftPadding: addWriteCheckBox.indicator.width + Theme.spacingXSmall
+                        verticalAlignment: Text.AlignVCenter
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                    }
+                }
+
+                AppButton {
+                    text: qsTr("Ajouter")
+                    variant: "primary"
+                    enabled: addUserCombo.selectedUserId >= 0
+                    onClicked: {
+                        if (root.context && addUserCombo.selectedUserId >= 0) {
+                            root.context.grantAccess(
+                                manageAccessDialog.targetFolderId,
+                                addUserCombo.selectedUserId,
+                                addWriteCheckBox.checked)
+                            manageAccessDialog.reload()
+                        }
+                    }
+                }
+            }
+
+            Item { Layout.fillHeight: true }
 
             RowLayout {
                 Layout.fillWidth: true

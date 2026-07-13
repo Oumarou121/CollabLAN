@@ -256,6 +256,51 @@ bool SharedFolderContext::revokeAccess(qint64 folderId, qint64 userId)
     return true;
 }
 
+bool SharedFolderContext::grantAccess(qint64 folderId, qint64 userId, bool allowWrite)
+{
+    if (!m_manager) {
+        m_lastErrorString = QStringLiteral("Module Shared Folder non disponible");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    qint64 grantedBy = 0;
+    if (m_userManager) {
+        if (const auto id = m_userManager->currentUserId(); id.has_value()) {
+            grantedBy = *id;
+        }
+    }
+
+    const auto permission = allowWrite ? models::SharedFolderPermission::Write
+                                       : models::SharedFolderPermission::Read;
+
+    if (!m_manager->grantAccess(folderId, userId, grantedBy, permission)) {
+        m_lastErrorString = m_manager->lastErrorString();
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    return true;
+}
+
+bool SharedFolderContext::changePermission(qint64 folderId, qint64 userId, bool allowWrite)
+{
+    if (!m_manager) {
+        m_lastErrorString = QStringLiteral("Module Shared Folder non disponible");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    // Revoque puis re-accorde avec le nouveau niveau de permission.
+    if (!m_manager->revokeAccess(folderId, userId)) {
+        m_lastErrorString = m_manager->lastErrorString();
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    return grantAccess(folderId, userId, allowWrite);
+}
+
 QVariantList SharedFolderContext::syncHistoryForFolder(qint64 folderId, int limit) const
 {
     QVariantList result;

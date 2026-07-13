@@ -100,6 +100,19 @@ public:
     /// @return true si la revocation a reussi (voir lastErrorString() sinon).
     Q_INVOKABLE bool revokeAccess(qint64 folderId, qint64 userId);
 
+    /// Accorde l'acces a un utilisateur sur un dossier deja partage (grant
+    /// post-creation). Utilise l'utilisateur courant comme grantedBy.
+    /// Diffuse le grant aux autres machines via SharedFolderManager::accessGranted
+    /// → FolderSyncService::announceAccessGranted (cable dans Application.cpp).
+    /// @param allowWrite  true = lecture/ecriture, false = lecture seule.
+    /// @return true si le grant a reussi (voir lastErrorString() sinon).
+    Q_INVOKABLE bool grantAccess(qint64 folderId, qint64 userId, bool allowWrite);
+
+    /// Modifie le niveau de permission d'un utilisateur deja present dans
+    /// la liste d'acces (revoque puis re-accorde avec le nouveau niveau).
+    /// @return true si la mise a jour a reussi.
+    Q_INVOKABLE bool changePermission(qint64 folderId, qint64 userId, bool allowWrite);
+
 signals:
     void errorOccurred(const QString &message);
 
