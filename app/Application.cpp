@@ -716,6 +716,11 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     m_folderSyncService->setTransferService(m_transferService);
     m_folderSyncService->setDiscoveryService(m_discoveryService);
     m_folderSyncService->setLocalMachineId(m_discoveryService->localId());
+    if (m_userManager) {
+        if (const auto uid = m_userManager->currentUserId(); uid.has_value()) {
+            m_folderSyncService->setLocalUserId(*uid);
+        }
+    }
 
     // Release 5/6 : chaque reindexation locale est diffusée aux pairs.
     connect(m_syncEngine, &core::sync::SyncEngine::folderReindexed,

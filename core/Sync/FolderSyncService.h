@@ -100,6 +100,11 @@ public:
     /// Identifiant local (DiscoveryService::localId()) inclus dans chaque message.
     void setLocalMachineId(const QString &machineId);
 
+    /// Identifiant de l'utilisateur courant sur cette machine (UserManager::currentUserId()).
+    /// Utilisé par handleFolderAccessRevoked() pour détecter si c'est NOUS qui sommes
+    /// révoqués et nettoyer les données locales du dossier en conséquence.
+    void setLocalUserId(qint64 userId);
+
     /**
      * @brief Annonce aux autres machines qu'un acces a ete accorde sur un
      *        dossier partage (a connecter sur SharedFolderManager::accessGranted,
@@ -300,6 +305,32 @@ private:
                                   const models::SharedFolder &folder) const;
 
     /**
+     * @brief Résout la permission effective d'un pair (machineId réseau) sur un
+     *        dossier donné.
+     *
+     *  - Le propriétaire du dossier obtient toujours Write.
+     *  - Un utilisateur connu (uuid == machineId) voit sa permission interrogée en
+     *    base ; None signifie que son accès a été explicitement révoqué.
+     *  - Si aucun utilisateur local ne correspond au machineId (identité non
+     *    résolue), retourne Write (politique « fail-open ») : sur un réseau LAN de
+     *    confiance on ne peut pas bloquer une machine dont le compte n'est pas
+     *    enregistré localement — la sécurité périmètre repose sur l'isolation du LAN.
+     *    En revanche, un utilisateur CONNU dont l'accès est révoqué est bloqué (None).
+     */
+    models::SharedFolderPermission effectivePermission(const models::SharedFolder &folder,
+                                                        const QString &peerMachineId) const;
+
+    /**
+     * @brief Nettoie les données locales d'un dossier dont l'accès vient d'être
+     *        révoqué sur CETTE machine (appeler uniquement quand m_localUserId
+     *        correspond à l'utilisateur révoqué).
+     *
+     * Supprime les fichiers indexés sur le disque puis supprime l'enregistrement
+     * du dossier dans la base locale (SharedFiles + SharedFolders cascade).
+     */
+    void cleanupRevokedFolder(const models::SharedFolder &folder);
+
+    /**
      * @brief Intègre un fichier reçu dans le dossier partagé (Release 8).
      *
      * 1. Calcule le hash SHA-256 du fichier source.
@@ -323,6 +354,7 @@ private:
     database::SharedFolderAccessRepository m_accessRepository;
     database::UserRepository m_userRepository;
     core::SharedFolderManager *m_folderManager = nullptr;
+    qint64 m_localUserId = 0; ///< Utilisateur courant (setLocalUserId).
     network::MessagingServer *m_messagingServer = nullptr;
     network::MessagingService *m_messagingService = nullptr;
     network::TransferService *m_transferService = nullptr;

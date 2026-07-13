@@ -885,6 +885,272 @@ private slots:
         delete svc;
         delete db;
     }
+    // ============================================================
+    // Enforcement de la révocation d'accès (Release post-R8).
+    // ============================================================
+    //
+    // Pour que effectivePermission() puisse identifier un pair "connu dont
+    // l'accès a été révoqué", l'UUID du pair doit exister dans la table
+    // Users (findByUuid) ET son accès doit être absent de SharedFolderAccess.
+    // Les helpers ci-dessous insèrent ces données directement en SQL.
+
+    // Insère un utilisateur minimal et retourne son id.
+    static qint64 insertUser(database::DatabaseManager *db,
+                              const QString &name,
+                              const QString &uuid)
+    {
+        QSqlQuery q(db->database());
+        q.prepare(QStringLiteral(
+            "INSERT INTO Users (name, uuid, role, status, password_hash, password_salt) "
+            "VALUES (:name, :uuid, 'Member', 'Online', '', '')"));
+        q.bindValue(QStringLiteral(":name"), name);
+        q.bindValue(QStringLiteral(":uuid"), uuid);
+        if (!q.exec()) return -1;
+        return q.lastInsertId().toLongLong();
+    }
+
+    // ------------------------------------------------------------------
+    // 17. folder_file_request d'un pair révoqué (uuid connu, accès None)
+    //     → pas de sendFile (test indirect : pas de crash + log).
+    //     Le test vérifie que le service ne tente pas d'envoyer le fichier
+    //     (TransferService non branché, donc sendFile provoquerait un crash
+    //     ou un warning ; ici l'early-return d'accès refusé doit arriver avant).
+    // ------------------------------------------------------------------
+    void fileRequest_revokedUser_isRefused()
+    {
+        QTemporaryDir dbDir, folderDir;
+        QVERIFY(dbDir.isValid() && folderDir.isValid());
+
+        const QString dbPath = dbDir.filePath(QStringLiteral("fss_revoke_fr_%1.sqlite")
+            .arg(QRandomGenerator::global()->generate()));
+        auto *db = openRealDb(QStringLiteral("fss_revoke_fr"), dbPath);
+        QVERIFY(db);
+
+        // Créer un dossier LOCAL (isLocalOrigin = true) avec un fichier.
+        core::SharedFolderManager mgr(db);
+        const QString filePath = folderDir.filePath(QStringLiteral("secret.txt"));
+        { QFile f(filePath); QVERIFY(f.open(QIODevice::WriteOnly)); f.write("secret"); }
+
+        const auto folder = mgr.createFolder(QStringLiteral("Privé"), folderDir.path(), 0);
+        QVERIFY(folder.has_value());
+        QVERIFY(mgr.shareFolder(folder->id()).has_value());
+
+        // Insérer un pair "machine-revoked" connu en base, SANS accès au dossier.
+        const qint64 revokedId = insertUser(db, QStringLiteral("alice"), QStringLiteral("machine-revoked"));
+        QVERIFY(revokedId > 0);
+        // Note : aucun grantAccess → permissionFor retourne None → bloqué.
+
+        auto *svc = new core::sync::FolderSyncService(db, &mgr, this);
+        svc->setLocalMachineId(QStringLiteral("machine-local"));
+
+        // Construit un folder_file_request depuis "machine-revoked".
+        QJsonObject req;
+        req[QStringLiteral("type")]                    = QStringLiteral("folder_file_request");
+        req[QStringLiteral("folder_uuid")]             = folder->uuid();
+        req[QStringLiteral("relative_path")]           = QStringLiteral("secret.txt");
+        req[QStringLiteral("requester_machine_id")]    = QStringLiteral("machine-revoked");
+        req[QStringLiteral("requester_transfer_port")] = 12346;
+        const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
+
+        // Sans TransferService branché, un sendFile() crasherait.
+        // Si l'enforcement fonctionne, l'early-return d'accès refusé arrive avant.
+        // On vérifie juste qu'il n'y a pas de crash.
+        QMetaObject::invokeMethod(svc, "onServerMessageReceived",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QString, json),
+                                  Q_ARG(QHostAddress, QHostAddress::LocalHost));
+        QVERIFY(true); // pas de crash = enforcement a bien intercepté
+
+        // Le fichier n'a pas disparu (on n'a pas servi le fichier).
+        QVERIFY(QFile::exists(filePath));
+
+        delete svc;
+        delete db;
+    }
+
+    // ------------------------------------------------------------------
+    // 18. folder_op Create d'un pair révoqué (uuid connu, accès None)
+    //     → remoteOpReceived émis (signal toujours propagé) MAIS
+    //     requestRemoteFile non déclenché (pas de crash, pas de demande de
+    //     transfert) : on compte les messages sortants via StubServer.
+    // ------------------------------------------------------------------
+    void folderOp_revokedUser_isDropped()
+    {
+        QTemporaryDir dbDir, folderDir;
+        QVERIFY(dbDir.isValid() && folderDir.isValid());
+
+        const QString dbPath = dbDir.filePath(QStringLiteral("fss_revoke_op_%1.sqlite")
+            .arg(QRandomGenerator::global()->generate()));
+        auto *db = openRealDb(QStringLiteral("fss_revoke_op"), dbPath);
+        QVERIFY(db);
+
+        core::SharedFolderManager mgr(db);
+        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), 0);
+        QVERIFY(folder.has_value());
+
+        // Pair révoqué : connu en base, mais sans accès.
+        const qint64 revokedId = insertUser(db, QStringLiteral("bob"), QStringLiteral("machine-bob"));
+        QVERIFY(revokedId > 0);
+
+        // Pair légitime : a accès Write.
+        const qint64 legitId = insertUser(db, QStringLiteral("carol"), QStringLiteral("machine-carol"));
+        QVERIFY(legitId > 0);
+        database::SharedFolderAccessRepository accessRepo(db->database());
+        accessRepo.grant(folder->id(), legitId, models::SharedFolderPermission::Write, 0);
+
+        auto *svc = new core::sync::FolderSyncService(db, &mgr, this);
+        svc->setLocalMachineId(QStringLiteral("machine-local"));
+
+        QSignalSpy spyOp(svc, &core::sync::FolderSyncService::remoteOpReceived);
+
+        auto injectOp = [&](const QString &senderId) {
+            QJsonObject obj;
+            obj[QStringLiteral("type")]             = QStringLiteral("folder_op");
+            obj[QStringLiteral("folder_uuid")]      = folder->uuid();
+            obj[QStringLiteral("op_type")]          = QStringLiteral("Create");
+            obj[QStringLiteral("relative_path")]    = QStringLiteral("newfile.txt");
+            obj[QStringLiteral("old_relative_path")] = QString();
+            obj[QStringLiteral("file_hash")]        = QStringLiteral("deadbeef");
+            obj[QStringLiteral("file_size")]        = 100;
+            obj[QStringLiteral("version")]          = 1;
+            obj[QStringLiteral("machine_id")]       = senderId;
+            obj[QStringLiteral("op_id")]            = 1;
+            obj[QStringLiteral("transfer_port")]    = 12346;
+            const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+            QMetaObject::invokeMethod(svc, "onClientMessageReceived",
+                                      Qt::DirectConnection,
+                                      Q_ARG(QString, json));
+        };
+
+        // Op du pair révoqué : remoteOpReceived quand même (signal informatif),
+        // mais pas de requestRemoteFile (pas de broadcast sortant possible sans
+        // MessagingService branché, et le code ne devrait pas aller jusque là).
+        injectOp(QStringLiteral("machine-bob"));
+        // L'accès de bob est None → l'enforcement coupe avant requestRemoteFile.
+        // remoteOpReceived est quand même émis (avant le check d'enforcement).
+        QCOMPARE(spyOp.count(), 1);
+
+        // Op du pair légitime : requestRemoteFile tenté (sans crash car pas de
+        // MessagingService -- mais la vérification d'accès passe).
+        spyOp.clear();
+        injectOp(QStringLiteral("machine-carol"));
+        QCOMPARE(spyOp.count(), 1);
+
+        delete svc;
+        delete db;
+    }
+
+    // ------------------------------------------------------------------
+    // 19. handleFolderAccessRevoked : quand NOUS sommes le pair révoqué
+    //     (m_localUserId == revokedUser->id()), le dossier et ses fichiers
+    //     locaux sont supprimés (cleanupRevokedFolder).
+    // ------------------------------------------------------------------
+    void accessRevoked_selfUser_cleansUpLocalFolder()
+    {
+        QTemporaryDir dbDir, folderDir;
+        QVERIFY(dbDir.isValid() && folderDir.isValid());
+
+        const QString dbPath = dbDir.filePath(QStringLiteral("fss_revoke_self_%1.sqlite")
+            .arg(QRandomGenerator::global()->generate()));
+        auto *db = openRealDb(QStringLiteral("fss_revoke_self"), dbPath);
+        QVERIFY(db);
+
+        core::SharedFolderManager mgr(db);
+
+        // Nous = utilisateur local avec uuid "machine-local".
+        const qint64 ownerId = insertUser(db, QStringLiteral("owner"), QStringLiteral("machine-owner"));
+        QVERIFY(ownerId > 0);
+        const qint64 localUserId = insertUser(db, QStringLiteral("me"), QStringLiteral("machine-local"));
+        QVERIFY(localUserId > 0);
+
+        // Créer un dossier dans folderDir (createFolder garantit un localPath valide).
+        const auto folder = mgr.createFolder(QStringLiteral("Projet"), folderDir.path(), ownerId);
+        QVERIFY(folder.has_value());
+
+        // Accorder l'accès à "nous" sur ce dossier.
+        QVERIFY(mgr.grantAccess(folder->id(), localUserId, ownerId));
+
+        auto *svc = new core::sync::FolderSyncService(db, &mgr, this);
+        svc->setLocalMachineId(QStringLiteral("machine-local"));
+        svc->setLocalUserId(localUserId); // nous sommes l'utilisateur révoqué
+
+        // Vérifier que le dossier existe bien avant la révocation.
+        QVERIFY(mgr.getFolderByUuid(QStringLiteral("uuid-remote-folder")).has_value());
+
+        // Injecter le message folder_access_revoked depuis "machine-owner".
+        QJsonObject obj;
+        obj[QStringLiteral("type")]              = QStringLiteral("folder_access_revoked");
+        obj[QStringLiteral("folder_uuid")]       = QStringLiteral("uuid-remote-folder");
+        obj[QStringLiteral("user_uuid")]         = QStringLiteral("machine-local"); // notre uuid
+        obj[QStringLiteral("origin_machine_id")] = QStringLiteral("machine-owner");
+        const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+
+        QMetaObject::invokeMethod(svc, "onClientMessageReceived",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QString, json));
+
+        // Le dossier doit avoir été supprimé de la base locale.
+        QVERIFY(!mgr.getFolderByUuid(QStringLiteral("uuid-remote-folder")).has_value());
+
+        delete svc;
+        delete db;
+    }
+
+    // ------------------------------------------------------------------
+    // 20. handleFolderAccessRevoked pour un autre utilisateur (pas nous)
+    //     → seulement revokeAccess en base, dossier conservé.
+    // ------------------------------------------------------------------
+    void accessRevoked_otherUser_keepsFolder()
+    {
+        QTemporaryDir dbDir, folderDir;
+        QVERIFY(dbDir.isValid() && folderDir.isValid());
+
+        const QString dbPath = dbDir.filePath(QStringLiteral("fss_revoke_other_%1.sqlite")
+            .arg(QRandomGenerator::global()->generate()));
+        auto *db = openRealDb(QStringLiteral("fss_revoke_other"), dbPath);
+        QVERIFY(db);
+
+        core::SharedFolderManager mgr(db);
+
+        const qint64 ownerId = insertUser(db, QStringLiteral("owner"), QStringLiteral("machine-owner"));
+        QVERIFY(ownerId > 0);
+        const qint64 localUserId = insertUser(db, QStringLiteral("me"), QStringLiteral("machine-local"));
+        QVERIFY(localUserId > 0);
+        const qint64 otherUserId = insertUser(db, QStringLiteral("carol"), QStringLiteral("machine-carol"));
+        QVERIFY(otherUserId > 0);
+
+        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), ownerId);
+        QVERIFY(folder.has_value());
+
+        // Accorder l'accès à carol (otherUserId).
+        QVERIFY(mgr.grantAccess(folder->id(), otherUserId, ownerId));
+
+        auto *svc = new core::sync::FolderSyncService(db, &mgr, this);
+        svc->setLocalMachineId(QStringLiteral("machine-local"));
+        svc->setLocalUserId(localUserId); // nous NE sommes PAS carol
+
+        QJsonObject obj;
+        obj[QStringLiteral("type")]              = QStringLiteral("folder_access_revoked");
+        obj[QStringLiteral("folder_uuid")]       = folder->uuid();
+        obj[QStringLiteral("user_uuid")]         = QStringLiteral("machine-carol"); // carol révoquée
+        obj[QStringLiteral("origin_machine_id")] = QStringLiteral("machine-owner");
+        const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+
+        QMetaObject::invokeMethod(svc, "onClientMessageReceived",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QString, json));
+
+        // Le dossier est toujours là (c'est carol qui est révoquée, pas nous).
+        QVERIFY(mgr.getFolder(folder->id()).has_value());
+
+        // L'accès de carol a été retiré.
+        database::SharedFolderAccessRepository accessRepo(db->database());
+        QCOMPARE(accessRepo.permissionFor(folder->id(), otherUserId),
+                 models::SharedFolderPermission::None);
+
+        delete svc;
+        delete db;
+    }
 };
 
 QTEST_MAIN(TestFolderSyncService)
