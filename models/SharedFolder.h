@@ -73,7 +73,7 @@ private:
     QDateTime m_createdAt;
     bool m_isActive = true;
     QString m_originMachineId;
-    QString m_excludePatterns;
+    QString m_excludePatterns = QStringLiteral("");
 };
 
 } // namespace models

@@ -25,7 +25,8 @@ public:
         OwnerIdRole,
         FileCountRole,
         IsActiveRole,
-        IsLocalOriginRole
+        IsLocalOriginRole,
+        HasConflictRole
     };
 
     explicit SharedFolderModel(QObject *parent = nullptr);
@@ -44,9 +45,13 @@ public:
     /// core::SharedFolderContext a partir de SharedFileRepository::count().
     void setFileCounts(const QHash<qint64, int> &counts);
 
+    /// Indique si chaque dossier a des conflits actifs, indexé par SharedFolder::id().
+    void setConflicts(const QHash<qint64, bool> &conflicts);
+
 private:
     QVector<SharedFolder> m_folders;
     QHash<qint64, int> m_fileCounts;
+    QHash<qint64, bool> m_conflicts;
 };
 
 } // namespace models

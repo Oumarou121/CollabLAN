@@ -129,6 +129,15 @@ public:
     /// @return true si la mise à jour a reussi (voir lastErrorString() sinon).
     Q_INVOKABLE bool setFolderLocalPath(qint64 folderId, const QString &localPath);
 
+    /// Récupère la liste des conflits du dossier sous forme de QVariantList de QVariantMap.
+    Q_INVOKABLE QVariantList getConflicts(qint64 folderId) const;
+
+    /// Indique si le dossier contient des conflits actifs.
+    Q_INVOKABLE bool hasConflicts(qint64 folderId) const;
+
+    /// Résout un conflit pour un dossier donné selon la stratégie choisie.
+    Q_INVOKABLE bool resolveConflict(qint64 folderId, const QString &relativePath, const QString &conflictPath, const QString &resolution);
+
     /// Motifs d'exclusion (debrief point #4) actuellement configures pour
     /// un dossier partage, tels que stockes (normalises, separes par
     /// ", ") -- utilise pour preremplir le champ de saisie du dialogue

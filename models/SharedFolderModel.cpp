@@ -18,6 +18,7 @@ QHash<int, QByteArray> SharedFolderModel::roleNames() const
     roles[FileCountRole] = "fileCount";
     roles[IsActiveRole] = "isActive";
     roles[IsLocalOriginRole] = "isLocalOrigin";
+    roles[HasConflictRole] = "hasConflict";
     return roles;
 }
 
@@ -52,6 +53,8 @@ QVariant SharedFolderModel::data(const QModelIndex &index, int role) const
         return folder.isActive();
     case IsLocalOriginRole:
         return folder.isLocalOrigin();
+    case HasConflictRole:
+        return m_conflicts.value(folder.id(), false);
     default:
         return QVariant();
     }
@@ -88,6 +91,7 @@ void SharedFolderModel::clear()
     beginResetModel();
     m_folders.clear();
     m_fileCounts.clear();
+    m_conflicts.clear();
     endResetModel();
 }
 
@@ -96,6 +100,14 @@ void SharedFolderModel::setFileCounts(const QHash<qint64, int> &counts)
     m_fileCounts = counts;
     if (!m_folders.isEmpty()) {
         emit dataChanged(index(0), index(m_folders.size() - 1), {FileCountRole});
+    }
+}
+
+void SharedFolderModel::setConflicts(const QHash<qint64, bool> &conflicts)
+{
+    m_conflicts = conflicts;
+    if (!m_folders.isEmpty()) {
+        emit dataChanged(index(0), index(m_folders.size() - 1), {HasConflictRole});
     }
 }
 

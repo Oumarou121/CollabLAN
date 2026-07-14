@@ -21,6 +21,7 @@ Item {
     property int count: 0
     property color accentColor: Theme.primary
     property bool highlighted: false
+    property bool hasConflict: false
 
     signal opened()
 
@@ -112,6 +113,30 @@ Item {
                         radius: folderShape.radius
                         color: Qt.rgba(1, 1, 1, 0.10)
                     }
+                }
+            }
+
+            // Pastille conflit (warning badge sur le coin superieur gauche)
+            Rectangle {
+                visible: root.hasConflict
+                width: 21
+                height: 21
+                radius: 11
+                color: "#C07000" // Ambre
+                border.width: 2
+                border.color: Theme.surface
+                anchors.left: folderShape.left
+                anchors.top: folderShape.top
+                anchors.leftMargin: -7
+                anchors.topMargin: -4
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "⚠"
+                    font.pixelSize: 11
+                    font.bold: true
+                    font.family: Theme.fontFamily
+                    color: "#FFFFFF"
                 }
             }
 

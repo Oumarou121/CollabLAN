@@ -55,7 +55,8 @@ std::optional<models::SharedFolder> SharedFolderRepository::insert(const models:
     query.bindValue(QStringLiteral(":is_active"), folder.isActive() ? 1 : 0);
     query.bindValue(QStringLiteral(":origin_machine_id"),
                      folder.originMachineId().isEmpty() ? QVariant(QVariant::String) : folder.originMachineId());
-    query.bindValue(QStringLiteral(":exclude_patterns"), folder.excludePatterns());
+    query.bindValue(QStringLiteral(":exclude_patterns"),
+                     folder.excludePatterns().isEmpty() ? QStringLiteral("") : folder.excludePatterns());
 
     if (!query.exec()) {
         m_lastError = query.lastError().text();
@@ -74,7 +75,8 @@ bool SharedFolderRepository::update(const models::SharedFolder &folder)
     query.bindValue(QStringLiteral(":name"), folder.name());
     query.bindValue(QStringLiteral(":local_path"), folder.localPath());
     query.bindValue(QStringLiteral(":is_active"), folder.isActive() ? 1 : 0);
-    query.bindValue(QStringLiteral(":exclude_patterns"), folder.excludePatterns());
+    query.bindValue(QStringLiteral(":exclude_patterns"),
+                     folder.excludePatterns().isEmpty() ? QStringLiteral("") : folder.excludePatterns());
     query.bindValue(QStringLiteral(":id"), folder.id());
 
     if (!query.exec()) {

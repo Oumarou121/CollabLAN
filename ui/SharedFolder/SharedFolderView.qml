@@ -64,8 +64,15 @@ Item {
     function refreshFiles() {
         if (root.context && root.openedFolderId >= 0) {
             root.currentFiles = root.context.filesForFolder(root.openedFolderId)
+            const conflicts = root.context.getConflicts(root.openedFolderId)
+            const conflictMap = {}
+            for (let i = 0; i < conflicts.length; i++) {
+                conflictMap[conflicts[i].relativePath] = conflicts[i].conflictPath
+            }
+            root.conflictedFiles = conflictMap
         } else {
             root.currentFiles = []
+            root.conflictedFiles = {}
         }
     }
 
@@ -225,7 +232,7 @@ Item {
         modal: true
         anchors.centerIn: parent
         width: 420
-        height: 560
+        height: 680
         standardButtons: Dialog.NoButton
 
         property string localPath: ""
@@ -1109,25 +1116,38 @@ Item {
                     }
                 }
 
+                // ---- Menu « ⋯ » regroupant les actions secondaires ----
+                // Exclusions et Gérer les accès sont fusionnés ici pour
+                // éviter le débordement horizontal de la barre d'actions
+                // quand la fenêtre n'est pas assez large.
                 AppButton {
+                    id: moreActionsBtn
                     visible: root.openedFolderId >= 0
-                    text: qsTr("Exclusions")
+                    text: qsTr("⋯")
                     variant: "secondary"
-                    onClicked: {
-                        editExcludePatternsDialog.targetFolderId = root.openedFolderId
-                        editExcludePatternsDialog.targetFolderName = root.openedFolderName
-                        editExcludePatternsDialog.open()
-                    }
-                }
+                    onClicked: moreActionsMenu.open()
 
-                AppButton {
-                    visible: root.openedFolderId >= 0
-                    text: qsTr("Gérer les accès")
-                    variant: "secondary"
-                    onClicked: {
-                        manageAccessDialog.targetFolderId = root.openedFolderId
-                        manageAccessDialog.targetFolderName = root.openedFolderName
-                        manageAccessDialog.open()
+                    Menu {
+                        id: moreActionsMenu
+                        // Ancré sous le bouton pour rester dans l'écran
+                        y: parent.height + 2
+
+                        MenuItem {
+                            text: qsTr("Exclusions…")
+                            onTriggered: {
+                                editExcludePatternsDialog.targetFolderId = root.openedFolderId
+                                editExcludePatternsDialog.targetFolderName = root.openedFolderName
+                                editExcludePatternsDialog.open()
+                            }
+                        }
+                        MenuItem {
+                            text: qsTr("Gérer les accès…")
+                            onTriggered: {
+                                manageAccessDialog.targetFolderId = root.openedFolderId
+                                manageAccessDialog.targetFolderName = root.openedFolderName
+                                manageAccessDialog.open()
+                            }
+                        }
                     }
                 }
 
@@ -1164,6 +1184,7 @@ Item {
                         label: model.name
                         sublabel: model.fileCount === 1 ? qsTr("1 fichier") : qsTr("%1 fichiers").arg(model.fileCount)
                         count: model.fileCount
+                        hasConflict: model.hasConflict
                         onOpened: {
                             if (!model.isLocalOrigin) {
                                 // Si le localPath est déjà défini, ouvrir directement le dossier
@@ -1237,7 +1258,7 @@ Item {
                 delegate: Rectangle {
                     id: fileRow
                     width: filesListView.width
-                    height: hasConflict ? 52 : 36
+                    height: hasConflict ? 90 : 36
                     color: fileMouseArea.containsMouse ? Theme.surfaceHover : "transparent"
 
                     // true si ce fichier a un conflit en attente de résolution
@@ -1304,6 +1325,46 @@ Item {
                             color: "#C07000"
                             font.pixelSize: Theme.fontSizeCaption
                             elide: Text.ElideMiddle
+                        }
+
+                        RowLayout {
+                            visible: fileRow.hasConflict
+                            Layout.fillWidth: true
+                            spacing: Theme.spacingSmall
+
+                            AppButton {
+                                text: qsTr("Conserver local")
+                                variant: "secondary"
+                                onClicked: {
+                                    if (root.context) {
+                                        root.context.resolveConflict(root.openedFolderId, modelData.relativePath, fileRow.conflictPath, "keep_local")
+                                        root.refreshFiles()
+                                        root.refreshHistory()
+                                    }
+                                }
+                            }
+                            AppButton {
+                                text: qsTr("Conserver distant")
+                                variant: "secondary"
+                                onClicked: {
+                                    if (root.context) {
+                                        root.context.resolveConflict(root.openedFolderId, modelData.relativePath, fileRow.conflictPath, "keep_remote")
+                                        root.refreshFiles()
+                                        root.refreshHistory()
+                                    }
+                                }
+                            }
+                            AppButton {
+                                text: qsTr("Garder les deux")
+                                variant: "secondary"
+                                onClicked: {
+                                    if (root.context) {
+                                        root.context.resolveConflict(root.openedFolderId, modelData.relativePath, fileRow.conflictPath, "keep_both")
+                                        root.refreshFiles()
+                                        root.refreshHistory()
+                                    }
+                                }
+                            }
                         }
                     }
 

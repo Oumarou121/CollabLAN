@@ -2,6 +2,10 @@
 
 #include <QHash>
 #include <QVariantMap>
+#include <QFile>
+#include <QDir>
+#include <QFileInfo>
+#include <QRegularExpression>
 
 namespace core {
 
@@ -104,10 +108,13 @@ void SharedFolderContext::refresh()
     m_folderModel->setFolders(folders);
 
     QHash<qint64, int> counts;
+    QHash<qint64, bool> conflicts;
     for (const models::SharedFolder &folder : folders) {
         counts.insert(folder.id(), m_manager->getFiles(folder.id()).size());
+        conflicts.insert(folder.id(), hasConflicts(folder.id()));
     }
     m_folderModel->setFileCounts(counts);
+    m_folderModel->setConflicts(conflicts);
 }
 
 bool SharedFolderContext::createFolder(const QString &name, const QString &localPath,
@@ -430,6 +437,161 @@ QVariantList SharedFolderContext::syncHistoryForFolder(qint64 folderId, int limi
         result.append(entry);
     }
     return result;
+}
+
+QVariantList SharedFolderContext::getConflicts(qint64 folderId) const
+{
+    QVariantList result;
+    if (!m_manager) {
+        return result;
+    }
+
+    const auto files = m_manager->getFiles(folderId);
+    QSet<QString> activePaths;
+    activePaths.reserve(files.size());
+    for (const auto &file : files) {
+        activePaths.insert(file.relativePath());
+    }
+
+    QRegularExpression conflictRegex(QStringLiteral("^(.+) \\(([^)]{6})\\)(\\.[^/\\.]+)?$"));
+
+    for (const auto &file : files) {
+        auto match = conflictRegex.match(file.relativePath());
+        if (match.hasMatch()) {
+            QString basePath = match.captured(1);
+            QString shortId = match.captured(2);
+            QString ext = match.captured(3);
+            QString originalPath = basePath + ext;
+
+            if (activePaths.contains(originalPath)) {
+                QVariantMap conflictMap;
+                conflictMap.insert(QStringLiteral("relativePath"), originalPath);
+                conflictMap.insert(QStringLiteral("conflictPath"), file.relativePath());
+                conflictMap.insert(QStringLiteral("shortId"), shortId);
+                result.append(conflictMap);
+            }
+        }
+    }
+
+    return result;
+}
+
+bool SharedFolderContext::hasConflicts(qint64 folderId) const
+{
+    if (!m_manager) {
+        return false;
+    }
+
+    const auto files = m_manager->getFiles(folderId);
+    QSet<QString> activePaths;
+    activePaths.reserve(files.size());
+    for (const auto &file : files) {
+        activePaths.insert(file.relativePath());
+    }
+
+    QRegularExpression conflictRegex(QStringLiteral("^(.+) \\(([^)]{6})\\)(\\.[^/\\.]+)?$"));
+
+    for (const auto &file : files) {
+        auto match = conflictRegex.match(file.relativePath());
+        if (match.hasMatch()) {
+            QString basePath = match.captured(1);
+            QString ext = match.captured(3);
+            QString originalPath = basePath + ext;
+
+            if (activePaths.contains(originalPath)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool SharedFolderContext::resolveConflict(qint64 folderId, const QString &relativePath, const QString &conflictPath, const QString &resolution)
+{
+    if (!m_manager) {
+        m_lastErrorString = QStringLiteral("Module Shared Folder non disponible");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    const auto folderOpt = m_manager->getFolder(folderId);
+    if (!folderOpt.has_value()) {
+        m_lastErrorString = QStringLiteral("Dossier introuvable");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    const auto &folder = folderOpt.value();
+    QString localPath = folder.localPath();
+    if (localPath.isEmpty()) {
+        m_lastErrorString = QStringLiteral("Le dossier local n'est pas configuré");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    QString originalAbsPath = QDir::cleanPath(localPath + QDir::separator() + relativePath);
+    QString conflictAbsPath = QDir::cleanPath(localPath + QDir::separator() + conflictPath);
+
+    if (resolution == QStringLiteral("keep_local")) {
+        if (QFile::exists(conflictAbsPath)) {
+            if (!QFile::remove(conflictAbsPath)) {
+                m_lastErrorString = QStringLiteral("Impossible de supprimer le fichier de conflit");
+                emit errorOccurred(m_lastErrorString);
+                return false;
+            }
+        }
+    } else if (resolution == QStringLiteral("keep_remote")) {
+        if (QFile::exists(originalAbsPath)) {
+            if (!QFile::remove(originalAbsPath)) {
+                m_lastErrorString = QStringLiteral("Impossible de supprimer le fichier original");
+                emit errorOccurred(m_lastErrorString);
+                return false;
+            }
+        }
+        if (!QFile::rename(conflictAbsPath, originalAbsPath)) {
+            m_lastErrorString = QStringLiteral("Impossible de renommer la copie de conflit");
+            emit errorOccurred(m_lastErrorString);
+            return false;
+        }
+    } else if (resolution == QStringLiteral("keep_both")) {
+        QFileInfo fi(originalAbsPath);
+        QString baseName = fi.completeBaseName();
+        QString suffix = fi.suffix();
+        QString dir = fi.path();
+
+        QString newAbsPath;
+        int counter = 1;
+        do {
+            QString suffixPart = suffix.isEmpty() ? QString() : QStringLiteral(".") + suffix;
+            QString newName = (counter == 1)
+                ? QStringLiteral("%1 (copie)%2").arg(baseName, suffixPart)
+                : QStringLiteral("%1 (copie %2)%3").arg(baseName, QString::number(counter), suffixPart);
+
+            newAbsPath = QDir::cleanPath(dir + QDir::separator() + newName);
+            counter++;
+        } while (QFile::exists(newAbsPath));
+
+        if (!QFile::rename(conflictAbsPath, newAbsPath)) {
+            m_lastErrorString = QStringLiteral("Impossible de renommer la copie de conflit");
+            emit errorOccurred(m_lastErrorString);
+            return false;
+        }
+    } else {
+        m_lastErrorString = QStringLiteral("Stratégie de résolution inconnue");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    // Réindexer le dossier pour prendre en compte les changements sur le disque
+    if (m_syncEngine) {
+        m_syncEngine->reindexFolder(folderId);
+    } else {
+        m_manager->shareFolder(folderId);
+    }
+
+    refresh();
+    return true;
 }
 
 } // namespace core
