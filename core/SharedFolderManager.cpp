@@ -224,6 +224,38 @@ std::optional<QVector<models::SharedFileChange>> SharedFolderManager::shareFolde
 
         seenRelativePaths.insert(relativePath);
 
+        const QFileInfo info(absolutePath);
+        const auto previousIt = previousByRelativePath.constFind(relativePath);
+        const bool existedBefore = (previousIt != previousByRelativePath.constEnd());
+
+        // Optimisation (debrief perf, point #1) : taille + date de derniere
+        // modification viennent d'un simple stat() (QFileInfo, deja fait
+        // pour parcourir le dossier), sans lire le contenu. Si les deux
+        // sont identiques a la derniere indexation connue, on considere le
+        // fichier inchange et on evite la lecture complete + le SHA-256 --
+        // c'est cette lecture/hash qui coutait cher sur de gros dossiers a
+        // chaque notification de FolderWatcher, meme pour un seul fichier
+        // modifie. Comparaison de lastModified() a la SECONDE pres :
+        // SharedFileRepository persiste les dates en Qt::ISODate, qui
+        // tronque les millisecondes -- comparer au msec pres aurait rendu
+        // ce raccourci inoperant a quasi tous les coups.
+        //
+        // Limite acceptee (comme rsync/git en mode par defaut) : un fichier
+        // modifie en place avec exactement la meme taille ET la meme
+        // seconde de mtime que l'etat connu ne sera pas detecte. Cas
+        // extremement rare en usage reel (necessite un outil qui force la
+        // mtime), et le prochain evenement watcher (qui met a jour la
+        // mtime) rattrapera de toute facon la modification.
+        const bool metadataUnchanged = existedBefore
+            && !previousIt->hash().isEmpty()
+            && previousIt->size() == info.size()
+            && previousIt->lastModified().toUTC().toSecsSinceEpoch()
+                   == info.lastModified().toUTC().toSecsSinceEpoch();
+
+        if (metadataUnchanged) {
+            continue; // rien a relire, rien a rapporter : fichier inchange
+        }
+
         QFile file(absolutePath);
         if (!file.open(QIODevice::ReadOnly)) {
             // Fichier illisible (permissions, verrouille...) : on l'ignore
@@ -237,11 +269,7 @@ std::optional<QVector<models::SharedFileChange>> SharedFolderManager::shareFolde
         }
         file.close();
 
-        const QFileInfo info(absolutePath);
         const QString newHash = QString::fromLatin1(hasher.result().toHex());
-
-        const auto previousIt = previousByRelativePath.constFind(relativePath);
-        const bool existedBefore = (previousIt != previousByRelativePath.constEnd());
         const bool contentChanged = !existedBefore || previousIt->hash() != newHash;
 
         models::SharedFile sharedFile;

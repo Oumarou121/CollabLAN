@@ -33,6 +33,14 @@ constexpr const char *kTypeAccessGranted  = "folder_access_granted";
 constexpr const char *kTypeAccessRevoked  = "folder_access_revoked";
 constexpr const char *kTypeResyncRequest  = "folder_resync_request";
 
+/// Fenetre pendant laquelle une nouvelle demande de resync pour le MEME
+/// (folder_uuid, requester_machine_id) est ignoree sans etre re-traitee
+/// (debrief perf, point #3 : tempete de folder_resync_request en boucle,
+/// aucune dedup/backoff jusqu'ici). 5s couvre largement les rafales
+/// observees en pratique (renvoi immediat par le demandeur) sans retarder
+/// perceptiblement un vrai resync isole.
+constexpr qint64 kResyncResponseCooldownMs = 5000;
+
 } // namespace
 
 FolderSyncService::FolderSyncService(database::DatabaseManager *dbManager,
@@ -955,15 +963,23 @@ void FolderSyncService::handleFolderAccessGranted(const QJsonObject &obj)
     if (m_localUserId > 0
         && static_cast<qint64>(grantedUser->id()) == m_localUserId
         && !folder->isLocalOrigin()) {
+        // since_op_id (debrief perf, point #3) : demander depuis notre
+        // dernier op connu pour CE dossier plutot que 0 -- un 0 code en dur
+        // fait rejouer l'HISTORIQUE COMPLET a chaque resync, meme quand on
+        // n'a manque qu'une poignee d'operations recentes (reconnexion
+        // rapide, deuxieme grant sur le meme dossier...).
+        const auto localOps = m_repository.getByFolderId(folder->id(), 1); // le plus recent d'abord
+        const qint64 sinceOpId = localOps.isEmpty() ? 0 : localOps.first().id();
+
         QJsonObject req;
         req[QStringLiteral("type")]                = QString::fromLatin1(kTypeResyncRequest);
         req[QStringLiteral("folder_uuid")]          = folder->uuid();
         req[QStringLiteral("requester_machine_id")] = m_machineId;
-        req[QStringLiteral("since_op_id")]          = 0;
+        req[QStringLiteral("since_op_id")]          = sinceOpId;
         const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
         broadcastMessage(json);
         qDebug() << "[FolderSync] folder_resync_request envoyé pour récupérer le contenu de"
-                 << folder->name();
+                 << folder->name() << "depuis op_id" << sinceOpId;
     } else {
         qDebug() << "[FolderSync] folder_resync_request NON envoyé (conditions non remplies)";
     }
@@ -992,15 +1008,22 @@ void FolderSyncService::requestFolderResync(const QString &folderUuid)
         return;
     }
 
+    // since_op_id (debrief perf, point #3) : cf. commentaire equivalent dans
+    // handleFolderAccessGranted() -- eviter de rejouer tout l'historique a
+    // chaque resync quand on connait deja une partie des operations.
+    const auto localOps = m_repository.getByFolderId(folder->id(), 1); // le plus recent d'abord
+    const qint64 sinceOpId = localOps.isEmpty() ? 0 : localOps.first().id();
+
     // Envoyer un resync request au propriétaire du dossier
     QJsonObject req;
     req[QStringLiteral("type")]                = QString::fromLatin1(kTypeResyncRequest);
     req[QStringLiteral("folder_uuid")]          = folder->uuid();
     req[QStringLiteral("requester_machine_id")] = m_machineId;
-    req[QStringLiteral("since_op_id")]          = 0;
+    req[QStringLiteral("since_op_id")]          = sinceOpId;
     const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
     broadcastMessage(json);
-    qDebug() << "[FolderSync] folder_resync_request envoyé pour récupérer le contenu de" << folder->name();
+    qDebug() << "[FolderSync] folder_resync_request envoyé pour récupérer le contenu de"
+             << folder->name() << "depuis op_id" << sinceOpId;
 }
 
 void FolderSyncService::handleFolderResyncRequest(const QJsonObject &obj)
@@ -1036,6 +1059,25 @@ void FolderSyncService::handleFolderResyncRequest(const QJsonObject &obj)
                  << "sur le dossier" << folder->name();
         return;
     }
+
+    // Dedup/backoff (debrief perf, point #3) : un demandeur peut renvoyer la
+    // meme requete en rafale rapide (aucun ack applicatif de son cote pour
+    // lui dire d'arreter). Sans garde ici, chaque renvoi refait la requete
+    // SQL (getByFolderId/getFiles) et re-broadcast un batch identique -- pur
+    // gaspillage, et amplificateur de trafic en plus du #broadcast vs
+    // unicast ci-dessous. On ignore silencieusement toute nouvelle demande
+    // pour le meme (dossier, demandeur) recue moins de
+    // kResyncResponseCooldownMs apres la precedente reponse.
+    const QString dedupKey = folderUuid + QStringLiteral("::") + requesterMachineId;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 lastAnsweredMs = m_lastResyncResponseMs.value(dedupKey, 0);
+    if (lastAnsweredMs != 0 && (nowMs - lastAnsweredMs) < kResyncResponseCooldownMs) {
+        qDebug() << "[FolderSync] folder_resync_request ignoré (cooldown actif, "
+                 << (nowMs - lastAnsweredMs) << "ms) pour" << requesterMachineId
+                 << "sur le dossier" << folder->name();
+        return;
+    }
+    m_lastResyncResponseMs.insert(dedupKey, nowMs);
 
     const quint16 selfPort = m_transferService ? m_transferService->port()
                                                : network::TransferService::defaultPort();

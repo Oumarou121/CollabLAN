@@ -465,6 +465,13 @@ private:
     /// Curseur de diffusion : dernier op_id déjà broadcasté.
     qint64 m_lastBroadcastOpId = 0;
 
+    /// Dedup/backoff des folder_resync_request (debrief perf, point #3).
+    /// Clé : "<folder_uuid>::<requester_machine_id>" → epoch ms (currentMSecsSinceEpoch)
+    /// de la dernière réponse effectivement envoyée. Une nouvelle demande pour
+    /// la même clé reçue moins de kResyncResponseCooldownMs après est ignorée
+    /// sans reconstruire ni rediffuser de batch identique.
+    QHash<QString, qint64> m_lastResyncResponseMs;
+
     // Release 8 — suivi des demandes de fichiers en attente.
     // Clé : "<ownerMachineId>::<fileName>" → PendingFileTransfer
     // (indexé par le basename du fichier tel qu'annoncé par TransferService).
