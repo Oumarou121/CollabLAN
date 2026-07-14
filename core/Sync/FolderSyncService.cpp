@@ -722,6 +722,59 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
                     qWarning() << "[FolderSync] catchup op ignoré : accès révoqué pour" << peerIdentifier;
                     break;
                 }
+                // CORRECTIF (historique dupliqué/faux côté destinataire) :
+                // contrairement à handleFolderOp() (traitement temps réel),
+                // cette branche ne vérifiait jamais si le fichier annoncé
+                // était déjà présent localement avec le même hash/version
+                // avant de (re)télécharger ou de (re)créer un placeholder.
+                // Un folder_catchup_batch est renvoyé à CHAQUE folder_hello
+                // (reconnexion d'un pair quelconque) et contient TOUTES les
+                // opérations depuis le curseur connu -- sans ce garde-fou,
+                // un fichier déjà reçu et inchangé était re-demandé/re-placé
+                // à chaque reconnexion, ajoutant une nouvelle ligne
+                // SyncOperations (registerCatchupPlaceholder()/
+                // integrateReceivedFile() insèrent toujours une nouvelle
+                // ligne, jamais une mise à jour) : l'historique grossissait
+                // indéfiniment avec des entrées redondantes, horodatées au
+                // moment du traitement local (donc sans rapport avec la date
+                // réelle de l'événement côté expéditeur).
+                //
+                // CORRECTIF 2 (régression "fichiers toujours à 0 Ko") : une
+                // comparaison hash/version identique à celle de handleFolderOp()
+                // ne suffit PAS ici, car registerCatchupPlaceholder() enregistre
+                // volontairement le hash ANNONCÉ (fileHash) sur une ligne
+                // SharedFiles dont le contenu réel est absent (0 octet, cf. son
+                // commentaire "size reste a 0"). Résultat : dès qu'un placeholder
+                // existait déjà (dossier distant sans localPath), la comparaison
+                // hash/version le trouvait "déjà à jour" et needsUpdate passait à
+                // false -- y compris APRÈS que l'utilisateur ait choisi un
+                // localPath (setFolderLocalPath() -> requestFolderResync()), ce
+                // qui empêchait alors définitivement le vrai contenu d'être
+                // téléchargé (requestRemoteFile() jamais appelé). Le hash/version
+                // en base ne peut donc être considéré comme "à jour" que si le
+                // fichier existe RÉELLEMENT sur disque à l'emplacement attendu ;
+                // sans localPath, aucun contenu réel n'est de toute façon possible
+                // (le hash connu ne peut provenir que d'un placeholder).
+                bool needsUpdate = true;
+                if (!fileHash.isEmpty()) {
+                    const auto files = m_folderManager->getFiles(folder.id());
+                    for (const auto &f : files) {
+                        if (f.relativePath() == relativePath && f.hash() == fileHash
+                            && f.version() >= version) {
+                            if (folder.localPath().isEmpty()) {
+                                needsUpdate = false;
+                            } else {
+                                const QString expectedAbsPath = QDir::cleanPath(
+                                    folder.localPath() + QDir::separator() + relativePath);
+                                needsUpdate = !QFile::exists(expectedAbsPath);
+                            }
+                            break;
+                        }
+                    }
+                }
+                if (!needsUpdate) {
+                    break;
+                }
                 // Pour les dossiers distants (localPath vide), on ne peut pas
                 // télécharger les fichiers tant qu'un chemin local n'est pas défini.
                 // On crée juste la métadonnée dans SharedFiles (+ l'entrée
