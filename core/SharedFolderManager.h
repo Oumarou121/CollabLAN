@@ -156,6 +156,61 @@ public:
     /// dossier partagé reçu d'un autre poste.
     bool updateFolderLocalPath(qint64 folderId, const QString &localPath);
 
+    /// Assigne automatiquement un chemin local par défaut à un dossier
+    /// partagé DISTANT qui n'en a pas encore (registerRemoteFolder() laisse
+    /// localPath vide, cf. son commentaire) : Documents/CollabLAN Shared
+    /// Folders/<nom du dossier>, désambiguïsé ("<nom> (2)", "<nom> (3)"...)
+    /// si ce nom est déjà pris sur le disque OU par un autre SharedFolder
+    /// connu -- au lieu d'attendre que l'utilisateur choisisse lui-même un
+    /// chemin via setFolderLocalPath()/updateFolderLocalPath() avant que la
+    /// moindre synchronisation ne puisse démarrer.
+    ///
+    /// No-op (retourne le chemin existant) si le dossier a déjà un
+    /// localPath, ou std::nullopt si le dossier est introuvable, est
+    /// d'origine LOCALE (isLocalOrigin(), n'a jamais de sens à
+    /// auto-provisionner : son localPath a été choisi explicitement à la
+    /// création), ou si la création du dossier sur le disque a échoué (voir
+    /// lastErrorString()).
+    ///
+    /// N'effectue AUCUNE demande réseau (pas de resync) : c'est à
+    /// l'appelant (cf. app/Application.cpp, connecté sur
+    /// folderLocalPathProvisioned()) de déclencher
+    /// core::sync::FolderSyncService::requestFolderResync() une fois le
+    /// chemin assigné, comme le fait déjà setFolderLocalPath() côté UI.
+    ///
+    /// Émet folderLocalPathProvisioned() en cas de succès -- ne PAS appeler
+    /// automatiquement à la réception d'un accès (cf. commentaire ci-dessus
+    /// sur le consentement implicite) : c'est désormais à l'utilisateur de
+    /// déclencher cet appel explicitement en acceptant le dialogue de
+    /// confirmation (core::SharedFolderContext::acceptFolderShare()).
+    std::optional<QString> provisionDefaultLocalPath(qint64 folderId);
+
+    /// Aperçu, SANS AUCUN EFFET DE BORD (ni création de dossier sur le
+    /// disque, ni écriture en base), du chemin que provisionDefaultLocalPath()
+    /// choisirait pour ce dossier -- même logique de désambiguïsation
+    /// ("<nom> (2)", ...), mais purement en lecture. Utilisé par le
+    /// dialogue de confirmation de partage (SharedFolderContext) pour
+    /// montrer à l'utilisateur OÙ le contenu serait placé AVANT qu'il
+    /// n'accepte, sans jamais créer quoi que ce soit tant qu'il n'a pas
+    /// validé -- rouvrir/fermer le dialogue plusieurs fois ne doit pas
+    /// laisser de dossiers vides orphelins sur le disque.
+    ///
+    /// Mêmes conditions de retour std::nullopt que provisionDefaultLocalPath()
+    /// (dossier introuvable ou d'origine locale), sauf qu'aucune erreur
+    /// d'écriture disque n'est possible ici puisque rien n'est écrit.
+    std::optional<QString> previewDefaultLocalPath(qint64 folderId) const;
+
+    /// Permet de substituer le dossier de base "Documents/CollabLAN Shared
+    /// Folders" utilisé par previewDefaultLocalPath()/provisionDefaultLocalPath()
+    /// -- EXCLUSIVEMENT destiné aux tests automatisés (QStandardPaths::
+    /// setTestModeOn() n'étant pas disponible avec cette configuration Qt/
+    /// MSVC). Ne JAMAIS appeler en production : sans ceci, les tests
+    /// devaient nettoyer le vrai dossier Documents de la machine avant/après
+    /// chaque exécution, ce qui supprimait les vrais dossiers/fichiers
+    /// partagés de l'utilisateur à chaque `ctest`. Chaîne vide (défaut) =
+    /// comportement normal (vrai Documents/CollabLAN Shared Folders).
+    void setSharedFoldersBaseDirOverrideForTests(const QString &baseDir);
+
     /// Met a jour les motifs d'exclusion (debrief point #4, sync
     /// selective) d'un dossier partage deja cree. N'affecte que la
     /// PROCHAINE indexation (shareFolder()) : les fichiers deja indexes
@@ -212,7 +267,17 @@ signals:
     void accessGranted(qint64 folderId, qint64 userId, models::SharedFolderPermission permission);
     /// Emis a chaque acces accorde pour le rafraîchissement UI local.
     /// Toujours émis, même quand broadcastNetwork est false (accès accordé via réseau).
-    void accessGrantedLocal(qint64 folderId, qint64 userId);
+    /// isNewGrant = false si cette paire (folderId, userId) avait déjà une
+    /// ligne SharedFolderAccess AVANT cet appel (ré-application idempotente
+    /// d'un grant déjà connu -- notamment à chaque reconnexion/catchup hors
+    /// ligne, cf. core::sync::FolderSyncService::handleFolderAccessGranted(),
+    /// rejoué sans condition sur folder_hello/catchup). Les abonnés qui
+    /// déclenchent une action visible pour l'utilisateur UNE SEULE FOIS par
+    /// partage (notification "dossier partagé avec vous", demande de
+    /// confirmation d'auto-provisionnement dans SharedFolderContext) doivent
+    /// se filtrer sur isNewGrant == true ; ceux qui font un simple
+    /// rafraîchissement idempotent de l'UI (refresh()) peuvent l'ignorer.
+    void accessGrantedLocal(qint64 folderId, qint64 userId, bool isNewGrant);
 
     /// Emis a chaque acces revoque (revokeAccess()). core::sync::FolderSyncService
     /// y est connecte pour diffuser "folder_access_revoked" aux autres machines
@@ -225,8 +290,19 @@ signals:
     /// Toujours émis, même quand l'accès est révoqué suite à un message réseau.
     void accessRevokedLocal(qint64 folderId, qint64 userId);
 
+    /// Émis par provisionDefaultLocalPath() en cas de succès : un chemin
+    /// local par défaut vient d'être assigné à un dossier partagé DISTANT
+    /// (que ce soit suite à acceptFolderShare() côté utilisateur, ou tout
+    /// autre appelant futur). app/Application.cpp y est connecté pour
+    /// déclencher le resync réseau (FolderSyncService::requestFolderResync())
+    /// et la notification "synchronisation démarrée dans ..." -- centralise
+    /// ce qui était auparavant fait en ligne dans le handler
+    /// accessGrantedLocal() de Application.cpp.
+    void folderLocalPathProvisioned(qint64 folderId, const QString &localPath);
+
 private:
     database::DatabaseManager *m_dbManager = nullptr;
+    QString m_sharedFoldersBaseDirOverride; // tests only, cf. setSharedFoldersBaseDirOverrideForTests()
     database::SharedFolderRepository m_folderRepository;
     database::SharedFileRepository m_fileRepository;
     database::SharedFolderAccessRepository m_accessRepository;

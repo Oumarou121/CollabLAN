@@ -116,6 +116,18 @@ void NotificationManager::onFolderAccessRevoked(const QString &folderName)
     emit notificationRequested(title, message, QStringLiteral("folder"));
 }
 
+void NotificationManager::onFolderAutoProvisioned(const QString &folderName, const QString &localPath)
+{
+    if (!m_notificationsEnabled) {
+        return;
+    }
+
+    const QString title = QStringLiteral("Synchronisation démarrée");
+    const QString message = QStringLiteral("\"%1\" sera synchronisé dans %2").arg(folderName, localPath);
+
+    emit notificationRequested(title, message, QStringLiteral("folder"));
+}
+
 void NotificationManager::onFolderFilesReceived(const QString &folderUuid, const QString &folderName, int fileCount)
 {
     Q_UNUSED(folderUuid);

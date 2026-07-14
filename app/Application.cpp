@@ -812,14 +812,32 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // l'acces est bien nouveau pour lui. On notifie donc plutot sur
     // accessGrantedLocal(), qui est TOUJOURS emis, filtre sur l'utilisateur
     // local.
+    //
+    // isNewGrant filtre les ré-émissions idempotentes du même grant (rejoué
+    // sans condition à chaque reconnexion/catchup hors ligne, cf.
+    // core::sync::FolderSyncService::handleFolderAccessGranted()) : sans ce
+    // filtre, l'utilisateur revoyait la notification "dossier partagé avec
+    // vous" à chaque reconnexion pour un partage déjà connu.
+    //
+    // L'auto-provisionnement du chemin local (Documents/CollabLAN Shared
+    // Folders/<nom>) n'est PLUS déclenché automatiquement ici : il nécessite
+    // désormais la confirmation explicite de l'utilisateur (dialogue de
+    // partage, cf. core::SharedFolderContext::folderShareConfirmationRequested()
+    // / acceptFolderShare()), pour ne pas commencer à remplir son disque
+    // sans qu'il ait rien validé. Cf. folderLocalPathProvisioned ci-dessous
+    // pour ce qui se passe une fois qu'il a accepté.
     connect(m_sharedFolderManager, &core::SharedFolderManager::accessGrantedLocal,
-            this, [this](qint64 folderId, qint64 userId) {
+            this, [this](qint64 folderId, qint64 userId, bool isNewGrant) {
+                if (!isNewGrant) {
+                    return;
+                }
                 if (!m_userManager->currentUserId().has_value()
                     || static_cast<qint64>(*m_userManager->currentUserId()) != userId) {
                     return;
                 }
                 const auto folder = m_sharedFolderManager->getFolder(folderId);
                 if (!folder.has_value()) return;
+
                 const auto users = m_userManager->allUsers();
                 auto it = std::find_if(users.begin(), users.end(),
                     [&folder](const models::User &u) { return u.id() == folder->ownerId(); });
@@ -827,6 +845,24 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                     m_notificationManager->onFolderCreated(folder->name(), it->name());
                 }
             });
+
+    // Une fois qu'un chemin local par défaut a été assigné à un dossier
+    // partagé distant (SharedFolderManager::provisionDefaultLocalPath(),
+    // déclenché par l'utilisateur en acceptant le dialogue de confirmation
+    // de partage, cf. core::SharedFolderContext::acceptFolderShare()) :
+    // lancer le resync réseau pour récupérer le contenu depuis le
+    // propriétaire, et notifier où la synchronisation démarre.
+    connect(m_sharedFolderManager, &core::SharedFolderManager::folderLocalPathProvisioned,
+            this, [this](qint64 folderId, const QString &localPath) {
+                const auto folder = m_sharedFolderManager->getFolder(folderId);
+                if (!folder.has_value()) return;
+
+                if (m_folderSyncService) {
+                    m_folderSyncService->requestFolderResync(folder->uuid());
+                }
+                m_notificationManager->onFolderAutoProvisioned(folder->name(), localPath);
+            });
+
 
     // Notifier quand l'accès à un dossier partagé est révoqué
     connect(m_sharedFolderManager, &core::SharedFolderManager::accessRevokedLocal,

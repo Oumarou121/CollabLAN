@@ -38,6 +38,24 @@ Item {
     // Réinitialisé à l'ouverture d'un nouveau dossier.
     property var conflictedFiles: ({})
 
+    // File d'attente des demandes de confirmation de partage (dossiers
+    // distants reçus sans localPath) pas encore affichées : plusieurs
+    // dossiers peuvent être reçus d'affilée, on les présente un par un
+    // plutôt que d'empiler des dialogues.
+    property var pendingShareConfirmations: []
+
+    function showNextShareConfirmation() {
+        if (shareConfirmDialog.visible || root.pendingShareConfirmations.length === 0) {
+            return
+        }
+        const next = root.pendingShareConfirmations.shift()
+        shareConfirmDialog.targetFolderId = next.folderId
+        shareConfirmDialog.targetFolderName = next.folderName
+        shareConfirmDialog.ownerName = next.ownerName
+        shareConfirmDialog.suggestedPath = next.suggestedPath
+        shareConfirmDialog.open()
+    }
+
     function formatBytes(bytes) {
         if (!bytes || bytes <= 0) return "0 o"
         const units = ["o", "Ko", "Mo", "Go"]
@@ -104,6 +122,21 @@ Item {
                 root.refreshFiles()
                 root.refreshHistory()
             }
+        }
+        // Un dossier partagé DISTANT vient d'être reçu pour la première
+        // fois sans chemin local : demander confirmation avant de
+        // provisionner quoi que ce soit sur le disque (au lieu de
+        // l'auto-provisionner silencieusement). Plusieurs demandes peuvent
+        // arriver d'affilée (plusieurs dossiers reçus en rafale) : on les
+        // met en file et on les affiche une par une.
+        function onFolderShareConfirmationRequested(folderId, folderName, ownerName, suggestedPath) {
+            root.pendingShareConfirmations.push({
+                folderId: folderId,
+                folderName: folderName,
+                ownerName: ownerName,
+                suggestedPath: suggestedPath
+            })
+            root.showNextShareConfirmation()
         }
     }
 
@@ -670,6 +703,111 @@ Item {
                 path = path.substring(1)
             }
             setLocalPathDialog.localPath = path
+        }
+    }
+
+    // ---- dialogue de confirmation d'un nouveau partage reçu ----
+    //
+    // Affiché quand core::SharedFolderContext émet
+    // folderShareConfirmationRequested() : un pair vient de nous partager un
+    // dossier pour la première fois. On demande explicitement l'accord de
+    // l'utilisateur avant de commencer quoi que ce soit sur son disque
+    // (au lieu d'auto-provisionner silencieusement), tout en lui montrant OÙ
+    // le contenu serait placé s'il accepte.
+    Dialog {
+        id: shareConfirmDialog
+        title: qsTr("Nouveau dossier partagé — %1").arg(shareConfirmDialog.targetFolderName)
+        modal: true
+        anchors.centerIn: parent
+        width: 440
+        height: 300
+        standardButtons: Dialog.NoButton
+        closePolicy: Popup.NoAutoClose
+
+        property int targetFolderId: -1
+        property string targetFolderName: ""
+        property string ownerName: ""
+        property string suggestedPath: ""
+
+        onClosed: root.showNextShareConfirmation()
+
+        background: Rectangle {
+            radius: Theme.radiusMedium
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.border
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: Theme.spacingMedium
+
+            Label {
+                text: shareConfirmDialog.ownerName.length > 0
+                    ? qsTr("« %1 » vient de partager le dossier « %2 » avec vous.")
+                        .arg(shareConfirmDialog.ownerName).arg(shareConfirmDialog.targetFolderName)
+                    : qsTr("Un dossier partagé « %1 » a été reçu.").arg(shareConfirmDialog.targetFolderName)
+                color: Theme.text
+                font.pixelSize: Theme.fontSizeBody
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            Label {
+                text: qsTr("Si vous acceptez, son contenu sera synchronisé dans :")
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            Label {
+                text: shareConfirmDialog.suggestedPath
+                color: Theme.text
+                font.pixelSize: Theme.fontSizeSmall
+                font.family: "monospace"
+                elide: Text.ElideMiddle
+                wrapMode: Text.WrapAnywhere
+                Layout.fillWidth: true
+            }
+
+            Label {
+                text: qsTr("Vous pourrez changer cet emplacement plus tard, ou refuser pour l'instant sans perdre l'accès au dossier.")
+                color: Theme.textTertiary
+                font.pixelSize: Theme.fontSizeSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacingSmall
+
+                AppButton {
+                    text: qsTr("Refuser")
+                    variant: "secondary"
+                    Layout.fillWidth: true
+                    onClicked: {
+                        if (root.context && shareConfirmDialog.targetFolderId >= 0) {
+                            root.context.declineFolderShare(shareConfirmDialog.targetFolderId)
+                        }
+                        shareConfirmDialog.close()
+                    }
+                }
+                AppButton {
+                    text: qsTr("Accepter")
+                    variant: "primary"
+                    Layout.fillWidth: true
+                    onClicked: {
+                        if (root.context && shareConfirmDialog.targetFolderId >= 0) {
+                            root.context.acceptFolderShare(shareConfirmDialog.targetFolderId)
+                        }
+                        shareConfirmDialog.close()
+                    }
+                }
+            }
         }
     }
 

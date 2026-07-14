@@ -1,5 +1,6 @@
 #include "SharedFolderContext.h"
 
+#include <algorithm>
 #include <QHash>
 #include <QVariantMap>
 #include <QFile>
@@ -30,9 +31,41 @@ void SharedFolderContext::setSharedFolderManager(SharedFolderManager *manager)
     if (m_manager) {
         connect(m_manager, &SharedFolderManager::folderShared,
                 this, [this](qint64, int) { refresh(); });
-        // Rafraîchir l'UI quand un accès est accordé localement (toujours émis)
+        // Rafraîchir l'UI quand un accès est accordé localement (toujours
+        // émis), et -- uniquement pour un grant réellement NOUVEAU
+        // (isNewGrant, cf. commentaire du signal dans SharedFolderManager.h)
+        // -- demander confirmation avant de proposer d'auto-provisionner un
+        // dossier DISTANT reçu sans localPath : sans le filtre isNewGrant,
+        // ce dialogue réapparaîtrait à chaque reconnexion/catchup pour un
+        // partage déjà connu.
         connect(m_manager, &SharedFolderManager::accessGrantedLocal,
-                this, [this](qint64, qint64) { refresh(); });
+                this, [this](qint64 folderId, qint64 userId, bool isNewGrant) {
+                    refresh();
+
+                    if (!isNewGrant) {
+                        return;
+                    }
+                    if (!m_userManager || !m_userManager->currentUserId().has_value()
+                        || static_cast<qint64>(*m_userManager->currentUserId()) != userId) {
+                        return;
+                    }
+
+                    const auto folder = m_manager->getFolder(folderId);
+                    if (!folder.has_value() || folder->isLocalOrigin() || !folder->localPath().isEmpty()) {
+                        return; // dossier local, ou deja provisionne/choisi
+                    }
+
+                    QString ownerName;
+                    const auto users = m_userManager->allUsers();
+                    auto it = std::find_if(users.begin(), users.end(),
+                        [&folder](const models::User &u) { return u.id() == folder->ownerId(); });
+                    if (it != users.end()) {
+                        ownerName = it->name();
+                    }
+
+                    const QString suggestedPath = m_manager->previewDefaultLocalPath(folderId).value_or(QString());
+                    emit folderShareConfirmationRequested(folderId, folder->name(), ownerName, suggestedPath);
+                });
         // Rafraîchir l'UI quand un accès est révoqué localement (toujours émis)
         connect(m_manager, &SharedFolderManager::accessRevokedLocal,
                 this, [this](qint64, qint64) { refresh(); });
@@ -367,6 +400,35 @@ bool SharedFolderContext::setFolderLocalPath(qint64 folderId, const QString &loc
 
     refresh();
     return true;
+}
+
+bool SharedFolderContext::acceptFolderShare(qint64 folderId)
+{
+    if (!m_manager) {
+        m_lastErrorString = QStringLiteral("Module Shared Folder non disponible");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    // provisionDefaultLocalPath() cree le dossier sur le disque, persiste
+    // le localPath, ET emet SharedFolderManager::folderLocalPathProvisioned
+    // -- app/Application.cpp y est connecte pour declencher le resync
+    // reseau et la notification, donc rien de plus a faire ici.
+    if (!m_manager->provisionDefaultLocalPath(folderId).has_value()) {
+        m_lastErrorString = m_manager->lastErrorString();
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    refresh();
+    return true;
+}
+
+void SharedFolderContext::declineFolderShare(qint64 /*folderId*/)
+{
+    // Intentionnellement un no-op : cf. commentaire Q_INVOKABLE dans le .h.
+    // Le dossier reste dans la liste avec un localPath vide ; l'utilisateur
+    // pourra choisir un chemin plus tard via setFolderLocalPath().
 }
 
 QString SharedFolderContext::excludePatternsForFolder(qint64 folderId) const

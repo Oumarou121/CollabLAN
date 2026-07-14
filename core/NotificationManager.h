@@ -53,6 +53,14 @@ public slots:
     /// Appelé lorsqu'un accès à un dossier partagé est révoqué.
     void onFolderAccessRevoked(const QString &folderName);
 
+    /// Appelé lorsqu'un dossier partagé distant vient d'être provisionné
+    /// automatiquement (chemin local par défaut assigné sous Documents/
+    /// CollabLAN Shared Folders/, cf. core::SharedFolderManager::
+    /// provisionDefaultLocalPath()) : la synchronisation démarre sans que
+    /// l'utilisateur ait eu à choisir un dossier lui-même, donc on
+    /// l'informe explicitement OÙ le contenu va apparaître sur son disque.
+    void onFolderAutoProvisioned(const QString &folderName, const QString &localPath);
+
     /// Appelé lorsqu'une rafale de fichiers reçus pour un dossier partagé
     /// vient de se terminer (regroupement fait par FolderSyncService, cf.
     /// FolderSyncService::folderFilesReceived) : une SEULE notification est

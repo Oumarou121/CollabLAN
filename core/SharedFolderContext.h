@@ -129,6 +129,26 @@ public:
     /// @return true si la mise à jour a reussi (voir lastErrorString() sinon).
     Q_INVOKABLE bool setFolderLocalPath(qint64 folderId, const QString &localPath);
 
+    /// Accepte un partage de dossier distant en attente de confirmation
+    /// (cf. folderShareConfirmationRequested()) : assigne le chemin local
+    /// par défaut sous Documents/CollabLAN Shared Folders/<nom>
+    /// (SharedFolderManager::provisionDefaultLocalPath()) et déclenche un
+    /// resync auprès du propriétaire pour récupérer le contenu (via le
+    /// signal SharedFolderManager::folderLocalPathProvisioned, câblé dans
+    /// app/Application.cpp).
+    /// @return true si l'assignation a réussi (voir lastErrorString() sinon).
+    Q_INVOKABLE bool acceptFolderShare(qint64 folderId);
+
+    /// Décline (pour l'instant) un partage de dossier distant en attente de
+    /// confirmation : ne fait RIEN de destructif -- le dossier reste dans la
+    /// liste avec un localPath vide, sans qu'aucune synchronisation ne
+    /// démarre. L'utilisateur pourra assigner un chemin plus tard via le
+    /// dialogue existant ("Définir le dossier local", cf.
+    /// setFolderLocalPath()). Un no-op explicite plutôt qu'une révocation
+    /// d'accès : refuser l'auto-provisionnement ne signifie pas refuser le
+    /// partage lui-même.
+    Q_INVOKABLE void declineFolderShare(qint64 folderId);
+
     /// Récupère la liste des conflits du dossier sous forme de QVariantList de QVariantMap.
     Q_INVOKABLE QVariantList getConflicts(qint64 folderId) const;
 
@@ -204,6 +224,26 @@ signals:
      * n'apparaissaient qu'après avoir quitté puis rouvert l'écran.
      */
     void fileReceived(const QString &folderUuid, const QString &relativePath);
+
+    /**
+     * @brief Un dossier partagé DISTANT vient d'être reçu pour la première
+     * fois (accessGrantedLocal, isNewGrant == true) sans localPath assigné :
+     * demande à l'UI (SharedFolderView.qml) d'afficher un dialogue de
+     * confirmation avant de commencer quoi que ce soit sur le disque de
+     * l'utilisateur, plutôt que d'auto-provisionner silencieusement.
+     *
+     * L'utilisateur répond en appelant acceptFolderShare(folderId) ou
+     * declineFolderShare(folderId).
+     *
+     * @param folderId      Identifiant local du dossier partagé.
+     * @param folderName    Nom du dossier tel que partagé.
+     * @param ownerName     Nom d'utilisateur du propriétaire du dossier.
+     * @param suggestedPath Aperçu (previewDefaultLocalPath(), sans effet de
+     *                      bord) du chemin qui serait utilisé en cas
+     *                      d'acceptation.
+     */
+    void folderShareConfirmationRequested(qint64 folderId, const QString &folderName,
+                                           const QString &ownerName, const QString &suggestedPath);
 
 private:
     SharedFolderManager *m_manager = nullptr;

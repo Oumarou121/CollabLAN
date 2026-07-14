@@ -1,6 +1,8 @@
 #include <QtTest>
 #include <QFile>
 #include <QDir>
+#include <QSqlQuery>
+#include <QStandardPaths>
 #include <QRandomGenerator>
 #include <QTemporaryDir>
 
@@ -36,6 +38,7 @@ private:
     // de changements).
     QTemporaryDir m_dbDir;
     std::unique_ptr<QTemporaryDir> m_folderDir;
+    std::unique_ptr<QTemporaryDir> m_sharedFoldersBaseDir;
     QString m_dbPath;
 
 private slots:
@@ -47,6 +50,11 @@ private slots:
         // Nouveau repertoire propre pour les fichiers de ce test
         m_folderDir = std::make_unique<QTemporaryDir>();
         QVERIFY(m_folderDir->isValid());
+        // Nouveau repertoire isole pour previewDefaultLocalPath()/
+        // provisionDefaultLocalPath() (cf. sharedFoldersBaseDirForTest()) :
+        // jamais le vrai Documents/ de la machine.
+        m_sharedFoldersBaseDir = std::make_unique<QTemporaryDir>();
+        QVERIFY(m_sharedFoldersBaseDir->isValid());
     }
 
     // ------------------------------------------------------------------ helpers
@@ -69,6 +77,22 @@ private slots:
             return {};
         f.write(content);
         return absPath;
+    }
+
+    // Insere une ligne minimale dans Users pour un id donne : necessaire
+    // pour les tests qui exercent SharedFolderAccess.user_id, seule colonne
+    // de ce module contrainte par une vraie FK NOT NULL vers Users (cf.
+    // migration 022). Les autres tests de cette suite n'ont pas besoin de
+    // Users car ownerId est passe a 0 (NULL en base, cf. commentaire en
+    // tete de fichier) -- seul grantAccess() reference un user_id reel.
+    bool insertStubUser(database::DatabaseManager *db, qint64 userId)
+    {
+        QSqlQuery query(db->database());
+        query.prepare(QStringLiteral(
+            "INSERT INTO Users (id, name) VALUES (:id, :name)"));
+        query.bindValue(QStringLiteral(":id"), userId);
+        query.bindValue(QStringLiteral(":name"), QStringLiteral("stub_user_%1").arg(userId));
+        return query.exec();
     }
 
     // ------------------------------------------------------------------ tests
@@ -474,6 +498,208 @@ private slots:
         QVERIFY(!mgr.isPathExcluded(folder->id(), QStringLiteral("rapport.docx")));
         // Dossier introuvable : pas d'exclusion applicable (pas de crash).
         QVERIFY(!mgr.isPathExcluded(folder->id() + 999, QStringLiteral("rapport.docx")));
+
+        db->close();
+        delete db;
+    }
+
+    // -------------------------------------------------- auto-provisioning du chemin local (dossiers distants)
+
+    // QStandardPaths::setTestModeOn() n'est pas disponible sur toutes les
+    // configurations Qt/MSVC (echec de compilation constate avec Qt 6.11.1
+    // MSVC2022 -- "n'est pas membre de QStandardPaths"). On utilise donc
+    // SharedFolderManager::setSharedFoldersBaseDirOverrideForTests() pour
+    // rediriger ces tests vers un QTemporaryDir isole, plutot que d'operer
+    // (et de removeRecursively()!) sur le vrai Documents/CollabLAN Shared
+    // Folders/ de la machine -- une precedente version de ces tests faisait
+    // exactement ca et effacait les vrais dossiers/fichiers partages de
+    // l'utilisateur a chaque execution de ctest. Le sous-dossier
+    // "CollabLAN Shared Folders" est conserve dans le chemin pour que les
+    // assertions QVERIFY(path->contains(...)) restent valides.
+    QString sharedFoldersBaseDirForTest()
+    {
+        return m_sharedFoldersBaseDir->path() + QStringLiteral("/CollabLAN Shared Folders");
+    }
+
+    void provisionDefaultLocalPathCreatesDirectoryUnderDocuments()
+    {
+        auto *db = openDb(QStringLiteral("sfm_autopath_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+        mgr.setSharedFoldersBaseDirOverrideForTests(sharedFoldersBaseDirForTest());
+
+        const auto folder = mgr.registerRemoteFolder(
+            QStringLiteral("uuid-autopath-1"), QStringLiteral("Projet"), 0, QStringLiteral("machine-distante"));
+        QVERIFY(folder.has_value());
+        QVERIFY(folder->localPath().isEmpty());
+
+        const auto path = mgr.provisionDefaultLocalPath(folder->id());
+        QVERIFY2(path.has_value(), qPrintable(mgr.lastErrorString()));
+        QVERIFY(path->contains(QStringLiteral("CollabLAN Shared Folders")));
+        QVERIFY(path->contains(QStringLiteral("Projet")));
+        QVERIFY(QDir(*path).exists());
+
+        const auto reloaded = mgr.getFolder(folder->id());
+        QVERIFY(reloaded.has_value());
+        QCOMPARE(reloaded->localPath(), *path);
+
+        // Idempotent : un second appel ne change rien et renvoie le meme chemin.
+        const auto second = mgr.provisionDefaultLocalPath(folder->id());
+        QVERIFY(second.has_value());
+        QCOMPARE(*second, *path);
+
+        db->close();
+        delete db;
+    }
+
+    void provisionDefaultLocalPathDisambiguatesNameCollisions()
+    {
+        auto *db = openDb(QStringLiteral("sfm_autopath_collision_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+        mgr.setSharedFoldersBaseDirOverrideForTests(sharedFoldersBaseDirForTest());
+
+        // Deux dossiers LOGIQUEMENT distincts (uuid different) partagés par
+        // deux pairs différents mais portant le même nom "Projet".
+        const auto folderA = mgr.registerRemoteFolder(
+            QStringLiteral("uuid-collision-a"), QStringLiteral("Projet"), 0, QStringLiteral("machine-a"));
+        const auto folderB = mgr.registerRemoteFolder(
+            QStringLiteral("uuid-collision-b"), QStringLiteral("Projet"), 0, QStringLiteral("machine-b"));
+        QVERIFY(folderA.has_value());
+        QVERIFY(folderB.has_value());
+
+        const auto pathA = mgr.provisionDefaultLocalPath(folderA->id());
+        const auto pathB = mgr.provisionDefaultLocalPath(folderB->id());
+        QVERIFY2(pathA.has_value(), qPrintable(mgr.lastErrorString()));
+        QVERIFY2(pathB.has_value(), qPrintable(mgr.lastErrorString()));
+
+        QVERIFY(*pathA != *pathB);
+        QVERIFY(pathB->contains(QStringLiteral("Projet (2)")));
+        QVERIFY(QDir(*pathA).exists());
+        QVERIFY(QDir(*pathB).exists());
+
+        db->close();
+        delete db;
+    }
+
+    void provisionDefaultLocalPathSkipsLocalOriginFolders()
+    {
+        auto *db = openDb(QStringLiteral("sfm_autopath_local_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+
+        // Un dossier créé localement a déjà un localPath (choisi à la
+        // création) : provisionDefaultLocalPath() doit être un no-op qui
+        // renvoie simplement ce chemin existant, jamais en écraser le
+        // choix explicite de l'utilisateur.
+        const auto folder = mgr.createFolder(QStringLiteral("F"), m_folderDir->path(), 0);
+        QVERIFY2(folder.has_value(), qPrintable(mgr.lastErrorString()));
+
+        const auto path = mgr.provisionDefaultLocalPath(folder->id());
+        QVERIFY(path.has_value());
+        QCOMPARE(*path, m_folderDir->path());
+
+        db->close();
+        delete db;
+    }
+
+    void previewDefaultLocalPathHasNoSideEffects()
+    {
+        auto *db = openDb(QStringLiteral("sfm_preview_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+        mgr.setSharedFoldersBaseDirOverrideForTests(sharedFoldersBaseDirForTest());
+
+        const auto folder = mgr.registerRemoteFolder(
+            QStringLiteral("uuid-preview-1"), QStringLiteral("Projet"), 0, QStringLiteral("machine-distante"));
+        QVERIFY(folder.has_value());
+
+        // previewDefaultLocalPath() doit renvoyer le meme chemin que
+        // provisionDefaultLocalPath() aurait choisi, mais SANS creer le
+        // dossier sur le disque ni toucher a la base : le dialogue de
+        // confirmation de partage doit pouvoir etre ouvert/ferme plusieurs
+        // fois sans laisser de dossiers vides orphelins.
+        const auto preview = mgr.previewDefaultLocalPath(folder->id());
+        QVERIFY(preview.has_value());
+        QVERIFY(preview->contains(QStringLiteral("CollabLAN Shared Folders")));
+        QVERIFY(preview->contains(QStringLiteral("Projet")));
+        QVERIFY(!QDir(*preview).exists());
+
+        const auto reloaded = mgr.getFolder(folder->id());
+        QVERIFY(reloaded.has_value());
+        QVERIFY(reloaded->localPath().isEmpty());
+
+        // Appeler previewDefaultLocalPath() plusieurs fois de suite reste
+        // stable (pas de desambiguisation "(2)", "(3)"... qui s'incrementerait
+        // a chaque appel puisque rien n'est jamais reserve/cree).
+        const auto secondPreview = mgr.previewDefaultLocalPath(folder->id());
+        QVERIFY(secondPreview.has_value());
+        QCOMPARE(*secondPreview, *preview);
+
+        // provisionDefaultLocalPath() (l'acceptation reelle par l'utilisateur)
+        // doit ensuite choisir exactement ce meme chemin previsualise.
+        const auto provisioned = mgr.provisionDefaultLocalPath(folder->id());
+        QVERIFY2(provisioned.has_value(), qPrintable(mgr.lastErrorString()));
+        QCOMPARE(*provisioned, *preview);
+        QVERIFY(QDir(*provisioned).exists());
+
+        db->close();
+        delete db;
+    }
+
+    void previewDefaultLocalPathSkipsLocalOriginFolders()
+    {
+        auto *db = openDb(QStringLiteral("sfm_preview_local_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+
+        const auto folder = mgr.createFolder(QStringLiteral("F"), m_folderDir->path(), 0);
+        QVERIFY2(folder.has_value(), qPrintable(mgr.lastErrorString()));
+
+        const auto preview = mgr.previewDefaultLocalPath(folder->id());
+        QVERIFY(preview.has_value());
+        QCOMPARE(*preview, m_folderDir->path());
+
+        db->close();
+        delete db;
+    }
+
+    void grantAccessMarksOnlyFirstGrantAsNew()
+    {
+        auto *db = openDb(QStringLiteral("sfm_grant_isnew_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+
+        const auto folder = mgr.createFolder(QStringLiteral("F"), m_folderDir->path(), 0);
+        QVERIFY2(folder.has_value(), qPrintable(mgr.lastErrorString()));
+
+        // grantAccess() ecrit reellement user_id = 42 dans SharedFolderAccess,
+        // dont la FK (migration 022) exige une ligne Users correspondante --
+        // contrairement a ownerId (passe a 0/NULL ailleurs dans cette suite),
+        // ce champ est ici exerce avec un id concret et doit donc exister.
+        QVERIFY(insertStubUser(db, 42));
+
+        QVector<bool> emittedIsNew;
+        QObject::connect(&mgr, &core::SharedFolderManager::accessGrantedLocal,
+                          [&emittedIsNew](qint64, qint64, bool isNew) { emittedIsNew.append(isNew); });
+
+        // Premier grant (utilisateur 42, jamais vu sur ce dossier) : nouveau.
+        QVERIFY(mgr.grantAccess(folder->id(), 42, 0, models::SharedFolderPermission::Read, false));
+        // Ré-application idempotente du meme grant (ex: handleFolderAccessGranted()
+        // rejoue le catchup a la reconnexion) : PAS nouveau, ne doit pas redeclencher
+        // notification/dialogue cote appelant.
+        QVERIFY(mgr.grantAccess(folder->id(), 42, 0, models::SharedFolderPermission::Read, false));
+        // Un changement de permission reste tout de meme une re-application
+        // de la MEME paire (folder, user) : toujours pas "nouveau" au sens
+        // de ce test (l'acces existait deja).
+        QVERIFY(mgr.grantAccess(folder->id(), 42, 0, models::SharedFolderPermission::Write, false));
+
+        QCoreApplication::processEvents(); // les emit() passent par Qt::QueuedConnection
+
+        QCOMPARE(emittedIsNew.size(), 3);
+        QCOMPARE(emittedIsNew.at(0), true);
+        QCOMPARE(emittedIsNew.at(1), false);
+        QCOMPARE(emittedIsNew.at(2), false);
 
         db->close();
         delete db;

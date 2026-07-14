@@ -11,6 +11,7 @@
 #include <QHash>
 #include <QRegularExpression>
 #include <QSet>
+#include <QStandardPaths>
 #include <QStringList>
 
 namespace core {
@@ -490,14 +491,27 @@ bool SharedFolderManager::grantAccess(qint64 folderId, qint64 userId, qint64 gra
         return false;
     }
 
+    // A verifier AVANT le grant() (qui est un UPSERT) : c'est la seule
+    // facon de savoir si cette paire (folderId, userId) est vraiment
+    // nouvelle, ou si ce grantAccess() ne fait que re-appliquer un acces
+    // deja connu (cf. commentaire accessGrantedLocal() dans le .h -- ce
+    // second cas survient a chaque reconnexion/catchup hors-ligne, ou
+    // FolderSyncService::handleFolderAccessGranted() rappelle grantAccess()
+    // sans condition).
+    const bool isNewGrant =
+        m_accessRepository.permissionFor(folderId, userId) == models::SharedFolderPermission::None;
+
     const auto access = m_accessRepository.grant(folderId, userId, permission, grantedBy);
     if (!access.has_value()) {
         return false;
     }
 
-    // Toujours émettre accessGrantedLocal pour le rafraîchissement UI
-    QMetaObject::invokeMethod(this, [this, folderId, userId]() {
-        emit accessGrantedLocal(folderId, userId);
+    // Toujours émettre accessGrantedLocal pour le rafraîchissement UI, mais
+    // avec isNewGrant pour que les abonnés qui declenchent une action
+    // visible UNE SEULE FOIS par partage (notification, confirmation) ne se
+    // redeclenchent pas a chaque repetition idempotente du meme grant.
+    QMetaObject::invokeMethod(this, [this, folderId, userId, isNewGrant]() {
+        emit accessGrantedLocal(folderId, userId, isNewGrant);
     }, Qt::QueuedConnection);
 
     if (broadcastNetwork) {
@@ -615,6 +629,121 @@ bool SharedFolderManager::updateFolderLocalPath(qint64 folderId, const QString &
     }
 
     return true;
+}
+
+void SharedFolderManager::setSharedFoldersBaseDirOverrideForTests(const QString &baseDir)
+{
+    m_sharedFoldersBaseDirOverride = baseDir;
+}
+
+std::optional<QString> SharedFolderManager::previewDefaultLocalPath(qint64 folderId) const
+{
+    const auto folder = m_folderRepository.getById(folderId);
+    if (!folder.has_value()) {
+        return std::nullopt;
+    }
+
+    if (!folder->localPath().isEmpty()) {
+        return folder->localPath(); // deja assigne (choisi par l'utilisateur ou provisionne avant)
+    }
+
+    // Un dossier d'origine LOCALE a toujours un localPath (choisi
+    // explicitement a la creation, cf. createFolder()) : localPath vide ne
+    // devrait donc jamais arriver ici pour un dossier local.
+    if (folder->isLocalOrigin()) {
+        return std::nullopt;
+    }
+
+    const QString baseDir = m_sharedFoldersBaseDirOverride.isEmpty()
+        ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
+              + QStringLiteral("/CollabLAN Shared Folders")
+        : m_sharedFoldersBaseDirOverride;
+
+    // Assainit le nom pour l'utiliser comme nom de dossier sur le disque :
+    // caracteres interdits par Windows/NTFS (le proprietaire distant a pu
+    // les utiliser sur un OS plus permissif) remplaces par '_' plutot que
+    // supprimes, pour rester lisible sans creer de collisions artificielles
+    // entre deux noms qui ne differaient que par un caractere interdit.
+    QString sanitizedName = folder->name().trimmed();
+    static const QRegularExpression forbiddenChars(QStringLiteral("[\\\\/:*?\"<>|]"));
+    sanitizedName.replace(forbiddenChars, QStringLiteral("_"));
+    if (sanitizedName.isEmpty()) {
+        sanitizedName = QStringLiteral("Dossier partage");
+    }
+
+    // Desambiguisation ("Projet", "Projet (2)", ...) : deux pairs peuvent
+    // partager un dossier du meme nom, et ce poste peut recevoir 2 dossiers
+    // LOGIQUEMENT distincts (uuid different) qui portent le meme nom. On
+    // verifie a la fois l'absence sur le disque ET l'absence d'un autre
+    // SharedFolder deja connu pointant vers ce chemin -- une simple
+    // verification disque ne suffirait pas si le dossier candidat n'existe
+    // pas encore mais est deja reserve par un autre SharedFolder de cette
+    // meme passe (provisionnement de plusieurs dossiers recus d'affilee).
+    QSet<QString> reservedPaths;
+    for (const models::SharedFolder &existing : m_folderRepository.getAll()) {
+        if (!existing.localPath().isEmpty()) {
+            reservedPaths.insert(QDir::cleanPath(existing.localPath()));
+        }
+    }
+
+    QString candidatePath = QDir::cleanPath(baseDir + QLatin1Char('/') + sanitizedName);
+    for (int suffix = 2; QDir(candidatePath).exists() || reservedPaths.contains(candidatePath); ++suffix) {
+        candidatePath = QDir::cleanPath(
+            QStringLiteral("%1/%2 (%3)").arg(baseDir, sanitizedName).arg(suffix));
+    }
+
+    return candidatePath;
+}
+
+std::optional<QString> SharedFolderManager::provisionDefaultLocalPath(qint64 folderId)
+{
+    if (!m_dbManager) {
+        m_lastError = SharedFolderManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral("DatabaseManager non disponible");
+        return std::nullopt;
+    }
+
+    const auto folder = m_folderRepository.getById(folderId);
+    if (!folder.has_value()) {
+        m_lastError = SharedFolderManagerError::InvalidFolder;
+        m_lastErrorString = QStringLiteral("Dossier introuvable");
+        return std::nullopt;
+    }
+
+    if (!folder->localPath().isEmpty()) {
+        return folder->localPath(); // deja assigne (choisi par l'utilisateur ou provisionne avant) : no-op
+    }
+
+    if (folder->isLocalOrigin()) {
+        m_lastError = SharedFolderManagerError::InvalidFolder;
+        m_lastErrorString = QStringLiteral("Dossier d'origine locale sans chemin -- etat inattendu");
+        return std::nullopt;
+    }
+
+    const auto candidate = previewDefaultLocalPath(folderId);
+    if (!candidate.has_value()) {
+        m_lastError = SharedFolderManagerError::InvalidFolder;
+        m_lastErrorString = QStringLiteral("Impossible de calculer un chemin par defaut");
+        return std::nullopt;
+    }
+    const QString candidatePath = *candidate;
+
+    if (!QDir().mkpath(candidatePath)) {
+        m_lastError = SharedFolderManagerError::InvalidPath;
+        m_lastErrorString = QStringLiteral("Impossible de creer le dossier local par defaut : %1").arg(candidatePath);
+        return std::nullopt;
+    }
+
+    models::SharedFolder updated = *folder;
+    updated.setLocalPath(candidatePath);
+    if (!m_folderRepository.update(updated)) {
+        m_lastError = SharedFolderManagerError::DatabaseError;
+        m_lastErrorString = m_folderRepository.lastError();
+        return std::nullopt;
+    }
+
+    emit folderLocalPathProvisioned(folderId, candidatePath);
+    return candidatePath;
 }
 
 bool SharedFolderManager::isPathExcluded(qint64 folderId, const QString &relativePath) const
