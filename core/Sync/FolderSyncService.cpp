@@ -1208,12 +1208,26 @@ void FolderSyncService::applyRemoteDelete(const models::SharedFolder &folder,
 
     const auto existing = m_fileRepository.findByRelativePath(folder.id(), relativePath);
 
-    models::FileSyncOperation op;
-    op.setType(models::SyncChangeType::Delete);
-    if (existing.has_value()) op.setFileId(existing->id());
-    op.setRelativePath(relativePath);
-    op.setMachineId(machineId);
-    m_repository.insert(op);
+    // CORRECTIF (diagnostic) : file_id est NOT NULL + FK vers SharedFiles(id)
+    // dans le schema (migration 018/021) -- sans ligne SharedFiles connue,
+    // toute tentative d'insert() echoue silencieusement (le code precedent
+    // n'en verifiait jamais le resultat), laissant SyncOperations vide sans
+    // le moindre indice dans les logs. On journalise desormais explicitement
+    // ce cas plutot que de tenter un insert voue a l'echec.
+    if (existing.has_value()) {
+        models::FileSyncOperation op;
+        op.setType(models::SyncChangeType::Delete);
+        op.setFileId(existing->id());
+        op.setRelativePath(relativePath);
+        op.setMachineId(machineId);
+        if (!m_repository.insert(op).has_value()) {
+            qWarning() << "[FolderSync] SyncOperations insert (Delete) échoué pour" << relativePath
+                       << "-- erreur SQL:" << m_repository.lastError();
+        }
+    } else {
+        qWarning() << "[FolderSync] Suppression distante : aucune ligne SharedFiles connue pour"
+                   << relativePath << "-- opération non journalisée (file_id requis)";
+    }
 
     qDebug() << "[FolderSync] Suppression distante appliquée :" << relativePath;
     emit fileIntegrated(folder.uuid(), relativePath, false);
@@ -1247,13 +1261,21 @@ void FolderSyncService::applyRemoteRename(const models::SharedFolder &folder,
 
     const auto existing = m_fileRepository.findByRelativePath(folder.id(), newRelativePath);
 
-    models::FileSyncOperation op;
-    op.setType(models::SyncChangeType::Rename);
-    if (existing.has_value()) op.setFileId(existing->id());
-    op.setRelativePath(newRelativePath);
-    op.setOldRelativePath(oldRelativePath);
-    op.setMachineId(machineId);
-    m_repository.insert(op);
+    if (existing.has_value()) {
+        models::FileSyncOperation op;
+        op.setType(models::SyncChangeType::Rename);
+        op.setFileId(existing->id());
+        op.setRelativePath(newRelativePath);
+        op.setOldRelativePath(oldRelativePath);
+        op.setMachineId(machineId);
+        if (!m_repository.insert(op).has_value()) {
+            qWarning() << "[FolderSync] SyncOperations insert (Rename) échoué pour" << newRelativePath
+                       << "-- erreur SQL:" << m_repository.lastError();
+        }
+    } else {
+        qWarning() << "[FolderSync] Renommage distant : aucune ligne SharedFiles connue pour"
+                   << newRelativePath << "-- opération non journalisée (file_id requis)";
+    }
 
     qDebug() << "[FolderSync] Renommage distant appliqué :" << oldRelativePath << "->" << newRelativePath;
     emit fileIntegrated(folder.uuid(), newRelativePath, false);
@@ -1426,7 +1448,15 @@ void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending
     op.setRelativePath(effectiveRelativePath);
     op.setVersion(upserted->version());
     op.setMachineId(pending.ownerMachineId);
-    m_repository.insert(op);
+    // CORRECTIF (diagnostic) : le résultat de insert() n'était jamais
+    // vérifié -- un échec SQL (table manquante, contrainte FK, etc.)
+    // passait totalement inaperçu, laissant SyncOperations vide sans
+    // aucune trace exploitable dans les logs malgré une intégration de
+    // fichier par ailleurs réussie (SharedFiles à jour, fichier sur disque).
+    if (!m_repository.insert(op).has_value()) {
+        qWarning() << "[FolderSync] SyncOperations insert échoué pour" << effectiveRelativePath
+                   << "-- erreur SQL:" << m_repository.lastError();
+    }
 
     qDebug() << "[FolderSync] Fichier intégré :" << effectiveRelativePath
              << (wasConflict ? "(conflit)" : "");

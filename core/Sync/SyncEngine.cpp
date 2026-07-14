@@ -1,6 +1,7 @@
 #include "SyncEngine.h"
 
 #include "database/DatabaseManager.h"
+#include <QDebug>
 
 namespace core::sync {
 
@@ -117,6 +118,9 @@ int SyncEngine::reindexFolder(qint64 folderId)
 
         if (m_operationRepository.insert(operation).has_value()) {
             ++persistedCount;
+        } else {
+            qWarning() << "[SyncEngine] SyncOperations insert échoué pour" << change.file().relativePath()
+                       << "-- erreur SQL:" << m_operationRepository.lastError();
         }
     }
 
