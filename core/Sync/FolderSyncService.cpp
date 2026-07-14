@@ -1468,13 +1468,24 @@ void FolderSyncService::registerCatchupPlaceholder(const models::SharedFolder &f
         return;
     }
 
-    models::FileSyncOperation op;
-    op.setType(existing.has_value() ? models::SyncChangeType::Update : models::SyncChangeType::Create);
-    op.setFileId(upserted->id());
-    op.setRelativePath(relativePath);
-    op.setVersion(upserted->version());
-    op.setMachineId(machineId);
-    m_repository.insert(op);
+    // CORRECTIF (historique "Créé" + "Modifié" simultanés côté destinataire) :
+    // cette fonction ne fait qu'enregistrer une ligne SharedFiles "creuse"
+    // (taille 0, aucun contenu réel) pour qu'un dossier distant sans
+    // localPath n'apparaisse pas vide dans l'UI -- ce n'est PAS un
+    // événement réel du point de vue de l'utilisateur (aucun fichier n'a
+    // encore été reçu). On n'insère donc plus ici d'entrée SyncOperations :
+    // l'unique entrée d'historique légitime pour ce fichier sera créée par
+    // integrateReceivedFile() lorsque le contenu réel sera effectivement
+    // téléchargé (cf. requestFolderResync() une fois localPath défini).
+    //
+    // Avant ce correctif, un op "Create" était inséré ici, PUIS un second op
+    // "Update" était inséré par integrateReceivedFile() dès que le vrai
+    // fichier arrivait -- car ce dernier trouvait la ligne SharedFiles
+    // placeholder créée ci-dessus et la traitait comme "déjà existante"
+    // (existing.has_value() == true). Résultat visible : "Créé" et
+    // "Modifié" apparaissaient tous les deux, horodatés au même instant,
+    // pour un seul et même fichier fraîchement reçu.
+    Q_UNUSED(existing);
 }
 
 void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending,
@@ -1490,6 +1501,17 @@ void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending
     // 2. Chemin cible absolu.
     const QString targetAbsPath = QDir::cleanPath(
         pending.localFolderPath + QDir::separator() + pending.relativePath);
+
+    // CORRECTIF (historique "Créé" + "Modifié" simultanés côté destinataire) :
+    // capturé AVANT toute copie/suppression ci-dessous, car ces opérations
+    // vont justement créer/écraser ce fichier. Sert à distinguer une vraie
+    // mise à jour (contenu déjà présent physiquement) d'une première
+    // réception (aucun octet réel encore sur disque), indépendamment de la
+    // ligne SharedFiles qui, elle, peut n'être qu'un placeholder "creux"
+    // (taille 0) posé par registerCatchupPlaceholder() lors d'un rattrapage
+    // pour un dossier distant sans localPath -- ce placeholder ne doit pas
+    // faire passer cette réception pour une "Update".
+    const bool hadRealContentOnDisk = QFile::exists(targetAbsPath);
 
     // 3. Détection de conflit (Release 8).
     bool wasConflict = false;
@@ -1561,7 +1583,13 @@ void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending
     }
 
     // 6. Insert FileSyncOperation.
-    const bool isUpdate = existing.has_value() && !wasConflict;
+    // CORRECTIF : anciennement `existing.has_value() && !wasConflict`, ce qui
+    // considérait à tort une ligne SharedFiles placeholder (posée par
+    // registerCatchupPlaceholder(), sans contenu réel) comme une "mise à
+    // jour". On se base désormais sur la présence RÉELLE du fichier sur
+    // disque avant cette intégration -- seul indicateur fiable qu'un
+    // contenu existait déjà localement.
+    const bool isUpdate = hadRealContentOnDisk && !wasConflict;
     models::FileSyncOperation op;
     op.setType(isUpdate ? models::SyncChangeType::Update : models::SyncChangeType::Create);
     op.setFileId(upserted->id());
