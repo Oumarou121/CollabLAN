@@ -150,6 +150,18 @@ signals:
     /// cliquer sur "Reindexer".
     void folderReindexed(qint64 folderId, int changeCount);
 
+    /**
+     * @brief Retransmis depuis FolderSyncService::fileIntegrated (Release 8).
+     *
+     * Émis à chaque fichier reçu du réseau et intégré dans un dossier
+     * partagé (transfert de synchronisation, PAS une réindexation locale).
+     * Sans ce relais, SharedFolderView.qml ne se rafraîchissait que sur
+     * folderReindexed (déclenché uniquement par FolderWatcher côté
+     * propriétaire) : côté destinataire, les fichiers reçus par le réseau
+     * n'apparaissaient qu'après avoir quitté puis rouvert l'écran.
+     */
+    void fileReceived(const QString &folderUuid, const QString &relativePath);
+
 private:
     SharedFolderManager *m_manager = nullptr;
     core::sync::SyncEngine *m_syncEngine = nullptr;

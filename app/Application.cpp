@@ -476,9 +476,20 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             });
 
     // Un transfert termine ou en echec declenche une notification
-    // (toast + son "transfert").
+    // (toast + son "transfert"). Exception : un transfert declenche par la
+    // synchronisation d'un dossier partage (m_folderSyncService le sait via
+    // isFolderTransfer()) n'affiche PAS sa propre notification -- sinon
+    // partager un dossier de N fichiers afficherait N toasts. Ces
+    // transferts sont regroupes en une seule notification "N fichiers
+    // recus" via FolderSyncService::folderFilesReceived (cf. plus bas,
+    // une fois m_folderSyncService cree).
     connect(m_transferService, &network::TransferService::transferCompleted,
-            m_notificationManager, &core::NotificationManager::onTransferCompleted);
+            this, [this](const QString &transferKey, const QString &filePath) {
+                if (m_folderSyncService && m_folderSyncService->isFolderTransfer(transferKey)) {
+                    return;
+                }
+                m_notificationManager->onTransferCompleted(transferKey, filePath);
+            });
     connect(m_transferService, &network::TransferService::transferFailed,
             m_notificationManager, &core::NotificationManager::onTransferFailed);
 
@@ -869,6 +880,13 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 qWarning() << "[App] Conflit détecté dans" << folderUuid
                            << ":" << relativePath << "→" << conflictPath;
             });
+
+    // Une seule notification "N fichiers reçus" par rafale de synchronisation
+    // de dossier partagé (cf. FolderSyncService::scheduleFolderNotification),
+    // au lieu d'une notification par fichier (voir plus haut, connexion de
+    // TransferService::transferCompleted).
+    connect(m_folderSyncService, &core::sync::FolderSyncService::folderFilesReceived,
+            m_notificationManager, &core::NotificationManager::onFolderFilesReceived);
 }
 
 core::UserManager *Application::userManager() const

@@ -334,8 +334,27 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
     const QJsonObject obj = doc.object();
     const QString type = obj[QStringLiteral("type")].toString();
 
-    if (type == QString::fromLatin1(kTypeFolderOp))
+    if (type == QString::fromLatin1(kTypeFolderOp)) {
         handleFolderOp(obj, senderAddress);
+        // Relais vers les autres clients connectes : SYMETRIQUE du correctif
+        // anti-boucle deja applique a folder_access_granted/revoked/resync_request
+        // ci-dessous. Sans ce relais, un CLIENT (non-SERVER) qui partage un
+        // dossier voit son folder_op applique UNIQUEMENT sur le SERVER lui-meme
+        // (qui le recoit via MessagingService -> sendMessage) : les AUTRES
+        // clients connectes au meme hub ne recoivent jamais l'operation en
+        // temps reel, et donc jamais le fichier associe (aucun folder_file_request
+        // n'est jamais emis de leur cote) tant qu'un partage ulterieur ne
+        // redeclenche pas un reindex complet. On ne relaie que si l'operation
+        // ne vient pas de nous-memes (meme garde que pour les autres types),
+        // pour eviter de renvoyer l'echo au client qui vient de l'emettre --
+        // c'est sans risque : handleFolderOp() ignore deja localement toute
+        // operation dont machine_id == m_machineId (ligne ci-dessus).
+        const QString opMachineId = obj[QStringLiteral("machine_id")].toString();
+        if (opMachineId != m_machineId
+            && m_messagingServer && m_messagingServer->isRunning()) {
+            m_messagingServer->broadcastMessage(message);
+        }
+    }
     else if (type == QString::fromLatin1(kTypeFolderHello))
         handleFolderHello(obj);
     else if (type == QString::fromLatin1(kTypeFileRequest))
@@ -385,6 +404,36 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
             m_messagingServer->broadcastMessage(message);
         }
     }
+    else if (type == QString::fromLatin1(kTypeCatchupBatch)) {
+        // BUG CRITIQUE (relais manquant) : quand le PROPRIETAIRE d'un dossier
+        // est un CLIENT (pas nous), sa reponse a un folder_resync_request
+        // (construite dans handleFolderResyncRequest(), qui reutilise ce meme
+        // type de message) part via broadcastMessage() -> sendMessageToServer()
+        // cote CLIENT proprietaire, puisqu'il ne peut pas joindre directement
+        // les autres clients. Ce cas n'etait pas gere ici du tout : le message
+        // arrivait sur le SERVER et etait silencieusement ignore (aucun des
+        // "else if" precedents ne correspondait), donc jamais retransmis au
+        // demandeur d'origine -- les fichiers d'un dossier partage par un
+        // CLIENT (par opposition au SERVER, qui diffuse directement a tous
+        // les clients connectes sans passer par ce relais) n'etaient donc
+        // jamais recus par les autres pairs. C'est la cause du bug "les
+        // fichiers ne sont pas partages quand ce n'est pas le SERVER qui
+        // fait le partage de dossier".
+        //
+        // On applique aussi localement (utile si CE poste est lui-meme
+        // destinataire d'une partie du contenu) : handleFolderCatchupBatch()
+        // et ses sous-appels sont deja idempotents (registerRemoteFolder(),
+        // grantAccess(), verification de hash avant requestRemoteFile()).
+        // Pas de garde anti-boucle par origin_machine_id necessaire ici : ce
+        // message est une reponse ponctuelle a une demande, jamais rediffuse
+        // en retour par ses destinataires (contrairement a folder_op/
+        // folder_access_granted qui peuvent repartir dans l'autre sens en
+        // topologie mesh).
+        handleFolderCatchupBatch(obj);
+        if (m_messagingServer && m_messagingServer->isRunning()) {
+            m_messagingServer->broadcastMessage(message);
+        }
+    }
 }
 
 void FolderSyncService::onClientMessageReceived(const QString &message)
@@ -398,6 +447,18 @@ void FolderSyncService::onClientMessageReceived(const QString &message)
         handleFolderOp(obj, QHostAddress());
     else if (type == QString::fromLatin1(kTypeCatchupBatch))
         handleFolderCatchupBatch(obj);
+    else if (type == QString::fromLatin1(kTypeFileRequest))
+        // CORRECTIF : sans ce cas, un CLIENT propriétaire d'un fichier ignorait
+        // silencieusement toute demande folder_file_request provenant du SERVER
+        // (ce type n'était traité que côté onServerMessageReceived). Le SERVER
+        // ne recevait donc jamais les octets du fichier : le placeholder créé par
+        // registerCatchupPlaceholder() (taille 0 par défaut) n'était jamais
+        // complété et le fichier n'était jamais écrit sur le disque -- c'est la
+        // cause du bug "fichiers reçus par le serveur toujours à 0 Ko". On passe
+        // QHostAddress() (l'adresse du serveur n'est pas connue ici, contrairement
+        // à handleFolderOp ci-dessus) : handleFolderFileRequest() se rabat alors
+        // sur m_discoveryService pour résoudre requester_machine_id en adresse IP.
+        handleFolderFileRequest(obj, QHostAddress());
     else if (type == QString::fromLatin1(kTypeAccessGranted))
         handleFolderAccessGranted(obj);
     else if (type == QString::fromLatin1(kTypeAccessRevoked))
@@ -436,8 +497,10 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
 
     if (opType == QStringLiteral("Create") || opType == QStringLiteral("Update")) {
         const auto folders = m_folderManager->getFolders();
+        bool folderKnownLocally = false;
         for (const auto &folder : folders) {
             if (folder.uuid() != folderUuid) continue;
+            folderKnownLocally = true;
             // ── Vérification d'accès : ignorer les ops d'un pair non autorisé ──
             // Utiliser user_uuid si disponible (plus fiable que machineId pour les permissions)
             const QString peerIdentifier = userUuid.isEmpty() ? machineId : userUuid;
@@ -462,6 +525,38 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
                                   fileHash, version);
             }
             break;
+        }
+        // CORRECTIF (course folder_op / folder_access_granted) : un partage
+        // immediat a la creation (SharedFolderManager::createFolder() avec
+        // authorizedUserIds) peut diffuser les folder_op de contenu initial
+        // avant que le folder_access_granted correspondant n'ait ete traite
+        // ici (registerRemoteFolder() pas encore appele) -- observe en
+        // pratique dans les logs serveur (op_id de creation recus plusieurs
+        // messages AVANT le folder_access_granted du meme dossier). Avant ce
+        // correctif, ces operations initiales etaient silencieusement
+        // perdues : la boucle ci-dessus ne trouve aucun dossier correspondant
+        // et ne demande donc jamais le fichier, sans le moindre avertissement.
+        // On ne peut pas les rattraper nous-memes tout de suite (le dossier
+        // n'existe pas encore localement), mais on peut demander un
+        // rattrapage cible : si un folder_access_granted arrive ensuite pour
+        // ce dossier, handleFolderAccessGranted() enregistrera le dossier et
+        // (si nous sommes le beneficiaire) redemandera deja un resync -- ce
+        // qui suffit dans la plupart des cas. Ce garde-fou couvre le cas
+        // residuel ou ce folder_op est le tout premier signal que nous
+        // recevons pour ce dossier (p. ex. si le folder_access_granted a ete
+        // perdu/retarde independamment) : on demande directement le contenu
+        // au proprietaire des qu'il aura ete enregistre.
+        if (!folderKnownLocally) {
+            qWarning() << "[FolderSync] folder_op" << opType << relativePath
+                       << "reçu pour un dossier encore inconnu localement ("
+                       << folderUuid << ") -- demande de rattrapage ciblé";
+            QJsonObject req;
+            req[QStringLiteral("type")]                = QString::fromLatin1(kTypeResyncRequest);
+            req[QStringLiteral("folder_uuid")]          = folderUuid;
+            req[QStringLiteral("requester_machine_id")] = m_machineId;
+            req[QStringLiteral("since_op_id")]          = 0;
+            const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
+            broadcastMessage(json);
         }
     } else if (opType == QStringLiteral("Delete")) {
         for (const auto &folder : m_folderManager->getFolders()) {
@@ -500,7 +595,20 @@ void FolderSyncService::handleFolderHello(const QJsonObject &obj)
     QJsonArray opsArray;
     const auto folders = m_folderManager->getFolders();
     for (const auto &folder : folders) {
-        if (!folder.isLocalOrigin()) continue;
+        // PAS de filtre isLocalOrigin() ici (correctif) : ce SERVER a pu
+        // accumuler de l'historique (SyncOperations) pour un dossier dont
+        // l'origine est un AUTRE poste -- des qu'il a lui-meme telecharge/
+        // applique au moins une operation distante sur ce dossier (cf.
+        // integrateReceivedFile(), applyRemoteDelete(), applyRemoteRename(),
+        // registerCatchupPlaceholder(), qui inserent toutes dans m_repository
+        // quel que soit folder.originMachineId()). Filtrer sur isLocalOrigin()
+        // faisait que le SERVER ne rattrapait QUE les dossiers qu'il avait
+        // lui-meme crees : un client qui se (re)connecte ne recevait alors
+        // aucun historique pour les dossiers partages par un AUTRE client,
+        // meme si le SERVER avait deja recu/relaye ces operations pendant que
+        // ce client etait hors-ligne. La verification d'acces ci-dessous reste
+        // la seule garde necessaire (elle s'applique deja independamment de
+        // l'origine du dossier).
 
         // ── Vérification d'accès : n'envoyer le rattrapage que si le pair
         //    qui se connecte a (encore) accès à ce dossier.
@@ -616,10 +724,14 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
                 }
                 // Pour les dossiers distants (localPath vide), on ne peut pas
                 // télécharger les fichiers tant qu'un chemin local n'est pas défini.
-                // On crée juste la métadonnée dans SharedFiles pour que le dossier
-                // ne paraisse pas vide dans l'UI.
+                // On crée juste la métadonnée dans SharedFiles (+ l'entrée
+                // d'historique correspondante) pour que le dossier ne
+                // paraisse pas vide dans l'UI ; le contenu réel et le hash
+                // définitif seront complétés par le resync déclenché dès que
+                // setFolderLocalPath() sera appelé (cf. requestFolderResync()).
                 if (folder.localPath().isEmpty()) {
-                    qWarning() << "[FolderSync] catchup op ignoré : dossier distant sans localPath pour" << relativePath;
+                    qWarning() << "[FolderSync] catchup op : dossier distant sans localPath, métadonnée seule pour" << relativePath;
+                    registerCatchupPlaceholder(folder, relativePath, fileHash, version, machineId);
                     break;
                 }
                 requestRemoteFile(folderUuid, relativePath, machineId,
@@ -1042,6 +1154,39 @@ void FolderSyncService::onTransferCompleted(const QString &transferKey,
     integrateReceivedFile(pending, filePath);
 }
 
+bool FolderSyncService::isFolderTransfer(const QString &transferKey) const
+{
+    return m_activeByTransferKey.contains(transferKey);
+}
+
+void FolderSyncService::scheduleFolderNotification(const QString &folderUuid)
+{
+    m_pendingNotifyCounts[folderUuid] = m_pendingNotifyCounts.value(folderUuid, 0) + 1;
+
+    QTimer *timer = m_notifyTimers.value(folderUuid, nullptr);
+    if (!timer) {
+        timer = new QTimer(this);
+        timer->setSingleShot(true);
+        connect(timer, &QTimer::timeout, this, [this, folderUuid]() {
+            const int count = m_pendingNotifyCounts.take(folderUuid);
+            if (count <= 0) return;
+
+            QString folderName = folderUuid;
+            if (m_folderManager) {
+                if (const auto folder = m_folderManager->getFolderByUuid(folderUuid); folder.has_value()) {
+                    folderName = folder->name();
+                }
+            }
+            emit folderFilesReceived(folderUuid, folderName, count);
+        });
+        m_notifyTimers.insert(folderUuid, timer);
+    }
+    // Redémarre le minuteur à chaque fichier reçu : la notification ne part
+    // qu'une fois la rafale terminée (~800ms de silence), plutôt qu'une par
+    // fichier (cf. NotificationManager::onTransferCompleted).
+    timer->start(800);
+}
+
 // ---------------------------------------------------------------------------
 // Application des Delete / Rename distants (complète le Release 6 : jusqu'ici
 // seuls Create/Update étaient appliqués côté récepteur).
@@ -1144,6 +1289,52 @@ QString FolderSyncService::makeConflictPath(const QString &relativePath,
         : dir + QStringLiteral("/") + conflictName;
 }
 
+void FolderSyncService::registerCatchupPlaceholder(const models::SharedFolder &folder,
+                                                     const QString &relativePath,
+                                                     const QString &fileHash,
+                                                     int version,
+                                                     const QString &machineId)
+{
+    const auto existing = m_fileRepository.findByRelativePath(folder.id(), relativePath);
+
+    models::SharedFile placeholder(0, folder.id(), relativePath);
+    placeholder.setHash(fileHash);
+    placeholder.setVersion(version > 0 ? version : 1);
+    placeholder.setDeleted(false);
+    // size reste a 0 (valeur par defaut) : le contenu reel n'est pas
+    // encore present sur ce poste (voir commentaire d'appel).
+    //
+    // CORRECTIF : lastModified etait laisse a sa valeur par defaut
+    // (QDateTime() -- invalide, aucun timespec). SharedFileRepository::upsert()
+    // bind ensuite file.lastModified().toUTC().toString(Qt::ISODate) tel quel ;
+    // avec un QDateTime invalide cette conversion est fragile (le champ SQL
+    // last_modified est NOT NULL avec DEFAULT datetime('now'), mais un DEFAULT
+    // ne s'applique QUE si la colonne est absente de l'INSERT -- ici on la
+    // fournit explicitement, meme vide/invalide). On utilise donc l'heure
+    // courante en attendant la vraie date du fichier, qui sera de toute facon
+    // ecrasee par integrateReceivedFile() une fois le contenu reel telecharge.
+    placeholder.setLastModified(QDateTime::currentDateTimeUtc());
+
+    const auto upserted = m_fileRepository.upsert(placeholder);
+    if (!upserted.has_value()) {
+        // CORRECTIF : on affichait un avertissement muet, sans jamais dire
+        // POURQUOI l'upsert echouait -- ce qui rendait ce bug (silencieux et
+        // systematique sur certains postes/bases) impossible a diagnostiquer
+        // depuis les logs utilisateur. lastError() expose le vrai message SQL.
+        qWarning() << "[FolderSync] placeholder SharedFile échoué pour" << relativePath
+                   << "-- erreur SQL:" << m_fileRepository.lastError();
+        return;
+    }
+
+    models::FileSyncOperation op;
+    op.setType(existing.has_value() ? models::SyncChangeType::Update : models::SyncChangeType::Create);
+    op.setFileId(upserted->id());
+    op.setRelativePath(relativePath);
+    op.setVersion(upserted->version());
+    op.setMachineId(machineId);
+    m_repository.insert(op);
+}
+
 void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending,
                                                const QString &sourcePath)
 {
@@ -1240,6 +1431,7 @@ void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending
     qDebug() << "[FolderSync] Fichier intégré :" << effectiveRelativePath
              << (wasConflict ? "(conflit)" : "");
     emit fileIntegrated(pending.folderUuid, effectiveRelativePath, wasConflict);
+    scheduleFolderNotification(pending.folderUuid);
 }
 
 } // namespace core::sync

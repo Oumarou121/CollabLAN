@@ -50,10 +50,11 @@ Item {
         return (unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)) + " " + units[unitIndex]
     }
 
-    function openFolder(folderId, name, isLocalOrigin = true) {
+    function openFolder(folderId, name, isLocalOrigin = true, uuid = "") {
         root.openedFolderId = folderId
         root.openedFolderName = name
         root.openedFolderIsLocalOrigin = isLocalOrigin
+        root.openedFolderUuid = uuid
         root.showHistory = false
         root.conflictedFiles = {}   // reset des conflits a l'ouverture
         root.refreshFiles()
@@ -83,6 +84,16 @@ Item {
         target: root.context
         function onFolderReindexed(folderId, changeCount) {
             if (folderId === root.openedFolderId) {
+                root.refreshFiles()
+                root.refreshHistory()
+            }
+        }
+        // Un fichier reçu via le réseau (synchronisation d'un dossier
+        // partagé, cf. FolderSyncService::fileIntegrated) doit rafraîchir
+        // la liste des fichiers et l'historique immédiatement, sans que
+        // l'utilisateur ait besoin de quitter puis rouvrir cet écran.
+        function onFileReceived(folderUuid, relativePath) {
+            if (folderUuid === root.openedFolderUuid) {
                 root.refreshFiles()
                 root.refreshHistory()
             }
@@ -401,6 +412,7 @@ Item {
 
         property int targetFolderId: -1
         property string targetFolderName: ""
+        property string targetFolderUuid: ""
         property string localPath: ""
 
         onOpened: {
@@ -470,7 +482,7 @@ Item {
                         if (root.context && setLocalPathDialog.targetFolderId >= 0) {
                             if (root.context.setFolderLocalPath(setLocalPathDialog.targetFolderId, setLocalPathDialog.localPath)) {
                                 setLocalPathDialog.close()
-                                root.openFolder(setLocalPathDialog.targetFolderId, setLocalPathDialog.targetFolderName, false)
+                                root.openFolder(setLocalPathDialog.targetFolderId, setLocalPathDialog.targetFolderName, false, setLocalPathDialog.targetFolderUuid)
                             }
                         }
                     }
@@ -983,14 +995,15 @@ Item {
                             if (!model.isLocalOrigin) {
                                 // Si le localPath est déjà défini, ouvrir directement le dossier
                                 if (model.localPath && model.localPath.length > 0) {
-                                    root.openFolder(model.folderId, model.name, false)
+                                    root.openFolder(model.folderId, model.name, false, model.uuid)
                                 } else {
                                     setLocalPathDialog.targetFolderId = model.folderId
                                     setLocalPathDialog.targetFolderName = model.name
+                                    setLocalPathDialog.targetFolderUuid = model.uuid
                                     setLocalPathDialog.open()
                                 }
                             } else {
-                                root.openFolder(model.folderId, model.name, true)
+                                root.openFolder(model.folderId, model.name, true, model.uuid)
                             }
                         }
 

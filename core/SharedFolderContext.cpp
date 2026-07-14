@@ -69,6 +69,17 @@ void SharedFolderContext::setFolderSyncService(core::sync::FolderSyncService *sv
         // afficher un badge ou une banniere sans connaitre FolderSyncService.
         connect(m_folderSyncService, &core::sync::FolderSyncService::conflictDetected,
                 this, &SharedFolderContext::conflictDetected);
+
+        // Retransmet fileIntegrated a QML (fileReceived) ET rafraîchit le
+        // modele de dossiers (compteur de fichiers sur les tuiles) : sans
+        // cela, un fichier recu du reseau (transfert de synchronisation)
+        // n'apparaissait dans l'UI qu'apres avoir quitte puis rouvert
+        // l'ecran SharedFolderView, faute de signal ecoute entre-temps.
+        connect(m_folderSyncService, &core::sync::FolderSyncService::fileIntegrated,
+                this, [this](const QString &folderUuid, const QString &relativePath, bool /*wasConflict*/) {
+                    refresh();
+                    emit fileReceived(folderUuid, relativePath);
+                });
     }
 }
 

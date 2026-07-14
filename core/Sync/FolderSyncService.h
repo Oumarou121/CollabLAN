@@ -6,6 +6,7 @@
 #include <QHostAddress>
 #include <QVector>
 #include <QHash>
+#include <QTimer>
 
 #include "database/Repositories/SyncOperationRepository.h"
 #include "database/Repositories/SharedFileRepository.h"
@@ -226,6 +227,14 @@ signals:
                           const QString &relativePath,
                           const QString &conflictPath);
 
+    /**
+     * @brief Émis groupé (anti-rebond) après une rafale de fichiers reçus
+     *        pour un même dossier partagé, afin qu'une seule notification
+     *        "N fichiers reçus" soit affichée plutôt qu'une par fichier
+     *        (cf. NotificationManager::onFolderFilesReceived).
+     */
+    void folderFilesReceived(const QString &folderUuid, const QString &folderName, int fileCount);
+
 public slots:
     /**
      * @brief À connecter sur SyncEngine::folderReindexed.
@@ -254,6 +263,23 @@ public slots:
      * Intègre le fichier reçu dans le dossier partagé (copie, upsert, SyncOp).
      */
     void onTransferCompleted(const QString &transferKey, const QString &filePath);
+
+    /**
+     * @brief Indique si transferKey correspond à un transfert déclenché par
+     *        la synchronisation d'un dossier partagé (folder_file_request),
+     *        par opposition à un transfert P2P "manuel" classique.
+     *
+     * Utilisé par app/Application.cpp pour éviter d'afficher une
+     * notification par fichier lors d'un partage de dossier (les fichiers
+     * "folder-sync" sont regroupés en une seule notification via
+     * folderFilesReceived() ; seuls les transferts manuels gardent leur
+     * notification individuelle "Transfert terminé").
+     *
+     * IMPORTANT : doit être appelé AVANT onTransferCompleted() pour le même
+     * transferKey (qui retire l'entrée correspondante) -- voir l'ordre de
+     * connexion dans Application.cpp.
+     */
+    bool isFolderTransfer(const QString &transferKey) const;
 
 private slots:
     void onServerMessageReceived(const QString &message, const QHostAddress &senderAddress);
@@ -371,6 +397,29 @@ private:
      */
     void integrateReceivedFile(const PendingFileTransfer &pending, const QString &sourcePath);
 
+    /**
+     * @brief Enregistre les métadonnées d'un fichier annoncé par un
+     *        folder_catchup_batch alors que le dossier distant n'a pas
+     *        encore de localPath (l'utilisateur n'a pas choisi où stocker
+     *        ce dossier reçu -- cf. setFolderLocalPath()).
+     *
+     * Sans localPath il est impossible de télécharger le contenu réel du
+     * fichier, mais on peut déjà upserter SharedFiles + journaliser une
+     * FileSyncOperation pour que le dossier n'apparaisse pas vide et que
+     * son historique reflète ce qui a été annoncé. Ces entrées seront
+     * complétées (hash/contenu réels) par le resync déclenché dès que
+     * setFolderLocalPath() est appelé (cf. requestFolderResync()).
+     */
+    void registerCatchupPlaceholder(const models::SharedFolder &folder,
+                                     const QString &relativePath,
+                                     const QString &fileHash,
+                                     int version,
+                                     const QString &machineId);
+
+    /// Regroupe (anti-rebond ~800ms) les fichiers reçus pour un même
+    /// dossier avant d'émettre folderFilesReceived() -- voir isFolderTransfer().
+    void scheduleFolderNotification(const QString &folderUuid);
+
     /// Calcule le SHA-256 hex d'un fichier sur disque. Retourne "" en cas d'erreur.
     static QString computeHash(const QString &filePath);
 
@@ -402,6 +451,12 @@ private:
     // Clé : transferKey (UUID) → PendingFileTransfer
     // (construit lors de onTransferStarted pour une corrélation O(1)).
     QHash<QString, PendingFileTransfer> m_activeByTransferKey;
+
+    // Regroupement des notifications "fichier reçu" par dossier (anti-rebond).
+    // Clé : folderUuid → nombre de fichiers reçus depuis le dernier signal.
+    QHash<QString, int> m_pendingNotifyCounts;
+    // Clé : folderUuid → minuteur anti-rebond associé.
+    QHash<QString, QTimer *> m_notifyTimers;
 };
 
 } // namespace core::sync

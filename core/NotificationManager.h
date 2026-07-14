@@ -53,6 +53,13 @@ public slots:
     /// Appelé lorsqu'un accès à un dossier partagé est révoqué.
     void onFolderAccessRevoked(const QString &folderName);
 
+    /// Appelé lorsqu'une rafale de fichiers reçus pour un dossier partagé
+    /// vient de se terminer (regroupement fait par FolderSyncService, cf.
+    /// FolderSyncService::folderFilesReceived) : une SEULE notification est
+    /// affichée pour tout le lot, au lieu d'une par fichier transféré
+    /// (TransferService::transferCompleted en émet un par fichier).
+    void onFolderFilesReceived(const QString &folderUuid, const QString &folderName, int fileCount);
+
 signals:
     /// Emis lorsqu'une notification doit être affichée (toast) et/ou
     /// sonorisee par l'UI. category identifie le type d'evenement

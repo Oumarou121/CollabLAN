@@ -116,4 +116,20 @@ void NotificationManager::onFolderAccessRevoked(const QString &folderName)
     emit notificationRequested(title, message, QStringLiteral("folder"));
 }
 
+void NotificationManager::onFolderFilesReceived(const QString &folderUuid, const QString &folderName, int fileCount)
+{
+    Q_UNUSED(folderUuid);
+
+    if (!m_notificationsEnabled || fileCount <= 0) {
+        return;
+    }
+
+    const QString title = QStringLiteral("Dossier synchronisé");
+    const QString message = fileCount == 1
+        ? QStringLiteral("1 fichier reçu dans \"%1\"").arg(folderName)
+        : QStringLiteral("%1 fichiers reçus dans \"%2\"").arg(fileCount).arg(folderName);
+
+    emit notificationRequested(title, message, QStringLiteral("transfer"));
+}
+
 } // namespace core
