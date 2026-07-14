@@ -60,7 +60,7 @@ private slots:
         // database/Migrations/ (une ligne schema_migrations par fichier
         // applique) : a mettre a jour a chaque migration ajoutee/retiree.
         // `ls database/Migrations/*.sql | wc -l` donne le chiffre courant.
-        QCOMPARE(manager2.schemaVersion(), 22);
+        QCOMPARE(manager2.schemaVersion(), 23);
     }
 
     void foreignKeysAreEnabled()
@@ -122,7 +122,7 @@ private slots:
         QVERIFY(manager.isOpen());
         QVERIFY(manager.lastError().isEmpty());
         // Voir reopenIsIdempotent() : nombre de fichiers *.sql presents sur le disque.
-        QCOMPARE(manager.schemaVersion(), 22);
+        QCOMPARE(manager.schemaVersion(), 23);
 
         manager.close();
     }

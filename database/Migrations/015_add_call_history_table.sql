@@ -1,4 +1,4 @@
--- Migration 013 : ajout de la table CallHistory (historique des appels vocaux).
+-- Migration 015 : ajout de la table CallHistory (historique des appels vocaux).
 --
 -- Constat : network::VoiceService gere l'appel entierement en memoire
 -- (CallState, adresse du correspondant...) et ne persiste jamais rien ;
@@ -9,7 +9,7 @@
 -- Chaque poste CollabLAN a sa propre base SQLite locale (architecture
 -- P2P sur LAN) : CallHistory persiste donc, du point de vue de CE poste
 -- uniquement, les appels emis/recus. local_user_id reste volontairement
--- NULLABLE (jamais NOT NULL) : la migration 012 a deja corrige exactement
+-- NULLABLE (jamais NOT NULL) : la migration 014 a deja corrige exactement
 -- ce probleme sur Transfers, ou une contrainte NOT NULL sur une reference
 -- utilisateur faisait echouer silencieusement l'insertion des qu'aucun
 -- compte local n'etait resolu (PRAGMA foreign_keys=ON est actif dans

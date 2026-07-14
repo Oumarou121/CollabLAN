@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariantList>
 
 #include "SharedFolderManager.h"
@@ -64,8 +65,13 @@ public:
     /// choisis, false = lecture seule (pas de granularite par utilisateur
     /// pour cette 1ere version, cf. core::SharedFolderManager::createFolder()).
     /// @return true si la creation a reussi (voir lastErrorString() sinon).
+    /// excludePatterns (optionnel, debrief point #4) : motifs glob separes
+    /// par des virgules (ex: "*.log, build, drafts/*") a exclure de ce
+    /// dossier en plus des exclusions codees en dur -- cf.
+    /// core::SharedFolderManager::createFolder().
     Q_INVOKABLE bool createFolder(const QString &name, const QString &localPath,
-                                   const QVariantList &authorizedUserIds, bool allowWrite);
+                                   const QVariantList &authorizedUserIds, bool allowWrite,
+                                   const QString &excludePatterns = QString());
 
     /// Utilisateurs locaux a qui l'on peut accorder l'acces a un dossier
     /// partage (tous sauf l'utilisateur courant), sur le meme principe que
@@ -122,6 +128,34 @@ public:
     /// dossier partagé reçu d'un autre poste.
     /// @return true si la mise à jour a reussi (voir lastErrorString() sinon).
     Q_INVOKABLE bool setFolderLocalPath(qint64 folderId, const QString &localPath);
+
+    /// Motifs d'exclusion (debrief point #4) actuellement configures pour
+    /// un dossier partage, tels que stockes (normalises, separes par
+    /// ", ") -- utilise pour preremplir le champ de saisie du dialogue
+    /// "Modifier les exclusions" (ui/SharedFolder/SharedFolderView.qml).
+    /// Chaine vide si le dossier est introuvable ou n'a aucun motif.
+    Q_INVOKABLE QString excludePatternsForFolder(qint64 folderId) const;
+
+    /// Met a jour les motifs d'exclusion d'un dossier deja partage. Ne
+    /// declenche PAS de reindexation automatique : les fichiers deja
+    /// indexes qui correspondent desormais a un motif ne seront
+    /// tombstones qu'au prochain shareFolder() (cf.
+    /// core::SharedFolderManager::updateExcludePatterns()) -- on
+    /// reindexe explicitement ici pour que l'effet soit visible tout de
+    /// suite dans l'UI plutot que d'attendre le prochain FolderWatcher.
+    /// @return true si la mise a jour a reussi (voir lastErrorString() sinon).
+    Q_INVOKABLE bool updateExcludePatterns(qint64 folderId, const QString &excludePatterns);
+
+    /// Chemins relatifs des fichiers deja indexes qui deviendraient exclus
+    /// si excludePatterns (pas encore enregistre) etait applique -- pour
+    /// que le dialogue "Modifier les exclusions"
+    /// (ui/SharedFolder/SharedFolderView.qml) puisse avertir l'utilisateur
+    /// AVANT qu'il clique sur "Enregistrer", plutot que de le laisser
+    /// decouvrir apres coup que des fichiers deja partages ont disparu.
+    /// Liste vide si aucun impact, si le dossier est introuvable, ou si
+    /// excludePatterns est mal forme (l'erreur de validation elle-meme
+    /// n'apparaitra qu'a la sauvegarde reelle, cf. updateExcludePatterns()).
+    Q_INVOKABLE QStringList previewExcludePatternsImpact(qint64 folderId, const QString &excludePatterns) const;
 
 signals:
     void errorOccurred(const QString &message);

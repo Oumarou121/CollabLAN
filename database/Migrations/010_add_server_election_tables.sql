@@ -1,4 +1,4 @@
--- Migration 008 : Architecture hybride avec bascule automatique de serveur (HYBRID_SERVER_FAILOVER.md)
+-- Migration 010 : Architecture hybride avec bascule automatique de serveur (HYBRID_SERVER_FAILOVER.md)
 -- Ajoute le suivi du rôle courant du poste (SERVER / CLIENT / TEMP_SERVER) et l'historique des bascules.
 
 CREATE TABLE IF NOT EXISTS ServerElection (

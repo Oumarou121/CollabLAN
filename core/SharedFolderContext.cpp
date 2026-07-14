@@ -111,7 +111,8 @@ void SharedFolderContext::refresh()
 }
 
 bool SharedFolderContext::createFolder(const QString &name, const QString &localPath,
-                                        const QVariantList &authorizedUserIds, bool allowWrite)
+                                        const QVariantList &authorizedUserIds, bool allowWrite,
+                                        const QString &excludePatterns)
 {
     if (!m_manager) {
         m_lastErrorString = QStringLiteral("Module Shared Folder non disponible");
@@ -134,7 +135,7 @@ bool SharedFolderContext::createFolder(const QString &name, const QString &local
     const auto permission = allowWrite ? models::SharedFolderPermission::Write
                                         : models::SharedFolderPermission::Read;
 
-    const auto folder = m_manager->createFolder(name, localPath, ownerId, userIds, permission);
+    const auto folder = m_manager->createFolder(name, localPath, ownerId, userIds, permission, excludePatterns);
     if (!folder.has_value()) {
         m_lastErrorString = m_manager->lastErrorString();
         emit errorOccurred(m_lastErrorString);
@@ -359,6 +360,57 @@ bool SharedFolderContext::setFolderLocalPath(qint64 folderId, const QString &loc
 
     refresh();
     return true;
+}
+
+QString SharedFolderContext::excludePatternsForFolder(qint64 folderId) const
+{
+    if (!m_manager) {
+        return QString();
+    }
+    const auto folder = m_manager->getFolder(folderId);
+    return folder.has_value() ? folder->excludePatterns() : QString();
+}
+
+bool SharedFolderContext::updateExcludePatterns(qint64 folderId, const QString &excludePatterns)
+{
+    if (!m_manager) {
+        m_lastErrorString = QStringLiteral("Module Shared Folder non disponible");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    if (!m_manager->updateExcludePatterns(folderId, excludePatterns)) {
+        m_lastErrorString = m_manager->lastErrorString();
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    // Reindexe immediatement (plutot que d'attendre le prochain passage de
+    // FolderWatcher) pour que l'effet du nouveau motif soit visible tout de
+    // suite dans l'UI : les fichiers desormais exclus doivent disparaitre de
+    // la liste sans que l'utilisateur ait a modifier un fichier pour
+    // declencher un reindex. Uniquement pertinent pour un dossier dont ce
+    // poste est l'origine -- un dossier distant sans localPath local n'a
+    // rien a reindexer.
+    const auto folder = m_manager->getFolder(folderId);
+    if (folder.has_value() && folder->isLocalOrigin()) {
+        if (m_syncEngine) {
+            m_syncEngine->reindexFolder(folderId);
+        } else {
+            m_manager->shareFolder(folderId);
+        }
+    }
+
+    refresh();
+    return true;
+}
+
+QStringList SharedFolderContext::previewExcludePatternsImpact(qint64 folderId, const QString &excludePatterns) const
+{
+    if (!m_manager) {
+        return {};
+    }
+    return m_manager->previewExcludePatternsImpact(folderId, excludePatterns);
 }
 
 QVariantList SharedFolderContext::syncHistoryForFolder(qint64 folderId, int limit) const

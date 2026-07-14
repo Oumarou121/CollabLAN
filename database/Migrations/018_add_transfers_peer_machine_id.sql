@@ -1,4 +1,4 @@
--- Migration 016 : ajoute l'UUID stable du pair (peer_machine_id) a
+-- Migration 018 : ajoute l'UUID stable du pair (peer_machine_id) a
 -- l'historique des transferts.
 --
 -- Constat : sender_id/recipient_id restent NULL des qu'un des deux postes

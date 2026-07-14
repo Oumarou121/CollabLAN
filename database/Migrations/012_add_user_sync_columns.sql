@@ -1,4 +1,4 @@
--- Migration 010 : colonnes de synchronisation stables pour Users.
+-- Migration 012 : colonnes de synchronisation stables pour Users.
 -- uuid sert de record_uuid inter-postes ; updated_at permet un LWW ligne entiere v1.
 
 ALTER TABLE Users ADD COLUMN updated_at TEXT;

@@ -516,6 +516,16 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
                 qWarning() << "[FolderSync] folder_op ignoré : accès révoqué pour" << peerIdentifier;
                 break;
             }
+            // Motifs d'exclusion LOCAUX (debrief #4, migration #022) : non
+            // synchronisés entre pairs, donc un expéditeur qui n'exclut pas
+            // "node_modules" de son côté continuera de nous l'annoncer même
+            // si NOUS l'excluons ici -- sans ce garde-fou, l'exclusion
+            // locale ne protégerait que shareFolder() (indexation de NOTRE
+            // contenu) mais pas la réception (contenu poussé par autrui).
+            if (m_folderManager->isPathExcluded(folder.id(), relativePath)) {
+                qDebug() << "[FolderSync] folder_op ignoré (motif d'exclusion local) :" << relativePath;
+                break;
+            }
             bool needsUpdate = true;
             if (!fileHash.isEmpty()) {
                 const auto files = m_folderManager->getFiles(folder.id());
@@ -728,6 +738,15 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
                 const QString peerIdentifier = userUuid.isEmpty() ? machineId : userUuid;
                 if (effectivePermission(folder, peerIdentifier) == models::SharedFolderPermission::None) {
                     qWarning() << "[FolderSync] catchup op ignoré : accès révoqué pour" << peerIdentifier;
+                    break;
+                }
+                // Motifs d'exclusion LOCAUX (debrief #4, migration #022),
+                // même garde-fou que handleFolderOp() ci-dessus -- un
+                // catchup peut réannoncer un fichier exclu localement à
+                // chaque reconnexion d'un pair, il ne faut pas le
+                // (re)demander ni poser de placeholder pour lui.
+                if (m_folderManager->isPathExcluded(folder.id(), relativePath)) {
+                    qDebug() << "[FolderSync] catchup op ignoré (motif d'exclusion local) :" << relativePath;
                     break;
                 }
                 // CORRECTIF (historique dupliqué/faux côté destinataire) :

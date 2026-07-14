@@ -1,5 +1,5 @@
--- Migration 021 : garantit la presence de la table SyncOperations (et de son
--- index) independamment de l'historique d'application de la migration 018.
+-- Migration 023 : garantit la presence de la table SyncOperations (et de son
+-- index) independamment de l'historique d'application de la migration 020.
 --
 -- CONTEXTE DU BUG CORRIGE : le systeme de migration (DatabaseManager) suit
 -- les fichiers deja executes PAR NOM DE FICHIER (table schema_migrations),

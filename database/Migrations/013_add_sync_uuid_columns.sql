@@ -1,9 +1,9 @@
--- Migration 011 : colonnes uuid stables pour Messages, Groups et Conversations
+-- Migration 013 : colonnes uuid stables pour Messages, Groups et Conversations
 -- (HYBRID_SERVER_FAILOVER.md section 7 : la reconciliation post-panne ne peut
 -- utiliser l'id local AUTOINCREMENT comme record_uuid, deux bases SQLite
 -- independantes n'ayant aucune raison de faire coincider leurs ids).
 --
--- Meme principe que la migration 010 pour Users : on ajoute une colonne
+-- Meme principe que la migration 012 pour Users : on ajoute une colonne
 -- uuid, on la remplit pour les lignes deja existantes, puis on pose un
 -- index unique. Sans cette migration, GroupRepository::insert()/getById()/
 -- findByUuid() et SyncLogRepository::applyMessageEntry()/

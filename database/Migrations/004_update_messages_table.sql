@@ -1,4 +1,4 @@
--- Migration 003 : Mise à jour de la table Messages pour correspondre au code
+-- Migration 004 : Mise à jour de la table Messages pour correspondre au code
 -- Le code utilise conversationId au lieu de sender_id/group_id/recipient_id
 
 -- Renommer la table Messages existante

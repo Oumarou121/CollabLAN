@@ -308,6 +308,176 @@ private slots:
         db->close();
         delete db;
     }
+
+    // -------------------------------------------------- exclude patterns (debrief #4)
+
+    void createFolderAppliesUserExcludePatterns()
+    {
+        auto *db = openDb(QStringLiteral("sfm_userexclude_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+
+        writeFile(QStringLiteral("rapport.docx"), QByteArrayLiteral("contenu"));
+        writeFile(QStringLiteral("notes.log"), QByteArrayLiteral("log"));
+        writeFile(QStringLiteral("drafts/idee.txt"), QByteArrayLiteral("draft"));
+        writeFile(QStringLiteral("node_modules/pkg/index.js"), QByteArrayLiteral("js"));
+
+        const auto folder = mgr.createFolder(QStringLiteral("F"), m_folderDir->path(), 0, {},
+                                              models::SharedFolderPermission::Write,
+                                              QStringLiteral("*.log, node_modules, drafts/*"));
+        QVERIFY2(folder.has_value(), qPrintable(mgr.lastErrorString()));
+        // Normalise (retrim + rejoint par ", ") par validateExcludePatterns().
+        QCOMPARE(folder->excludePatterns(), QStringLiteral("*.log, node_modules, drafts/*"));
+
+        const auto changes = mgr.shareFolder(folder->id());
+        QVERIFY(changes.has_value());
+        QCOMPARE(changes->size(), 1);
+        QCOMPARE(changes->at(0).file().relativePath(), QStringLiteral("rapport.docx"));
+
+        const auto files = mgr.getFiles(folder->id());
+        QCOMPARE(files.size(), 1);
+        QCOMPARE(files.at(0).relativePath(), QStringLiteral("rapport.docx"));
+
+        db->close();
+        delete db;
+    }
+
+    void createFolderRejectsInvalidExcludePattern()
+    {
+        auto *db = openDb(QStringLiteral("sfm_badexclude_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+
+        // Un crochet non ferme rend l'expression reguliere generee invalide.
+        const auto folder = mgr.createFolder(QStringLiteral("F"), m_folderDir->path(), 0, {},
+                                              models::SharedFolderPermission::Write,
+                                              QStringLiteral("[abc"));
+        QVERIFY(!folder.has_value());
+        QCOMPARE(mgr.lastError(), core::SharedFolderManagerError::InvalidExcludePatterns);
+
+        db->close();
+        delete db;
+    }
+
+    void updateExcludePatternsTombstonesMatchingFilesOnNextShare()
+    {
+        auto *db = openDb(QStringLiteral("sfm_updateexclude_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+
+        writeFile(QStringLiteral("rapport.docx"), QByteArrayLiteral("contenu"));
+        writeFile(QStringLiteral("notes.log"), QByteArrayLiteral("log"));
+
+        const auto folder = mgr.createFolder(QStringLiteral("F"), m_folderDir->path(), 0);
+        QVERIFY2(folder.has_value(), qPrintable(mgr.lastErrorString()));
+
+        // Pas encore de motif : les deux fichiers sont indexes.
+        auto changes = mgr.shareFolder(folder->id());
+        QVERIFY(changes.has_value());
+        QCOMPARE(mgr.getFiles(folder->id()).size(), 2);
+
+        // On exclut desormais les .log -- n'affecte QUE la prochaine
+        // indexation, cf. commentaire updateExcludePatterns().
+        QVERIFY2(mgr.updateExcludePatterns(folder->id(), QStringLiteral("*.log")),
+                  qPrintable(mgr.lastErrorString()));
+        QCOMPARE(mgr.getFiles(folder->id()).size(), 2); // pas encore retroactif
+
+        changes = mgr.shareFolder(folder->id());
+        QVERIFY(changes.has_value());
+        const auto files = mgr.getFiles(folder->id());
+        QCOMPARE(files.size(), 1);
+        QCOMPARE(files.at(0).relativePath(), QStringLiteral("rapport.docx"));
+
+        db->close();
+        delete db;
+    }
+
+    void previewExcludePatternsImpactListsAlreadyIndexedMatches()
+    {
+        auto *db = openDb(QStringLiteral("sfm_previewexclude_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+
+        writeFile(QStringLiteral("rapport.docx"), QByteArrayLiteral("contenu"));
+        writeFile(QStringLiteral("notes.txt"), QByteArrayLiteral("notes"));
+        writeFile(QStringLiteral("drafts/idee.txt"), QByteArrayLiteral("draft"));
+
+        const auto folder = mgr.createFolder(QStringLiteral("F"), m_folderDir->path(), 0);
+        QVERIFY2(folder.has_value(), qPrintable(mgr.lastErrorString()));
+
+        const auto changes = mgr.shareFolder(folder->id());
+        QVERIFY(changes.has_value());
+        QCOMPARE(mgr.getFiles(folder->id()).size(), 3);
+
+        // Un motif candidat pas encore enregistre ("*.txt") doit remonter
+        // les fichiers DEJA indexes qui deviendraient exclus, SANS rien
+        // ecrire en base (aucun appel a updateExcludePatterns()/shareFolder()
+        // apres coup dans ce test).
+        QStringList impacted = mgr.previewExcludePatternsImpact(folder->id(), QStringLiteral("*.txt"));
+        impacted.sort();
+        QCOMPARE(impacted, QStringList({QStringLiteral("drafts/idee.txt"), QStringLiteral("notes.txt")}));
+
+        // Le dossier n'a pas ete modifie : toujours 3 fichiers indexes.
+        QCOMPARE(mgr.getFiles(folder->id()).size(), 3);
+        // Et le motif enregistre en base n'a pas change.
+        const auto reloaded = mgr.getFolder(folder->id());
+        QVERIFY(reloaded.has_value());
+        QVERIFY(reloaded->excludePatterns().isEmpty());
+
+        db->close();
+        delete db;
+    }
+
+    void previewExcludePatternsImpactIsEmptyWhenNoMatchOrInvalidPattern()
+    {
+        auto *db = openDb(QStringLiteral("sfm_previewexclude2_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+
+        writeFile(QStringLiteral("rapport.docx"), QByteArrayLiteral("contenu"));
+
+        const auto folder = mgr.createFolder(QStringLiteral("F"), m_folderDir->path(), 0);
+        QVERIFY2(folder.has_value(), qPrintable(mgr.lastErrorString()));
+        QVERIFY(mgr.shareFolder(folder->id()).has_value());
+
+        // Aucun motif ne correspond a rapport.docx.
+        QVERIFY(mgr.previewExcludePatternsImpact(folder->id(), QStringLiteral("*.log")).isEmpty());
+
+        // Motif malforme (crochet non ferme) : liste vide plutot qu'un crash
+        // ou une exception -- la vraie erreur de validation n'apparait qu'a
+        // l'enregistrement reel (updateExcludePatterns()).
+        QVERIFY(mgr.previewExcludePatternsImpact(folder->id(), QStringLiteral("[abc")).isEmpty());
+
+        // Dossier introuvable : liste vide, pas de crash.
+        QVERIFY(mgr.previewExcludePatternsImpact(folder->id() + 999, QStringLiteral("*.docx")).isEmpty());
+
+        db->close();
+        delete db;
+    }
+
+    void isPathExcludedReflectsHardcodedAndUserPatterns()
+    {
+        auto *db = openDb(QStringLiteral("sfm_ispathexcluded_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+
+        const auto folder = mgr.createFolder(QStringLiteral("F"), m_folderDir->path(), 0, {},
+                                              models::SharedFolderPermission::Write,
+                                              QStringLiteral("*.log, node_modules"));
+        QVERIFY2(folder.has_value(), qPrintable(mgr.lastErrorString()));
+
+        // Motif utilisateur (segment de dossier).
+        QVERIFY(mgr.isPathExcluded(folder->id(), QStringLiteral("node_modules/pkg/index.js")));
+        // Motif utilisateur (extension).
+        QVERIFY(mgr.isPathExcluded(folder->id(), QStringLiteral("notes.log")));
+        // Aucun motif ne correspond.
+        QVERIFY(!mgr.isPathExcluded(folder->id(), QStringLiteral("rapport.docx")));
+        // Dossier introuvable : pas d'exclusion applicable (pas de crash).
+        QVERIFY(!mgr.isPathExcluded(folder->id() + 999, QStringLiteral("rapport.docx")));
+
+        db->close();
+        delete db;
+    }
 };
 
 QTEST_MAIN(TestSharedFolderManager)

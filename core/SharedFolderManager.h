@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <optional>
 
@@ -27,7 +28,8 @@ enum class SharedFolderManagerError {
     InvalidPath,
     PathNotDirectory,
     InvalidFolder,
-    DatabaseError
+    DatabaseError,
+    InvalidExcludePatterns
 };
 
 /**
@@ -68,9 +70,16 @@ public:
     /// emet accessGranted(), ecoute par core::sync::FolderSyncService pour
     /// diffuser la creation aux autres machines du reseau (cas "plusieurs
     /// machines LAN").
+    /// excludePatterns (optionnel, debrief point #4) : motifs glob separes
+    /// par des virgules (ex: "*.log,build,drafts/*") a exclure de
+    /// l'indexation/sync pour CE dossier, en plus des exclusions codees
+    /// en dur (isExcludedRelativePath()). Voir setExcludePatterns() pour
+    /// le detail du format et validate/normalizeExcludePatterns() pour la
+    /// validation appliquee.
     std::optional<models::SharedFolder> createFolder(const QString &name, const QString &localPath, qint64 ownerId,
                                                        const QVector<qint64> &authorizedUserIds = {},
-                                                       models::SharedFolderPermission permission = models::SharedFolderPermission::Write);
+                                                       models::SharedFolderPermission permission = models::SharedFolderPermission::Write,
+                                                       const QString &excludePatterns = QString());
 
     /// Supprime un dossier partage (et son historique de fichiers, cascade
     /// SQL). Ne touche jamais aux fichiers reels sur le disque.
@@ -146,6 +155,46 @@ public:
     /// des fichiers. Nécessaire avant de pouvoir synchroniser le contenu d'un
     /// dossier partagé reçu d'un autre poste.
     bool updateFolderLocalPath(qint64 folderId, const QString &localPath);
+
+    /// Met a jour les motifs d'exclusion (debrief point #4, sync
+    /// selective) d'un dossier partage deja cree. N'affecte que la
+    /// PROCHAINE indexation (shareFolder()) : les fichiers deja indexes
+    /// qui correspondent desormais a un motif ne sont pas retires
+    /// retroactivement -- ils seront tombstones (marques supprimes) au
+    /// prochain shareFolder(), comme tout fichier disparu du disque.
+    /// @return true si la mise a jour a reussi (voir lastErrorString() sinon,
+    /// notamment InvalidExcludePatterns si un motif est vide/mal forme).
+    bool updateExcludePatterns(qint64 folderId, const QString &excludePatterns);
+
+    /// Previsualise l'impact d'un jeu de motifs candidat (pas forcement
+    /// encore enregistre, cf. updateExcludePatterns()) sur le contenu
+    /// DEJA indexe d'un dossier partage : renvoie les chemins relatifs des
+    /// fichiers actuellement connus (non supprimes) qui deviendraient
+    /// exclus si candidateExcludePatterns etait applique puis le dossier
+    /// reindexe. Utilise par le dialogue "Exclusions" (SharedFolderView.qml)
+    /// pour avertir l'utilisateur AVANT qu'il valide -- sans cela, un motif
+    /// trop large ("*.md" au lieu de "*.tmp") tombstone silencieusement des
+    /// fichiers deja partages des la sauvegarde, sans avertissement prealable.
+    ///
+    /// N'effectue AUCUNE ecriture (ni en base, ni sur le disque) : lecture
+    /// seule sur l'etat deja indexe. Methode const, ne modifie donc PAS
+    /// lastError()/lastErrorString() -- retourne simplement une liste vide
+    /// si le dossier est introuvable, si candidateExcludePatterns est
+    /// invalide (motif malforme), ou si aucun fichier indexe ne correspond.
+    QStringList previewExcludePatternsImpact(qint64 folderId, const QString &candidateExcludePatterns) const;
+
+    /// Indique si relativePath serait exclu de l'indexation/sync de folderId,
+    /// compte tenu des exclusions codees en dur (isExcludedRelativePath())
+    /// ET des motifs propres a ce dossier (excludePatterns()). Utilise cote
+    /// RECEPTION (core::sync::FolderSyncService::handleFolderOp() /
+    /// handleFolderCatchupBatch()) pour refuser une annonce/un transfert
+    /// entrant qui matche NOS PROPRES motifs locaux -- sans ce garde-fou,
+    /// exclure "node_modules" localement n'empeche pas de recevoir quand
+    /// meme "node_modules" pousse par un pair qui n'a pas ce motif de son
+    /// cote (excludePatterns est une colonne LOCALE, non synchronisee entre
+    /// pairs, cf. migration #022). false si le dossier est introuvable
+    /// (aucune exclusion applicable, l'appelant gere ce cas autrement).
+    bool isPathExcluded(qint64 folderId, const QString &relativePath) const;
 
     SharedFolderManagerError lastError() const { return m_lastError; }
     QString lastErrorString() const { return m_lastErrorString; }

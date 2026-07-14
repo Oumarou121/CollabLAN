@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QRegularExpression>
 #include <QSet>
 #include <QStringList>
 
@@ -21,8 +22,21 @@ namespace {
  * synchroniser des fichiers techniques/temporaires qui n'ont pas de sens a
  * partager entre postes (fichiers de verrouillage d'editeurs, dossiers de
  * VCS, caches, etc.).
+ *
+ * userPatterns (debrief point #4, sync selective) : motifs glob
+ * SUPPLEMENTAIRES propres a un dossier partage donne (cf.
+ * models::SharedFolder::excludePatterns(), rempli via createFolder()/
+ * updateExcludePatterns()), en plus des exclusions codees en dur
+ * ci-dessus qui restent toujours actives. Chaque motif est teste :
+ *  - contre le chemin relatif complet (ex: "docs/*.log" exclut tous les
+ *    .log du sous-dossier docs) ;
+ *  - contre chaque segment de dossier ET le nom de fichier pris seuls
+ *    (ex: "drafts" exclut tout le sous-arbre "drafts/", sans avoir a
+ *    ecrire "drafts/*" ; "*.log" exclut n'importe quel .log a n'importe
+ *    quelle profondeur, pas seulement a la racine).
+ * Comparaison insensible a la casse (usage mixte Windows/Linux en LAN).
  */
-bool isExcludedRelativePath(const QString &relativePath)
+bool isExcludedRelativePath(const QString &relativePath, const QVector<QRegularExpression> &userPatterns = {})
 {
     static const QSet<QString> excludedDirNames = {
         QStringLiteral(".git"), QStringLiteral(".svn"), QStringLiteral(".hg"),
@@ -50,7 +64,86 @@ bool isExcludedRelativePath(const QString &relativePath)
 
     if (excludedSuffixes.contains(info.suffix().toLower())) return true;
 
+    for (const QRegularExpression &regex : userPatterns) {
+        if (!regex.isValid()) continue; // deja filtre par normalizeExcludePatterns(), defense en profondeur
+
+        if (regex.match(relativePath).hasMatch()) return true;
+        if (regex.match(fileName).hasMatch()) return true;
+        for (const QString &segment : segments) {
+            if (regex.match(segment).hasMatch()) return true;
+        }
+    }
+
     return false;
+}
+
+/**
+ * @brief Parse la chaine brute stockee dans SharedFolder::excludePatterns()
+ * (motifs separes par des virgules) en une liste de motifs individuels,
+ * en supprimant les espaces superflus et les entrees vides (ex: virgule
+ * finale). Utilise a la fois pour construire la liste passee a
+ * isExcludedRelativePath() (shareFolder()) et pour valider une saisie
+ * utilisateur (createFolder()/updateExcludePatterns()).
+ */
+QStringList parseExcludePatterns(const QString &raw)
+{
+    QStringList patterns;
+    const QStringList parts = raw.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    patterns.reserve(parts.size());
+    for (const QString &part : parts) {
+        const QString trimmed = part.trimmed();
+        if (!trimmed.isEmpty()) {
+            patterns.append(trimmed);
+        }
+    }
+    return patterns;
+}
+
+/**
+ * @brief Compile chaque motif de userPatterns en QRegularExpression, une
+ * seule fois par appel (a la difference de l'ancienne version qui
+ * recompilait un QRegularExpression par motif ET par fichier a l'interieur
+ * de isExcludedRelativePath() -- cout non negligeable une fois combine a
+ * l'optimisation du debrief point #1, qui fait que le hash SHA-256 n'est
+ * plus le poste dominant sur un scan de dossier inchange).
+ */
+QVector<QRegularExpression> compileExcludePatterns(const QStringList &userPatterns)
+{
+    QVector<QRegularExpression> compiled;
+    compiled.reserve(userPatterns.size());
+    for (const QString &pattern : userPatterns) {
+        compiled.append(QRegularExpression(
+            QRegularExpression::wildcardToRegularExpression(pattern),
+            QRegularExpression::CaseInsensitiveOption));
+    }
+    return compiled;
+}
+
+/**
+ * @brief Valide une chaine de motifs telle que saisie par l'utilisateur.
+ * Chaque motif doit produire une expression reguliere valide une fois
+ * converti via QRegularExpression::wildcardToRegularExpression() -- en
+ * pratique, un glob simple (*, ?, []) est toujours valide ; ce garde-fou
+ * protege surtout contre une saisie completement degenerate. Retourne la
+ * chaine normalisee (motifs retrimmes, rejoints par ", ") dans
+ * *normalized si non nul et que la validation reussit.
+ */
+bool validateExcludePatterns(const QString &raw, QString *normalized, QString *errorMessage)
+{
+    const QStringList patterns = parseExcludePatterns(raw);
+    for (const QString &pattern : patterns) {
+        const QRegularExpression regex(QRegularExpression::wildcardToRegularExpression(pattern));
+        if (!regex.isValid()) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("Motif d'exclusion invalide : '%1'").arg(pattern);
+            }
+            return false;
+        }
+    }
+    if (normalized) {
+        *normalized = patterns.join(QStringLiteral(", "));
+    }
+    return true;
 }
 
 } // namespace
@@ -70,7 +163,8 @@ SharedFolderManager::~SharedFolderManager()
 
 std::optional<models::SharedFolder> SharedFolderManager::createFolder(const QString &name, const QString &localPath, qint64 ownerId,
                                                                         const QVector<qint64> &authorizedUserIds,
-                                                                        models::SharedFolderPermission permission)
+                                                                        models::SharedFolderPermission permission,
+                                                                        const QString &excludePatterns)
 {
     if (!m_dbManager) {
         m_lastError = SharedFolderManagerError::DatabaseError;
@@ -102,9 +196,18 @@ std::optional<models::SharedFolder> SharedFolderManager::createFolder(const QStr
         return std::nullopt;
     }
 
+    QString normalizedExcludePatterns;
+    QString excludePatternsError;
+    if (!validateExcludePatterns(excludePatterns, &normalizedExcludePatterns, &excludePatternsError)) {
+        m_lastError = SharedFolderManagerError::InvalidExcludePatterns;
+        m_lastErrorString = excludePatternsError;
+        return std::nullopt;
+    }
+
     models::SharedFolder folder(0, name.trimmed(), pathInfo.absoluteFilePath());
     folder.setOwnerId(ownerId);
     folder.setIsActive(true);
+    folder.setExcludePatterns(normalizedExcludePatterns);
 
     const auto inserted = m_folderRepository.insert(folder);
     if (!inserted.has_value()) {
@@ -204,6 +307,13 @@ std::optional<QVector<models::SharedFileChange>> SharedFolderManager::shareFolde
 
     QVector<models::SharedFileChange> changes;
 
+    // Motifs d'exclusion propres a CE dossier (debrief point #4), en plus
+    // des exclusions codees en dur toujours actives dans
+    // isExcludedRelativePath(). Parse une seule fois avant la boucle
+    // plutot qu'a chaque fichier.
+    const QVector<QRegularExpression> userExcludePatterns =
+        compileExcludePatterns(parseExcludePatterns(folder->excludePatterns()));
+
     // Parcours recursif : chaque fichier trouve est indexe (upsert) avec
     // son chemin RELATIF a la racine du dossier partage (cf. commentaire
     // migration #018 -- independant du chemin absolu, qui peut differer
@@ -214,7 +324,7 @@ std::optional<QVector<models::SharedFileChange>> SharedFolderManager::shareFolde
         const QString absolutePath = it.next();
         const QString relativePath = rootDir.relativeFilePath(absolutePath);
 
-        if (isExcludedRelativePath(relativePath)) {
+        if (isExcludedRelativePath(relativePath, userExcludePatterns)) {
             // Fichier technique/temporaire (Release 9 partielle) : ni
             // indexe, ni compte comme "vu" -- s'il etait connu d'une
             // indexation precedente (peu probable, ce filtre est nouveau),
@@ -505,6 +615,92 @@ bool SharedFolderManager::updateFolderLocalPath(qint64 folderId, const QString &
     }
 
     return true;
+}
+
+bool SharedFolderManager::isPathExcluded(qint64 folderId, const QString &relativePath) const
+{
+    const auto folder = m_folderRepository.getById(folderId);
+    if (!folder.has_value()) {
+        return false;
+    }
+
+    const QVector<QRegularExpression> userExcludePatterns =
+        compileExcludePatterns(parseExcludePatterns(folder->excludePatterns()));
+    return isExcludedRelativePath(relativePath, userExcludePatterns);
+}
+
+bool SharedFolderManager::updateExcludePatterns(qint64 folderId, const QString &excludePatterns)
+{
+    if (!m_dbManager) {
+        m_lastError = SharedFolderManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral("DatabaseManager non disponible");
+        return false;
+    }
+
+    const auto folder = m_folderRepository.getById(folderId);
+    if (!folder.has_value()) {
+        m_lastError = SharedFolderManagerError::InvalidFolder;
+        m_lastErrorString = QStringLiteral("Dossier introuvable");
+        return false;
+    }
+
+    QString normalizedExcludePatterns;
+    QString excludePatternsError;
+    if (!validateExcludePatterns(excludePatterns, &normalizedExcludePatterns, &excludePatternsError)) {
+        m_lastError = SharedFolderManagerError::InvalidExcludePatterns;
+        m_lastErrorString = excludePatternsError;
+        return false;
+    }
+
+    models::SharedFolder updated = *folder;
+    updated.setExcludePatterns(normalizedExcludePatterns);
+
+    if (!m_folderRepository.update(updated)) {
+        m_lastError = SharedFolderManagerError::DatabaseError;
+        m_lastErrorString = m_folderRepository.lastError();
+        return false;
+    }
+
+    return true;
+}
+
+QStringList SharedFolderManager::previewExcludePatternsImpact(qint64 folderId, const QString &candidateExcludePatterns) const
+{
+    if (!m_dbManager) {
+        return {};
+    }
+
+    QString normalized;
+    QString errorMessage;
+    if (!validateExcludePatterns(candidateExcludePatterns, &normalized, &errorMessage)) {
+        // Motif malforme : rien a previsualiser (le dialogue affichera sa
+        // propre erreur de validation au moment de l'enregistrement reel).
+        return {};
+    }
+
+    const QVector<QRegularExpression> candidatePatterns =
+        compileExcludePatterns(parseExcludePatterns(normalized));
+    if (candidatePatterns.isEmpty()) {
+        return {}; // aucun motif candidat : aucun fichier deja indexe ne peut devenir exclu
+    }
+
+    // getByFolderId() ne renvoie deja que les fichiers non supprimes (filtre
+    // "deleted = 0" cote SQL) : un fichier deja tombstone (exclu par un
+    // motif precedent, ou disparu du disque) n'a pas d'impact supplementaire
+    // a signaler ici, pas besoin de refiltrer.
+    QStringList impacted;
+    for (const models::SharedFile &file : m_fileRepository.getByFolderId(folderId)) {
+        // isExcludedRelativePath() teste aussi les exclusions codees en dur,
+        // mais un fichier deja indexe ne peut par construction pas les
+        // matcher (shareFolder() ne les indexe jamais) -- seuls les motifs
+        // candidats ci-dessous peuvent donc faire basculer le resultat.
+        if (isExcludedRelativePath(file.relativePath(), candidatePatterns)) {
+            impacted.append(file.relativePath());
+        }
+    }
+
+    impacted.sort(Qt::CaseInsensitive);
+    return impacted;
 }
 
 } // namespace core

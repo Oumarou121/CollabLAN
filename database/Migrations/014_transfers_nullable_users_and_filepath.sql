@@ -1,4 +1,4 @@
--- Migration 012 : corrige la persistance de l'historique des transferts.
+-- Migration 014 : corrige la persistance de l'historique des transferts.
 --
 -- Deux problemes constates en usage reel (transferts LAN entre postes sans
 -- compte utilisateur correspondant cote destinataire) :

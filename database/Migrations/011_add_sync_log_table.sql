@@ -1,4 +1,4 @@
--- Migration 009 : Journal de synchronisation pour la reconciliation post-panne
+-- Migration 011 : Journal de synchronisation pour la reconciliation post-panne
 -- (HYBRID_SERVER_FAILOVER.md, section 3 : "Les tables SyncLog / PeerSyncState / colonnes
 -- uuid, updated_at, origin_machine_id du document precedent sont reutilisees telles quelles :
 -- c'est ce qui permet la reconciliation a la reprise.")

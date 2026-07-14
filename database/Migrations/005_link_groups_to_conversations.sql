@@ -1,4 +1,4 @@
--- Migration 004 : Lie chaque groupe a une conversation, pour reutiliser
+-- Migration 005 : Lie chaque groupe a une conversation, pour reutiliser
 -- telle quelle la messagerie (Messages.conversationId) pour les groupes.
 --
 -- NB : 001_initial_schema.sql cree Groups(id, name, created_at) SANS

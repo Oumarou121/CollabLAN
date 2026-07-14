@@ -234,6 +234,7 @@ Item {
             nameField.text = ""
             localPath = ""
             allowWriteCheckBox.checked = true
+            excludePatternsField.text = ""
             reloadUsers()
         }
 
@@ -366,6 +367,32 @@ Item {
                 }
             }
 
+            Label {
+                text: qsTr("Exclure de la synchronisation (optionnel)")
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeSmall
+            }
+            TextField {
+                id: excludePatternsField
+                Layout.fillWidth: true
+                placeholderText: qsTr("ex : *.log, node_modules, drafts/*")
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.text
+                background: Rectangle {
+                    radius: Theme.radiusSmall
+                    color: Theme.surfaceAlt
+                    border.width: 1
+                    border.color: excludePatternsField.activeFocus ? Theme.primary : Theme.border
+                }
+            }
+            Label {
+                text: qsTr("Motifs séparés par des virgules. S'applique en plus des exclusions par défaut (dossiers systèmes, fichiers temporaires…). Local à ce poste.")
+                color: Theme.textTertiary
+                font.pixelSize: Theme.fontSizeSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: Theme.spacingSmall
@@ -391,8 +418,143 @@ Item {
                             }
                         }
                         if (root.context.createFolder(nameField.text.trim(), createDialog.localPath,
-                                                       selectedUserIds, allowWriteCheckBox.checked)) {
+                                                       selectedUserIds, allowWriteCheckBox.checked,
+                                                       excludePatternsField.text.trim())) {
                             createDialog.close()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- dialogue de modification des motifs d'exclusion (debrief point #4) ----
+    Dialog {
+        id: editExcludePatternsDialog
+        title: qsTr("Exclusions — %1").arg(editExcludePatternsDialog.targetFolderName)
+        modal: true
+        anchors.centerIn: parent
+        width: 420
+        height: 320
+        standardButtons: Dialog.NoButton
+
+        property int targetFolderId: -1
+        property string targetFolderName: ""
+        property var impactedPaths: []
+
+        function refreshImpactPreview() {
+            if (root.context && editExcludePatternsDialog.targetFolderId >= 0) {
+                editExcludePatternsDialog.impactedPaths =
+                    root.context.previewExcludePatternsImpact(editExcludePatternsDialog.targetFolderId,
+                                                               excludePatternsEditField.text.trim())
+            } else {
+                editExcludePatternsDialog.impactedPaths = []
+            }
+        }
+
+        onOpened: {
+            excludePatternsEditField.text =
+                root.context ? root.context.excludePatternsForFolder(editExcludePatternsDialog.targetFolderId) : ""
+            // Motifs actuellement enregistres : par definition aucun fichier
+            // deja indexe ne peut les matcher (ils seraient deja tombstones),
+            // donc l'impact initial est toujours vide -- pas la peine
+            // d'attendre le debounce pour l'afficher.
+            editExcludePatternsDialog.impactedPaths = []
+        }
+
+        background: Rectangle {
+            radius: Theme.radiusMedium
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.border
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: Theme.spacingMedium
+
+            Label {
+                text: qsTr("Motifs glob séparés par des virgules (ex : *.log, node_modules, drafts/*). S'ajoutent aux exclusions par défaut. Ne s'applique qu'à ce poste.")
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            TextField {
+                id: excludePatternsEditField
+                Layout.fillWidth: true
+                placeholderText: qsTr("ex : *.log, node_modules, drafts/*")
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.text
+                background: Rectangle {
+                    radius: Theme.radiusSmall
+                    color: Theme.surfaceAlt
+                    border.width: 1
+                    border.color: excludePatternsEditField.activeFocus ? Theme.primary : Theme.border
+                }
+                // Previsualisation live (debounce 250ms) de l'impact sur les
+                // fichiers deja partages : sans ca, un motif trop large
+                // ("*.md" tape par erreur au lieu de "*.tmp") ne se
+                // remarquait qu'apres coup, une fois les fichiers disparus
+                // de la liste suite a l'enregistrement.
+                onTextChanged: impactPreviewTimer.restart()
+            }
+
+            Timer {
+                id: impactPreviewTimer
+                interval: 250
+                repeat: false
+                onTriggered: editExcludePatternsDialog.refreshImpactPreview()
+            }
+
+            Label {
+                visible: editExcludePatternsDialog.impactedPaths.length > 0
+                text: {
+                    var paths = editExcludePatternsDialog.impactedPaths
+                    var shown = paths.slice(0, 5).join(", ")
+                    var extra = paths.length > 5 ? qsTr(" (+%1 autre(s))").arg(paths.length - 5) : ""
+                    return qsTr("⚠ %1 fichier(s) déjà partagé(s) seront retirés à l'enregistrement : %2%3")
+                        .arg(paths.length).arg(shown).arg(extra)
+                }
+                color: Theme.warning
+                font.pixelSize: Theme.fontSizeSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            Label {
+                text: qsTr("Les fichiers déjà indexés qui correspondent à un nouveau motif seront retirés lors de la prochaine réindexation (immédiate à la validation).")
+                color: Theme.textTertiary
+                font.pixelSize: Theme.fontSizeSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacingSmall
+
+                AppButton {
+                    text: qsTr("Annuler")
+                    variant: "secondary"
+                    Layout.fillWidth: true
+                    onClicked: editExcludePatternsDialog.close()
+                }
+                AppButton {
+                    text: qsTr("Enregistrer")
+                    variant: "primary"
+                    Layout.fillWidth: true
+                    onClicked: {
+                        if (root.context && editExcludePatternsDialog.targetFolderId >= 0) {
+                            if (root.context.updateExcludePatterns(editExcludePatternsDialog.targetFolderId,
+                                                                    excludePatternsEditField.text.trim())) {
+                                editExcludePatternsDialog.close()
+                                root.refreshFiles()
+                                root.refreshHistory()
+                            }
                         }
                     }
                 }
@@ -944,6 +1106,17 @@ Item {
                             root.refreshFiles()
                             root.refreshHistory()
                         }
+                    }
+                }
+
+                AppButton {
+                    visible: root.openedFolderId >= 0
+                    text: qsTr("Exclusions")
+                    variant: "secondary"
+                    onClicked: {
+                        editExcludePatternsDialog.targetFolderId = root.openedFolderId
+                        editExcludePatternsDialog.targetFolderName = root.openedFolderName
+                        editExcludePatternsDialog.open()
                     }
                 }
 

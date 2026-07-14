@@ -1,4 +1,4 @@
--- Migration 017 : remplace definitivement sender_id/recipient_id (comptes
+-- Migration 019 : remplace definitivement sender_id/recipient_id (comptes
 -- Users locaux, INTEGER) par sender_uuid/recipient_uuid (TEXT, Users.uuid)
 -- sur la table Transfers.
 --

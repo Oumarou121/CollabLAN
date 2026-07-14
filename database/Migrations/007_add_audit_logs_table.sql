@@ -1,4 +1,4 @@
--- Migration 004 : Ajout de la table AuditLogs pour le journal d'audit (issue #65)
+-- Migration 007 : Ajout de la table AuditLogs pour le journal d'audit (issue #65)
 
 CREATE TABLE IF NOT EXISTS AuditLogs (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,

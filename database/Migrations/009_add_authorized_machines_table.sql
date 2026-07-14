@@ -1,4 +1,4 @@
--- Migration 006 : Ajout de la table AuthorizedMachines pour la gestion des machines autorisées (issue #68)
+-- Migration 009 : Ajout de la table AuthorizedMachines pour la gestion des machines autorisées (issue #68)
 
 CREATE TABLE IF NOT EXISTS AuthorizedMachines (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,

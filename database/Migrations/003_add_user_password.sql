@@ -1,4 +1,4 @@
--- Migration 002 : garantit l'unicite du nom d'utilisateur (identifiant
+-- Migration 003 : garantit l'unicite du nom d'utilisateur (identifiant
 -- de connexion). Les colonnes password_hash/password_salt existent deja
 -- depuis 001_initial_schema.sql. Le compte admin par defaut est seede
 -- au demarrage de l'application (voir Application::initialize()) plutot

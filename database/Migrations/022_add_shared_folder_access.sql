@@ -1,4 +1,4 @@
--- Migration 020 : gestion des permissions d'acces aux dossiers partages
+-- Migration 022 : gestion des permissions d'acces aux dossiers partages
 -- (SharedFolderAccess) + suivi de la machine d'origine d'un dossier
 -- partage replique depuis un autre poste (colonne origin_machine_id).
 --

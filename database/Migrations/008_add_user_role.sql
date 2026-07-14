@@ -1,4 +1,4 @@
--- Migration 006 : Ajout de la colonne role dans la table Users (issue #67)
+-- Migration 008 : Ajout de la colonne role dans la table Users (issue #67)
 
 ALTER TABLE Users ADD COLUMN role TEXT NOT NULL DEFAULT 'user';
 

@@ -26,6 +26,7 @@ models::SharedFolder SharedFolderRepository::folderFromQuery(const QSqlQuery &qu
     folder.setCreatedAt(query.value(QStringLiteral("created_at")).toDateTime());
     folder.setIsActive(query.value(QStringLiteral("is_active")).toInt() != 0);
     folder.setOriginMachineId(query.value(QStringLiteral("origin_machine_id")).toString());
+    folder.setExcludePatterns(query.value(QStringLiteral("exclude_patterns")).toString());
     return folder;
 }
 
@@ -37,8 +38,8 @@ std::optional<models::SharedFolder> SharedFolderRepository::insert(const models:
 
     QSqlQuery query(m_db);
     if (!query.prepare(QStringLiteral(
-        "INSERT INTO SharedFolders (uuid, name, local_path, owner_id, is_active, origin_machine_id) "
-        "VALUES (:uuid, :name, :local_path, :owner_id, :is_active, :origin_machine_id)"))) {
+        "INSERT INTO SharedFolders (uuid, name, local_path, owner_id, is_active, origin_machine_id, exclude_patterns) "
+        "VALUES (:uuid, :name, :local_path, :owner_id, :is_active, :origin_machine_id, :exclude_patterns)"))) {
         // Si prepare() echoue (ex: schema en base desynchronise du code,
         // colonne manquante...), on remonte l'erreur ici plutot que de
         // laisser bindValue()/exec() produire un message trompeur du
@@ -54,6 +55,7 @@ std::optional<models::SharedFolder> SharedFolderRepository::insert(const models:
     query.bindValue(QStringLiteral(":is_active"), folder.isActive() ? 1 : 0);
     query.bindValue(QStringLiteral(":origin_machine_id"),
                      folder.originMachineId().isEmpty() ? QVariant(QVariant::String) : folder.originMachineId());
+    query.bindValue(QStringLiteral(":exclude_patterns"), folder.excludePatterns());
 
     if (!query.exec()) {
         m_lastError = query.lastError().text();
@@ -68,10 +70,11 @@ bool SharedFolderRepository::update(const models::SharedFolder &folder)
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
         "UPDATE SharedFolders SET name = :name, local_path = :local_path, "
-        "is_active = :is_active WHERE id = :id"));
+        "is_active = :is_active, exclude_patterns = :exclude_patterns WHERE id = :id"));
     query.bindValue(QStringLiteral(":name"), folder.name());
     query.bindValue(QStringLiteral(":local_path"), folder.localPath());
     query.bindValue(QStringLiteral(":is_active"), folder.isActive() ? 1 : 0);
+    query.bindValue(QStringLiteral(":exclude_patterns"), folder.excludePatterns());
     query.bindValue(QStringLiteral(":id"), folder.id());
 
     if (!query.exec()) {

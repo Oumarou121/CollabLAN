@@ -1,6 +1,6 @@
--- Migration 015 : ajoute l'identite du correspondant a l'historique des
+-- Migration 017 : ajoute l'identite du correspondant a l'historique des
 -- transferts (peer_address/peer_name), sur le meme modele que CallHistory
--- (migration 013).
+-- (migration 015).
 --
 -- Constat : la table Transfers ne conservait jusqu'ici AUCUNE information
 -- sur l'autre poste de l'echange - seulement sender_id/recipient_id, qui

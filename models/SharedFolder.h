@@ -57,6 +57,13 @@ public:
     /// recue d'un autre poste.
     bool isLocalOrigin() const { return m_originMachineId.isEmpty(); }
 
+    /// Motifs glob (separes par des virgules) exclus de l'indexation/sync
+    /// pour CE dossier partage, en plus des exclusions codees en dur
+    /// (migration #022, debrief point #4 -- sync selective). Local a ce
+    /// poste : non synchronise entre pairs, cf. commentaire migration.
+    QString excludePatterns() const { return m_excludePatterns; }
+    void setExcludePatterns(const QString &excludePatterns) { m_excludePatterns = excludePatterns; }
+
 private:
     qint64 m_id = 0;
     QString m_uuid;
@@ -66,6 +73,7 @@ private:
     QDateTime m_createdAt;
     bool m_isActive = true;
     QString m_originMachineId;
+    QString m_excludePatterns;
 };
 
 } // namespace models

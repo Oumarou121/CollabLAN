@@ -1,4 +1,4 @@
--- Migration 018 : ajout du module "Shared Folder" (partage de dossiers
+-- Migration 020 : ajout du module "Shared Folder" (partage de dossiers
 -- façon explorateur Windows, cf. docs de conception fournies).
 --
 -- SharedFolders : un dossier local partage par ce poste. local_path est
