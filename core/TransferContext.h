@@ -147,8 +147,10 @@ private:
     /// Port TCP actuellement annonce par le pair a peerAddress (via
     /// m_peersModel), utilise par retryTransfer() pour reprendre au bon
     /// port meme s'il a change depuis l'echec initial. -1 si le pair
-    /// n'est plus decouvert (retryTransfer() retombe alors sur
-    /// network::TransferService::defaultPort(), comme sendFile()).
+    /// n'est plus decouvert (retryTransfer() retombe alors sur le dernier
+    /// port connu pour CE transfert, voir entry "port" / m_pendingSendPorts,
+    /// puis seulement sur network::TransferService::defaultPort() si meme
+    /// celui-ci est inconnu).
     int resolvePeerPort(const QString &peerAddress) const;
 
     /// Reconstruit activeTransfers() a partir de l'historique persiste
@@ -174,6 +176,15 @@ private:
     /// nom de fichier, pour l'attacher a l'entree activeTransfers a la
     /// reception de transferStarted().
     QHash<QString, QStringList> m_pendingSendFilePaths;
+
+    /// Meme mecanisme que m_pendingSendFilePaths, pour le port TCP
+    /// effectivement utilise par ce sendFile() (apres resolution de
+    /// portHint) : conserve sur l'entree activeTransfers ("port") afin
+    /// que retryTransfer() puisse s'y reprendre si le pair n'est plus
+    /// decouvert dans m_peersModel au moment de la relance (voir
+    /// retryTransfer()) plutot que de retomber sur un port par defaut
+    /// potentiellement different de celui reellement utilise par le pair.
+    QHash<QString, QList<int>> m_pendingSendPorts;
 };
 
 } // namespace core

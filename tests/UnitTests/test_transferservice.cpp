@@ -110,6 +110,68 @@ private slots:
     }
 
     /*
+     * Regression : le pool de connexions par pair (kMaxConnectionsPerPeer)
+     * ne liberait jamais sa place (m_activeSendConnections jamais
+     * decremente dans finishSend()) -- au-dela des 3 premieres
+     * connexions ouvertes vers un meme destKey, tout fichier
+     * supplementaire restait bloque indefiniment dans m_sendQueues sans
+     * jamais etre envoye. On envoie ici plus de fichiers que la capacite
+     * du pool vers la MEME destination et on verifie que TOUS se
+     * terminent (le test doit timeout AVANT le correctif).
+     */
+    void sendManyFilesToSamePeerAllComplete()
+    {
+        QTemporaryDir sourceDir;
+        QTemporaryDir destDir;
+        QVERIFY(sourceDir.isValid());
+        QVERIFY(destDir.isValid());
+
+        constexpr int kFileCount = 7; // > kMaxConnectionsPerPeer (3)
+
+        QStringList sourcePaths;
+        for (int i = 0; i < kFileCount; ++i) {
+            const QString path = sourceDir.filePath(QStringLiteral("file_%1.bin").arg(i));
+            makeRandomFile(path, 32 * 1024 + i); // petits fichiers, tailles differentes
+            sourcePaths << path;
+        }
+
+        TransferService receiver;
+        receiver.setReceiveDirectory(destDir.path());
+        QVERIFY(receiver.start(23464));
+
+        TransferService sender;
+
+        QSignalSpy receiverCompleted(&receiver, &TransferService::transferCompleted);
+        QSignalSpy receiverFailed(&receiver, &TransferService::transferFailed);
+        QSignalSpy senderCompleted(&sender, &TransferService::transferCompleted);
+        QSignalSpy senderFailed(&sender, &TransferService::transferFailed);
+
+        for (const QString &path : sourcePaths) {
+            QVERIFY(sender.sendFile(QHostAddress::LocalHost, 23464, path,
+                                     QStringLiteral("1"), QStringLiteral("2")));
+        }
+
+        // Avant le correctif, seuls les 3 premiers fichiers se terminaient
+        // et ce wait() timeoutait systematiquement (les 4 suivants restant
+        // bloques en file pour toujours).
+        while (senderCompleted.count() < kFileCount) {
+            QVERIFY2(senderCompleted.wait(10000),
+                     "Timeout : au moins un fichier n'a jamais ete envoye "
+                     "(regression du pool de connexions -- voir finishSend())");
+        }
+        QCOMPARE(senderFailed.count(), 0);
+
+        while (receiverCompleted.count() < kFileCount) {
+            QVERIFY2(receiverCompleted.wait(10000),
+                     "Timeout cote reception : la connexion reutilisee n'a "
+                     "pas enchaine correctement (voir finishReceive())");
+        }
+        QCOMPARE(receiverFailed.count(), 0);
+
+        receiver.stop();
+    }
+
+    /*
      * Issue #54 : "Un transfert coupe au milieu reprend sans repartir de
      * zero". On simule une interruption reseau en pre-remplissant le
      * fichier temporaire "<nom>.part" cote destinataire avec le debut du

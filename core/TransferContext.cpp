@@ -194,6 +194,7 @@ bool TransferContext::sendFile(const QString &filePath, const QString &address, 
     // onTransferStarted() la cree (voir m_pendingSendFilePaths).
     const QString fileName = info.fileName();
     m_pendingSendFilePaths[fileName].append(localPath);
+    m_pendingSendPorts[fileName].append(static_cast<int>(port));
 
     const bool started = m_transferManager->sendFile(host, port, localPath, senderUuid, recipientUuid);
     if (!started) {
@@ -201,6 +202,11 @@ bool TransferContext::sendFile(const QString &filePath, const QString &address, 
         pending.removeOne(localPath);
         if (pending.isEmpty()) {
             m_pendingSendFilePaths.remove(fileName);
+        }
+        QList<int> &pendingPorts = m_pendingSendPorts[fileName];
+        pendingPorts.removeOne(static_cast<int>(port));
+        if (pendingPorts.isEmpty()) {
+            m_pendingSendPorts.remove(fileName);
         }
         emit transferRejected(tr("Impossible de demarrer l'envoi de %1").arg(info.fileName()));
     }
@@ -238,10 +244,18 @@ bool TransferContext::retryTransfer(const QString &transferKey)
     }
 
     // Reprend le port actuellement annonce par le pair (peut avoir changé
-    // depuis l'echec initial) ; sendFile() retombe sur le port par defaut
-    // si le pair n'est plus decouvert (portHint <= 0), comme pour un
-    // nouvel envoi classique.
-    const int portHint = resolvePeerPort(peerAddress);
+    // depuis l'echec initial). S'il n'est plus decouvert dans
+    // m_peersModel, on prefere le dernier port reellement utilise par ce
+    // transfert (memorise dans l'entree "port" au moment du sendFile()
+    // initial) plutot que de deviner network::TransferService::defaultPort() :
+    // le pair a tres bien pu ecouter sur un port different du port par
+    // defaut (voir issue de test transfercontext::retryTransfer...
+    // AfterPeerReturns, qui echouait silencieusement pour cette raison
+    // avant ce correctif). sendFile() ne retombe sur defaultPort() que si
+    // meme ce dernier port connu est absent (portHint <= 0).
+    const int discoveredPort = resolvePeerPort(peerAddress);
+    const int lastKnownPort = entry.value(QStringLiteral("port")).toInt();
+    const int portHint = discoveredPort > 0 ? discoveredPort : lastKnownPort;
 
     // sendFile() revalide fichier/adresse et delegue a
     // TransferManager::sendFile() -> network::TransferService::sendFile(),
@@ -321,6 +335,7 @@ void TransferContext::onTransferStarted(const QString &transferKey, const QStrin
     // pour une reception, il ne sera connu qu'a la fin du transfert
     // (dossier de reception + nom de fichier final, voir onTransferCompleted()).
     QString filePath;
+    int sendPort = 0;
     if (!incoming) {
         QStringList &pending = m_pendingSendFilePaths[fileName];
         if (!pending.isEmpty()) {
@@ -329,8 +344,20 @@ void TransferContext::onTransferStarted(const QString &transferKey, const QStrin
                 m_pendingSendFilePaths.remove(fileName);
             }
         }
+        // Pris dans le meme ordre (FIFO) que filePath ci-dessus : les deux
+        // listes sont alimentees ensemble par sendFile() pour chaque envoi
+        // de ce fileName, donc restent alignees meme en cas d'envois
+        // concurrents du meme nom de fichier vers des destinations differentes.
+        QList<int> &pendingPorts = m_pendingSendPorts[fileName];
+        if (!pendingPorts.isEmpty()) {
+            sendPort = pendingPorts.takeFirst();
+            if (pendingPorts.isEmpty()) {
+                m_pendingSendPorts.remove(fileName);
+            }
+        }
     }
     entry[QStringLiteral("filePath")] = filePath;
+    entry[QStringLiteral("port")] = sendPort;
 
     const int existing = indexOfTransfer(transferKey);
     if (existing >= 0) {

@@ -153,12 +153,14 @@ bool TransferService::start(quint16 port)
 
 void TransferService::stop()
 {
-    if (m_server) {
-        m_server->close();
-        delete m_server;
-        m_server = nullptr;
-    }
-
+    // Les sockets acceptes via m_server->nextPendingConnection() sont
+    // parentes au QTcpServer (comportement par defaut de Qt). Si on
+    // supprime m_server avant de traiter m_receiveStates, ces sockets
+    // sont detruits en cascade et la boucle ci-dessous deviendrait un
+    // use-after-free (c'etait la cause des crashs sur les tests qui
+    // recoivent reellement un fichier). On detache donc chaque socket
+    // du serveur (setParent(nullptr)) et on nettoie son etat AVANT de
+    // detruire m_server.
     for (auto it = m_receiveStates.begin(); it != m_receiveStates.end(); ++it) {
         QTcpSocket *socket = it.key();
         if (it.value().file) {
@@ -166,10 +168,17 @@ void TransferService::stop()
             delete it.value().file;
         }
         socket->disconnect(this);
+        socket->setParent(nullptr);
         socket->close();
         socket->deleteLater();
     }
     m_receiveStates.clear();
+
+    if (m_server) {
+        m_server->close();
+        delete m_server;
+        m_server = nullptr;
+    }
 
     for (auto it = m_sendStates.begin(); it != m_sendStates.end(); ++it) {
         QTcpSocket *socket = it.key();
@@ -258,25 +267,62 @@ QString TransferService::makeTransferKey(QTcpSocket *socket)
 // Cote expediteur
 // ---------------------------------------------------------------------
 
+QString TransferService::destKeyFor(const QHostAddress &host, quint16 port)
+{
+    return host.toString() + QStringLiteral(":") + QString::number(port);
+}
+
 bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
                                 const QString &senderUuid, const QString &recipientUuid)
 {
-    auto *file = new QFile(filePath);
-    if (!file->open(QIODevice::ReadOnly)) {
+    // Verification rapide et synchrone : un fichier absent/illisible des
+    // l'appel doit echouer immediatement (contrat historique de sendFile(),
+    // toujours respecte par les appelants existants -- ex. TransferService::
+    // sendMissingFileFails() dans les tests). Une fois mis en file, en
+    // revanche, un probleme de lecture ne peut plus etre remonte que de
+    // facon asynchrone via transferFailed() (voir startSendOnSocket()).
+    const QFileInfo info(filePath);
+    if (!info.exists() || !info.isReadable()) {
         qWarning() << "TransferService: cannot open file for sending:" << filePath;
-        delete file;
         return false;
     }
 
+    // CORRECTIF (pool de connexions reutilisables) : plutot que d'ouvrir
+    // systematiquement une nouvelle connexion TCP ici, le fichier est mis
+    // en file d'attente pour sa destination (host:port) ; dispatchSendQueue()
+    // decide de reutiliser une connexion existante, d'en ouvrir une
+    // nouvelle (si le pool n'est pas plein), ou de laisser le fichier
+    // patienter (voir doc de classe, section 0).
+    const QString destKey = destKeyFor(host, port);
+    m_destInfo[destKey] = DestInfo{host, port};
+    m_sendQueues[destKey].enqueue(PendingSendJob{filePath, senderUuid, recipientUuid});
+    dispatchSendQueue(destKey);
+    return true;
+}
+
+void TransferService::dispatchSendQueue(const QString &destKey)
+{
+    auto queueIt = m_sendQueues.find(destKey);
+    if (queueIt == m_sendQueues.end() || queueIt->isEmpty()) {
+        return;
+    }
+    if (m_activeSendConnections.value(destKey, 0) >= kMaxConnectionsPerPeer) {
+        // Plafond atteint pour ce pair : le(s) fichier(s) restant(s)
+        // patientent dans la file. Le prochain appel viendra de
+        // finishSend() des qu'une des connexions existantes se libere
+        // (fichier termine, sans qu'il en reste a lui enchainer).
+        return;
+    }
+
+    const PendingSendJob job = queueIt->dequeue();
+    const DestInfo dest = m_destInfo.value(destKey);
+
     auto *socket = new QTcpSocket(this);
+    m_socketDestKey.insert(socket, destKey);
+    m_activeSendConnections[destKey] = m_activeSendConnections.value(destKey, 0) + 1;
 
     SendState state;
-    state.transferKey = makeTransferKey(socket);
-    state.file = file;
-    state.filePath = filePath;
-    state.fileSize = file->size();
-    state.senderUuid = senderUuid;
-    state.recipientUuid = recipientUuid;
+    state.pendingJob = job; // consomme par onClientSocketConnected() une fois la connexion etablie
     m_sendStates.insert(socket, state);
 
     connect(socket, &QTcpSocket::connected, this, &TransferService::onClientSocketConnected);
@@ -284,19 +330,42 @@ bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QSt
     connect(socket, &QTcpSocket::bytesWritten, this, &TransferService::onClientSocketBytesWritten);
     connect(socket, &QTcpSocket::errorOccurred, this, &TransferService::onClientSocketErrorOccurred);
 
-    socket->connectToHost(host, port);
-    return true;
+    socket->connectToHost(dest.host, dest.port);
 }
 
-void TransferService::onClientSocketConnected()
+bool TransferService::startSendOnSocket(QTcpSocket *socket, const PendingSendJob &job)
 {
-    auto *socket = qobject_cast<QTcpSocket*>(sender());
-    if (!socket || !m_sendStates.contains(socket)) {
-        return;
+    if (!m_sendStates.contains(socket)) {
+        return false;
     }
-
     SendState &state = m_sendStates[socket];
-    const QFileInfo info(state.filePath);
+
+    // Genere une NOUVELLE cle a chaque fichier (y compris sur une
+    // connexion reutilisee) : du point de vue des consommateurs des
+    // signaux (TransferManager, NotificationManager...), chaque fichier
+    // reste un transfert logique distinct, independamment du socket TCP
+    // qui le vehicule.
+    state.transferKey = makeTransferKey(socket);
+    state.filePath = job.filePath;
+    state.senderUuid = job.senderUuid;
+    state.recipientUuid = job.recipientUuid;
+    state.bytesSent = 0;
+    state.resumeOffsetReceived = false;
+    state.waitingForAck = false;
+    state.buffer.clear();
+    state.pendingFrameSize = -1;
+
+    auto *file = new QFile(job.filePath);
+    if (!file->open(QIODevice::ReadOnly)) {
+        qWarning() << "TransferService: cannot open file for sending:" << job.filePath;
+        delete file;
+        emit transferFailed(state.transferKey, QStringLiteral("Impossible d'ouvrir le fichier"));
+        return false;
+    }
+    state.file = file;
+    state.fileSize = file->size();
+
+    const QFileInfo info(job.filePath);
     // peerMachineId (dernier argument) : vide cote envoi - on connait deja
     // l'identite du destinataire directement via le pair choisi dans
     // DiscoveryService (TransferContext/TransferManager n'ont pas besoin
@@ -312,6 +381,23 @@ void TransferService::onClientSocketConnected()
     socket->write(frameOf(header));
     // La reponse (resumeOffset) arrive de facon asynchrone dans
     // onClientSocketReadyRead ; voir state.resumeOffsetReceived.
+    return true;
+}
+
+void TransferService::onClientSocketConnected()
+{
+    auto *socket = qobject_cast<QTcpSocket*>(sender());
+    if (!socket || !m_sendStates.contains(socket)) {
+        return;
+    }
+
+    const PendingSendJob job = m_sendStates[socket].pendingJob;
+    if (!startSendOnSocket(socket, job)) {
+        // Echec synchrone (fichier devenu illisible entre la mise en file
+        // et l'etablissement de la connexion) : transferFailed() a deja
+        // ete emis par startSendOnSocket(), on referme proprement.
+        finishSend(socket, false, QStringLiteral("Fichier introuvable au moment de l'envoi"));
+    }
 }
 
 void TransferService::onClientSocketBytesWritten(qint64 bytes)
@@ -459,10 +545,66 @@ void TransferService::finishSend(QTcpSocket *socket, bool success, const QString
         emit transferFailed(state.transferKey, errorString);
     }
 
+    const QString destKey = m_socketDestKey.value(socket);
+
+    // CORRECTIF (pool de connexions -- la reutilisation n'etait jamais
+    // effective) : m_activeSendConnections etait incremente dans
+    // dispatchSendQueue() mais JAMAIS decremente ici, et cette fonction
+    // fermait systematiquement le socket sans jamais consulter
+    // m_sendQueues[destKey]. Consequence concrete : au-dela des 3
+    // premiers fichiers vers un meme pair, tous les suivants restaient
+    // bloques indefiniment dans la file (le compteur restait bloque a
+    // kMaxConnectionsPerPeer pour toujours) -- un dossier de plus de 3
+    // fichiers ne se synchronisait donc jamais completement.
+    //
+    // Un fichier termine AVEC SUCCES peut enchainer directement le
+    // suivant en attente pour le meme pair sur CETTE MEME connexion deja
+    // etablie (c'est le but du pool : eviter un nouveau handshake TCP).
+    // Une connexion en ECHEC n'est jamais reutilisee (etat potentiellement
+    // corrompu ou connexion morte cote reseau) : on la ferme et on relance
+    // dispatchSendQueue() pour que les jobs restants repartent sur une
+    // connexion neuve.
+    if (success && !destKey.isEmpty()) {
+        auto queueIt = m_sendQueues.find(destKey);
+        while (queueIt != m_sendQueues.end() && !queueIt->isEmpty()) {
+            const PendingSendJob job = queueIt->dequeue();
+            m_sendStates.insert(socket, SendState{});
+            if (startSendOnSocket(socket, job)) {
+                return; // Connexion reutilisee : ne pas fermer le socket.
+            }
+            // Echec synchrone (fichier devenu illisible entre la mise en
+            // file et son tour) : startSendOnSocket() a deja emis
+            // transferFailed() pour CE job. La connexion reseau, elle,
+            // reste saine -- on retente le job suivant sur ce meme socket
+            // plutot que de la fermer pour un probleme purement local.
+            m_sendStates.remove(socket);
+        }
+    }
+
+    // Plus rien a enchainer sur cette connexion : on la ferme et on
+    // libere sa place dans le pool pour ce pair.
+    if (!destKey.isEmpty()) {
+        const int remaining = m_activeSendConnections.value(destKey, 1) - 1;
+        if (remaining <= 0) {
+            m_activeSendConnections.remove(destKey);
+        } else {
+            m_activeSendConnections[destKey] = remaining;
+        }
+        m_socketDestKey.remove(socket);
+    }
+
     socket->disconnect(this);
     socket->flush();
     socket->close();
     socket->deleteLater();
+
+    // Des fichiers ont pu rester en file pour ce pair (pool plein au
+    // moment ou ils ont ete mis en attente, ou connexion qui vient
+    // d'echouer alors qu'il en restait) : une place vient de se liberer,
+    // tente d'ouvrir une nouvelle connexion pour les reprendre.
+    if (!destKey.isEmpty()) {
+        dispatchSendQueue(destKey);
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -494,6 +636,7 @@ void TransferService::onServerSocketReadyRead()
     }
 
     ReceiveState &state = m_receiveStates[socket];
+    state.connectionIdle = false; // des octets arrivent : soit la suite d'un fichier en cours, soit l'en-tete du suivant sur une connexion reutilisee.
     state.buffer.append(socket->readAll());
 
     // Traite autant de trames completes que possible dans le tampon.
@@ -540,6 +683,14 @@ void TransferService::onServerSocketReadyRead()
             state.senderMachineId = senderMachineId;
             state.compressionEnabled = (compressionFlags & 0x01) != 0;
             state.headerParsed = true;
+            // CORRECTIF (pool de connexions -- cote reception) : une
+            // connexion reutilisee vehicule plusieurs fichiers a la suite ;
+            // chaque fichier doit avoir sa propre transferKey (regeneree
+            // ici, comme le fait deja l'expediteur dans startSendOnSocket())
+            // pour que TransferManager/FolderSyncService les correlent
+            // individuellement au lieu de les confondre sous la cle unique
+            // attribuee a la connexion lors de onNewConnection().
+            state.transferKey = makeTransferKey(socket);
 
             const QString dir = receiveDirectory();
             // Sous-dossier par correspondant : regroupe tous les fichiers
@@ -640,13 +791,21 @@ void TransferService::onServerSocketDisconnected()
 
     if (m_receiveStates.contains(socket)) {
         const ReceiveState &state = m_receiveStates[socket];
-        const bool incomplete = !state.headerParsed || state.bytesReceived < state.fileSize;
+        // CORRECTIF (pool de connexions -- cote reception) : sur une
+        // connexion reutilisee, entre deux fichiers, headerParsed est
+        // remis a false (voir finishReceive()) alors qu'aucun transfert
+        // n'est reellement en cours -- sans connectionIdle, cet etat
+        // "propre" etait a tort signale comme une interruption
+        // (transferFailed emis pour un transfert qui n'existait pas).
+        const bool incomplete = !state.connectionIdle
+            && (!state.headerParsed || state.bytesReceived < state.fileSize);
         if (incomplete) {
             finishReceive(socket, false, QStringLiteral("Connexion interrompue"));
             return;
         }
     }
 
+    m_receiveStates.remove(socket);
     socket->deleteLater();
 }
 
@@ -656,14 +815,31 @@ void TransferService::finishReceive(QTcpSocket *socket, bool success, const QStr
         socket->deleteLater();
         return;
     }
-    ReceiveState state = m_receiveStates.take(socket);
-
-    if (state.file) {
-        state.file->close();
-        delete state.file;
-    }
 
     if (success) {
+        // CORRECTIF (pool de connexions -- cote reception, la moitie qui
+        // manquait) : cote emission, un fichier termine avec succes peut
+        // enchainer le suivant sur la MEME connexion (voir finishSend()).
+        // Mais cette fonction refermait jusqu'ici systematiquement le
+        // socket a la fin de CHAQUE fichier -- l'expediteur se retrouvait
+        // alors a ecrire l'en-tete du fichier suivant sur une connexion
+        // deja fermee cote destinataire, ce qui annulait tout le gain du
+        // pool (et provoquait un echec reseau evitable). On ne ferme donc
+        // plus la connexion ici : on finalise le fichier courant et on
+        // reinitialise seulement les champs propres a CE fichier, en
+        // gardant le socket et son entree dans m_receiveStates pour
+        // recevoir eventuellement un autre en-tete a la suite. Le buffer
+        // n'est PAS vide : il peut deja contenir le debut de l'en-tete
+        // suivant (arrive dans la meme trame TCP) ; onServerSocketReadyRead()
+        // le traitera naturellement des le prochain tour de sa boucle.
+        ReceiveState &state = m_receiveStates[socket];
+
+        if (state.file) {
+            state.file->close();
+            delete state.file;
+            state.file = nullptr;
+        }
+
         // Transfert termine : promouvoir le fichier temporaire "<nom>.part"
         // vers son nom final.
         if (!state.partialPath.isEmpty() && state.partialPath != state.destinationPath) {
@@ -671,12 +847,39 @@ void TransferService::finishReceive(QTcpSocket *socket, bool success, const QStr
             QFile::rename(state.partialPath, state.destinationPath);
         }
         emit transferCompleted(state.transferKey, state.destinationPath);
-    } else {
-        // Ne PAS supprimer le fichier partiel : il permet de reprendre le
-        // transfert a partir du dernier bloc confirme (issue #54) lors
-        // d'un prochain appel a sendFile() pour le meme fichier.
-        emit transferFailed(state.transferKey, errorString);
+
+        state.headerParsed = false;
+        state.headerAcked = false;
+        state.fileName.clear();
+        state.fileSize = 0;
+        state.bytesReceived = 0;
+        state.senderUuid.clear();
+        state.recipientUuid.clear();
+        state.senderMachineId.clear();
+        state.compressionEnabled = false;
+        state.destinationPath.clear();
+        state.partialPath.clear();
+        state.pendingBlockSize = -1;
+        state.connectionIdle = true;
+        // state.buffer et state.transferKey volontairement laisses tels
+        // quels : buffer peut contenir le prochain en-tete deja arrive ;
+        // transferKey sera regenere a la reception de ce prochain en-tete
+        // (voir onServerSocketReadyRead()).
+        return;
     }
+
+    // Echec : fermeture definitive de la connexion, comme avant.
+    ReceiveState state = m_receiveStates.take(socket);
+
+    if (state.file) {
+        state.file->close();
+        delete state.file;
+    }
+
+    // Ne PAS supprimer le fichier partiel : il permet de reprendre le
+    // transfert a partir du dernier bloc confirme (issue #54) lors
+    // d'un prochain appel a sendFile() pour le meme fichier.
+    emit transferFailed(state.transferKey, errorString);
 
     socket->disconnect(this);
     // Flush avant fermeture : le dernier octet d'accuse de reception

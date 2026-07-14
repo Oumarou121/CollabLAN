@@ -6,6 +6,7 @@
 #include <QString>
 #include <QByteArray>
 #include <QHash>
+#include <QQueue>
 #include <functional>
 
 class QTcpServer;
@@ -18,7 +19,21 @@ namespace network {
  * @brief Transfert de fichiers via TCP, par blocs, avec accuses de reception
  * et reprise apres interruption.
  *
- * Protocole applicatif (au-dessus de TCP, un socket par transfert) :
+ * Protocole applicatif (au-dessus de TCP) :
+ *  0. Pool de connexions par destination (host:port) : au lieu d'ouvrir
+ *     une connexion TCP par fichier, sendFile() met le fichier en file
+ *     d'attente pour sa destination et reutilise une connexion existante
+ *     des que l'un des fichiers en cours se termine, dans la limite de
+ *     kMaxConnectionsPerPeer connexions simultanees par pair. Ceci evite
+ *     de repayer un handshake TCP + echange d'en-tete pour chaque fichier
+ *     lors d'un partage de dossier avec de nombreux petits fichiers (une
+ *     connexion peut ainsi enchainer plusieurs fichiers a la suite avant
+ *     de se fermer, cf. dispatchSendQueue()/startSendOnSocket() cote
+ *     expediteur et la reinitialisation de ReceiveState dans
+ *     finishReceive() cote destinataire). Le reste du protocole
+ *     ci-dessous (en-tete, reprise, blocs, accuses) reste inchange et
+ *     s'applique a CHAQUE fichier individuellement au sein d'une
+ *     connexion partagee.
  *  1. L'expediteur ouvre une connexion TCP vers le port d'ecoute du
  *     destinataire et envoie un en-tete : nom du fichier (UTF-8) et
  *     taille totale en octets (voir encodeHeader()/decodeHeader()).
@@ -88,9 +103,20 @@ public:
      * meme fichier (meme nom, meme taille) vers ce destinataire a ete
      * interrompu avant la fin, l'envoi reprend a partir du dernier bloc
      * confirme par le destinataire au lieu de repartir de zero.
-     * @return false immediatement si le fichier ne peut pas etre ouvert
-     * ou si la connexion ne peut pas etre initiee ; true sinon (le
-     * transfert est en cours).
+     *
+     * Mis en file d'attente pour sa destination (host:port) : peut donc
+     * demarrer immediatement (nouvelle connexion ou connexion existante
+     * libre) ou attendre qu'une des kMaxConnectionsPerPeer connexions du
+     * pool pour ce pair se libere -- voir la section 0 de la doc de
+     * classe ci-dessus.
+     *
+     * @return false immediatement seulement si filePath est illisible des
+     * l'appel (fichier absent, permissions...) ; dans ce cas rien n'est mis
+     * en file et aucun signal n'est emis. Si le fichier redevient illisible
+     * plus tard (juste avant l'envoi effectif, une fois son tour venu dans
+     * la file), l'echec est signale de façon asynchrone via transferFailed()
+     * a la place -- le true retourne ici ne garantit donc que la mise en
+     * file, pas le succes du transfert.
      */
     bool sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
                   const QString &senderUuid, const QString &recipientUuid);
@@ -162,9 +188,33 @@ private:
         QString destinationPath;    ///< Chemin final (une fois le transfert termine).
         QString partialPath;        ///< Fichier temporaire "<nom>.part" pendant le transfert.
         qint64 pendingBlockSize = -1; ///< Taille du bloc en cours d'attente (-1 = attend l'entete de bloc).
+        bool connectionIdle = false; ///< true entre deux fichiers sur une connexion reutilisee (voir finishReceive()) -- distingue une deconnexion normale (pair qui n'a plus rien a envoyer) d'un transfert reellement interrompu (onServerSocketDisconnected()).
     };
 
-    /// Etat d'envoi associe a un socket cote client.
+    /// Fichier en attente d'envoi vers une destination donnee (voir
+    /// m_sendQueues) : mis de cote par sendFile() tant que le pool de
+    /// connexions pour cette destination est plein, puis consomme par
+    /// dispatchSendQueue()/startSendOnSocket() des qu'une connexion se
+    /// libere.
+    struct PendingSendJob {
+        QString filePath;
+        QString senderUuid;
+        QString recipientUuid;
+    };
+
+    /// Adresse/port d'une destination, retrouvee par sa cle (voir
+    /// destKeyFor()) au moment d'ouvrir une NOUVELLE connexion pour elle
+    /// (une connexion reutilisee n'en a pas besoin, elle est deja
+    /// connectee).
+    struct DestInfo {
+        QHostAddress host;
+        quint16 port = 0;
+    };
+
+    /// Etat d'envoi associe a un socket cote client. Persiste au-dela d'un
+    /// seul fichier : reutilise en place (voir startSendOnSocket()) tant
+    /// que la connexion sert plusieurs fichiers consecutifs pour le meme
+    /// pair (pool de connexions, voir doc de classe).
     struct SendState {
         QString transferKey;
         QFile *file = nullptr;
@@ -177,16 +227,52 @@ private:
         bool waitingForAck = false;
         QByteArray buffer;          ///< Octets recus non encore consommes (reponse d'en-tete puis accuses).
         qint64 pendingFrameSize = -1; ///< Taille de la trame de reponse d'en-tete en attente.
+        PendingSendJob pendingJob;  ///< Fichier a demarrer des que le socket est pret (connexion initiale ou reutilisation) -- voir startSendOnSocket().
     };
+
+    /// Nombre maximal de connexions TCP simultanees ouvertes vers un meme
+    /// pair (host:port) pour l'envoi de fichiers. Au-dela, les fichiers
+    /// suivants patientent dans m_sendQueues et sont repris des qu'une des
+    /// connexions existantes termine son fichier en cours (voir
+    /// finishSend()). Une valeur > 1 permet de paralleliser un peu le
+    /// transfert d'un dossier avec de nombreux fichiers sans pour autant
+    /// ouvrir une connexion par fichier (cout de handshake TCP repete).
+    static constexpr int kMaxConnectionsPerPeer = 3;
 
     void sendNextBlock(QTcpSocket *socket);
     void finishReceive(QTcpSocket *socket, bool success, const QString &errorString = QString());
     void finishSend(QTcpSocket *socket, bool success, const QString &errorString = QString());
     static QString makeTransferKey(QTcpSocket *socket);
 
+    /// Cle identifiant une destination pour le regroupement des files
+    /// d'attente/pool de connexions (m_sendQueues, m_destInfo,
+    /// m_activeSendConnections) : simplement "host:port".
+    static QString destKeyFor(const QHostAddress &host, quint16 port);
+
+    /// Tente de demarrer le prochain fichier en attente pour destKey :
+    /// ouvre une NOUVELLE connexion si le pool n'est pas plein et qu'il
+    /// n'y a rien a reutiliser immediatement. Ne fait rien si la file est
+    /// vide ou si le pool est deja au plafond (kMaxConnectionsPerPeer) --
+    /// dans ce cas, le prochain appel viendra de finishSend() des qu'une
+    /// connexion existante se libere.
+    void dispatchSendQueue(const QString &destKey);
+
+    /// Demarre (ou redemarre, pour une connexion reutilisee) l'envoi du
+    /// fichier decrit par job sur socket, deja connecte. Reinitialise les
+    /// champs de SendState propres a UN fichier (transferKey, filePath,
+    /// bytesSent, etc.) en conservant le socket. Retourne false si le
+    /// fichier n'a pas pu etre ouvert (dans ce cas, transferFailed() a
+    /// deja ete emis et l'appelant doit considerer la connexion comme
+    /// devant se fermer normalement, cf. finishSend()/onClientSocketConnected()).
+    bool startSendOnSocket(QTcpSocket *socket, const PendingSendJob &job);
+
     QTcpServer *m_server = nullptr;
     QHash<QTcpSocket*, ReceiveState> m_receiveStates;
     QHash<QTcpSocket*, SendState> m_sendStates;
+    QHash<QString, QQueue<PendingSendJob>> m_sendQueues;   ///< destKey -> fichiers en attente d'envoi vers cette destination.
+    QHash<QString, DestInfo> m_destInfo;                    ///< destKey -> host/port, pour ouvrir de nouvelles connexions.
+    QHash<QString, int> m_activeSendConnections;            ///< destKey -> nombre de connexions TCP actuellement ouvertes vers ce pair.
+    QHash<QTcpSocket*, QString> m_socketDestKey;            ///< socket d'envoi -> destKey (pour retrouver sa file/son compteur a la fin d'un fichier).
     QString m_receiveDirOverride;
     QString m_localMachineId;        ///< UUID DiscoveryService::localId() local, transmis dans l'en-tete (voir encodeHeader()).
     bool m_compressionEnabled = false; ///< Voir setCompressionEnabled().
