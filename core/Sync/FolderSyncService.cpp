@@ -20,7 +20,7 @@
 #include <QFileInfo>
 #include <QDateTime>
 #include <QCryptographicHash>
-
+#include <QPair>
 namespace core::sync {
 
 namespace {
@@ -32,6 +32,22 @@ constexpr const char *kTypeFileRequest    = "folder_file_request";
 constexpr const char *kTypeAccessGranted  = "folder_access_granted";
 constexpr const char *kTypeAccessRevoked  = "folder_access_revoked";
 constexpr const char *kTypeResyncRequest  = "folder_resync_request";
+/// op_type special (pas dans models::SyncChangeType, jamais persiste tel
+/// quel dans SyncOperations -- cf. FolderSyncService::onLocalFolderReindexed()
+/// / applyRemoteDirectoryRename()) : deplacement d'un sous-dossier entier,
+/// diffuse en UN seul folder_op au lieu d'un Rename par fichier deplace
+/// (debrief point #6).
+constexpr const char *kOpTypeDirectoryRename = "DirectoryRename";
+
+/// Dossier parent d'un chemin relatif ("a/b/c.txt" -> "a/b"), ou chaine
+/// vide si le fichier est a la racine du dossier partage (rien a
+/// regrouper dans ce cas : un fichier isole a la racine ne fait jamais
+/// partie d'un "deplacement de sous-dossier").
+QString parentDirOf(const QString &relativePath)
+{
+    const int idx = relativePath.lastIndexOf(QLatin1Char('/'));
+    return idx >= 0 ? relativePath.left(idx) : QString();
+}
 
 /// Fenetre pendant laquelle une nouvelle demande de resync pour le MEME
 /// (folder_uuid, requester_machine_id) est ignoree sans etre re-traitee
@@ -230,13 +246,88 @@ void FolderSyncService::onLocalFolderReindexed(qint64 folderId, int changeCount)
         newOps.prepend(op);
     }
 
+    // Regroupement des renommages (debrief #6) : chaque fichier deplace
+    // reste journalise individuellement dans SyncOperations ci-dessus
+    // (necessaire au rattrapage/replay par fichier), mais les DIFFUSER
+    // individuellement force chaque pair a traiter un message reseau ET un
+    // renommage sur disque par fichier -- couteux pour un deplacement de
+    // sous-dossier entier (potentiellement des centaines de fichiers pour
+    // un seul geste utilisateur). On regroupe donc les Rename partageant
+    // le meme couple (ancien dossier parent, nouveau dossier parent) pour
+    // n'emettre qu'UN SEUL folder_op de type DirectoryRename par groupe
+    // d'au moins 2 fichiers ; applyRemoteDirectoryRename() cote receveur
+    // fait alors UN seul renommage disque pour tout le sous-arbre. Un
+    // renommage isole (fichier seul, ou deplacement a la racine) reste
+    // diffuse normalement : pas de gain a regrouper un seul element, et un
+    // vrai fichier renomme seul ne doit pas etre confondu avec un
+    // deplacement de dossier.
+    QHash<QPair<QString, QString>, QVector<models::FileSyncOperation>> renameGroups;
+    QVector<models::FileSyncOperation> ungrouped;
     for (const auto &op : newOps) {
+        if (op.type() != models::SyncChangeType::Rename) {
+            ungrouped.append(op);
+            continue;
+        }
+        const QString oldDir = parentDirOf(op.oldRelativePath());
+        const QString newDir = parentDirOf(op.relativePath());
+        if (oldDir.isEmpty() || newDir.isEmpty() || oldDir == newDir) {
+            ungrouped.append(op);
+            continue;
+        }
+        renameGroups[qMakePair(oldDir, newDir)].append(op);
+    }
+
+    for (const auto &op : ungrouped) {
         if (op.id() > m_lastBroadcastOpId) m_lastBroadcastOpId = op.id();
         const QString json = QString::fromUtf8(
             QJsonDocument(buildFolderOpJson(op, folder)).toJson(QJsonDocument::Compact));
         broadcastMessage(json);
         qDebug() << "[FolderSync] Diffusé" << models::syncChangeTypeToString(op.type())
                  << op.relativePath() << "depuis" << folder.name();
+    }
+
+    for (auto it = renameGroups.constBegin(); it != renameGroups.constEnd(); ++it) {
+        const QVector<models::FileSyncOperation> &group = it.value();
+        qint64 maxOpId = 0;
+        for (const auto &op : group) {
+            maxOpId = qMax(maxOpId, op.id());
+        }
+        if (maxOpId > m_lastBroadcastOpId) m_lastBroadcastOpId = maxOpId;
+
+        if (group.size() < 2) {
+            // Un seul fichier "traverse" ce couple de dossiers : deplacement
+            // isole, pas un vrai deplacement de sous-dossier -- diffuser
+            // normalement plutot que d'introduire un DirectoryRename inutile.
+            const QString json = QString::fromUtf8(
+                QJsonDocument(buildFolderOpJson(group.first(), folder)).toJson(QJsonDocument::Compact));
+            broadcastMessage(json);
+            continue;
+        }
+
+        const QString oldDir = it.key().first;
+        const QString newDir = it.key().second;
+
+        QJsonObject obj;
+        obj[QStringLiteral("type")]              = QString::fromLatin1(kTypeFolderOp);
+        obj[QStringLiteral("folder_uuid")]       = folder.uuid();
+        obj[QStringLiteral("folder_name")]       = folder.name();
+        obj[QStringLiteral("op_type")]            = QString::fromLatin1(kOpTypeDirectoryRename);
+        obj[QStringLiteral("relative_path")]     = newDir;
+        obj[QStringLiteral("old_relative_path")] = oldDir;
+        obj[QStringLiteral("file_count")]         = group.size();
+        obj[QStringLiteral("machine_id")]        = group.first().machineId();
+        obj[QStringLiteral("op_id")]              = maxOpId;
+        if (m_userManager) {
+            obj[QStringLiteral("user_uuid")] = m_userManager->currentUserUuid();
+        }
+        const quint16 transferPort = m_transferService
+            ? m_transferService->port()
+            : network::TransferService::defaultPort();
+        obj[QStringLiteral("transfer_port")] = static_cast<int>(transferPort);
+
+        broadcastMessage(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+        qDebug() << "[FolderSync] Diffusé DirectoryRename" << oldDir << "->" << newDir
+                 << "(" << group.size() << "fichiers regroupés en 1 message) depuis" << folder.name();
     }
 }
 
@@ -596,6 +687,21 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
                 break;
             }
             applyRemoteRename(folder, oldRelPath, relativePath, machineId);
+            break;
+        }
+    } else if (opType == QString::fromLatin1(kOpTypeDirectoryRename)) {
+        // Debrief #6 : ici relativePath/oldRelPath sont des chemins de
+        // DOSSIERS (nouveau/ancien), pas de fichiers -- cf.
+        // onLocalFolderReindexed() qui construit ce message unique pour un
+        // groupe de renommages partageant le meme couple de dossiers.
+        for (const auto &folder : m_folderManager->getFolders()) {
+            if (folder.uuid() != folderUuid) continue;
+            const QString peerIdentifier = userUuid.isEmpty() ? machineId : userUuid;
+            if (effectivePermission(folder, peerIdentifier) == models::SharedFolderPermission::None) {
+                qWarning() << "[FolderSync] folder_op DirectoryRename ignoré : accès révoqué pour" << peerIdentifier;
+                break;
+            }
+            applyRemoteDirectoryRename(folder, oldRelPath, relativePath, machineId);
             break;
         }
     }
@@ -1460,6 +1566,87 @@ void FolderSyncService::applyRemoteRename(const models::SharedFolder &folder,
 
     qDebug() << "[FolderSync] Renommage distant appliqué :" << oldRelativePath << "->" << newRelativePath;
     emit fileIntegrated(folder.uuid(), newRelativePath, false);
+}
+
+void FolderSyncService::applyRemoteDirectoryRename(const models::SharedFolder &folder,
+                                                     const QString &oldRelativeDir,
+                                                     const QString &newRelativeDir,
+                                                     const QString &machineId)
+{
+    const QString oldAbsDir = QDir::cleanPath(
+        folder.localPath() + QDir::separator() + oldRelativeDir);
+    const QString newAbsDir = QDir::cleanPath(
+        folder.localPath() + QDir::separator() + newRelativeDir);
+
+    // Repli fichier par fichier si on ne peut pas se permettre un
+    // renommage de dossier "en gros" : sous-dossier source introuvable
+    // localement (contenu jamais reçu -- rare mais possible sur un
+    // dossier distant partiellement synchronisé), ou dossier cible déjà
+    // existant (renommage en gros écraserait un contenu local sans
+    // détection de conflit fichier par fichier, contrairement à
+    // applyRemoteRename()).
+    if (!QDir(oldAbsDir).exists() || QDir(newAbsDir).exists()) {
+        qWarning() << "[FolderSync] DirectoryRename : repli fichier par fichier pour"
+                   << oldRelativeDir << "->" << newRelativeDir
+                   << "(dossier source absent ou dossier cible déjà présent)";
+        const QString oldPrefix = oldRelativeDir + QLatin1Char('/');
+        for (const auto &file : m_fileRepository.getByFolderId(folder.id())) {
+            if (!file.relativePath().startsWith(oldPrefix)) continue;
+            const QString suffix = file.relativePath().mid(oldPrefix.length());
+            applyRemoteRename(folder, file.relativePath(), newRelativeDir + QLatin1Char('/') + suffix, machineId);
+        }
+        return;
+    }
+
+    // Chemin rapide (l'objectif du debrief #6) : UN seul renommage sur le
+    // disque pour tout le sous-arbre, au lieu d'un déplacement fichier par
+    // fichier (potentiellement des centaines d'accès disque + de lignes
+    // d'historique pour un seul geste utilisateur côté émetteur).
+    QDir().mkpath(QFileInfo(newAbsDir).absolutePath());
+    if (!QDir().rename(oldAbsDir, newAbsDir)) {
+        qWarning() << "[FolderSync] DirectoryRename : échec du renommage sur disque :"
+                   << oldAbsDir << "->" << newAbsDir;
+        return;
+    }
+
+    // Répercute le renommage sur chaque ligne SharedFiles concernée --
+    // simple mise à jour DB par fichier (pas de nouvel accès disque, le
+    // contenu a déjà été déplacé ci-dessus en une fois) et journalisation
+    // individuelle (nécessaire au rattrapage/replay par fichier d'un pair
+    // qui se reconnecterait plus tard, cf. handleFolderCatchupBatch()).
+    const QString oldPrefix = oldRelativeDir + QLatin1Char('/');
+    const QString newPrefix = newRelativeDir + QLatin1Char('/');
+    int movedCount = 0;
+    for (const auto &file : m_fileRepository.getByFolderId(folder.id())) {
+        if (!file.relativePath().startsWith(oldPrefix)) continue;
+
+        const QString oldRelativePath = file.relativePath();
+        const QString newRelativePath = newPrefix + oldRelativePath.mid(oldPrefix.length());
+
+        if (!m_fileRepository.renameFile(folder.id(), oldRelativePath, newRelativePath)) {
+            qWarning() << "[FolderSync] DirectoryRename : mise à jour DB échouée pour" << oldRelativePath;
+            continue;
+        }
+        ++movedCount;
+
+        const auto existing = m_fileRepository.findByRelativePath(folder.id(), newRelativePath);
+        if (existing.has_value()) {
+            models::FileSyncOperation op;
+            op.setType(models::SyncChangeType::Rename);
+            op.setFileId(existing->id());
+            op.setRelativePath(newRelativePath);
+            op.setOldRelativePath(oldRelativePath);
+            op.setMachineId(machineId);
+            if (!m_repository.insert(op).has_value()) {
+                qWarning() << "[FolderSync] SyncOperations insert (DirectoryRename) échoué pour" << newRelativePath
+                           << "-- erreur SQL:" << m_repository.lastError();
+            }
+        }
+    }
+
+    qDebug() << "[FolderSync] Renommage de dossier distant appliqué en 1 opération disque :"
+             << oldRelativeDir << "->" << newRelativeDir << "(" << movedCount << "fichiers)";
+    emit fileIntegrated(folder.uuid(), newRelativeDir, false);
 }
 
 // ---------------------------------------------------------------------------

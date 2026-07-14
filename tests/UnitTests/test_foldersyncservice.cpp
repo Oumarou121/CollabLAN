@@ -885,6 +885,83 @@ private slots:
         delete svc;
         delete db;
     }
+
+    // ------------------------------------------------------------------
+    // Debrief #6 : folder_op DirectoryRename -- un sous-dossier entier
+    // déplacé en UNE seule opération disque (QDir::rename) et une seule
+    // mise à jour DB par fichier, plutôt qu'un déplacement fichier par
+    // fichier.
+    // ------------------------------------------------------------------
+    void receiveFolderOpDirectoryRename_movesWholeSubtreeInOneDiskOperation()
+    {
+        QTemporaryDir dbDir, folderDir;
+        QVERIFY(dbDir.isValid() && folderDir.isValid());
+
+        const QString dbPath = dbDir.filePath(QStringLiteral("fss_dirrename_%1.sqlite")
+            .arg(QRandomGenerator::global()->generate()));
+        auto *db = openRealDb(QStringLiteral("fss_dirrename"), dbPath);
+        QVERIFY(db);
+
+        core::SharedFolderManager mgr(db);
+        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), 0);
+        QVERIFY(folder.has_value());
+        const qint64 folderId = folder->id();
+
+        QVERIFY(QDir(folderDir.path()).mkpath(QStringLiteral("drafts")));
+        const QByteArray contentA = QByteArrayLiteral("contenu a");
+        const QByteArray contentB = QByteArrayLiteral("contenu b");
+        {
+            QFile fa(folderDir.filePath(QStringLiteral("drafts/a.txt")));
+            QVERIFY(fa.open(QIODevice::WriteOnly));
+            fa.write(contentA);
+            QFile fb(folderDir.filePath(QStringLiteral("drafts/b.txt")));
+            QVERIFY(fb.open(QIODevice::WriteOnly));
+            fb.write(contentB);
+        }
+        QVERIFY(mgr.shareFolder(folderId).has_value());
+        QCOMPARE(mgr.getFiles(folderId).size(), 2);
+
+        auto *svc = new core::sync::FolderSyncService(db, &mgr, this);
+        svc->setLocalMachineId(QStringLiteral("machine-local"));
+        QSignalSpy spy(svc, &core::sync::FolderSyncService::fileIntegrated);
+
+        QJsonObject obj;
+        obj[QStringLiteral("type")]              = QStringLiteral("folder_op");
+        obj[QStringLiteral("folder_uuid")]       = folder->uuid();
+        obj[QStringLiteral("op_type")]           = QStringLiteral("DirectoryRename");
+        obj[QStringLiteral("relative_path")]     = QStringLiteral("final");
+        obj[QStringLiteral("old_relative_path")] = QStringLiteral("drafts");
+        obj[QStringLiteral("machine_id")]        = QStringLiteral("machine-remote");
+        const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+
+        QMetaObject::invokeMethod(svc, "onClientMessageReceived",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QString, json));
+
+        // Le sous-dossier entier a été déplacé en un seul renommage disque :
+        // l'ancien dossier n'existe plus, le nouveau contient les 2 fichiers.
+        QVERIFY(!QDir(folderDir.filePath(QStringLiteral("drafts"))).exists());
+        QVERIFY(QFile::exists(folderDir.filePath(QStringLiteral("final/a.txt"))));
+        QVERIFY(QFile::exists(folderDir.filePath(QStringLiteral("final/b.txt"))));
+        {
+            QFile fa(folderDir.filePath(QStringLiteral("final/a.txt")));
+            QVERIFY(fa.open(QIODevice::ReadOnly));
+            QCOMPARE(fa.readAll(), contentA);
+        }
+
+        database::SharedFileRepository fileRepo(db->database());
+        QVERIFY(!fileRepo.findByRelativePath(folderId, QStringLiteral("drafts/a.txt")).has_value());
+        QVERIFY(!fileRepo.findByRelativePath(folderId, QStringLiteral("drafts/b.txt")).has_value());
+        QVERIFY(fileRepo.findByRelativePath(folderId, QStringLiteral("final/a.txt")).has_value());
+        QVERIFY(fileRepo.findByRelativePath(folderId, QStringLiteral("final/b.txt")).has_value());
+
+        // Un seul fileIntegrated pour tout le sous-arbre déplacé (pas un par
+        // fichier) : cohérent avec le "1 opération au lieu de N" recherché.
+        QCOMPARE(spy.count(), 1);
+
+        delete svc;
+        delete db;
+    }
     // ============================================================
     // Enforcement de la révocation d'accès (Release post-R8).
     // ============================================================

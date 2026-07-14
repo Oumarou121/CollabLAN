@@ -370,6 +370,24 @@ private:
     void applyRemoteRename(const models::SharedFolder &folder, const QString &oldRelativePath,
                           const QString &newRelativePath, const QString &machineId);
 
+    /**
+     * @brief Applique localement un déplacement de SOUS-DOSSIER ENTIER
+     *        distant (folder_op DirectoryRename, debrief point #6).
+     *
+     * oldRelativeDir/newRelativeDir sont des chemins de DOSSIERS (pas de
+     * fichiers) : contrairement à applyRemoteRename() (un fichier à la
+     * fois), cette méthode déplace tout le sous-arbre EN UNE SEULE
+     * opération disque (QDir::rename()) quand le dossier source existe
+     * déjà localement, puis répercute le renommage sur chaque ligne
+     * SharedFiles concernée (mise à jour DB uniquement, pas de nouvel
+     * accès disque par fichier). Se replie sur un renommage fichier par
+     * fichier (applyRemoteRename()) si le sous-dossier source est
+     * introuvable localement ou si la cible existe déjà (évite d'écraser
+     * un contenu local par un renommage de dossier "en gros").
+     */
+    void applyRemoteDirectoryRename(const models::SharedFolder &folder, const QString &oldRelativeDir,
+                                    const QString &newRelativeDir, const QString &machineId);
+
     /// Construit le JSON d'un folder_op à partir d'une FileSyncOperation déjà
     /// hydratée (relativePath renseigné via JOIN de getByFolderId).
     QJsonObject buildFolderOpJson(const models::FileSyncOperation &op,
