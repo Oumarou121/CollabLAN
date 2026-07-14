@@ -477,12 +477,14 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
 
     // Un transfert termine ou en echec declenche une notification
     // (toast + son "transfert"). Exception : un transfert declenche par la
-    // synchronisation d'un dossier partage (m_folderSyncService le sait via
-    // isFolderTransfer()) n'affiche PAS sa propre notification -- sinon
-    // partager un dossier de N fichiers afficherait N toasts. Ces
+    // synchronisation d'un dossier partage -- que ce soit une reception ou
+    // un envoi en reponse a un folder_file_request d'un pair, dans les deux
+    // cas m_folderSyncService le sait via isFolderTransfer() -- n'affiche
+    // PAS sa propre notification, sinon partager un dossier de N fichiers
+    // afficherait N toasts (cote destinataire ET cote expediteur). Ces
     // transferts sont regroupes en une seule notification "N fichiers
-    // recus" via FolderSyncService::folderFilesReceived (cf. plus bas,
-    // une fois m_folderSyncService cree).
+    // recus" (folderFilesReceived) ou "N fichiers envoyes" (folderFilesSent)
+    // via FolderSyncService (cf. plus bas, une fois m_folderSyncService cree).
     connect(m_transferService, &network::TransferService::transferCompleted,
             this, [this](const QString &transferKey, const QString &filePath) {
                 if (m_folderSyncService && m_folderSyncService->isFolderTransfer(transferKey)) {
@@ -887,6 +889,15 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // TransferService::transferCompleted).
     connect(m_folderSyncService, &core::sync::FolderSyncService::folderFilesReceived,
             m_notificationManager, &core::NotificationManager::onFolderFilesReceived);
+
+    // Symétrique côté expéditeur : une seule notification "N fichiers
+    // envoyés" par rafale d'envois répondant à des folder_file_request pour
+    // un même dossier partagé (cf. FolderSyncService::scheduleFolderSentNotification),
+    // au lieu d'une notification par fichier -- le filtre isFolderTransfer()
+    // sur la connexion de TransferService::transferCompleted plus haut couvre
+    // désormais aussi ces transferts sortants.
+    connect(m_folderSyncService, &core::sync::FolderSyncService::folderFilesSent,
+            m_notificationManager, &core::NotificationManager::onFolderFilesSent);
 }
 
 core::UserManager *Application::userManager() const

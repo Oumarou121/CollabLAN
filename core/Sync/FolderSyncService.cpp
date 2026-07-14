@@ -819,10 +819,22 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
         }
         const bool ok = m_transferService->sendFile(
             targetAddress, requesterPort, absPath, m_machineId, requesterMachineId);
-        if (!ok)
+        if (!ok) {
             qWarning() << "[FolderSync] sendFile échoué pour" << absPath;
-        else
+        } else {
             qDebug() << "[FolderSync] Envoi de" << relativePath << "vers" << targetAddress;
+
+            // Enregistre cette réponse à un folder_file_request pour que
+            // onTransferStarted() puisse corréler le transfert SORTANT
+            // correspondant : cela permet à isFolderTransfer() de le
+            // reconnaître et de le regrouper dans une seule notification
+            // "N fichiers envoyés" (scheduleFolderSentNotification) au lieu
+            // d'une notification par fichier (cf. NotificationManager::
+            // onTransferCompleted, appelé sinon pour chaque fichier envoyé).
+            const QString fileName = QFileInfo(absPath).fileName();
+            const QString pendingKey = requesterMachineId + QStringLiteral("::") + fileName;
+            m_pendingOutgoingByKey.insert(pendingKey, folderUuid);
+        }
         return;
     }
     qWarning() << "[FolderSync] folder_file_request : dossier" << folderUuid << "introuvable";
@@ -1123,11 +1135,25 @@ void FolderSyncService::onTransferStarted(const QString &transferKey,
                                            bool incoming,
                                            qint64 /*resumeOffset*/,
                                            const QString &/*senderUuid*/,
-                                           const QString &/*recipientUuid*/,
+                                           const QString &recipientUuid,
                                            const QHostAddress &/*peerAddress*/,
                                            const QString &peerMachineId)
 {
-    if (!incoming) return; // On ne s'occupe que des réceptions.
+    if (!incoming) {
+        // Sens ENVOI : cherche une réponse à folder_file_request en attente
+        // dont le destinataire (recipientUuid porte ici le machineId du
+        // demandeur, cf. handleFolderFileRequest()) et le nom de fichier
+        // correspondent à ce transfert sortant.
+        const QString pendingKey = recipientUuid + QStringLiteral("::") + fileName;
+        const auto it = m_pendingOutgoingByKey.find(pendingKey);
+        if (it == m_pendingOutgoingByKey.end()) return;
+
+        m_activeOutgoingByTransferKey.insert(transferKey, it.value());
+        m_pendingOutgoingByKey.erase(it);
+
+        qDebug() << "[FolderSync] Transfert sortant" << transferKey << "corrélé à" << fileName;
+        return;
+    }
 
     // Cherche une demande en attente dont l'expéditeur et le nom de fichier
     // correspondent à ce transfert entrant.
@@ -1145,6 +1171,18 @@ void FolderSyncService::onTransferStarted(const QString &transferKey,
 void FolderSyncService::onTransferCompleted(const QString &transferKey,
                                              const QString &filePath)
 {
+    // Sens ENVOI : réponse à un folder_file_request qui vient de se terminer
+    // -- regroupe en une seule notification "N fichiers envoyés" plutôt que
+    // d'intégrer quoi que ce soit (rien à intégrer, ce fichier existait déjà
+    // localement puisque c'est nous qui l'avons envoyé).
+    const auto oit = m_activeOutgoingByTransferKey.find(transferKey);
+    if (oit != m_activeOutgoingByTransferKey.end()) {
+        const QString folderUuid = oit.value();
+        m_activeOutgoingByTransferKey.erase(oit);
+        scheduleFolderSentNotification(folderUuid);
+        return;
+    }
+
     const auto it = m_activeByTransferKey.find(transferKey);
     if (it == m_activeByTransferKey.end()) return; // Pas un transfert folder-sync.
 
@@ -1156,7 +1194,8 @@ void FolderSyncService::onTransferCompleted(const QString &transferKey,
 
 bool FolderSyncService::isFolderTransfer(const QString &transferKey) const
 {
-    return m_activeByTransferKey.contains(transferKey);
+    return m_activeByTransferKey.contains(transferKey)
+        || m_activeOutgoingByTransferKey.contains(transferKey);
 }
 
 void FolderSyncService::scheduleFolderNotification(const QString &folderUuid)
@@ -1184,6 +1223,34 @@ void FolderSyncService::scheduleFolderNotification(const QString &folderUuid)
     // Redémarre le minuteur à chaque fichier reçu : la notification ne part
     // qu'une fois la rafale terminée (~800ms de silence), plutôt qu'une par
     // fichier (cf. NotificationManager::onTransferCompleted).
+    timer->start(800);
+}
+
+void FolderSyncService::scheduleFolderSentNotification(const QString &folderUuid)
+{
+    m_pendingSentCounts[folderUuid] = m_pendingSentCounts.value(folderUuid, 0) + 1;
+
+    QTimer *timer = m_sentNotifyTimers.value(folderUuid, nullptr);
+    if (!timer) {
+        timer = new QTimer(this);
+        timer->setSingleShot(true);
+        connect(timer, &QTimer::timeout, this, [this, folderUuid]() {
+            const int count = m_pendingSentCounts.take(folderUuid);
+            if (count <= 0) return;
+
+            QString folderName = folderUuid;
+            if (m_folderManager) {
+                if (const auto folder = m_folderManager->getFolderByUuid(folderUuid); folder.has_value()) {
+                    folderName = folder->name();
+                }
+            }
+            emit folderFilesSent(folderUuid, folderName, count);
+        });
+        m_sentNotifyTimers.insert(folderUuid, timer);
+    }
+    // Même logique anti-rebond que scheduleFolderNotification() : redémarre
+    // le minuteur à chaque fichier envoyé, la notification ne part qu'une
+    // fois la rafale terminée (~800ms de silence), plutôt qu'une par fichier.
     timer->start(800);
 }
 

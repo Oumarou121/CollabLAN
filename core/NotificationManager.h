@@ -60,6 +60,14 @@ public slots:
     /// (TransferService::transferCompleted en émet un par fichier).
     void onFolderFilesReceived(const QString &folderUuid, const QString &folderName, int fileCount);
 
+    /// Notification groupée "N fichiers envoyés" pour une rafale de fichiers
+    /// envoyés en réponse à des folder_file_request lors d'un partage de
+    /// dossier (cf. FolderSyncService::folderFilesSent), symétrique de
+    /// onFolderFilesReceived() côté destinataire, au lieu d'une notification
+    /// par fichier (TransferService::transferCompleted en émet un par fichier
+    /// côté expéditeur aussi).
+    void onFolderFilesSent(const QString &folderUuid, const QString &folderName, int fileCount);
+
 signals:
     /// Emis lorsqu'une notification doit être affichée (toast) et/ou
     /// sonorisee par l'UI. category identifie le type d'evenement

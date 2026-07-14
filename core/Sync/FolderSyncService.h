@@ -235,6 +235,16 @@ signals:
      */
     void folderFilesReceived(const QString &folderUuid, const QString &folderName, int fileCount);
 
+    /**
+     * @brief Émis groupé (anti-rebond) après une rafale de fichiers envoyés
+     *        (côté propriétaire/expéditeur) pour un même dossier partagé, en
+     *        réponse à des folder_file_request, afin qu'une seule notification
+     *        "N fichiers envoyés" soit affichée plutôt qu'une par fichier
+     *        (cf. NotificationManager::onFolderFilesSent, symétrique de
+     *        folderFilesReceived côté destinataire).
+     */
+    void folderFilesSent(const QString &folderUuid, const QString &folderName, int fileCount);
+
 public slots:
     /**
      * @brief À connecter sur SyncEngine::folderReindexed.
@@ -272,8 +282,14 @@ public slots:
      * Utilisé par app/Application.cpp pour éviter d'afficher une
      * notification par fichier lors d'un partage de dossier (les fichiers
      * "folder-sync" sont regroupés en une seule notification via
-     * folderFilesReceived() ; seuls les transferts manuels gardent leur
-     * notification individuelle "Transfert terminé").
+     * folderFilesReceived() côté destinataire, ou folderFilesSent() côté
+     * expéditeur ; seuls les transferts manuels gardent leur notification
+     * individuelle "Transfert terminé").
+     *
+     * Couvre les deux sens : un transfert entrant corrélé via
+     * onTransferStarted()/m_activeByTransferKey (réception), ou un transfert
+     * sortant déclenché par handleFolderFileRequest()/m_activeOutgoingByTransferKey
+     * (envoi, réponse à un folder_file_request d'un pair).
      *
      * IMPORTANT : doit être appelé AVANT onTransferCompleted() pour le même
      * transferKey (qui retire l'entrée correspondante) -- voir l'ordre de
@@ -420,6 +436,12 @@ private:
     /// dossier avant d'émettre folderFilesReceived() -- voir isFolderTransfer().
     void scheduleFolderNotification(const QString &folderUuid);
 
+    /// Symétrique de scheduleFolderNotification() côté expéditeur : regroupe
+    /// (anti-rebond ~800ms) les fichiers envoyés en réponse à des
+    /// folder_file_request pour un même dossier avant d'émettre
+    /// folderFilesSent() -- voir isFolderTransfer() et handleFolderFileRequest().
+    void scheduleFolderSentNotification(const QString &folderUuid);
+
     /// Calcule le SHA-256 hex d'un fichier sur disque. Retourne "" en cas d'erreur.
     static QString computeHash(const QString &filePath);
 
@@ -457,6 +479,24 @@ private:
     QHash<QString, int> m_pendingNotifyCounts;
     // Clé : folderUuid → minuteur anti-rebond associé.
     QHash<QString, QTimer *> m_notifyTimers;
+
+    // Suivi symétrique côté ENVOI (expéditeur/propriétaire répondant à des
+    // folder_file_request) -- permet à isFolderTransfer() de reconnaître ces
+    // transferts sortants et de les regrouper en une seule notification
+    // "N fichiers envoyés" au lieu d'une par fichier.
+    // Clé : "<recipientUuid>::<fileName>" → folderUuid, enregistrée juste
+    // après l'appel à TransferService::sendFile() dans handleFolderFileRequest().
+    // (recipientUuid porte ici le machineId du demandeur, cf. sendFile() appelé
+    // avec requesterMachineId en 5e argument -- pas de peerMachineId disponible
+    // côté envoi, voir TransferService::onClientSocketConnected().)
+    QHash<QString, QString> m_pendingOutgoingByKey;
+    // Clé : transferKey (UUID) → folderUuid, construit lors de onTransferStarted()
+    // une fois le transfert sortant corrélé à sa demande.
+    QHash<QString, QString> m_activeOutgoingByTransferKey;
+    // Clé : folderUuid → nombre de fichiers envoyés depuis le dernier signal.
+    QHash<QString, int> m_pendingSentCounts;
+    // Clé : folderUuid → minuteur anti-rebond associé (envoi).
+    QHash<QString, QTimer *> m_sentNotifyTimers;
 };
 
 } // namespace core::sync

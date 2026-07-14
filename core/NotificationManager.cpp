@@ -132,4 +132,20 @@ void NotificationManager::onFolderFilesReceived(const QString &folderUuid, const
     emit notificationRequested(title, message, QStringLiteral("transfer"));
 }
 
+void NotificationManager::onFolderFilesSent(const QString &folderUuid, const QString &folderName, int fileCount)
+{
+    Q_UNUSED(folderUuid);
+
+    if (!m_notificationsEnabled || fileCount <= 0) {
+        return;
+    }
+
+    const QString title = QStringLiteral("Dossier envoyé");
+    const QString message = fileCount == 1
+        ? QStringLiteral("1 fichier envoyé depuis \"%1\"").arg(folderName)
+        : QStringLiteral("%1 fichiers envoyés depuis \"%2\"").arg(fileCount).arg(folderName);
+
+    emit notificationRequested(title, message, QStringLiteral("transfer"));
+}
+
 } // namespace core
