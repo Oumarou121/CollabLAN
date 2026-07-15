@@ -487,6 +487,14 @@ private:
     /// dossier avant d'émettre folderFilesReceived() -- voir isFolderTransfer().
     void scheduleFolderNotification(const QString &folderUuid);
 
+    /// Émet folderFilesReceived() immédiatement pour folderUuid (arrête le
+    /// timer d'anti-rebond en cours s'il y en a un) et nettoie l'état de
+    /// notification/progression associé. Factorise la logique commune entre
+    /// le timeout du timer de scheduleFolderNotification() et la détection
+    /// de fin de rafale exacte (filesCompleted == filesExpected, cf.
+    /// onTransferCompleted()). No-op si aucune notification n'est en attente.
+    void flushFolderNotification(const QString &folderUuid);
+
     /// Symétrique de scheduleFolderNotification() côté expéditeur : regroupe
     /// (anti-rebond ~800ms) les fichiers envoyés en réponse à des
     /// folder_file_request pour un même dossier avant d'émettre
@@ -499,6 +507,18 @@ private:
     struct BatchProgress {
         int filesTotal = 0;
         int filesCompleted = 0;
+        /// Nombre de fichiers réellement demandés (requestRemoteFile() déjà
+        /// appelé) pour la rafale ENTRANTE en cours -- contrairement à
+        /// filesTotal (incrémenté de façon asynchrone, fichier par fichier,
+        /// à chaque démarrage réel de transfert dans onTransferStarted()),
+        /// filesExpected est connu de façon synchrone et fiable dès le
+        /// traitement de folder_catchup_batch/folder_resync_request (cf.
+        /// handleFolderCatchupBatch() -> requestRemoteFile()). Permet de
+        /// détecter la fin exacte d'une rafale sans attendre le debounce de
+        /// 800ms (cf. scheduleFolderNotification()). Non utilisé côté envoi
+        /// (m_sentProgress) : l'expéditeur ne connaît jamais à l'avance le
+        /// nombre total de folder_file_request qu'il va recevoir.
+        int filesExpected = 0;
         qint64 bytesTotal = 0;
         /// Somme des tailles des fichiers déjà terminés dans la rafale.
         qint64 bytesCompletedSum = 0;

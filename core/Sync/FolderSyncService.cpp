@@ -1379,6 +1379,11 @@ void FolderSyncService::requestRemoteFile(const QString &folderUuid,
         pending.incomingHash     = incomingHash;
         pending.incomingVersion  = incomingVersion;
         m_pendingByKey.insert(pendingKey, pending);
+
+        // Connu de façon synchrone et fiable ici, contrairement à
+        // filesTotal (cf. commentaire BatchProgress::filesExpected) : permet
+        // à onTransferCompleted() de détecter la fin exacte d'une rafale.
+        m_receiveProgress[folderUuid].filesExpected++;
     }
 
     qDebug() << "[FolderSync] Demande de fichier :" << relativePath << "de" << ownerMachineId;
@@ -1462,6 +1467,20 @@ void FolderSyncService::onTransferCompleted(const QString &transferKey,
     emitBatchProgress(pending.folderUuid, true);
 
     integrateReceivedFile(pending, filePath);
+
+    // Fin exacte de rafale : si tous les fichiers annoncés jusqu'ici ont été
+    // demandés ET reçus, pas besoin d'attendre le silence de 800ms
+    // (scheduleFolderNotification(), appelé par integrateReceivedFile()
+    // ci-dessus, vient de (re)démarrer ce timer) -- on notifie tout de
+    // suite. filesExpected > 0 exclut le cas où aucune demande n'a encore
+    // été enregistrée pour ce dossier (progression déjà nettoyée par un
+    // flush précédent, ou fichier hors rafale de catchup).
+    const auto progIt = m_receiveProgress.constFind(pending.folderUuid);
+    if (progIt != m_receiveProgress.constEnd()
+        && progIt.value().filesExpected > 0
+        && progIt.value().filesCompleted >= progIt.value().filesExpected) {
+        flushFolderNotification(pending.folderUuid);
+    }
 }
 
 void FolderSyncService::onTransferProgress(const QString &transferKey,
@@ -1552,30 +1571,44 @@ void FolderSyncService::scheduleFolderNotification(const QString &folderUuid)
         timer = new QTimer(this);
         timer->setSingleShot(true);
         connect(timer, &QTimer::timeout, this, [this, folderUuid]() {
-            const int count = m_pendingNotifyCounts.take(folderUuid);
-            if (count <= 0) return;
-
-            QString folderName = folderUuid;
-            if (m_folderManager) {
-                if (const auto folder = m_folderManager->getFolderByUuid(folderUuid); folder.has_value()) {
-                    folderName = folder->name();
-                }
-            }
-            emit folderFilesReceived(folderUuid, folderName, count);
-
-            // La rafale est terminée (~800ms de silence) : la notification
-            // finale ci-dessus vient d'être émise, la barre de progression
-            // globale de l'UI peut donc disparaître. On retire l'état de
-            // progression pour que la PROCHAINE rafale reparte de zéro
-            // plutôt que de reprendre les compteurs de celle-ci.
-            m_receiveProgress.remove(folderUuid);
+            flushFolderNotification(folderUuid);
         });
         m_notifyTimers.insert(folderUuid, timer);
     }
     // Redémarre le minuteur à chaque fichier reçu : la notification ne part
     // qu'une fois la rafale terminée (~800ms de silence), plutôt qu'une par
-    // fichier (cf. NotificationManager::onTransferCompleted).
+    // fichier (cf. NotificationManager::onTransferCompleted). Filet de
+    // sécurité : si filesExpected est correct, flushFolderNotification()
+    // sera en réalité déclenché plus tôt, dès la fin exacte de la rafale
+    // (cf. onTransferCompleted()) -- ce timer ne sert alors que pour les cas
+    // où filesExpected sous-évalue le total réel (pair injoignable, rafale
+    // partiellement annoncée, etc.).
     timer->start(800);
+}
+
+void FolderSyncService::flushFolderNotification(const QString &folderUuid)
+{
+    if (QTimer *timer = m_notifyTimers.value(folderUuid, nullptr)) {
+        timer->stop();
+    }
+
+    const int count = m_pendingNotifyCounts.take(folderUuid);
+    if (count <= 0) return;
+
+    QString folderName = folderUuid;
+    if (m_folderManager) {
+        if (const auto folder = m_folderManager->getFolderByUuid(folderUuid); folder.has_value()) {
+            folderName = folder->name();
+        }
+    }
+    emit folderFilesReceived(folderUuid, folderName, count);
+
+    // La rafale est terminée : la notification finale ci-dessus vient d'être
+    // émise, la barre de progression globale de l'UI peut donc disparaître.
+    // On retire l'état de progression pour que la PROCHAINE rafale reparte
+    // de zéro (y compris filesExpected) plutôt que de reprendre les
+    // compteurs de celle-ci.
+    m_receiveProgress.remove(folderUuid);
 }
 
 void FolderSyncService::scheduleFolderSentNotification(const QString &folderUuid)
