@@ -30,6 +30,8 @@ Item {
     property var openedFolderId: -1
     property bool openedFolderIsLocalOrigin: true
     property var currentFiles: []
+    property var browserItems: []
+    property string browsedRelativePath: ""
     property var currentSyncHistory: []
     property bool showHistory: false
 
@@ -75,6 +77,7 @@ Item {
         root.openedFolderUuid = uuid
         root.showHistory = false
         root.conflictedFiles = {}   // reset des conflits a l'ouverture
+        root.browsedRelativePath = ""
         root.refreshFiles()
         root.refreshHistory()
     }
@@ -88,10 +91,56 @@ Item {
                 conflictMap[conflicts[i].relativePath] = conflicts[i].conflictPath
             }
             root.conflictedFiles = conflictMap
+            root.rebuildFileBrowser()
         } else {
             root.currentFiles = []
             root.conflictedFiles = {}
+            root.browserItems = []
         }
+    }
+
+    function rebuildFileBrowser() {
+        const folders = {}
+        const files = []
+        const prefix = root.browsedRelativePath.length > 0 ? root.browsedRelativePath + "/" : ""
+
+        for (let i = 0; i < root.currentFiles.length; ++i) {
+            const file = root.currentFiles[i]
+            if (!file.relativePath.startsWith(prefix)) {
+                continue
+            }
+            const remainingPath = file.relativePath.slice(prefix.length)
+            const separatorIndex = remainingPath.indexOf("/")
+            if (separatorIndex >= 0) {
+                const name = remainingPath.slice(0, separatorIndex)
+                const path = prefix + name
+                if (!folders[path]) {
+                    folders[path] = { kind: "folder", name: name, path: path, count: 0 }
+                }
+                folders[path].count++
+            } else {
+                files.push({ kind: "file", name: remainingPath, relativePath: file.relativePath,
+                             size: file.size, version: file.version })
+            }
+        }
+
+        const folderItems = Object.keys(folders).map(function(path) { return folders[path] })
+        folderItems.sort(function(left, right) { return left.name.localeCompare(right.name) })
+        files.sort(function(left, right) { return left.name.localeCompare(right.name) })
+        root.browserItems = folderItems.concat(files)
+    }
+
+    function openBrowserFolder(path) {
+        root.browsedRelativePath = path
+        root.rebuildFileBrowser()
+    }
+
+    function goUpInBrowser() {
+        const separatorIndex = root.browsedRelativePath.lastIndexOf("/")
+        root.browsedRelativePath = separatorIndex >= 0
+            ? root.browsedRelativePath.slice(0, separatorIndex)
+            : ""
+        root.rebuildFileBrowser()
     }
 
     function refreshHistory() {
@@ -254,6 +303,7 @@ Item {
             const updated = Object.assign({}, root.conflictedFiles)
             updated[relativePath] = conflictPath
             root.conflictedFiles = updated
+            root.rebuildFileBrowser()
             conflictBanner.show(relativePath, conflictPath)
         }
     }
@@ -1215,7 +1265,11 @@ Item {
                     }
                     onClicked: {
                         if (root.openedFolderId >= 0) {
-                            root.openedFolderId = -1
+                            if (root.browsedRelativePath.length > 0) {
+                                root.goUpInBrowser()
+                            } else {
+                                root.openedFolderId = -1
+                            }
                         } else {
                             root.backRequested()
                         }
@@ -1369,16 +1423,18 @@ Item {
             Layout.fillHeight: true
             clip: true
 
-            ListView {
+            GridView {
                 id: filesListView
                 anchors.fill: parent
                 anchors.margins: Theme.spacingMedium
-                spacing: 2
-                model: root.currentFiles
+                cellWidth: 148
+                cellHeight: 144
+                model: root.browserItems
 
                 header: Rectangle {
                     width: filesListView.width
-                    height: 32
+                    height: 0
+                    visible: false
                     color: Theme.surfaceAlt
                     border.width: 1
                     border.color: Theme.border
@@ -1395,15 +1451,31 @@ Item {
 
                 delegate: Rectangle {
                     id: fileRow
-                    width: filesListView.width
-                    height: hasConflict ? 90 : 36
+                    width: filesListView.cellWidth
+                    height: filesListView.cellHeight
                     color: fileMouseArea.containsMouse ? Theme.surfaceHover : "transparent"
 
                     // true si ce fichier a un conflit en attente de résolution
-                    readonly property bool hasConflict: root.conflictedFiles.hasOwnProperty(modelData.relativePath)
+                    readonly property bool isFolder: modelData.kind === "folder"
+                    readonly property bool hasConflict: !isFolder
+                        && root.conflictedFiles.hasOwnProperty(modelData.relativePath)
                     readonly property string conflictPath: hasConflict ? root.conflictedFiles[modelData.relativePath] : ""
+                    border.width: isFolder ? 0 : 1
+                    border.color: Theme.border
+
+                    FolderTile {
+                        visible: fileRow.isFolder
+                        anchors.centerIn: parent
+                        label: modelData.name
+                        sublabel: fileRow.isFolder && modelData.count === 1 ? qsTr("1 fichier")
+                                                                             : qsTr("%1 fichiers").arg(fileRow.isFolder ? modelData.count : 0)
+                        count: fileRow.isFolder ? modelData.count : 0
+                        accentColor: Theme.colorForName(modelData.name)
+                        onOpened: root.openBrowserFolder(modelData.path)
+                    }
 
                     ColumnLayout {
+                        visible: !fileRow.isFolder
                         anchors.fill: parent
                         anchors.leftMargin: Theme.spacingSmall
                         anchors.rightMargin: Theme.spacingSmall
@@ -1413,6 +1485,18 @@ Item {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             spacing: Theme.spacingSmall
+
+                            Item {
+                                Layout.preferredWidth: 0
+                            }
+
+                            Label {
+                                visible: false
+                                Layout.preferredWidth: 0
+                                text: ""
+                                color: Theme.textSecondary
+                                font.pixelSize: Theme.fontSizeCaption
+                            }
 
                             // Badge conflit — icône ⚠ ambrée sur la gauche du nom
                             Rectangle {
@@ -1435,21 +1519,21 @@ Item {
 
                             Label {
                                 Layout.fillWidth: true
-                                text: modelData.relativePath
+                                text: modelData.name
                                 color: fileRow.hasConflict ? "#C07000" : Theme.text
                                 font.pixelSize: Theme.fontSizeSmall
-                                font.bold: fileRow.hasConflict
+                                font.bold: fileRow.hasConflict || fileRow.isFolder
                                 elide: Text.ElideMiddle
                             }
                             Label {
-                                Layout.preferredWidth: 90
-                                text: root.formatBytes(modelData.size)
+                                Layout.preferredWidth: 40
+                                text: fileRow.isFolder ? "" : root.formatBytes(modelData.size)
                                 color: Theme.textSecondary
                                 font.pixelSize: Theme.fontSizeSmall
                             }
                             Label {
-                                Layout.preferredWidth: 60
-                                text: "v" + modelData.version
+                                Layout.preferredWidth: 26
+                                text: fileRow.isFolder ? "" : "v" + modelData.version
                                 color: Theme.textSecondary
                                 font.pixelSize: Theme.fontSizeSmall
                             }
@@ -1508,6 +1592,7 @@ Item {
 
                     MouseArea {
                         id: fileMouseArea
+                        visible: !fileRow.isFolder
                         anchors.fill: parent
                         hoverEnabled: true
                         acceptedButtons: Qt.NoButton
