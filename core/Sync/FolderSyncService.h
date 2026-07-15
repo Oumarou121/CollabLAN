@@ -245,6 +245,31 @@ signals:
      */
     void folderFilesSent(const QString &folderUuid, const QString &folderName, int fileCount);
 
+    /**
+     * @brief Progression agrégée d'une rafale de transferts de synchronisation
+     *        pour un même dossier partagé (réception OU envoi), émis à chaque
+     *        fichier qui démarre/progresse/se termine pendant la rafale.
+     *
+     * Permet à l'UI d'afficher UNE SEULE barre de progression globale pour
+     * tout le lot (ex: partage d'un dossier de 40 fichiers) plutôt qu'un
+     * indicateur par fichier -- symétrique de folderFilesReceived/
+     * folderFilesSent, mais émis en temps réel PENDANT la rafale plutôt
+     * qu'une fois à la fin (cf. NotificationManager, qui reste la source de
+     * la notification finale une fois la rafale terminée).
+     *
+     * @param incoming         true = réception, false = envoi (une rafale
+     *                         entrante et une rafale sortante peuvent être en
+     *                         cours simultanément pour le même dossier).
+     * @param filesCompleted   Nombre de fichiers déjà terminés dans la rafale en cours.
+     * @param filesTotal       Nombre total de fichiers annoncés jusqu'ici dans la rafale.
+     * @param bytesTransferred Octets transférés cumulés (fichiers terminés + progression
+     *                         des transferts encore actifs).
+     * @param bytesTotal       Taille cumulée de tous les fichiers de la rafale.
+     */
+    void folderTransferProgress(const QString &folderUuid, const QString &folderName,
+                                 bool incoming, int filesCompleted, int filesTotal,
+                                 qint64 bytesTransferred, qint64 bytesTotal);
+
 public slots:
     /**
      * @brief À connecter sur SyncEngine::folderReindexed.
@@ -273,6 +298,14 @@ public slots:
      * Intègre le fichier reçu dans le dossier partagé (copie, upsert, SyncOp).
      */
     void onTransferCompleted(const QString &transferKey, const QString &filePath);
+
+    /**
+     * @brief À connecter sur TransferService::transferProgress.
+     * Ne fait rien si transferKey ne correspond pas à un transfert
+     * folder-sync actif (cf. isFolderTransfer()) : sinon, met à jour la
+     * progression agrégée de la rafale en cours et émet folderTransferProgress().
+     */
+    void onTransferProgress(const QString &transferKey, qint64 bytesTransferred, qint64 totalBytes);
 
     /**
      * @brief Indique si transferKey correspond à un transfert déclenché par
@@ -460,6 +493,37 @@ private:
     /// folderFilesSent() -- voir isFolderTransfer() et handleFolderFileRequest().
     void scheduleFolderSentNotification(const QString &folderUuid);
 
+    /// État de progression agrégé d'une rafale de transferts folder-sync en
+    /// cours pour un dossier donné (réception OU envoi, deux instances
+    /// indépendantes -- voir m_receiveProgress/m_sentProgress).
+    struct BatchProgress {
+        int filesTotal = 0;
+        int filesCompleted = 0;
+        qint64 bytesTotal = 0;
+        /// Somme des tailles des fichiers déjà terminés dans la rafale.
+        qint64 bytesCompletedSum = 0;
+        /// transferKey -> taille annoncée, pour les transferts encore actifs.
+        QHash<QString, qint64> transferSizes;
+        /// transferKey -> octets transférés à ce jour, pour les transferts encore actifs.
+        QHash<QString, qint64> activeBytes;
+    };
+
+    /// Enregistre un nouveau fichier dans la rafale en cours pour folderUuid
+    /// (incrémente filesTotal/bytesTotal) -- appelé depuis onTransferStarted()
+    /// une fois le transfert corrélé à une PendingFileTransfer/folder_file_request.
+    void registerBatchTransfer(QHash<QString, BatchProgress> &store, const QString &folderUuid,
+                                const QString &transferKey, qint64 fileSize);
+
+    /// Marque un fichier de la rafale comme terminé (déplace sa taille de
+    /// transferSizes/activeBytes vers bytesCompletedSum, incrémente
+    /// filesCompleted) -- appelé depuis onTransferCompleted().
+    void completeBatchTransfer(QHash<QString, BatchProgress> &store, const QString &folderUuid,
+                                const QString &transferKey);
+
+    /// Émet folderTransferProgress() avec l'état courant de la rafale pour
+    /// folderUuid (no-op si aucune rafale n'est en cours pour ce dossier).
+    void emitBatchProgress(const QString &folderUuid, bool incoming);
+
     /// Calcule le SHA-256 hex d'un fichier sur disque. Retourne "" en cas d'erreur.
     static QString computeHash(const QString &filePath);
 
@@ -522,6 +586,15 @@ private:
     QHash<QString, int> m_pendingSentCounts;
     // Clé : folderUuid → minuteur anti-rebond associé (envoi).
     QHash<QString, QTimer *> m_sentNotifyTimers;
+
+    // Progression agrégée en temps réel des rafales folder-sync en cours,
+    // pour la barre de progression globale de l'UI (voir folderTransferProgress()).
+    // Clé : folderUuid. Vidé (entrée retirée) une fois la rafale terminée,
+    // càd au même moment que l'émission de folderFilesReceived()/
+    // folderFilesSent() (fin du minuteur anti-rebond ~800ms), pour que la
+    // rafale suivante reparte de zéro.
+    QHash<QString, BatchProgress> m_receiveProgress;
+    QHash<QString, BatchProgress> m_sentProgress;
 };
 
 } // namespace core::sync

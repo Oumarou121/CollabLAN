@@ -117,6 +117,25 @@ void SharedFolderContext::setFolderSyncService(core::sync::FolderSyncService *sv
                     refresh();
                     emit fileReceived(folderUuid, relativePath);
                 });
+
+        // Retransmet la progression agrégée d'une rafale de synchronisation
+        // (barre de progression globale de l'UI) telle quelle.
+        connect(m_folderSyncService, &core::sync::FolderSyncService::folderTransferProgress,
+                this, &SharedFolderContext::folderTransferProgress);
+
+        // Unifie folderFilesReceived/folderFilesSent (qui portent chacun le
+        // nombre final de fichiers, utile pour la notification texte mais
+        // pas pour la barre de progression) en un simple signal "fin de
+        // rafale" avec le sens (incoming), pour que l'UI sache quelle barre
+        // masquer sans avoir à comparer des noms de dossier.
+        connect(m_folderSyncService, &core::sync::FolderSyncService::folderFilesReceived,
+                this, [this](const QString &folderUuid, const QString & /*folderName*/, int /*fileCount*/) {
+                    emit folderTransferBatchFinished(folderUuid, true);
+                });
+        connect(m_folderSyncService, &core::sync::FolderSyncService::folderFilesSent,
+                this, [this](const QString &folderUuid, const QString & /*folderName*/, int /*fileCount*/) {
+                    emit folderTransferBatchFinished(folderUuid, false);
+                });
     }
 }
 

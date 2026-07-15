@@ -110,10 +110,13 @@ quint16 MessagingServer::port() const
     return m_server ? m_server->serverPort() : 0;
 }
 
-int MessagingServer::broadcastMessage(const QString &message)
+int MessagingServer::broadcastMessage(const QString &message, const QHostAddress &excludeAddress)
 {
     int sentCount = 0;
     for (QWebSocket *client : m_clients) {
+        if (!excludeAddress.isNull() && client->peerAddress() == excludeAddress) {
+            continue;
+        }
         client->sendTextMessage(message);
         ++sentCount;
     }

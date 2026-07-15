@@ -890,6 +890,14 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_transferService, &network::TransferService::transferCompleted,
             m_folderSyncService, &core::sync::FolderSyncService::onTransferCompleted);
 
+    // Alimente la progression agrégée d'une rafale de synchronisation de
+    // dossier (barre de progression globale de l'UI, cf. FolderSyncService::
+    // folderTransferProgress()) : no-op pour les transferts P2P manuels
+    // (isFolderTransfer() false), qui gardent leur suivi individuel existant
+    // via core::TransferContext (activeTransfers).
+    connect(m_transferService, &network::TransferService::transferProgress,
+            m_folderSyncService, &core::sync::FolderSyncService::onTransferProgress);
+
     // Journal de bord : log des opérations distantes reçues.
     connect(m_folderSyncService, &core::sync::FolderSyncService::remoteOpReceived,
             this, [](const QString &folderUuid, const QString &opType,

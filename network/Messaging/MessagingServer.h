@@ -40,7 +40,14 @@ public:
     /// (utilise pour la diffusion des messages de groupe : chaque membre
     /// connecte a ce poste recoit le message). Retourne le nombre de
     /// clients auxquels le message a effectivement ete envoye.
-    int broadcastMessage(const QString &message);
+    ///
+    /// @param excludeAddress Si non-null, le client dont l'adresse pair
+    ///        correspond a excludeAddress ne recoit PAS le message. Utilise
+    ///        par les relais de FolderSyncService (ex: folder_resync_request)
+    ///        pour eviter de renvoyer l'echo au client qui vient d'emettre
+    ///        le message d'origine (cf. debrief "relais resync_request").
+    int broadcastMessage(const QString &message,
+                          const QHostAddress &excludeAddress = QHostAddress());
 
     /// Port d'écoute.
     quint16 port() const;

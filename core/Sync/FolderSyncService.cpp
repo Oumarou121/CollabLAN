@@ -451,7 +451,7 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
         const QString opMachineId = obj[QStringLiteral("machine_id")].toString();
         if (opMachineId != m_machineId
             && m_messagingServer && m_messagingServer->isRunning()) {
-            m_messagingServer->broadcastMessage(message);
+            m_messagingServer->broadcastMessage(message, senderAddress);
         }
     }
     else if (type == QString::fromLatin1(kTypeFolderHello))
@@ -481,7 +481,11 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
         const QString originMachineId = obj[QStringLiteral("origin_machine_id")].toString();
         if (originMachineId != m_machineId
             && m_messagingServer && m_messagingServer->isRunning()) {
-            m_messagingServer->broadcastMessage(message);
+            // excludeAddress=senderAddress : evite de renvoyer l'echo au
+            // client qui vient d'emettre ce message (cf. debrief resync_request
+            // ci-dessous, meme correctif applique par coherence a tous les
+            // relais de ce bloc).
+            m_messagingServer->broadcastMessage(message, senderAddress);
         }
     }
     else if (type == QString::fromLatin1(kTypeAccessRevoked)) {
@@ -490,17 +494,29 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
         const QString originMachineId = obj[QStringLiteral("origin_machine_id")].toString();
         if (originMachineId != m_machineId
             && m_messagingServer && m_messagingServer->isRunning()) {
-            m_messagingServer->broadcastMessage(message);
+            m_messagingServer->broadcastMessage(message, senderAddress);
         }
     }
     else if (type == QString::fromLatin1(kTypeResyncRequest)) {
         handleFolderResyncRequest(obj);
         // Relais vers les autres clients (le proprietaire du dossier peut
         // etre un autre client de ce hub, pas nous) ; meme garde anti-boucle.
+        //
+        // CORRECTIF (debrief "0 Ko" / rafale resync_request) : le garde
+        // `requesterMachineId != m_machineId` ne protege QUE contre le cas
+        // ou CE HUB serait lui-meme le demandeur (impossible en pratique) --
+        // il n'empechait PAS de renvoyer l'echo du message au client qui
+        // vient de l'emettre, puisque son requesterMachineId n'est presque
+        // jamais egal a m_machineId (l'ID du hub). Chaque folder_resync_request
+        // recu etait donc systematiquement rebroadcast au client demandeur
+        // lui-meme, en plus d'etre traite par handleFolderResyncRequest()
+        // ci-dessus -- observe en pratique dans les logs (le SERVER recoit
+        // la meme requete de nombreuses fois de suite). On exclut desormais
+        // l'emetteur d'origine du relais via excludeAddress.
         const QString requesterMachineId = obj[QStringLiteral("requester_machine_id")].toString();
         if (requesterMachineId != m_machineId
             && m_messagingServer && m_messagingServer->isRunning()) {
-            m_messagingServer->broadcastMessage(message);
+            m_messagingServer->broadcastMessage(message, senderAddress);
         }
     }
     else if (type == QString::fromLatin1(kTypeCatchupBatch)) {
@@ -530,7 +546,7 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
         // topologie mesh).
         handleFolderCatchupBatch(obj);
         if (m_messagingServer && m_messagingServer->isRunning()) {
-            m_messagingServer->broadcastMessage(message);
+            m_messagingServer->broadcastMessage(message, senderAddress);
         }
     }
 }
@@ -1140,14 +1156,32 @@ void FolderSyncService::requestFolderResync(const QString &folderUuid)
     const qint64 sinceOpId = localOps.isEmpty() ? 0 : localOps.first().id();
 
     // Envoyer un resync request au propriétaire du dossier
+    //
+    // "force": true (CORRECTIF régression "0 Ko") : ce point d'entrée n'est
+    // appelé QUE lorsque localPath vient d'être défini (garde ci-dessus),
+    // c-à-d juste après que l'utilisateur ait accepté le partage
+    // (setFolderLocalPath()/acceptFolderShare()). Un premier resync_request
+    // "live" (handleFolderAccessGranted(), avant que localPath ne soit
+    // connu) a très probablement déjà eu lieu quelques secondes plus tôt et
+    // n'a pu recevoir qu'une réponse "métadonnée seule" (placeholders 0 Ko,
+    // cf. handleFolderCatchupBatch()), car le propriétaire ne pouvait pas
+    // encore transmettre le vrai contenu. Le cooldown anti-flood du
+    // répondeur (kResyncResponseCooldownMs, 5s) ne distingue pas ce cas
+    // d'une simple requête dupliquée : sans ce flag, cette relance -- la
+    // SEULE capable de déclencher le téléchargement réel -- pouvait être
+    // silencieusement ignorée si elle arrivait dans les 5s suivant la
+    // première réponse (placeholder), laissant les fichiers bloqués à 0 Ko
+    // indéfiniment. "force" permet à ce point d'entrée précis (rare, jamais
+    // en rafale) de contourner le cooldown.
     QJsonObject req;
     req[QStringLiteral("type")]                = QString::fromLatin1(kTypeResyncRequest);
     req[QStringLiteral("folder_uuid")]          = folder->uuid();
     req[QStringLiteral("requester_machine_id")] = m_machineId;
     req[QStringLiteral("since_op_id")]          = sinceOpId;
+    req[QStringLiteral("force")]                = true;
     const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
     broadcastMessage(json);
-    qDebug() << "[FolderSync] folder_resync_request envoyé pour récupérer le contenu de"
+    qDebug() << "[FolderSync] folder_resync_request envoyé (force) pour récupérer le contenu de"
              << folder->name() << "depuis op_id" << sinceOpId;
 }
 
@@ -1159,6 +1193,7 @@ void FolderSyncService::handleFolderResyncRequest(const QJsonObject &obj)
     const QString folderUuid         = obj[QStringLiteral("folder_uuid")].toString();
     const QString requesterMachineId = obj[QStringLiteral("requester_machine_id")].toString();
     const qint64 sinceOpId = static_cast<qint64>(obj[QStringLiteral("since_op_id")].toDouble());
+    const bool force = obj[QStringLiteral("force")].toBool(false);
 
     qDebug() << "[FolderSync] folder_resync_request: folderUuid=" << folderUuid
              << "requesterMachineId=" << requesterMachineId
@@ -1196,7 +1231,7 @@ void FolderSyncService::handleFolderResyncRequest(const QJsonObject &obj)
     const QString dedupKey = folderUuid + QStringLiteral("::") + requesterMachineId;
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     const qint64 lastAnsweredMs = m_lastResyncResponseMs.value(dedupKey, 0);
-    if (lastAnsweredMs != 0 && (nowMs - lastAnsweredMs) < kResyncResponseCooldownMs) {
+    if (!force && lastAnsweredMs != 0 && (nowMs - lastAnsweredMs) < kResyncResponseCooldownMs) {
         qDebug() << "[FolderSync] folder_resync_request ignoré (cooldown actif, "
                  << (nowMs - lastAnsweredMs) << "ms) pour" << requesterMachineId
                  << "sur le dossier" << folder->name();
@@ -1351,7 +1386,7 @@ void FolderSyncService::requestRemoteFile(const QString &folderUuid,
 
 void FolderSyncService::onTransferStarted(const QString &transferKey,
                                            const QString &fileName,
-                                           qint64 /*fileSize*/,
+                                           qint64 fileSize,
                                            bool incoming,
                                            qint64 /*resumeOffset*/,
                                            const QString &/*senderUuid*/,
@@ -1368,8 +1403,14 @@ void FolderSyncService::onTransferStarted(const QString &transferKey,
         const auto it = m_pendingOutgoingByKey.find(pendingKey);
         if (it == m_pendingOutgoingByKey.end()) return;
 
-        m_activeOutgoingByTransferKey.insert(transferKey, it.value());
+        const QString folderUuid = it.value();
+        m_activeOutgoingByTransferKey.insert(transferKey, folderUuid);
         m_pendingOutgoingByKey.erase(it);
+
+        // Intègre ce fichier dans la progression agrégée de la rafale
+        // sortante en cours (barre de progression globale de l'UI).
+        registerBatchTransfer(m_sentProgress, folderUuid, transferKey, fileSize);
+        emitBatchProgress(folderUuid, false);
 
         qDebug() << "[FolderSync] Transfert sortant" << transferKey << "corrélé à" << fileName;
         return;
@@ -1382,8 +1423,14 @@ void FolderSyncService::onTransferStarted(const QString &transferKey,
     if (it == m_pendingByKey.end()) return;
 
     // Corrèle : associe le transferKey à la PendingFileTransfer.
-    m_activeByTransferKey.insert(transferKey, it.value());
+    const PendingFileTransfer pending = it.value();
+    m_activeByTransferKey.insert(transferKey, pending);
     m_pendingByKey.erase(it);
+
+    // Intègre ce fichier dans la progression agrégée de la rafale entrante
+    // en cours (barre de progression globale de l'UI).
+    registerBatchTransfer(m_receiveProgress, pending.folderUuid, transferKey, fileSize);
+    emitBatchProgress(pending.folderUuid, true);
 
     qDebug() << "[FolderSync] Transfert" << transferKey << "corrélé à" << fileName;
 }
@@ -1399,6 +1446,8 @@ void FolderSyncService::onTransferCompleted(const QString &transferKey,
     if (oit != m_activeOutgoingByTransferKey.end()) {
         const QString folderUuid = oit.value();
         m_activeOutgoingByTransferKey.erase(oit);
+        completeBatchTransfer(m_sentProgress, folderUuid, transferKey);
+        emitBatchProgress(folderUuid, false);
         scheduleFolderSentNotification(folderUuid);
         return;
     }
@@ -1409,13 +1458,89 @@ void FolderSyncService::onTransferCompleted(const QString &transferKey,
     const PendingFileTransfer pending = it.value();
     m_activeByTransferKey.erase(it);
 
+    completeBatchTransfer(m_receiveProgress, pending.folderUuid, transferKey);
+    emitBatchProgress(pending.folderUuid, true);
+
     integrateReceivedFile(pending, filePath);
+}
+
+void FolderSyncService::onTransferProgress(const QString &transferKey,
+                                            qint64 bytesTransferred,
+                                            qint64 /*totalBytes*/)
+{
+    if (const auto it = m_activeByTransferKey.find(transferKey); it != m_activeByTransferKey.end()) {
+        const QString folderUuid = it.value().folderUuid;
+        auto bpIt = m_receiveProgress.find(folderUuid);
+        if (bpIt != m_receiveProgress.end() && bpIt.value().activeBytes.contains(transferKey)) {
+            bpIt.value().activeBytes[transferKey] = bytesTransferred;
+            emitBatchProgress(folderUuid, true);
+        }
+        return;
+    }
+
+    if (const auto oit = m_activeOutgoingByTransferKey.find(transferKey); oit != m_activeOutgoingByTransferKey.end()) {
+        const QString folderUuid = oit.value();
+        auto bpIt = m_sentProgress.find(folderUuid);
+        if (bpIt != m_sentProgress.end() && bpIt.value().activeBytes.contains(transferKey)) {
+            bpIt.value().activeBytes[transferKey] = bytesTransferred;
+            emitBatchProgress(folderUuid, false);
+        }
+    }
 }
 
 bool FolderSyncService::isFolderTransfer(const QString &transferKey) const
 {
     return m_activeByTransferKey.contains(transferKey)
         || m_activeOutgoingByTransferKey.contains(transferKey);
+}
+
+void FolderSyncService::registerBatchTransfer(QHash<QString, BatchProgress> &store,
+                                               const QString &folderUuid,
+                                               const QString &transferKey,
+                                               qint64 fileSize)
+{
+    BatchProgress &bp = store[folderUuid];
+    bp.filesTotal++;
+    bp.bytesTotal += fileSize;
+    bp.transferSizes.insert(transferKey, fileSize);
+    bp.activeBytes.insert(transferKey, 0);
+}
+
+void FolderSyncService::completeBatchTransfer(QHash<QString, BatchProgress> &store,
+                                               const QString &folderUuid,
+                                               const QString &transferKey)
+{
+    const auto it = store.find(folderUuid);
+    if (it == store.end()) return;
+
+    BatchProgress &bp = it.value();
+    bp.bytesCompletedSum += bp.transferSizes.take(transferKey);
+    bp.activeBytes.remove(transferKey);
+    bp.filesCompleted++;
+}
+
+void FolderSyncService::emitBatchProgress(const QString &folderUuid, bool incoming)
+{
+    QHash<QString, BatchProgress> &store = incoming ? m_receiveProgress : m_sentProgress;
+    const auto it = store.find(folderUuid);
+    if (it == store.end()) return;
+
+    const BatchProgress &bp = it.value();
+    qint64 bytesTransferred = bp.bytesCompletedSum;
+    for (auto valueIt = bp.activeBytes.cbegin(); valueIt != bp.activeBytes.cend(); ++valueIt) {
+        bytesTransferred += valueIt.value();
+    }
+
+    QString folderName = folderUuid;
+    if (m_folderManager) {
+        if (const auto folder = m_folderManager->getFolderByUuid(folderUuid); folder.has_value()) {
+            folderName = folder->name();
+        }
+    }
+
+    emit folderTransferProgress(folderUuid, folderName, incoming,
+                                 bp.filesCompleted, bp.filesTotal,
+                                 bytesTransferred, bp.bytesTotal);
 }
 
 void FolderSyncService::scheduleFolderNotification(const QString &folderUuid)
@@ -1437,6 +1562,13 @@ void FolderSyncService::scheduleFolderNotification(const QString &folderUuid)
                 }
             }
             emit folderFilesReceived(folderUuid, folderName, count);
+
+            // La rafale est terminée (~800ms de silence) : la notification
+            // finale ci-dessus vient d'être émise, la barre de progression
+            // globale de l'UI peut donc disparaître. On retire l'état de
+            // progression pour que la PROCHAINE rafale reparte de zéro
+            // plutôt que de reprendre les compteurs de celle-ci.
+            m_receiveProgress.remove(folderUuid);
         });
         m_notifyTimers.insert(folderUuid, timer);
     }
@@ -1465,6 +1597,11 @@ void FolderSyncService::scheduleFolderSentNotification(const QString &folderUuid
                 }
             }
             emit folderFilesSent(folderUuid, folderName, count);
+
+            // Symétrique de scheduleFolderNotification() : la rafale
+            // sortante est terminée, on retire l'état de progression pour
+            // que la prochaine rafale reparte de zéro.
+            m_sentProgress.remove(folderUuid);
         });
         m_sentNotifyTimers.insert(folderUuid, timer);
     }

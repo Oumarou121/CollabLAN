@@ -67,6 +67,15 @@ ApplicationWindow {
         anchors.fill: parent
     }
 
+    // Barre(s) de progression globale(s) pour le partage de dossiers :
+    // remplace le flot de notifications repetitives (une par fichier) par
+    // une seule progression par rafale de synchronisation, suivie de la
+    // notification finale existante (voir ToastHost ci-dessus) plutot que
+    // par un toast par fichier transfere.
+    FolderTransferProgressHost {
+        anchors.fill: parent
+    }
+
     // Navigation automatique vers CallView pour un appel entrant (issue #64bis) :
     // callContext est global et ecoute meme quand l'utilisateur est sur un
     // autre ecran (Home/Chat/...). Sans ce hook, "ringing" ne se voit que si

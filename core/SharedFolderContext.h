@@ -245,6 +245,30 @@ signals:
     void folderShareConfirmationRequested(qint64 folderId, const QString &folderName,
                                            const QString &ownerName, const QString &suggestedPath);
 
+    /**
+     * @brief Retransmis depuis FolderSyncService::folderTransferProgress
+     *        (Release "barre de progression globale" du partage de dossier).
+     *
+     * Permet à l'UI (SharedFolderView.qml / un composant global type
+     * ToastHost) d'afficher UNE SEULE barre de progression pour toute une
+     * rafale de fichiers synchronisés, plutôt qu'une notification par
+     * fichier -- voir la doc de FolderSyncService::folderTransferProgress
+     * pour le détail des paramètres.
+     */
+    void folderTransferProgress(const QString &folderUuid, const QString &folderName,
+                                 bool incoming, int filesCompleted, int filesTotal,
+                                 qint64 bytesTransferred, qint64 bytesTotal);
+
+    /**
+     * @brief Retransmis (sous forme unifiée) depuis FolderSyncService::
+     *        folderFilesReceived (incoming=true) ou folderFilesSent
+     *        (incoming=false) : signale la fin d'une rafale, càd le moment
+     *        où l'UI doit masquer la barre de progression correspondante
+     *        (la notification finale "N fichiers reçus/envoyés" est
+     *        affichée séparément par NotificationManager/ToastHost).
+     */
+    void folderTransferBatchFinished(const QString &folderUuid, bool incoming);
+
 private:
     SharedFolderManager *m_manager = nullptr;
     core::sync::SyncEngine *m_syncEngine = nullptr;

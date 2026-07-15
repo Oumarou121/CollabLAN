@@ -27,6 +27,7 @@
         <file>Components/FolderTile.qml</file>
         <file>Components/Toast.qml</file>
         <file>Components/ToastHost.qml</file>
+        <file>Components/FolderTransferProgressHost.qml</file>
         <file>Components/ServerStatusIndicator.qml</file>
     </qresource>
 </RCC>
