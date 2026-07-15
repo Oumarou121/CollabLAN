@@ -1,11 +1,34 @@
 #include "FolderWatcher.h"
 
+#include <QDebug>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileSystemWatcher>
+#include <QSet>
 
 namespace core::sync {
+
+namespace {
+
+/// Dossiers techniques a ne jamais surveiller : un depot .git peut contenir
+/// des milliers de sous-dossiers (.git/objects/xx/...), ce qui peut faire
+/// echouer silencieusement QFileSystemWatcher::addPaths() sur certains OS
+/// (limite de handles ReadDirectoryChangesW sur Windows notamment) -- sans
+/// garantie que la racine du dossier partage reste dans le lot qui reussit,
+/// puisque watchedDirectories est un QSet (ordre non garanti). Meme liste
+/// que isExcludedRelativePath() dans SharedFolderManager.cpp (dupliquee ici
+/// faute d'export -- a factoriser si un troisieme site en a besoin).
+bool isWatchExcludedDirName(const QString &dirName)
+{
+    static const QSet<QString> excludedDirNames = {
+        QStringLiteral(".git"), QStringLiteral(".svn"), QStringLiteral(".hg"),
+        QStringLiteral("node_modules"), QStringLiteral("__pycache__"),
+    };
+    return excludedDirNames.contains(dirName);
+}
+
+} // namespace
 
 FolderWatcher::FolderWatcher(QObject *parent)
     : QObject(parent)
@@ -38,6 +61,14 @@ void FolderWatcher::watchFolder(qint64 folderId, const QString &rootPath, const 
     QDirIterator dirIt(rootPath, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
     while (dirIt.hasNext()) {
         const QString absoluteDir = dirIt.next();
+        if (isWatchExcludedDirName(dirIt.fileName())) {
+            // N'ajoute pas ce dossier (.git, node_modules...) a la
+            // surveillance. QDirIterator::Subdirectories n'offre pas de
+            // moyen d'elaguer une branche : il continuera de lister son
+            // contenu (cout de scan inchange), mais aucune de ces entrees
+            // ne sera passee a addPaths().
+            continue;
+        }
         watched.watchedDirectories.insert(absoluteDir);
         m_directoryToFolderId.insert(absoluteDir, folderId);
     }
@@ -57,7 +88,12 @@ void FolderWatcher::watchFolder(qint64 folderId, const QString &rootPath, const 
     for (const QString &dir : watched.watchedDirectories) allPaths.append(dir);
     for (const QString &file : watched.watchedFilePaths) allPaths.append(file);
     if (!allPaths.isEmpty()) {
-        m_watcher->addPaths(allPaths);
+        const QStringList failed = m_watcher->addPaths(allPaths);
+        if (!failed.isEmpty()) {
+            qWarning() << "[FolderWatcher] addPaths() a echoue pour" << failed.size()
+                       << "chemin(s) sur" << allPaths.size() << "-- ces changements ne seront"
+                       << "PAS detectes automatiquement (dossier :" << rootPath << ")" << failed;
+        }
     }
 
     m_folders.insert(folderId, watched);
@@ -137,6 +173,9 @@ void FolderWatcher::refreshWatchedFiles(qint64 folderId, const QStringList &know
     QStringList newDirs;
     while (dirIt.hasNext()) {
         const QString absoluteDir = dirIt.next();
+        if (isWatchExcludedDirName(dirIt.fileName())) {
+            continue;
+        }
         if (!it->watchedDirectories.contains(absoluteDir)) {
             newDirs.append(absoluteDir);
             it->watchedDirectories.insert(absoluteDir);
@@ -144,7 +183,11 @@ void FolderWatcher::refreshWatchedFiles(qint64 folderId, const QStringList &know
         }
     }
     if (!newDirs.isEmpty()) {
-        m_watcher->addPaths(newDirs);
+        const QStringList failed = m_watcher->addPaths(newDirs);
+        if (!failed.isEmpty()) {
+            qWarning() << "[FolderWatcher] addPaths() (refresh) a echoue pour" << failed.size()
+                       << "chemin(s) -- dossier :" << it->rootPath << failed;
+        }
     }
 }
 
