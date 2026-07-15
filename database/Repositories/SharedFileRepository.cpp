@@ -24,6 +24,7 @@ models::SharedFile SharedFileRepository::fileFromQuery(const QSqlQuery &query) c
     file.setLastModified(query.value(QStringLiteral("last_modified")).toDateTime());
     file.setVersion(query.value(QStringLiteral("version")).toInt());
     file.setDeleted(query.value(QStringLiteral("deleted")).toInt() != 0);
+    file.setPendingDownload(query.value(QStringLiteral("pending_download")).toInt() != 0);
     return file;
 }
 
@@ -41,12 +42,14 @@ std::optional<models::SharedFile> SharedFileRepository::upsert(const models::Sha
 
         query.prepare(QStringLiteral(
             "UPDATE SharedFiles SET hash = :hash, size = :size, "
-            "last_modified = :last_modified, version = :version, deleted = 0 "
+            "last_modified = :last_modified, version = :version, deleted = 0, "
+            "pending_download = :pending_download "
             "WHERE id = :id"));
         query.bindValue(QStringLiteral(":hash"), file.hash());
         query.bindValue(QStringLiteral(":size"), file.size());
         query.bindValue(QStringLiteral(":last_modified"), file.lastModified().toUTC().toString(Qt::ISODate));
         query.bindValue(QStringLiteral(":version"), nextVersion);
+        query.bindValue(QStringLiteral(":pending_download"), file.pendingDownload() ? 1 : 0);
         query.bindValue(QStringLiteral(":id"), existing->id());
 
         if (!query.exec()) {
@@ -57,14 +60,15 @@ std::optional<models::SharedFile> SharedFileRepository::upsert(const models::Sha
     }
 
     query.prepare(QStringLiteral(
-        "INSERT INTO SharedFiles (folder_id, relative_path, hash, size, last_modified, version, deleted) "
-        "VALUES (:folder_id, :relative_path, :hash, :size, :last_modified, :version, 0)"));
+        "INSERT INTO SharedFiles (folder_id, relative_path, hash, size, last_modified, version, deleted, pending_download) "
+        "VALUES (:folder_id, :relative_path, :hash, :size, :last_modified, :version, 0, :pending_download)"));
     query.bindValue(QStringLiteral(":folder_id"), file.folderId());
     query.bindValue(QStringLiteral(":relative_path"), file.relativePath());
     query.bindValue(QStringLiteral(":hash"), file.hash());
     query.bindValue(QStringLiteral(":size"), file.size());
     query.bindValue(QStringLiteral(":last_modified"), file.lastModified().toUTC().toString(Qt::ISODate));
     query.bindValue(QStringLiteral(":version"), file.version() > 0 ? file.version() : 1);
+    query.bindValue(QStringLiteral(":pending_download"), file.pendingDownload() ? 1 : 0);
 
     if (!query.exec()) {
         m_lastError = query.lastError().text();

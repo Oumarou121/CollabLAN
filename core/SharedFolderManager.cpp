@@ -420,6 +420,19 @@ std::optional<QVector<models::SharedFileChange>> SharedFolderManager::shareFolde
             continue; // toujours present, deja traite ci-dessus
         }
 
+        // CORRECTIF (suppression en masse au partage) : une ligne encore
+        // pending_download=true n'est qu'un placeholder de rattrapage
+        // (FolderSyncService::registerCatchupPlaceholder()) -- son
+        // contenu reel n'a jamais existe sur CE disque, donc son absence
+        // ici ne veut pas dire "supprime", juste "pas encore telecharge".
+        // La tombstoner ferait diffuser un Delete pour un fichier qui,
+        // ailleurs sur le reseau, existe toujours bel et bien. Le
+        // telechargement en cours (requestFolderResync()) mettra ce flag
+        // a jour via integrateReceivedFile() une fois le contenu recu.
+        if (known.pendingDownload()) {
+            continue;
+        }
+
         const auto renamedToIt = createdPathsByHash.constFind(known.hash());
         if (!known.hash().isEmpty() && renamedToIt != createdPathsByHash.constEnd()) {
             // Renommage/deplacement detecte : on retire le Create genere

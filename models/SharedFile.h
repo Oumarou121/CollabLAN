@@ -46,6 +46,17 @@ public:
     bool deleted() const { return m_deleted; }
     void setDeleted(bool deleted) { m_deleted = deleted; }
 
+    /// true tant que ce SharedFile n'est qu'un placeholder de rattrapage
+    /// (FolderSyncService::registerCatchupPlaceholder(), taille 0, contenu
+    /// reel pas encore telecharge). Remis a false par
+    /// integrateReceivedFile() une fois le vrai fichier recu.
+    /// SharedFolderManager::shareFolder() ne doit jamais tombstoner
+    /// (Delete) une ligne encore a l'etat pending_download=true : son
+    /// absence du disque local ne signifie pas qu'elle a ete supprimee,
+    /// juste qu'elle n'a pas encore ete telechargee.
+    bool pendingDownload() const { return m_pendingDownload; }
+    void setPendingDownload(bool pendingDownload) { m_pendingDownload = pendingDownload; }
+
 private:
     qint64 m_id = 0;
     qint64 m_folderId = 0;
@@ -55,6 +66,7 @@ private:
     QDateTime m_lastModified;
     int m_version = 1;
     bool m_deleted = false;
+    bool m_pendingDownload = false;
 };
 
 } // namespace models

@@ -124,3 +124,7 @@ add_test(NAME test_folderwatcher COMMAND test_folderwatcher)
 add_executable(test_syncengine UnitTests/test_syncengine.cpp)
 target_link_libraries(test_syncengine PRIVATE Qt6::Test core database models)
 add_test(NAME test_syncengine COMMAND test_syncengine)
+
+add_executable(test_syncengine_multinode_integration UnitTests/test_syncengine_multinode_integration.cpp)
+target_link_libraries(test_syncengine_multinode_integration PRIVATE Qt6::Test core database models network)
+add_test(NAME test_syncengine_multinode_integration COMMAND test_syncengine_multinode_integration)

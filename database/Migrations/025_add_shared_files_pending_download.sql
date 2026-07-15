@@ -1,0 +1,26 @@
+-- Migration 025 : ajout de la colonne pending_download sur SharedFiles.
+--
+-- Bug corrige : quand un dossier partage est recu (folder_access_granted +
+-- folder_catchup_batch), FolderSyncService::registerCatchupPlaceholder()
+-- insere une ligne SharedFiles "creuse" (taille 0, aucun contenu reel --
+-- seule la metadonnee est connue en attendant le telechargement effectif
+-- via requestFolderResync()/integrateReceivedFile()).
+--
+-- Des que le localPath du dossier est ensuite auto-provisionne
+-- (SharedFolderManager::provisionDefaultLocalPath()), un reindexFolder()
+-- scanne ce dossier local -- qui est a ce moment-la physiquement VIDE, le
+-- telechargement des fichiers n'ayant pas encore eu lieu.
+-- SharedFolderManager::shareFolder() ne pouvait alors pas distinguer un
+-- placeholder en attente de telechargement d'un vrai fichier disparu du
+-- disque : les deux etaient traites comme "connu en base mais absent du
+-- disque" et tombstones en Delete, broadcastes a tous les pairs -- qui les
+-- appliquaient reellement, supprimant le contenu partage partout, y
+-- compris chez le proprietaire d'origine.
+--
+-- pending_download = 1 tant que le contenu reel n'a pas ete recu
+-- (registerCatchupPlaceholder()), remis a 0 des que integrateReceivedFile()
+-- integre le vrai fichier. SharedFolderManager::shareFolder() ignore
+-- desormais les lignes pending_download = 1 lors de la detection des
+-- suppressions.
+
+ALTER TABLE SharedFiles ADD COLUMN pending_download INTEGER NOT NULL DEFAULT 0;

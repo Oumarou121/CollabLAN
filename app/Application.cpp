@@ -708,6 +708,22 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // core/SharedFolderContext.cpp).
     m_syncEngine = new core::sync::SyncEngine(m_sharedFolderManager, m_databaseManager.get(),
                                                m_discoveryService->localId(), this);
+    // Necessaire pour que canWatchFolder() puisse resoudre la permission
+    // Write du poste local sur un dossier replique (cf. SyncEngine.h) ;
+    // meme cablage que m_folderSyncService->setLocalUserId() ci-dessous,
+    // car initialize() s'execute avant le login (currentUserId() est
+    // nullopt a ce stade la premiere fois).
+    if (m_userManager) {
+        if (const auto uid = m_userManager->currentUserId(); uid.has_value()) {
+            m_syncEngine->setLocalUserId(*uid);
+        }
+        connect(m_userManager, &core::UserManager::loginSucceeded,
+                this, [this]() {
+                    if (const auto uid = m_userManager->currentUserId(); uid.has_value()) {
+                        m_syncEngine->setLocalUserId(*uid);
+                    }
+                });
+    }
     m_syncEngine->start();
 
     // Idem pour TransferService : chaque en-tete de transfert envoye doit

@@ -500,6 +500,24 @@ private slots:
             QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex());
     }
 
+    // Reproduit exactement core::sync::(anonymous namespace)::folderTransferFileName()
+    // (FolderSyncService.cpp, non exporté) : le nom de fichier réellement
+    // utilisé sur le fil (TransferService::sendFile()/transferStarted()) est
+    // un nom haché "clfs-<sha256[0:24]>.<ext>", jamais le relativePath brut.
+    // La corrélation dans onTransferStarted() (pendingKey = peerMachineId +
+    // "::" + fileName) échoue silencieusement si ce test simule fileName
+    // avec le relativePath brut au lieu de ce nom haché.
+    static QString transferFileNameForTest(const QString &folderUuid, const QString &relativePath)
+    {
+        const QByteArray identity = folderUuid.toUtf8() + '\0' + relativePath.toUtf8();
+        const QString digest = QString::fromLatin1(
+            QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex().left(24));
+        const QString suffix = QFileInfo(relativePath).suffix();
+        return suffix.isEmpty()
+            ? QStringLiteral("clfs-%1").arg(digest)
+            : QStringLiteral("clfs-%1.%2").arg(digest, suffix);
+    }
+
     // ------------------------------------------------------------------
     // 11. onTransferStarted + onTransferCompleted → fichier intégré dans
     //     le dossier partagé, fileIntegrated émis.
@@ -549,7 +567,7 @@ private slots:
         QMetaObject::invokeMethod(svc, "onTransferStarted",
             Qt::DirectConnection,
             Q_ARG(QString, transferKey),
-            Q_ARG(QString, QStringLiteral("rapport.docx")),
+            Q_ARG(QString, transferFileNameForTest(folder->uuid(), QStringLiteral("rapport.docx"))),
             Q_ARG(qint64, content.size()),
             Q_ARG(bool, true),
             Q_ARG(qint64, 0),
@@ -648,7 +666,7 @@ private slots:
         QMetaObject::invokeMethod(svc, "onTransferStarted",
             Qt::DirectConnection,
             Q_ARG(QString, transferKey),
-            Q_ARG(QString, QStringLiteral("rapport.docx")),
+            Q_ARG(QString, transferFileNameForTest(folder->uuid(), QStringLiteral("rapport.docx"))),
             Q_ARG(qint64, remoteContent.size()),
             Q_ARG(bool, true),
             Q_ARG(qint64, 0),

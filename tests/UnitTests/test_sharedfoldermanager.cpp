@@ -1,4 +1,5 @@
 #include <QtTest>
+#include <QDateTime>
 #include <QFile>
 #include <QDir>
 #include <QSqlQuery>
@@ -7,6 +8,7 @@
 #include <QTemporaryDir>
 
 #include "database/DatabaseManager.h"
+#include "database/Repositories/SharedFileRepository.h"
 #include "SharedFolderManager.h"
 
 /*
@@ -218,6 +220,59 @@ private slots:
         QVERIFY(changes.has_value());
         QCOMPARE(changes->size(), 1);
         QCOMPARE(changes->at(0).type(), models::SyncChangeType::Delete);
+
+        db->close();
+        delete db;
+    }
+
+    // Regression : bug "tout le contenu est supprime au partage". Une
+    // ligne SharedFiles encore a l'etat pending_download=true (placeholder
+    // pose par FolderSyncService::registerCatchupPlaceholder() lors d'un
+    // rattrapage, avant que le contenu reel n'ait ete telecharge) ne doit
+    // JAMAIS etre tombstonee par shareFolder() simplement parce qu'elle
+    // est absente du disque local -- son absence signifie "pas encore
+    // recue", pas "supprimee". Avant correctif, ce cas produisait un
+    // Delete diffuse a tous les pairs, qui l'appliquaient reellement et
+    // supprimaient le fichier partout, y compris chez son proprietaire.
+    void shareFolderIgnoresPendingDownloadPlaceholders()
+    {
+        auto *db = openDb(QStringLiteral("sfm_pending_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(db);
+        core::SharedFolderManager mgr(db);
+
+        const auto folder = mgr.createFolder(QStringLiteral("F"), m_folderDir->path(), 0);
+        QVERIFY2(folder.has_value(), qPrintable(mgr.lastErrorString()));
+
+        // Simule registerCatchupPlaceholder() : une ligne "creuse" (taille
+        // 0, pending_download=true) pour un fichier connu du reseau mais
+        // dont le contenu n'a pas encore ete telecharge sur ce poste --
+        // le dossier local est encore vide a ce stade.
+        database::SharedFileRepository fileRepo(db->database());
+        models::SharedFile placeholder(0, folder->id(), QStringLiteral("pas_encore_recu.txt"));
+        placeholder.setHash(QStringLiteral("deadbeef"));
+        placeholder.setVersion(1);
+        placeholder.setDeleted(false);
+        placeholder.setPendingDownload(true);
+        // Indispensable : un QDateTime par defaut est invalide, et
+        // QDateTime::toString() sur une date invalide renvoie une QString
+        // NULLE -- que SharedFileRepository::upsert() lie alors comme NULL
+        // SQL, ce qui viole la contrainte NOT NULL de last_modified et fait
+        // echouer l'INSERT (cf. commentaire de registerCatchupPlaceholder(),
+        // qui applique deja ce correctif en production).
+        placeholder.setLastModified(QDateTime::currentDateTimeUtc());
+        QVERIFY2(fileRepo.upsert(placeholder).has_value(), qPrintable(fileRepo.lastError()));
+
+        // reindex sur le dossier local, physiquement vide : le placeholder
+        // ne doit generer AUCUN changement (surtout pas un Delete), et ne
+        // doit pas etre tombstone en base.
+        const auto changes = mgr.shareFolder(folder->id());
+        QVERIFY(changes.has_value());
+        QCOMPARE(changes->size(), 0);
+
+        const auto stillKnown = fileRepo.findByRelativePath(folder->id(), QStringLiteral("pas_encore_recu.txt"));
+        QVERIFY(stillKnown.has_value());
+        QVERIFY(!stillKnown->deleted());
+        QVERIFY(stillKnown->pendingDownload());
 
         db->close();
         delete db;

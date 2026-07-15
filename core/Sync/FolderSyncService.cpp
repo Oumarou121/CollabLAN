@@ -993,9 +993,21 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
     const QString folderUuid         = obj[QStringLiteral("folder_uuid")].toString();
     const QString relativePath       = obj[QStringLiteral("relative_path")].toString();
     const QString requesterMachineId = obj[QStringLiteral("requester_machine_id")].toString();
+    const QString targetMachineId    = obj[QStringLiteral("owner_machine_id")].toString();
     const quint16 requesterPort      = static_cast<quint16>(
         obj[QStringLiteral("requester_transfer_port")].toInt(
             static_cast<int>(network::TransferService::defaultPort())));
+
+    // La requête est diffusée à tous les pairs (broadcastMessage), mais un
+    // seul doit répondre -- celui explicitement désigné comme source par
+    // l'émetteur de la requête (l'auteur réel de l'op, cf. handleFolderOp,
+    // ou le propriétaire pour un rattrapage initial, cf. requestRemoteFile
+    // à 3 arguments). Sans ce filtre, généraliser la source de fichiers au
+    // point suivant (n'importe quel membre Write possédant une copie
+    // locale) ferait répondre TOUS les membres Write simultanément.
+    if (!targetMachineId.isEmpty() && targetMachineId != m_machineId) {
+        return;
+    }
 
     QHostAddress targetAddress = senderAddress;
     if ((targetAddress.isNull() || targetAddress == QHostAddress::Any) && m_discoveryService) {
@@ -1011,7 +1023,14 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
 
     const auto folders = m_folderManager->getFolders();
     for (const auto &folder : folders) {
-        if (folder.uuid() != folderUuid || !folder.isLocalOrigin()) continue;
+        // Un dossier ne peut servir de source de fichier que s'il a un
+        // contenu réel sur CE disque (localPath non vide) -- que ce poste
+        // en soit le propriétaire (isLocalOrigin()) ou un membre Write
+        // ayant reçu et stocké sa propre copie (cf. plan de synchronisation
+        // bidirectionnelle, point 4 : "une demande de contenu doit pouvoir
+        // être servie par un membre Write qui possède le fichier local, pas
+        // uniquement par le créateur").
+        if (folder.uuid() != folderUuid || folder.localPath().isEmpty()) continue;
 
         // ── Vérification d'accès (Release 9 — dossiers en lecture seule) ───
         // Le contenu réel des fichiers n'est transféré qu'aux pairs ayant un
@@ -1940,6 +1959,17 @@ void FolderSyncService::registerCatchupPlaceholder(const models::SharedFolder &f
     placeholder.setHash(fileHash);
     placeholder.setVersion(version > 0 ? version : 1);
     placeholder.setDeleted(false);
+    // CORRECTIF (suppression en masse au partage) : ce placeholder n'a
+    // pas de contenu reel sur ce poste. Sans ce flag, un reindexFolder()
+    // lance des que le localPath est provisionne (avant que le contenu
+    // n'ait ete telecharge) trouvait ces lignes "connues en base mais
+    // absentes du disque" et les tombstonait en Delete, broadcastes a
+    // tous les pairs -- supprimant reellement le contenu partage partout,
+    // y compris chez le proprietaire d'origine. SharedFolderManager::
+    // shareFolder() ignore desormais toute ligne pending_download=true
+    // lors de la detection des suppressions ; integrateReceivedFile()
+    // repasse ce flag a false des que le vrai contenu est recu.
+    placeholder.setPendingDownload(true);
     // size reste a 0 (valeur par defaut) : le contenu reel n'est pas
     // encore present sur ce poste (voir commentaire d'appel).
     //
