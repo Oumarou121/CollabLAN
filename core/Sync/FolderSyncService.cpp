@@ -1605,14 +1605,17 @@ void FolderSyncService::scheduleFolderNotification(const QString &folderUuid)
         m_notifyTimers.insert(folderUuid, timer);
     }
     // Redémarre le minuteur à chaque fichier reçu : la notification ne part
-    // qu'une fois la rafale terminée (~800ms de silence), plutôt qu'une par
+    // qu'une fois la rafale terminée (~5s de silence), plutôt qu'une par
     // fichier (cf. NotificationManager::onTransferCompleted). Filet de
     // sécurité : si filesExpected est correct, flushFolderNotification()
     // sera en réalité déclenché plus tôt, dès la fin exacte de la rafale
     // (cf. onTransferCompleted()) -- ce timer ne sert alors que pour les cas
     // où filesExpected sous-évalue le total réel (pair injoignable, rafale
-    // partiellement annoncée, etc.).
-    timer->start(800);
+    // partiellement annoncée, etc.). Porté de 800ms à 5000ms pour la même
+    // raison que côté envoi (cf. scheduleFolderSentNotification) : 800ms
+    // pouvait se déclencher avant la fin réelle de la rafale sur une
+    // liaison lente.
+    timer->start(5000);
 }
 
 void FolderSyncService::flushFolderNotification(const QString &folderUuid)
@@ -1663,11 +1666,18 @@ void FolderSyncService::scheduleFolderSentNotification(const QString &folderUuid
     }
     // Même logique anti-rebond que scheduleFolderNotification() : redémarre
     // le minuteur à chaque fichier envoyé, la notification ne part qu'une
-    // fois la rafale terminée (~800ms de silence), plutôt qu'une par
-    // fichier. Filet de sécurité seulement : si filesExpected est correct,
-    // flushFolderSentNotification() sera déclenché plus tôt, dès la fin
-    // exacte de la rafale (cf. onTransferCompleted()).
-    timer->start(800);
+    // fois la rafale terminée (~5s de silence), plutôt qu'une par
+    // fichier. Pur filet de sécurité : le cas nominal (filesExpected
+    // correct) est couvert plus tôt et avec précision par
+    // flushFolderSentNotification() déclenché dès la fin exacte de la
+    // rafale (cf. onTransferCompleted()). Ce timer ne doit donc se
+    // déclencher qu'en cas de requête perdue / pair injoignable -- il a été
+    // porté de 800ms à 5000ms car 800ms s'est révélé trop court sur une
+    // liaison lente (ex. hotspot Wi-Fi), provoquant un flush prématuré qui
+    // scindait une seule rafale de fichiers en deux notifications
+    // successives (ex. "5 fichiers envoyés" puis "3 fichiers envoyés" au
+    // lieu d'une notification unique "8 fichiers envoyés").
+    timer->start(5000);
 }
 
 void FolderSyncService::flushFolderSentNotification(const QString &folderUuid)
