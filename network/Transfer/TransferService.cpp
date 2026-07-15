@@ -273,7 +273,8 @@ QString TransferService::destKeyFor(const QHostAddress &host, quint16 port)
 }
 
 bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
-                                const QString &senderUuid, const QString &recipientUuid)
+                                const QString &senderUuid, const QString &recipientUuid,
+                                const QString &transferFileName)
 {
     // Verification rapide et synchrone : un fichier absent/illisible des
     // l'appel doit echouer immediatement (contrat historique de sendFile(),
@@ -295,7 +296,8 @@ bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QSt
     // patienter (voir doc de classe, section 0).
     const QString destKey = destKeyFor(host, port);
     m_destInfo[destKey] = DestInfo{host, port};
-    m_sendQueues[destKey].enqueue(PendingSendJob{filePath, senderUuid, recipientUuid});
+    m_sendQueues[destKey].enqueue(PendingSendJob{filePath, senderUuid, recipientUuid,
+                                                 transferFileName});
     dispatchSendQueue(destKey);
     return true;
 }
@@ -366,6 +368,9 @@ bool TransferService::startSendOnSocket(QTcpSocket *socket, const PendingSendJob
     state.fileSize = file->size();
 
     const QFileInfo info(job.filePath);
+    const QString announcedFileName = job.transferFileName.isEmpty()
+        ? info.fileName()
+        : QFileInfo(job.transferFileName).fileName();
     // peerMachineId (dernier argument) : vide cote envoi - on connait deja
     // l'identite du destinataire directement via le pair choisi dans
     // DiscoveryService (TransferContext/TransferManager n'ont pas besoin
@@ -375,7 +380,7 @@ bool TransferService::startSendOnSocket(QTcpSocket *socket, const PendingSendJob
                           state.senderUuid, state.recipientUuid, socket->peerAddress(), QString());
 
     const quint8 compressionFlags = m_compressionEnabled ? 0x01 : 0x00;
-    const QByteArray header = encodeHeader(info.fileName(), state.fileSize, state.senderUuid,
+    const QByteArray header = encodeHeader(announcedFileName, state.fileSize, state.senderUuid,
                                             state.recipientUuid, m_localMachineId,
                                             compressionFlags);
     socket->write(frameOf(header));

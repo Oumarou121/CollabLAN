@@ -119,7 +119,8 @@ public:
      * file, pas le succes du transfert.
      */
     bool sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
-                  const QString &senderUuid, const QString &recipientUuid);
+                  const QString &senderUuid, const QString &recipientUuid,
+                  const QString &transferFileName = QString());
 
 signals:
     /// Emis quand un transfert (entrant ou sortant) demarre. resumeOffset
@@ -200,6 +201,7 @@ private:
         QString filePath;
         QString senderUuid;
         QString recipientUuid;
+        QString transferFileName; ///< Nom annonce au destinataire (vide = basename de filePath).
     };
 
     /// Adresse/port d'une destination, retrouvee par sa cle (voir

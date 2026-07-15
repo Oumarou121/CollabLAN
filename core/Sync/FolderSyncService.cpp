@@ -49,6 +49,21 @@ QString parentDirOf(const QString &relativePath)
     return idx >= 0 ? relativePath.left(idx) : QString();
 }
 
+// TransferService uses the announced name for its temporary receive file.
+// A basename alone would collide for files such as docs/report.pdf and
+// archive/report.pdf. The real relative path is restored by
+// integrateReceivedFile() after the transfer completes.
+QString folderTransferFileName(const QString &folderUuid, const QString &relativePath)
+{
+    const QByteArray identity = folderUuid.toUtf8() + '\0' + relativePath.toUtf8();
+    const QString digest = QString::fromLatin1(
+        QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex().left(24));
+    const QString suffix = QFileInfo(relativePath).suffix();
+    return suffix.isEmpty()
+        ? QStringLiteral("clfs-%1").arg(digest)
+        : QStringLiteral("clfs-%1.%2").arg(digest, suffix);
+}
+
 /// Fenetre pendant laquelle une nouvelle demande de resync pour le MEME
 /// (folder_uuid, requester_machine_id) est ignoree sans etre re-traitee
 /// (debrief perf, point #3 : tempete de folder_resync_request en boucle,
@@ -1019,8 +1034,10 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
             qWarning() << "[FolderSync] folder_file_request : fichier introuvable :" << absPath;
             return;
         }
+        const QString transferFileName = folderTransferFileName(folderUuid, relativePath);
         const bool ok = m_transferService->sendFile(
-            targetAddress, requesterPort, absPath, m_machineId, requesterMachineId);
+            targetAddress, requesterPort, absPath, m_machineId, requesterMachineId,
+            transferFileName);
         if (!ok) {
             qWarning() << "[FolderSync] sendFile échoué pour" << absPath;
         } else {
@@ -1033,8 +1050,8 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
             // "N fichiers envoyés" (scheduleFolderSentNotification) au lieu
             // d'une notification par fichier (cf. NotificationManager::
             // onTransferCompleted, appelé sinon pour chaque fichier envoyé).
-            const QString fileName = QFileInfo(absPath).fileName();
-            const QString pendingKey = requesterMachineId + QStringLiteral("::") + fileName;
+            const QString pendingKey = requesterMachineId + QStringLiteral("::")
+                + QFileInfo(absPath).fileName();
             m_pendingOutgoingByKey.insert(pendingKey, folderUuid);
 
             // Symétrique de requestRemoteFile() côté récepteur : chaque
@@ -1049,7 +1066,7 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
             m_sentProgress[folderUuid].filesExpected++;
             qDebug() << "[DEBUG sent-notif] filesExpected++ pour" << folderUuid
                       << "-> filesExpected=" << m_sentProgress[folderUuid].filesExpected
-                      << "(requête acceptée pour" << fileName << ")";
+                      << "(requête acceptée pour" << relativePath << ")";
         }
         return;
     }
@@ -1381,8 +1398,8 @@ void FolderSyncService::requestRemoteFile(const QString &folderUuid,
 
     // Enregistre la demande en attente pour corréler avec TransferService.
     if (folderId > 0 && !localFolderPath.isEmpty()) {
-        const QString fileName = QFileInfo(relativePath).fileName();
-        const QString pendingKey = ownerMachineId + QStringLiteral("::") + fileName;
+        const QString transferFileName = folderTransferFileName(folderUuid, relativePath);
+        const QString pendingKey = ownerMachineId + QStringLiteral("::") + transferFileName;
 
         PendingFileTransfer pending;
         pending.folderUuid       = folderUuid;

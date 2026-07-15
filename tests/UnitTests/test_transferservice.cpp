@@ -1,6 +1,7 @@
 #include <QtTest>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QDir>
 #include <QFile>
 #include <QCryptographicHash>
 #include <QRandomGenerator>
@@ -168,6 +169,64 @@ private slots:
         }
         QCOMPARE(receiverFailed.count(), 0);
 
+        receiver.stop();
+    }
+
+    void transferFilesWithSameBasenameUsingDistinctTransportNames()
+    {
+        QTemporaryDir sourceDir;
+        QTemporaryDir destDir;
+        QVERIFY(sourceDir.isValid());
+        QVERIFY(destDir.isValid());
+
+        QVERIFY(QDir().mkpath(sourceDir.filePath(QStringLiteral("docs"))));
+        QVERIFY(QDir().mkpath(sourceDir.filePath(QStringLiteral("archives"))));
+        const QString firstPath = sourceDir.filePath(QStringLiteral("docs/rapport.txt"));
+        const QString secondPath = sourceDir.filePath(QStringLiteral("archives/rapport.txt"));
+        const QByteArray firstData("document courant");
+        const QByteArray secondData("document archive");
+        {
+            QFile first(firstPath);
+            QVERIFY(first.open(QIODevice::WriteOnly));
+            QCOMPARE(first.write(firstData), static_cast<qint64>(firstData.size()));
+        }
+        {
+            QFile second(secondPath);
+            QVERIFY(second.open(QIODevice::WriteOnly));
+            QCOMPARE(second.write(secondData), static_cast<qint64>(secondData.size()));
+        }
+
+        TransferService receiver;
+        receiver.setReceiveDirectory(destDir.path());
+        QVERIFY(receiver.start(23465));
+        TransferService sender;
+        QSignalSpy receiverCompleted(&receiver, &TransferService::transferCompleted);
+        QSignalSpy senderCompleted(&sender, &TransferService::transferCompleted);
+        QSignalSpy senderFailed(&sender, &TransferService::transferFailed);
+        QSignalSpy receiverFailed(&receiver, &TransferService::transferFailed);
+
+        QVERIFY(sender.sendFile(QHostAddress::LocalHost, 23465, firstPath,
+                                 QStringLiteral("1"), QStringLiteral("2"),
+                                 QStringLiteral("clfs-first.txt")));
+        QVERIFY(sender.sendFile(QHostAddress::LocalHost, 23465, secondPath,
+                                 QStringLiteral("1"), QStringLiteral("2"),
+                                 QStringLiteral("clfs-second.txt")));
+
+        while (senderCompleted.count() < 2) {
+            QVERIFY(senderCompleted.wait(10000));
+        }
+        while (receiverCompleted.count() < 2) {
+            QVERIFY(receiverCompleted.wait(10000));
+        }
+        QCOMPARE(senderFailed.count(), 0);
+        QCOMPARE(receiverFailed.count(), 0);
+
+        QFile firstReceived(destDir.filePath(QStringLiteral("clfs-first.txt")));
+        QVERIFY(firstReceived.open(QIODevice::ReadOnly));
+        QCOMPARE(firstReceived.readAll(), firstData);
+        QFile secondReceived(destDir.filePath(QStringLiteral("clfs-second.txt")));
+        QVERIFY(secondReceived.open(QIODevice::ReadOnly));
+        QCOMPARE(secondReceived.readAll(), secondData);
         receiver.stop();
     }
 
