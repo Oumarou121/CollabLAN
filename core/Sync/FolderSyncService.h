@@ -501,23 +501,33 @@ private:
     /// folderFilesSent() -- voir isFolderTransfer() et handleFolderFileRequest().
     void scheduleFolderSentNotification(const QString &folderUuid);
 
+    /// Symétrique de flushFolderNotification() côté expéditeur : émet
+    /// folderFilesSent() immédiatement et nettoie l'état associé. No-op si
+    /// aucune notification n'est en attente.
+    void flushFolderSentNotification(const QString &folderUuid);
+
     /// État de progression agrégé d'une rafale de transferts folder-sync en
     /// cours pour un dossier donné (réception OU envoi, deux instances
     /// indépendantes -- voir m_receiveProgress/m_sentProgress).
     struct BatchProgress {
         int filesTotal = 0;
         int filesCompleted = 0;
-        /// Nombre de fichiers réellement demandés (requestRemoteFile() déjà
-        /// appelé) pour la rafale ENTRANTE en cours -- contrairement à
+        /// Nombre de fichiers déjà "acceptés" pour la rafale en cours,
+        /// connu de façon SYNCHRONE et donc fiable, contrairement à
         /// filesTotal (incrémenté de façon asynchrone, fichier par fichier,
-        /// à chaque démarrage réel de transfert dans onTransferStarted()),
-        /// filesExpected est connu de façon synchrone et fiable dès le
-        /// traitement de folder_catchup_batch/folder_resync_request (cf.
-        /// handleFolderCatchupBatch() -> requestRemoteFile()). Permet de
-        /// détecter la fin exacte d'une rafale sans attendre le debounce de
-        /// 800ms (cf. scheduleFolderNotification()). Non utilisé côté envoi
-        /// (m_sentProgress) : l'expéditeur ne connaît jamais à l'avance le
-        /// nombre total de folder_file_request qu'il va recevoir.
+        /// à chaque démarrage réel de transfert dans onTransferStarted()).
+        /// Coté RÉCEPTION (m_receiveProgress) : incrémenté dans
+        /// requestRemoteFile(), dès l'émission de la demande -- avant même
+        /// que le transfert ne démarre (cf. handleFolderCatchupBatch()).
+        /// Côté ENVOI (m_sentProgress) : incrémenté dans
+        /// handleFolderFileRequest(), dès l'acceptation d'un
+        /// folder_file_request -- avant même que sendFile() ne termine (les
+        /// requêtes d'une même rafale arrivent en rafale réseau rapprochée,
+        /// bien avant que les transferts eux-mêmes ne se terminent).
+        /// Dans les deux cas, permet de détecter la fin exacte d'une rafale
+        /// sans attendre le debounce de 800ms (cf. scheduleFolderNotification()
+        /// / scheduleFolderSentNotification()) -- ce debounce reste un filet
+        /// de sécurité pour le cas où filesExpected sous-évalue le total réel.
         int filesExpected = 0;
         qint64 bytesTotal = 0;
         /// Somme des tailles des fichiers déjà terminés dans la rafale.

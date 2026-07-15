@@ -1036,6 +1036,20 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
             const QString fileName = QFileInfo(absPath).fileName();
             const QString pendingKey = requesterMachineId + QStringLiteral("::") + fileName;
             m_pendingOutgoingByKey.insert(pendingKey, folderUuid);
+
+            // Symétrique de requestRemoteFile() côté récepteur : chaque
+            // folder_file_request accepté ici est connu de façon synchrone,
+            // AVANT que le transfert (potentiellement long) ne démarre --
+            // contrairement à onTransferStarted()/registerBatchTransfer(),
+            // qui ne s'exécutent qu'une fois la connexion TCP sortante
+            // effectivement établie. Permet à onTransferCompleted() de
+            // détecter la fin exacte d'une rafale d'envois (cf.
+            // BatchProgress::filesExpected) sans attendre le debounce de
+            // 800ms de scheduleFolderSentNotification().
+            m_sentProgress[folderUuid].filesExpected++;
+            qDebug() << "[DEBUG sent-notif] filesExpected++ pour" << folderUuid
+                      << "-> filesExpected=" << m_sentProgress[folderUuid].filesExpected
+                      << "(requête acceptée pour" << fileName << ")";
         }
         return;
     }
@@ -1454,6 +1468,21 @@ void FolderSyncService::onTransferCompleted(const QString &transferKey,
         completeBatchTransfer(m_sentProgress, folderUuid, transferKey);
         emitBatchProgress(folderUuid, false);
         scheduleFolderSentNotification(folderUuid);
+
+        // Fin exacte de rafale sortante, même logique que côté réception
+        // (cf. onTransferCompleted() plus bas / BatchProgress::filesExpected) :
+        // pas besoin d'attendre le silence de 800ms si toutes les requêtes
+        // déjà acceptées pour ce dossier ont été servies.
+        const auto progIt = m_sentProgress.constFind(folderUuid);
+        qDebug() << "[DEBUG sent-notif] onTransferCompleted (envoi) pour" << folderUuid
+                  << "filesCompleted=" << (progIt != m_sentProgress.constEnd() ? progIt.value().filesCompleted : -1)
+                  << "filesExpected=" << (progIt != m_sentProgress.constEnd() ? progIt.value().filesExpected : -1);
+        if (progIt != m_sentProgress.constEnd()
+            && progIt.value().filesExpected > 0
+            && progIt.value().filesCompleted >= progIt.value().filesExpected) {
+            qDebug() << "[DEBUG sent-notif] -> rafale complète, flush immédiat";
+            flushFolderSentNotification(folderUuid);
+        }
         return;
     }
 
@@ -1615,33 +1644,56 @@ void FolderSyncService::scheduleFolderSentNotification(const QString &folderUuid
 {
     m_pendingSentCounts[folderUuid] = m_pendingSentCounts.value(folderUuid, 0) + 1;
 
+    // TEMP DEBUG -- à retirer une fois le diagnostic terminé.
+    const auto dbgProg = m_sentProgress.constFind(folderUuid);
+    qDebug() << "[DEBUG sent-notif] scheduleFolderSentNotification" << folderUuid
+              << "pendingCount=" << m_pendingSentCounts.value(folderUuid)
+              << "filesExpected=" << (dbgProg != m_sentProgress.constEnd() ? dbgProg.value().filesExpected : -1)
+              << "filesCompleted=" << (dbgProg != m_sentProgress.constEnd() ? dbgProg.value().filesCompleted : -1);
+
     QTimer *timer = m_sentNotifyTimers.value(folderUuid, nullptr);
     if (!timer) {
         timer = new QTimer(this);
         timer->setSingleShot(true);
         connect(timer, &QTimer::timeout, this, [this, folderUuid]() {
-            const int count = m_pendingSentCounts.take(folderUuid);
-            if (count <= 0) return;
-
-            QString folderName = folderUuid;
-            if (m_folderManager) {
-                if (const auto folder = m_folderManager->getFolderByUuid(folderUuid); folder.has_value()) {
-                    folderName = folder->name();
-                }
-            }
-            emit folderFilesSent(folderUuid, folderName, count);
-
-            // Symétrique de scheduleFolderNotification() : la rafale
-            // sortante est terminée, on retire l'état de progression pour
-            // que la prochaine rafale reparte de zéro.
-            m_sentProgress.remove(folderUuid);
+            qDebug() << "[DEBUG sent-notif] TIMER timeout (800ms) -> flush" << folderUuid;
+            flushFolderSentNotification(folderUuid);
         });
         m_sentNotifyTimers.insert(folderUuid, timer);
     }
     // Même logique anti-rebond que scheduleFolderNotification() : redémarre
     // le minuteur à chaque fichier envoyé, la notification ne part qu'une
-    // fois la rafale terminée (~800ms de silence), plutôt qu'une par fichier.
+    // fois la rafale terminée (~800ms de silence), plutôt qu'une par
+    // fichier. Filet de sécurité seulement : si filesExpected est correct,
+    // flushFolderSentNotification() sera déclenché plus tôt, dès la fin
+    // exacte de la rafale (cf. onTransferCompleted()).
     timer->start(800);
+}
+
+void FolderSyncService::flushFolderSentNotification(const QString &folderUuid)
+{
+    if (QTimer *timer = m_sentNotifyTimers.value(folderUuid, nullptr)) {
+        timer->stop();
+    }
+
+    const int count = m_pendingSentCounts.take(folderUuid);
+    // TEMP DEBUG -- à retirer une fois le diagnostic terminé.
+    qDebug() << "[DEBUG sent-notif] flushFolderSentNotification" << folderUuid
+              << "-> count=" << count << (count <= 0 ? "(NO-OP, rien à notifier)" : "(EMET la notification)");
+    if (count <= 0) return;
+
+    QString folderName = folderUuid;
+    if (m_folderManager) {
+        if (const auto folder = m_folderManager->getFolderByUuid(folderUuid); folder.has_value()) {
+            folderName = folder->name();
+        }
+    }
+    emit folderFilesSent(folderUuid, folderName, count);
+
+    // Symétrique de flushFolderNotification() : la rafale sortante est
+    // terminée, on retire l'état de progression (y compris filesExpected)
+    // pour que la prochaine rafale reparte de zéro.
+    m_sentProgress.remove(folderUuid);
 }
 
 // ---------------------------------------------------------------------------

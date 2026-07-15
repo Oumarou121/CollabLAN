@@ -53,20 +53,22 @@ public slots:
     /// Appelé lorsqu'un accès à un dossier partagé est révoqué.
     void onFolderAccessRevoked(const QString &folderName);
 
-    /// Appelé lorsqu'un dossier partagé distant vient d'être provisionné
-    /// automatiquement (chemin local par défaut assigné sous Documents/
-    /// CollabLAN Shared Folders/, cf. core::SharedFolderManager::
-    /// provisionDefaultLocalPath()) : la synchronisation démarre sans que
-    /// l'utilisateur ait eu à choisir un dossier lui-même, donc on
-    /// l'informe explicitement OÙ le contenu va apparaître sur son disque.
-    void onFolderAutoProvisioned(const QString &folderName, const QString &localPath);
-
     /// Appelé lorsqu'une rafale de fichiers reçus pour un dossier partagé
     /// vient de se terminer (regroupement fait par FolderSyncService, cf.
     /// FolderSyncService::folderFilesReceived) : une SEULE notification est
     /// affichée pour tout le lot, au lieu d'une par fichier transféré
     /// (TransferService::transferCompleted en émet un par fichier).
-    void onFolderFilesReceived(const QString &folderUuid, const QString &folderName, int fileCount);
+    /// localPath (peut être vide si le dossier est introuvable au moment de
+    /// l'appel) est inclus dans le message pour couvrir aussi le cas du
+    /// tout premier provisionnement automatique (chemin local par défaut
+    /// assigné sous Documents/CollabLAN Shared Folders/, cf.
+    /// core::SharedFolderManager::provisionDefaultLocalPath()) : plutôt
+    /// qu'une notification séparée "la synchronisation démarre dans X" puis
+    /// une seconde "N fichiers reçus" quelques secondes après, un seul
+    /// message donne à la fois le compte ET l'emplacement une fois la
+    /// rafale terminée.
+    void onFolderFilesReceived(const QString &folderUuid, const QString &folderName,
+                                int fileCount, const QString &localPath);
 
     /// Notification groupée "N fichiers envoyés" pour une rafale de fichiers
     /// envoyés en réponse à des folder_file_request lors d'un partage de

@@ -116,19 +116,8 @@ void NotificationManager::onFolderAccessRevoked(const QString &folderName)
     emit notificationRequested(title, message, QStringLiteral("folder"));
 }
 
-void NotificationManager::onFolderAutoProvisioned(const QString &folderName, const QString &localPath)
-{
-    if (!m_notificationsEnabled) {
-        return;
-    }
-
-    const QString title = QStringLiteral("Synchronisation démarrée");
-    const QString message = QStringLiteral("\"%1\" sera synchronisé dans %2").arg(folderName, localPath);
-
-    emit notificationRequested(title, message, QStringLiteral("folder"));
-}
-
-void NotificationManager::onFolderFilesReceived(const QString &folderUuid, const QString &folderName, int fileCount)
+void NotificationManager::onFolderFilesReceived(const QString &folderUuid, const QString &folderName,
+                                                 int fileCount, const QString &localPath)
 {
     Q_UNUSED(folderUuid);
 
@@ -137,9 +126,16 @@ void NotificationManager::onFolderFilesReceived(const QString &folderUuid, const
     }
 
     const QString title = QStringLiteral("Dossier synchronisé");
-    const QString message = fileCount == 1
-        ? QStringLiteral("1 fichier reçu dans \"%1\"").arg(folderName)
-        : QStringLiteral("%1 fichiers reçus dans \"%2\"").arg(fileCount).arg(folderName);
+    // localPath peut être vide si le dossier n'a pas pu être retrouvé au
+    // moment de l'appel (cf. Application.cpp) -- on retombe alors sur le
+    // message sans emplacement plutôt que d'afficher "dans """.
+    const QString message = localPath.isEmpty()
+        ? (fileCount == 1
+               ? QStringLiteral("1 fichier reçu dans \"%1\"").arg(folderName)
+               : QStringLiteral("%1 fichiers reçus dans \"%2\"").arg(fileCount).arg(folderName))
+        : (fileCount == 1
+               ? QStringLiteral("\"%1\" synchronisé (1 fichier) dans %2").arg(folderName, localPath)
+               : QStringLiteral("\"%1\" synchronisé (%2 fichiers) dans %3").arg(folderName).arg(fileCount).arg(localPath));
 
     emit notificationRequested(title, message, QStringLiteral("transfer"));
 }

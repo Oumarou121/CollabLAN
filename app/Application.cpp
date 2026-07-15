@@ -851,16 +851,20 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // déclenché par l'utilisateur en acceptant le dialogue de confirmation
     // de partage, cf. core::SharedFolderContext::acceptFolderShare()) :
     // lancer le resync réseau pour récupérer le contenu depuis le
-    // propriétaire, et notifier où la synchronisation démarre.
+    // propriétaire. Pas de notification séparée ici -- l'emplacement du
+    // dossier est désormais communiqué une seule fois, fusionné avec le
+    // compte de fichiers, dans la notification de fin de rafale (cf.
+    // connexion de folderFilesReceived plus bas / NotificationManager::
+    // onFolderFilesReceived()).
     connect(m_sharedFolderManager, &core::SharedFolderManager::folderLocalPathProvisioned,
             this, [this](qint64 folderId, const QString &localPath) {
+                Q_UNUSED(localPath);
                 const auto folder = m_sharedFolderManager->getFolder(folderId);
                 if (!folder.has_value()) return;
 
                 if (m_folderSyncService) {
                     m_folderSyncService->requestFolderResync(folder->uuid());
                 }
-                m_notificationManager->onFolderAutoProvisioned(folder->name(), localPath);
             });
 
 
@@ -930,9 +934,20 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // Une seule notification "N fichiers reçus" par rafale de synchronisation
     // de dossier partagé (cf. FolderSyncService::scheduleFolderNotification),
     // au lieu d'une notification par fichier (voir plus haut, connexion de
-    // TransferService::transferCompleted).
+    // TransferService::transferCompleted). Le localPath est résolu ici
+    // (plutôt que porté par le signal folderFilesReceived, qui ne le
+    // connaît pas) pour fusionner en un seul message le compte de fichiers
+    // ET l'emplacement -- auparavant ce dernier était annoncé séparément
+    // par onFolderAutoProvisioned() dès l'acceptation du partage, avant même
+    // que le contenu soit là.
     connect(m_folderSyncService, &core::sync::FolderSyncService::folderFilesReceived,
-            m_notificationManager, &core::NotificationManager::onFolderFilesReceived);
+            this, [this](const QString &folderUuid, const QString &folderName, int fileCount) {
+                QString localPath;
+                if (const auto folder = m_sharedFolderManager->getFolderByUuid(folderUuid); folder.has_value()) {
+                    localPath = folder->localPath();
+                }
+                m_notificationManager->onFolderFilesReceived(folderUuid, folderName, fileCount, localPath);
+            });
 
     // Symétrique côté expéditeur : une seule notification "N fichiers
     // envoyés" par rafale d'envois répondant à des folder_file_request pour
