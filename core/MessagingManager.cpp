@@ -461,4 +461,22 @@ QVector<models::Conversation> MessagingManager::getUserConversations(qint64 user
     return conversations;
 }
 
+bool MessagingManager::markConversationAsRead(qint64 conversationId, qint64 userId)
+{
+    if (!m_dbManager) {
+        return false;
+    }
+
+    return m_repository.markConversationAsRead(conversationId, userId);
+}
+
+int MessagingManager::getUnreadCount(qint64 conversationId, qint64 userId)
+{
+    if (!m_dbManager) {
+        return 0;
+    }
+
+    return m_repository.getUnreadCount(conversationId, userId);
+}
+
 } // namespace core

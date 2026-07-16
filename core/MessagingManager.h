@@ -81,6 +81,14 @@ public:
     /// Recupere toutes les conversations d'un utilisateur.
     QVector<models::Conversation> getUserConversations(qint64 userId);
 
+    /// Marque tous les messages recus d'une conversation comme lus pour
+    /// userId (appele quand l'utilisateur ouvre la conversation).
+    bool markConversationAsRead(qint64 conversationId, qint64 userId);
+
+    /// Nombre de messages non lus dans une conversation pour userId,
+    /// utilise pour le badge dans ConversationsView.
+    int getUnreadCount(qint64 conversationId, qint64 userId);
+
     /// Derniere erreur survenue.
     MessagingManagerError lastError() const { return m_lastError; }
     QString lastErrorString() const { return m_lastErrorString; }

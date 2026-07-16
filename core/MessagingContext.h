@@ -43,8 +43,17 @@ public:
     /// Configure le UserManager (necessaire a userName() ci-dessous).
     void setUserManager(UserManager *manager);
 
-    /// Définit la conversation active.
+    /// Définit la conversation active. Marque au passage les messages
+    /// reçus de cette conversation comme lus (issue : is_read n'était
+    /// jamais mis à jour nulle part dans le code applicatif).
     Q_INVOKABLE void setConversation(qint64 conversationId);
+
+    /// Nom d'affichage d'une conversation (nom du groupe, ou nom de
+    /// l'autre participant pour une conversation individuelle). Utilisé
+    /// par ChatView pour son header (qui affichait jusqu'ici "Conversation"
+    /// en dur, quel que soit l'interlocuteur). Retourne une chaîne vide si
+    /// la conversation est inconnue.
+    Q_INVOKABLE QString conversationDisplayName(qint64 conversationId) const;
 
     /// Envoie un message dans la conversation active.
     Q_INVOKABLE void sendMessage(const QString &content);

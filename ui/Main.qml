@@ -188,8 +188,8 @@ ApplicationWindow {
             onBackRequested: {
                 stackView.pop()
             }
-            onConversationSelected: function(conversationId) {
-                stackView.push(chatViewComponent, { conversationId: conversationId })
+            onConversationSelected: function(conversationId, name) {
+                stackView.push(chatViewComponent, { conversationId: conversationId, name: name })
             }
             onCreateGroupRequested: {
                 stackView.push(createGroupViewComponent)

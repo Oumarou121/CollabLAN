@@ -70,15 +70,18 @@ QVector<models::Message> MessageRepository::getMessages(qint64 conversationId, i
     QSqlDatabase db = m_dbManager->database();
     QSqlQuery query(db);
 
-    const QString queryString = QStringLiteral(
+    query.prepare(QStringLiteral(
         "SELECT id, conversationId, senderId, content, timestamp, is_read, uuid "
         "FROM Messages "
-        "WHERE conversationId = %1 "
+        "WHERE conversationId = :conversationId "
         "ORDER BY id ASC "
-        "LIMIT %2 OFFSET %3"
-    ).arg(conversationId).arg(limit).arg(offset);
+        "LIMIT :limit OFFSET :offset"
+    ));
+    query.bindValue(QStringLiteral(":conversationId"), conversationId);
+    query.bindValue(QStringLiteral(":limit"), limit);
+    query.bindValue(QStringLiteral(":offset"), offset);
 
-    if (query.exec(queryString)) {
+    if (query.exec()) {
         while (query.next()) {
             models::Message msg(
                 query.value(0).toLongLong(),
@@ -105,11 +108,11 @@ int MessageRepository::getMessageCount(qint64 conversationId)
     QSqlDatabase db = m_dbManager->database();
     QSqlQuery query(db);
 
-    const QString queryString = QStringLiteral(
-        "SELECT COUNT(*) FROM Messages WHERE conversationId = %1"
-    ).arg(conversationId);
+    query.prepare(QStringLiteral(
+        "SELECT COUNT(*) FROM Messages WHERE conversationId = :conversationId"));
+    query.bindValue(QStringLiteral(":conversationId"), conversationId);
 
-    if (query.exec(queryString) && query.next()) {
+    if (query.exec() && query.next()) {
         return query.value(0).toInt();
     }
 
@@ -125,11 +128,10 @@ bool MessageRepository::markAsRead(qint64 messageId)
     QSqlDatabase db = m_dbManager->database();
     QSqlQuery query(db);
 
-    const QString queryString = QStringLiteral(
-        "UPDATE Messages SET is_read = 1 WHERE id = %1"
-    ).arg(messageId);
+    query.prepare(QStringLiteral("UPDATE Messages SET is_read = 1 WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), messageId);
 
-    return query.exec(queryString);
+    return query.exec();
 }
 
 bool MessageRepository::markConversationAsRead(qint64 conversationId, qint64 userId)
@@ -141,12 +143,39 @@ bool MessageRepository::markConversationAsRead(qint64 conversationId, qint64 use
     QSqlDatabase db = m_dbManager->database();
     QSqlQuery query(db);
 
-    const QString queryString = QStringLiteral(
+    query.prepare(QStringLiteral(
         "UPDATE Messages SET is_read = 1 "
-        "WHERE conversationId = %1 AND senderId != %2"
-    ).arg(conversationId).arg(userId);
+        "WHERE conversationId = :conversationId AND senderId != :userId"));
+    query.bindValue(QStringLiteral(":conversationId"), conversationId);
+    query.bindValue(QStringLiteral(":userId"), userId);
 
-    return query.exec(queryString);
+    return query.exec();
+}
+
+int MessageRepository::getUnreadCount(qint64 conversationId, qint64 userId)
+{
+    if (!m_dbManager) {
+        return 0;
+    }
+
+    QSqlDatabase db = m_dbManager->database();
+    QSqlQuery query(db);
+
+    // Ne compte que les messages recus (senderId != userId) : on ne veut
+    // pas comptabiliser nos propres messages, jamais marques is_read par
+    // markConversationAsRead (qui exclut deja senderId = userId), comme
+    // "non lus" dans le badge de ConversationsView.
+    query.prepare(QStringLiteral(
+        "SELECT COUNT(*) FROM Messages "
+        "WHERE conversationId = :conversationId AND senderId != :userId AND is_read = 0"));
+    query.bindValue(QStringLiteral(":conversationId"), conversationId);
+    query.bindValue(QStringLiteral(":userId"), userId);
+
+    if (query.exec() && query.next()) {
+        return query.value(0).toInt();
+    }
+
+    return 0;
 }
 
 std::optional<models::Message> MessageRepository::findByUuid(const QString &uuid) const

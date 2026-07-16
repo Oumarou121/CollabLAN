@@ -16,7 +16,7 @@ Item {
     property var _allConversations: []
 
     signal backRequested()
-    signal conversationSelected(var conversationId)
+    signal conversationSelected(var conversationId, string name)
     signal createGroupRequested()
     signal newConversationRequested()
 
@@ -165,7 +165,8 @@ Item {
                         conversationId: item.conversationId,
                         name: item.name,
                         lastMessage: item.lastMessage || qsTr("Aucun message"),
-                        timestamp: item.timestamp ? Qt.formatDateTime(item.timestamp, "hh:mm") : ""
+                        timestamp: item.timestamp ? Qt.formatDateTime(item.timestamp, "hh:mm") : "",
+                        unreadCount: item.unreadCount || 0
                     })
                 }
             }
@@ -223,18 +224,46 @@ Item {
                             text: lastMessage
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: Theme.fontFamily
-                            color: Theme.textSecondary
+                            // Non lu = plus contrasté, pour attirer l'oeil comme le badge.
+                            color: unreadCount > 0 ? Theme.text : Theme.textSecondary
+                            font.bold: unreadCount > 0
                             elide: Text.ElideRight
                             Layout.fillWidth: true
                         }
                     }
 
-                    Label {
-                        text: timestamp
-                        font.pixelSize: Theme.fontSizeCaption
-                        font.family: Theme.fontFamily
-                        color: Theme.textTertiary
+                    ColumnLayout {
                         Layout.alignment: Qt.AlignTop
+                        spacing: 6
+
+                        Label {
+                            Layout.alignment: Qt.AlignRight
+                            text: timestamp
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.family: Theme.fontFamily
+                            color: unreadCount > 0 ? Theme.primary : Theme.textTertiary
+                        }
+
+                        // Badge de messages non lus (issue : is_read n'était jamais
+                        // exploité côté UI, alors que le repository le gérait déjà).
+                        Rectangle {
+                            Layout.alignment: Qt.AlignRight
+                            visible: unreadCount > 0
+                            implicitWidth: Math.max(20, unreadCountLabel.implicitWidth + 12)
+                            implicitHeight: 20
+                            radius: 10
+                            color: Theme.primary
+
+                            Label {
+                                id: unreadCountLabel
+                                anchors.centerIn: parent
+                                text: unreadCount > 99 ? "99+" : unreadCount
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.bold: true
+                                font.family: Theme.fontFamily
+                                color: "#FFFFFF"
+                            }
+                        }
                     }
                 }
 
@@ -243,7 +272,7 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.conversationSelected(conversationId)
+                    onClicked: root.conversationSelected(conversationId, name)
                 }
             }
 

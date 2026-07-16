@@ -14,7 +14,14 @@ Item {
 
     property var messagingContext: null
     property var conversationId: 0
+    property string name: ""
     property int currentUserId: messagingContext ? messagingContext.currentUserId() : 0
+
+    // Nom reel du contact/groupe : priorite au nom transmis par ConversationsView,
+    // sinon repli sur la resolution cote MessagingContext (utile si ouvert sans nom)
+    readonly property string displayName: name.length > 0
+        ? name
+        : (messagingContext ? messagingContext.conversationDisplayName(conversationId) : qsTr("Conversation"))
 
     signal backRequested()
 
@@ -70,7 +77,7 @@ Item {
                 }
 
                 Avatar {
-                    name: qsTr("Conversation")
+                    name: root.displayName
                     size: 36
                 }
 
@@ -79,19 +86,15 @@ Item {
                     spacing: 0
 
                     Label {
-                        text: qsTr("Conversation")
+                        text: root.displayName
                         font.pixelSize: Theme.fontSizeSubheading
                         font.bold: true
                         font.family: Theme.fontFamily
                         color: Theme.text
                     }
 
-                    Label {
-                        text: qsTr("En ligne")
-                        font.pixelSize: Theme.fontSizeCaption
-                        font.family: Theme.fontFamily
-                        color: Theme.success
-                    }
+                    // Le statut "En ligne" fige a ete retire : il n'y a pas
+                    // encore de vrai suivi de presence par conversation.
                 }
             }
         }

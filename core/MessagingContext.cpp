@@ -162,6 +162,7 @@ QVariantList MessagingContext::conversationsList()
         const auto messages = m_messagingManager->getMessages(conv.id(), 1);
         entry[QStringLiteral("lastMessage")] = messages.isEmpty() ? QString() : messages.last().content();
         entry[QStringLiteral("timestamp")] = messages.isEmpty() ? QVariant() : messages.last().timestamp();
+        entry[QStringLiteral("unreadCount")] = m_messagingManager->getUnreadCount(conv.id(), currentId);
         list.append(entry);
     }
 
@@ -180,6 +181,7 @@ QVariantList MessagingContext::conversationsList()
             const auto messages = m_messagingManager->getMessages(group.conversationId(), 1);
             entry[QStringLiteral("lastMessage")] = messages.isEmpty() ? QString() : messages.last().content();
             entry[QStringLiteral("timestamp")] = messages.isEmpty() ? QVariant() : messages.last().timestamp();
+            entry[QStringLiteral("unreadCount")] = m_messagingManager->getUnreadCount(group.conversationId(), currentId);
             list.append(entry);
         }
     }
@@ -255,9 +257,52 @@ void MessagingContext::setConversation(qint64 conversationId)
     if (m_messagingManager && conversationId > 0) {
         const QVector<models::Message> messages = m_messagingManager->getMessages(conversationId);
         m_messageModel->setMessages(messages);
+
+        // Marquer les messages reçus comme lus : jusqu'ici is_read n'était
+        // jamais mis à jour nulle part dans le code applicatif (seulement
+        // testé), donc le badge de messages non lus restait figé même
+        // après ouverture de la conversation.
+        const qint64 currentId = currentUserId();
+        if (currentId > 0 && m_messagingManager->markConversationAsRead(conversationId, currentId)) {
+            emit conversationsChanged();
+        }
     } else {
         m_messageModel->clear();
     }
+}
+
+QString MessagingContext::conversationDisplayName(qint64 conversationId) const
+{
+    if (conversationId <= 0) {
+        return QString();
+    }
+
+    // Conversation de groupe : le nom vient de Groups, pas de Conversations
+    // (voir GroupManager::createGroup, qui lie group.conversationId()).
+    if (m_groupManager) {
+        const auto groups = m_groupManager->getUserGroups(currentUserId());
+        for (const auto &group : groups) {
+            if (group.conversationId() == conversationId) {
+                return group.name();
+            }
+        }
+    }
+
+    // Conversation individuelle : le nom affiché est celui de l'AUTRE
+    // participant (jamais le nôtre).
+    if (m_messagingManager) {
+        const qint64 currentId = currentUserId();
+        const auto conversations = m_messagingManager->getUserConversations(currentId);
+        for (const auto &conv : conversations) {
+            if (conv.id() == conversationId) {
+                const qint64 otherId = conv.participant1Id() == currentId
+                    ? conv.participant2Id() : conv.participant1Id();
+                return userName(otherId);
+            }
+        }
+    }
+
+    return QString();
 }
 
 void MessagingContext::sendMessage(const QString &content)
