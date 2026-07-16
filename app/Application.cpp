@@ -781,6 +781,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     m_folderSyncService->setDiscoveryService(m_discoveryService);
     m_folderSyncService->setLocalMachineId(m_discoveryService->localId());
     m_folderSyncService->setUserManager(m_userManager);
+
     if (m_userManager) {
         if (const auto uid = m_userManager->currentUserId(); uid.has_value()) {
             m_folderSyncService->setLocalUserId(*uid);

@@ -313,10 +313,21 @@ int TransferContext::percentOf(qint64 bytesTransferred, qint64 totalBytes)
 void TransferContext::onTransferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
                                          bool incoming, qint64 resumeOffset, const QString &senderUuid,
                                          const QString &recipientUuid, const QHostAddress &peerAddress,
-                                         const QString &peerMachineId)
+                                         const QString &peerMachineId, bool isFolderTransfer)
 {
     Q_UNUSED(senderUuid)
     Q_UNUSED(recipientUuid)
+
+    // CORRECTIF : les transferts de synchronisation de dossier ne doivent
+    // pas apparaitre dans l'UI de transfert manuel (activeTransfers), au
+    // meme titre qu'ils ne sont pas persistes en base (voir le meme
+    // filtre dans TransferManager::onNetworkTransferStarted()).
+    // transferProgress/transferCompleted/transferFailed ne portent pas ce
+    // flag : on retient donc la cle ici pour les ignorer eux aussi.
+    if (isFolderTransfer) {
+        m_folderSyncTransferKeys.insert(transferKey);
+        return;
+    }
 
     QVariantMap entry;
     entry[QStringLiteral("transferKey")] = transferKey;
@@ -371,6 +382,10 @@ void TransferContext::onTransferStarted(const QString &transferKey, const QStrin
 
 void TransferContext::onTransferProgress(const QString &transferKey, qint64 bytesTransferred, qint64 totalBytes)
 {
+    if (m_folderSyncTransferKeys.contains(transferKey)) {
+        return;
+    }
+
     const int index = indexOfTransfer(transferKey);
     if (index < 0) {
         // Progression pour un transfert dont on n'a pas vu le demarrage
@@ -405,6 +420,10 @@ void TransferContext::onTransferProgress(const QString &transferKey, qint64 byte
 
 void TransferContext::onTransferCompleted(const QString &transferKey, const QString &filePath)
 {
+    if (m_folderSyncTransferKeys.remove(transferKey)) {
+        return;
+    }
+
     const int index = indexOfTransfer(transferKey);
     if (index < 0) {
         return;
@@ -429,6 +448,10 @@ void TransferContext::onTransferCompleted(const QString &transferKey, const QStr
 
 void TransferContext::onTransferFailed(const QString &transferKey, const QString &errorString)
 {
+    if (m_folderSyncTransferKeys.remove(transferKey)) {
+        return;
+    }
+
     const int index = indexOfTransfer(transferKey);
     if (index < 0) {
         return;

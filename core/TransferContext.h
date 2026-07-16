@@ -6,6 +6,7 @@
 #include <QVariantMap>
 #include <QString>
 #include <QHash>
+#include <QSet>
 #include <QStringList>
 
 #include "TransferManager.h"
@@ -125,7 +126,7 @@ private slots:
     void onTransferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
                             bool incoming, qint64 resumeOffset, const QString &senderUuid,
                             const QString &recipientUuid, const QHostAddress &peerAddress,
-                            const QString &peerMachineId);
+                            const QString &peerMachineId, bool isFolderTransfer);
     void onTransferProgress(const QString &transferKey, qint64 bytesTransferred, qint64 totalBytes);
     void onTransferCompleted(const QString &transferKey, const QString &filePath);
     void onTransferFailed(const QString &transferKey, const QString &errorString);
@@ -185,6 +186,16 @@ private:
     /// retryTransfer()) plutot que de retomber sur un port par defaut
     /// potentiellement different de celui reellement utilise par le pair.
     QHash<QString, QList<int>> m_pendingSendPorts;
+
+    /// Cles (transferKey) des transferts identifies comme folder-sync par
+    /// onTransferStarted() (isFolderTransfer == true) : ces transferts ne
+    /// doivent pas apparaitre dans activeTransfers() (voir le meme filtre
+    /// applique cote persistance par TransferManager::onNetworkTransferStarted()).
+    /// transferProgress/transferCompleted/transferFailed ne portent pas ce
+    /// flag : on le memorise donc ici pour pouvoir les ignorer eux aussi,
+    /// et on le retire a la fin du transfert (Completed/Failed) pour ne
+    /// pas laisser grossir cet ensemble indefiniment.
+    QSet<QString> m_folderSyncTransferKeys;
 };
 
 } // namespace core

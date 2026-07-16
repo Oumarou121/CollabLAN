@@ -144,8 +144,17 @@ void TransferManager::onNetworkTransferStarted(const QString &transferKey, const
                                                 qint64 fileSize, bool incoming, qint64 resumeOffset,
                                                 const QString &senderUuid, const QString &recipientUuid,
                                                 const QHostAddress &peerAddress,
-                                                const QString &peerMachineId)
+                                                const QString &peerMachineId, bool isFolderTransfer)
 {
+    // CORRECTIF : les transferts de synchronisation de dossier (FolderSyncService)
+    // ne doivent pas être enregistrés dans la table Transfers, réservée aux
+    // transferts manuels P2P. FolderSyncService gère son propre historique via
+    // SyncOperations et SharedFiles.
+    if (isFolderTransfer) {
+        qDebug() << "[TransferManager] Transfert ignoré (folder-sync):" << fileName;
+        return;
+    }
+
     // Chaine vide acceptee comme "inconnu" - le transfert doit toujours
     // etre enregistre pour l'historique, meme sans identite complete (ex.
     // recipientUuid inconnu sur un reseau P2P : c'est le cas le plus

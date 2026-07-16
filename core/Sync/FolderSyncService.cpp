@@ -1056,7 +1056,7 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
         const QString transferFileName = folderTransferFileName(folderUuid, relativePath);
         const bool ok = m_transferService->sendFile(
             targetAddress, requesterPort, absPath, m_machineId, requesterMachineId,
-            transferFileName);
+            transferFileName, true);
         if (!ok) {
             qWarning() << "[FolderSync] sendFile échoué pour" << absPath;
         } else {
@@ -2066,6 +2066,8 @@ void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending
             qWarning() << "[FolderSync] Copie conflit échouée vers" << conflictAbsPath;
             return;
         }
+        // Supprimer le fichier temporaire après copie réussie
+        QFile::remove(sourcePath);
 
         wasConflict = true;
         qWarning() << "[FolderSync] Conflit détecté :" << pending.relativePath
@@ -2087,6 +2089,8 @@ void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending
             qWarning() << "[FolderSync] Copie échouée vers" << targetAbsPath;
             return;
         }
+        // Supprimer le fichier temporaire après copie réussie
+        QFile::remove(sourcePath);
     }
 
     // 4. Infos du fichier final sur disque.

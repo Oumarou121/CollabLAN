@@ -120,7 +120,7 @@ public:
      */
     bool sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
                   const QString &senderUuid, const QString &recipientUuid,
-                  const QString &transferFileName = QString());
+                  const QString &transferFileName = QString(), bool isFolderTransfer = false);
 
 signals:
     /// Emis quand un transfert (entrant ou sortant) demarre. resumeOffset
@@ -140,7 +140,7 @@ signals:
     void transferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
                           bool incoming, qint64 resumeOffset, const QString &senderUuid,
                           const QString &recipientUuid, const QHostAddress &peerAddress,
-                          const QString &peerMachineId);
+                          const QString &peerMachineId, bool isFolderTransfer = false);
 
     /// Emis a intervalles reguliers pendant le transfert.
     void transferProgress(const QString &transferKey, qint64 bytesTransferred, qint64 totalBytes);
@@ -185,6 +185,7 @@ private:
         QString recipientUuid;
         QString senderMachineId;    ///< UUID DiscoveryService::localId() de l'expediteur (voir encodeHeader()).
         bool compressionEnabled = false; ///< true si l'expediteur a active la compression zlib (compressionFlags & 0x01).
+        bool isFolderTransfer = false; ///< true si le transfert provient de FolderSyncService (ne doit pas etre enregistre dans la table Transfers).
         QFile *file = nullptr;
         QString destinationPath;    ///< Chemin final (une fois le transfert termine).
         QString partialPath;        ///< Fichier temporaire "<nom>.part" pendant le transfert.
@@ -202,6 +203,7 @@ private:
         QString senderUuid;
         QString recipientUuid;
         QString transferFileName; ///< Nom annonce au destinataire (vide = basename de filePath).
+        bool isFolderTransfer = false; ///< true si le transfert provient de FolderSyncService.
     };
 
     /// Adresse/port d'une destination, retrouvee par sa cle (voir

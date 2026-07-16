@@ -31,7 +31,7 @@ namespace {
 // decodeHeader() (pas de compression).
 QByteArray encodeHeader(const QString &fileName, qint64 fileSize, const QString &senderUuid,
                          const QString &recipientUuid, const QString &senderMachineId,
-                         quint8 compressionFlags = 0)
+                         quint8 compressionFlags = 0, bool isFolderTransfer = false)
 {
     QByteArray payload;
     QDataStream stream(&payload, QIODevice::WriteOnly);
@@ -39,13 +39,14 @@ QByteArray encodeHeader(const QString &fileName, qint64 fileSize, const QString 
     stream << fileName << static_cast<qint64>(fileSize)
            << senderUuid << recipientUuid
            << senderMachineId
-           << compressionFlags;
+           << compressionFlags
+           << isFolderTransfer;
     return payload;
 }
 
 bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize,
                    QString *senderUuid, QString *recipientUuid, QString *senderMachineId,
-                   quint8 *compressionFlags = nullptr)
+                   quint8 *compressionFlags = nullptr, bool *isFolderTransfer = nullptr)
 {
     QDataStream stream(payload);
     stream.setVersion(QDataStream::Qt_6_0);
@@ -53,6 +54,7 @@ bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize
     if (stream.status() != QDataStream::Ok) {
         senderMachineId->clear();
         if (compressionFlags) *compressionFlags = 0;
+        if (isFolderTransfer) *isFolderTransfer = false;
         return false;
     }
     // senderMachineId : champ optionnel ajoute apres la v1 du protocole.
@@ -60,6 +62,7 @@ bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize
     if (stream.status() != QDataStream::Ok) {
         senderMachineId->clear();
         if (compressionFlags) *compressionFlags = 0;
+        if (isFolderTransfer) *isFolderTransfer = false;
         return true; // champs obligatoires presents, optionnels absents = OK
     }
     // compressionFlags : champ optionnel ajoute apres senderMachineId.
@@ -67,6 +70,13 @@ bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize
         stream >> *compressionFlags;
         if (stream.status() != QDataStream::Ok) {
             *compressionFlags = 0;
+        }
+    }
+    // isFolderTransfer : champ optionnel ajoute apres compressionFlags.
+    if (isFolderTransfer) {
+        stream >> *isFolderTransfer;
+        if (stream.status() != QDataStream::Ok) {
+            *isFolderTransfer = false;
         }
     }
     return true;
@@ -274,7 +284,7 @@ QString TransferService::destKeyFor(const QHostAddress &host, quint16 port)
 
 bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
                                 const QString &senderUuid, const QString &recipientUuid,
-                                const QString &transferFileName)
+                                const QString &transferFileName, bool isFolderTransfer)
 {
     // Verification rapide et synchrone : un fichier absent/illisible des
     // l'appel doit echouer immediatement (contrat historique de sendFile(),
@@ -297,7 +307,7 @@ bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QSt
     const QString destKey = destKeyFor(host, port);
     m_destInfo[destKey] = DestInfo{host, port};
     m_sendQueues[destKey].enqueue(PendingSendJob{filePath, senderUuid, recipientUuid,
-                                                 transferFileName});
+                                                 transferFileName, isFolderTransfer});
     dispatchSendQueue(destKey);
     return true;
 }
@@ -377,12 +387,13 @@ bool TransferService::startSendOnSocket(QTcpSocket *socket, const PendingSendJob
     // d'un aller-retour reseau pour la resoudre dans ce sens). Seul le
     // sens reception en a besoin (voir onServerSocketReadyRead()).
     emit transferStarted(state.transferKey, info.fileName(), state.fileSize, false, 0,
-                          state.senderUuid, state.recipientUuid, socket->peerAddress(), QString());
+                          state.senderUuid, state.recipientUuid, socket->peerAddress(), QString(),
+                          job.isFolderTransfer);
 
     const quint8 compressionFlags = m_compressionEnabled ? 0x01 : 0x00;
     const QByteArray header = encodeHeader(announcedFileName, state.fileSize, state.senderUuid,
                                             state.recipientUuid, m_localMachineId,
-                                            compressionFlags);
+                                            compressionFlags, job.isFolderTransfer);
     socket->write(frameOf(header));
     // La reponse (resumeOffset) arrive de facon asynchrone dans
     // onClientSocketReadyRead ; voir state.resumeOffsetReceived.
@@ -673,7 +684,8 @@ void TransferService::onServerSocketReadyRead()
             QString recipientUuid;
             QString senderMachineId;
             quint8 compressionFlags = 0;
-            if (!decodeHeader(payload, &fileName, &fileSize, &senderUuid, &recipientUuid, &senderMachineId, &compressionFlags)
+            bool isFolderTransfer = false;
+            if (!decodeHeader(payload, &fileName, &fileSize, &senderUuid, &recipientUuid, &senderMachineId, &compressionFlags, &isFolderTransfer)
                 || fileSize < 0) {
                 finishReceive(socket, false, QStringLiteral("En-tete de transfert invalide"));
                 return;
@@ -686,6 +698,7 @@ void TransferService::onServerSocketReadyRead()
             state.senderUuid = senderUuid;
             state.recipientUuid = recipientUuid;
             state.senderMachineId = senderMachineId;
+            state.isFolderTransfer = isFolderTransfer;
             state.compressionEnabled = (compressionFlags & 0x01) != 0;
             state.headerParsed = true;
             // CORRECTIF (pool de connexions -- cote reception) : une
@@ -750,7 +763,7 @@ void TransferService::onServerSocketReadyRead()
 
             emit transferStarted(state.transferKey, state.fileName, state.fileSize, true, resumeOffset,
                                   state.senderUuid, state.recipientUuid, socket->peerAddress(),
-                                  state.senderMachineId);
+                                  state.senderMachineId, state.isFolderTransfer);
             if (resumeOffset > 0) {
                 emit transferProgress(state.transferKey, state.bytesReceived, state.fileSize);
             }

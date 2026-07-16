@@ -80,7 +80,7 @@ private slots:
     void onNetworkTransferStarted(const QString &transferKey, const QString &fileName, qint64 fileSize,
                                    bool incoming, qint64 resumeOffset, const QString &senderUuid,
                                    const QString &recipientUuid, const QHostAddress &peerAddress,
-                                   const QString &peerMachineId);
+                                   const QString &peerMachineId, bool isFolderTransfer = false);
     void onNetworkTransferCompleted(const QString &transferKey, const QString &filePath);
     void onNetworkTransferFailed(const QString &transferKey, const QString &errorString);
 
