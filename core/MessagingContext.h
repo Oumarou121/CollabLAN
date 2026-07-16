@@ -100,10 +100,20 @@ signals:
     /// l'ecran pour voir la liste se mettre a jour.
     void conversationsChanged();
 
+    /// CORRECTIF : jusqu'ici, un echec d'envoi (pas de conversation active,
+    /// MessagingManager absent, service reseau deconnecte, erreur base de
+    /// donnees...) ne produisait qu'un qWarning() cote C++ -- rien ne
+    /// remontait jamais a l'UI, qui affichait le message comme s'il avait
+    /// ete envoye normalement, ou ne montrait tout simplement rien du tout.
+    /// Emis pour toute erreur concernant la conversation actuellement
+    /// ouverte (ChatView.qml), avec un message d'erreur lisible.
+    void messageSendFailed(const QString &error);
+
 private slots:
     void onMessageReceived(const models::Message &message);
     void onMessageSent(const models::Message &message);
     void onGroupCreated(const models::Group &group);
+    void onMessageSendFailed(qint64 conversationId, const QString &error);
 
 private:
     MessagingManager *m_messagingManager = nullptr;

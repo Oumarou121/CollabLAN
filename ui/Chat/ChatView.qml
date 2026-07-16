@@ -25,6 +25,27 @@ Item {
 
     signal backRequested()
 
+    // CORRECTIF : un echec d'envoi (pas de conversation active, service
+    // deconnecte, erreur base de donnees...) ne produisait auparavant
+    // qu'un qWarning() cote C++ -- rien ne remontait jamais ici. Bandeau
+    // transitoire, discret mais visible, qui disparait tout seul.
+    property string sendErrorMessage: ""
+
+    Connections {
+        target: messagingContext
+        function onMessageSendFailed(error) {
+            root.sendErrorMessage = error
+            sendErrorBanner.visible = true
+            sendErrorHideTimer.restart()
+        }
+    }
+
+    Timer {
+        id: sendErrorHideTimer
+        interval: 4000
+        onTriggered: sendErrorBanner.visible = false
+    }
+
     Rectangle {
         anchors.fill: parent
         color: Theme.background
@@ -95,6 +116,47 @@ Item {
 
                     // Le statut "En ligne" fige a ete retire : il n'y a pas
                     // encore de vrai suivi de presence par conversation.
+                }
+            }
+        }
+
+        // Bandeau d'erreur d'envoi (masque par defaut, cf. sendErrorMessage)
+        Rectangle {
+            id: sendErrorBanner
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? 36 : 0
+            visible: false
+            color: "#D93025"
+            clip: true
+
+            Behavior on Layout.preferredHeight { NumberAnimation { duration: 120 } }
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.spacingMedium
+                anchors.rightMargin: Theme.spacingMedium
+                spacing: Theme.spacingSmall
+
+                Label {
+                    Layout.fillWidth: true
+                    text: root.sendErrorMessage
+                    color: "#FFFFFF"
+                    font.pixelSize: Theme.fontSizeCaption
+                    font.family: Theme.fontFamily
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    text: "\u2715"
+                    color: "#FFFFFF"
+                    font.pixelSize: 12
+
+                    MouseArea {
+                        anchors.fill: parent
+                        anchors.margins: -6
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: sendErrorBanner.visible = false
+                    }
                 }
             }
         }

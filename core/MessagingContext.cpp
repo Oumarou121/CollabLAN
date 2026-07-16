@@ -32,6 +32,8 @@ void MessagingContext::setMessagingManager(MessagingManager *manager)
                     this, &MessagingContext::onMessageReceived);
             connect(m_messagingManager, &MessagingManager::messageSent,
                     this, &MessagingContext::onMessageSent);
+            connect(m_messagingManager, &MessagingManager::messageSendFailed,
+                    this, &MessagingContext::onMessageSendFailed);
         }
 
         emit messagingManagerChanged();
@@ -329,13 +331,19 @@ QString MessagingContext::conversationDisplayName(qint64 conversationId) const
 
 void MessagingContext::sendMessage(const QString &content)
 {
-    if (!m_messagingManager || content.trimmed().isEmpty()) {
+    if (!m_messagingManager) {
+        qWarning() << "Cannot send message: MessagingManager not set";
+        emit messageSendFailed(tr("Impossible d'envoyer le message : service de messagerie indisponible"));
+        return;
+    }
+    if (content.trimmed().isEmpty()) {
         return;
     }
 
     const qint64 conversationId = m_messageModel->conversationId();
     if (conversationId <= 0) {
         qWarning() << "Cannot send message: no active conversation";
+        emit messageSendFailed(tr("Impossible d'envoyer le message : aucune conversation active"));
         return;
     }
 
@@ -373,6 +381,17 @@ void MessagingContext::onMessageSent(const models::Message &message)
         m_messageModel->addMessage(message);
     }
     emit conversationsChanged();
+}
+
+void MessagingContext::onMessageSendFailed(qint64 conversationId, const QString &error)
+{
+    // Ne remonter a l'UI que les echecs concernant la conversation
+    // actuellement ouverte : un echec sur une autre conversation (ex. un
+    // retry d'arriere-plan) n'a pas a interrompre l'utilisateur ici.
+    if (conversationId != m_messageModel->conversationId()) {
+        return;
+    }
+    emit messageSendFailed(error);
 }
 
 } // namespace core

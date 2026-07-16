@@ -131,12 +131,14 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
     if (!m_dbManager) {
         m_lastError = MessagingManagerError::DatabaseError;
         m_lastErrorString = QStringLiteral("DatabaseManager not set");
+        emit messageSendFailed(conversationId, m_lastErrorString);
         return std::nullopt;
     }
 
     if (content.trimmed().isEmpty()) {
         m_lastError = MessagingManagerError::InvalidContent;
         m_lastErrorString = QStringLiteral("Message content cannot be empty");
+        emit messageSendFailed(conversationId, m_lastErrorString);
         return std::nullopt;
     }
 
@@ -158,6 +160,7 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
     if (!inserted.has_value()) {
         m_lastError = MessagingManagerError::DatabaseError;
         m_lastErrorString = QStringLiteral("Failed to persist message");
+        emit messageSendFailed(conversationId, m_lastErrorString);
         return std::nullopt;
     }
 
@@ -243,7 +246,18 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
         if (!m_messagingService->sendMessage(jsonMessage)) {
             qWarning() << "Failed to send message via network";
             // On ne retourne pas d'erreur ici car le message est deja en base
+            emit messageSendFailed(conversationId,
+                QStringLiteral("Message enregistre localement mais l'envoi reseau a echoue"));
         }
+    } else {
+        // CORRECTIF : jusqu'ici totalement silencieux (pas meme un qWarning)
+        // -- le message etait persiste en base locale mais ne partait jamais
+        // sur le reseau si aucune connexion n'etait etablie (ex. serveur
+        // injoignable), sans que rien ne le signale nulle part, ni logs ni UI.
+        qWarning() << "sendMessage: MessagingService non connecte, message conserve localement uniquement"
+                   << conversationId;
+        emit messageSendFailed(conversationId,
+            QStringLiteral("Pas de connexion reseau : message enregistre localement uniquement"));
     }
 
     // Diffuse egalement aux clients connectes a notre serveur, mais
