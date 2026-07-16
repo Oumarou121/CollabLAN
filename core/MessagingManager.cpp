@@ -10,6 +10,7 @@
 
 #include <QSqlQuery>
 #include <QSqlError>
+#include <QStringList>
 #include <QUuid>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -245,13 +246,35 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
         }
     }
 
-    // Diffuse egalement a tous les clients connectes a notre serveur : pour
-    // une conversation de groupe, chaque membre connecte a ce poste doit
-    // recevoir le message (MessagingService ne gere qu'une connexion
-    // sortante point-a-point, insuffisante des que le groupe compte plus
-    // de 2 membres).
+    // Diffuse egalement aux clients connectes a notre serveur, mais
+    // UNIQUEMENT ceux qui sont participants de la conversation (issue #2 :
+    // broadcastMessage() envoyait ce message a TOUS les clients connectes,
+    // y compris des tiers totalement etrangers a la conversation, qui le
+    // persistaient silencieusement dans leur propre base). Pour une
+    // conversation de groupe, participant1Uuid/participant2Uuid sont vides
+    // (les Conversations de type 'group' n'utilisent pas ces colonnes) :
+    // on resout alors les membres via resolveGroupMemberUuids().
     if (m_messagingServer) {
-        m_messagingServer->broadcastMessage(jsonMessage);
+        QStringList targetUuids;
+        if (!participant1Uuid.isEmpty()) targetUuids << participant1Uuid;
+        if (!participant2Uuid.isEmpty()) targetUuids << participant2Uuid;
+
+        if (conversationType == QStringLiteral("group")) {
+            targetUuids << resolveGroupMemberUuids(conversationId);
+        }
+
+        targetUuids.removeDuplicates();
+        if (!targetUuids.isEmpty()) {
+            m_messagingServer->sendToUuids(jsonMessage, targetUuids);
+        } else {
+            // Repli de securite : si on n'a pas pu resoudre le moindre
+            // destinataire (donnee manquante, groupe introuvable...), on
+            // garde l'ancien comportement plutot que de perdre le message
+            // silencieusement.
+            qWarning() << "sendMessage: aucun destinataire resolu pour la conversation" << conversationId
+                       << "- repli sur broadcastMessage()";
+            m_messagingServer->broadcastMessage(jsonMessage);
+        }
     }
 
     emit messageSent(message);
@@ -425,6 +448,15 @@ QVector<models::Message> MessagingManager::getMessages(qint64 conversationId, in
     return m_repository.getMessages(conversationId, limit);
 }
 
+std::optional<models::Message> MessagingManager::getLastMessage(qint64 conversationId)
+{
+    if (!m_dbManager) {
+        return std::nullopt;
+    }
+
+    return m_repository.getLastMessage(conversationId);
+}
+
 QVector<models::Conversation> MessagingManager::getUserConversations(qint64 userId)
 {
     QVector<models::Conversation> conversations;
@@ -477,6 +509,79 @@ int MessagingManager::getUnreadCount(qint64 conversationId, qint64 userId)
     }
 
     return m_repository.getUnreadCount(conversationId, userId);
+}
+
+QStringList MessagingManager::resolveGroupMemberUuids(qint64 conversationId) const
+{
+    QStringList uuids;
+    if (!m_dbManager) {
+        return uuids;
+    }
+
+    QSqlDatabase db = m_dbManager->database();
+    QSqlQuery groupQuery(db);
+    groupQuery.prepare(QStringLiteral("SELECT id FROM Groups WHERE conversation_id = :cid"));
+    groupQuery.bindValue(QStringLiteral(":cid"), conversationId);
+    if (!groupQuery.exec() || !groupQuery.next()) {
+        return uuids;
+    }
+    const qint64 groupId = groupQuery.value(0).toLongLong();
+
+    QSqlQuery membersQuery(db);
+    membersQuery.prepare(QStringLiteral("SELECT user_id FROM GroupMembers WHERE group_id = :gid"));
+    membersQuery.bindValue(QStringLiteral(":gid"), groupId);
+    if (!membersQuery.exec()) {
+        return uuids;
+    }
+
+    database::UserRepository users(db);
+    while (membersQuery.next()) {
+        const qint64 memberId = membersQuery.value(0).toLongLong();
+        if (const auto member = users.findById(static_cast<int>(memberId)); member.has_value()) {
+            uuids << member->uuid();
+        }
+    }
+    return uuids;
+}
+
+QStringList MessagingManager::resolveTargetUuidsFromPayload(const QString &jsonPayload) const
+{
+    QStringList targetUuids;
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonPayload.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        return targetUuids;
+    }
+    const QJsonObject obj = doc.object();
+    if (obj.value(QStringLiteral("type")).toString() != QStringLiteral("message")) {
+        return targetUuids;
+    }
+
+    const QString participant1Uuid = obj.value(QStringLiteral("participant1Uuid")).toString();
+    const QString participant2Uuid = obj.value(QStringLiteral("participant2Uuid")).toString();
+    if (!participant1Uuid.isEmpty()) targetUuids << participant1Uuid;
+    if (!participant2Uuid.isEmpty()) targetUuids << participant2Uuid;
+
+    if (obj.value(QStringLiteral("conversationType")).toString() == QStringLiteral("group")) {
+        // conversationId dans le payload est l'id LOCAL de l'expediteur,
+        // qui n'a aucune raison de correspondre au notre (chaque poste a sa
+        // propre base) : on doit d'abord retrouver notre propre id local
+        // via conversationUuid, qui lui est stable inter-postes.
+        const QString conversationUuid = obj.value(QStringLiteral("conversationUuid")).toString();
+        if (!conversationUuid.isEmpty() && m_dbManager) {
+            QSqlQuery convQuery(m_dbManager->database());
+            convQuery.prepare(QStringLiteral("SELECT id FROM Conversations WHERE uuid = :uuid"));
+            convQuery.bindValue(QStringLiteral(":uuid"), conversationUuid);
+            if (convQuery.exec() && convQuery.next()) {
+                const qint64 localConversationId = convQuery.value(0).toLongLong();
+                targetUuids << resolveGroupMemberUuids(localConversationId);
+            }
+        }
+    }
+
+    targetUuids.removeDuplicates();
+    return targetUuids;
 }
 
 } // namespace core

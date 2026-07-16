@@ -159,9 +159,22 @@ QVariantList MessagingContext::conversationsList()
         const qint64 otherId = conv.participant1Id() == currentId ? conv.participant2Id() : conv.participant1Id();
         entry[QStringLiteral("name")] = userName(otherId);
 
-        const auto messages = m_messagingManager->getMessages(conv.id(), 1);
-        entry[QStringLiteral("lastMessage")] = messages.isEmpty() ? QString() : messages.last().content();
-        entry[QStringLiteral("timestamp")] = messages.isEmpty() ? QVariant() : messages.last().timestamp();
+        // Bug rapporte : getMessages(id, 1) retourne le PREMIER message
+        // (ORDER BY id ASC), pas le dernier -> l'apercu restait fige sur
+        // le tout premier message echange, comme si rien de plus recent
+        // n'avait jamais ete envoye. getLastMessage() corrige cela.
+        const auto lastMessage = m_messagingManager->getLastMessage(conv.id());
+        if (lastMessage.has_value()) {
+            // Prefixe "Moi :"/"Lui :" pour savoir qui a envoye le dernier
+            // message sans avoir a ouvrir la conversation (comme WhatsApp).
+            const QString prefix = lastMessage->senderId() == currentId
+                ? tr("Moi : ") : tr("Lui : ");
+            entry[QStringLiteral("lastMessage")] = prefix + lastMessage->content();
+            entry[QStringLiteral("timestamp")] = lastMessage->timestamp();
+        } else {
+            entry[QStringLiteral("lastMessage")] = QString();
+            entry[QStringLiteral("timestamp")] = QVariant();
+        }
         entry[QStringLiteral("unreadCount")] = m_messagingManager->getUnreadCount(conv.id(), currentId);
         list.append(entry);
     }
@@ -178,9 +191,18 @@ QVariantList MessagingContext::conversationsList()
             entry[QStringLiteral("conversationId")] = group.conversationId();
             entry[QStringLiteral("name")] = group.name();
 
-            const auto messages = m_messagingManager->getMessages(group.conversationId(), 1);
-            entry[QStringLiteral("lastMessage")] = messages.isEmpty() ? QString() : messages.last().content();
-            entry[QStringLiteral("timestamp")] = messages.isEmpty() ? QVariant() : messages.last().timestamp();
+            const auto lastMessage = m_messagingManager->getLastMessage(group.conversationId());
+            if (lastMessage.has_value()) {
+                // Pour un groupe, "Lui :" serait ambigu (plusieurs membres
+                // possibles) : on utilise le prenom de l'expediteur reel.
+                const QString prefix = lastMessage->senderId() == currentId
+                    ? tr("Moi : ") : userName(lastMessage->senderId()) + QStringLiteral(" : ");
+                entry[QStringLiteral("lastMessage")] = prefix + lastMessage->content();
+                entry[QStringLiteral("timestamp")] = lastMessage->timestamp();
+            } else {
+                entry[QStringLiteral("lastMessage")] = QString();
+                entry[QStringLiteral("timestamp")] = QVariant();
+            }
             entry[QStringLiteral("unreadCount")] = m_messagingManager->getUnreadCount(group.conversationId(), currentId);
             list.append(entry);
         }
@@ -325,6 +347,17 @@ void MessagingContext::onMessageReceived(const models::Message &message)
     // Ajouter le message au modèle s'il appartient à la conversation active
     if (message.conversationId() == m_messageModel->conversationId()) {
         m_messageModel->addMessage(message);
+
+        // Bug rapporté : un message recu pendant que la conversation est
+        // DEJA ouverte restait marque non-lu tant qu'on ne quittait pas
+        // l'ecran puis n'y revenait pas (seul setConversation(), appele a
+        // l'ouverture, appelait markConversationAsRead()). Ici on est déjà
+        // en train de lire cette conversation, donc ce nouveau message doit
+        // être marqué lu immédiatement, sans attendre une réouverture.
+        const qint64 currentId = currentUserId();
+        if (currentId > 0 && m_messagingManager) {
+            m_messagingManager->markConversationAsRead(message.conversationId(), currentId);
+        }
     }
     // Meme si la conversation n'est pas celle actuellement ouverte, son
     // apercu (dernier message/horodatage) dans ConversationsView doit se

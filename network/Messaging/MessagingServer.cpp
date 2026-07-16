@@ -10,6 +10,8 @@
 #include <QFile>
 #include <QDebug>
 #include <QMetaObject>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 namespace network {
 
@@ -92,6 +94,7 @@ void MessagingServer::stop()
             client->close();
         }
         m_clients.clear();
+        m_clientUuids.clear();
 
         m_server->close();
         delete m_server;
@@ -119,6 +122,22 @@ int MessagingServer::broadcastMessage(const QString &message, const QHostAddress
         }
         client->sendTextMessage(message);
         ++sentCount;
+    }
+    return sentCount;
+}
+
+int MessagingServer::sendToUuids(const QString &message, const QStringList &uuids)
+{
+    if (uuids.isEmpty()) {
+        return 0;
+    }
+
+    int sentCount = 0;
+    for (auto it = m_clientUuids.constBegin(); it != m_clientUuids.constEnd(); ++it) {
+        if (uuids.contains(it.value())) {
+            it.key()->sendTextMessage(message);
+            ++sentCount;
+        }
     }
     return sentCount;
 }
@@ -168,6 +187,26 @@ void MessagingServer::onTextMessageReceived(const QString &message)
         return;
     }
 
+    // Handshake d'identification : chaque client envoie son userUuid juste
+    // apres connexion (cf. Application::sendIdentifyIfReady). On l'intercepte
+    // ici plutot que de le laisser remonter jusqu'a MessagingManager, qui ne
+    // sait traiter que les types "message"/"group_created". Sans ce
+    // handshake, le serveur ne peut associer aucune connexion a un
+    // utilisateur, et sendToUuids() ne peut donc cibler personne (issue #2).
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(message.toUtf8(), &parseError);
+    if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+        const QJsonObject obj = doc.object();
+        if (obj.value(QStringLiteral("type")).toString() == QStringLiteral("identify")) {
+            const QString userUuid = obj.value(QStringLiteral("userUuid")).toString();
+            if (!userUuid.isEmpty()) {
+                m_clientUuids.insert(client, userUuid);
+                qDebug() << "Client" << client->peerAddress() << "identifie comme utilisateur" << userUuid;
+            }
+            return;
+        }
+    }
+
     qDebug() << "Message received from" << client->peerAddress() << ":" << message;
     emit messageReceived(message, client->peerAddress());
 }
@@ -183,6 +222,7 @@ void MessagingServer::onSocketDisconnected()
     emit clientDisconnected(client->peerAddress());
 
     m_clients.removeAll(client);
+    m_clientUuids.remove(client);
     client->deleteLater();
 }
 

@@ -3,7 +3,9 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QHostAddress>
+#include <QHash>
 
 class QWebSocketServer;
 class QWebSocket;
@@ -49,6 +51,16 @@ public:
     int broadcastMessage(const QString &message,
                           const QHostAddress &excludeAddress = QHostAddress());
 
+    /// Envoie un message texte uniquement aux clients dont l'UUID
+    /// utilisateur identifie (cf. handshake "identify" gere en interne)
+    /// figure dans @p uuids. Contrairement a broadcastMessage(), les
+    /// clients non concernes par la conversation/le groupe ne recoivent
+    /// (et ne persistent) jamais le message (issue #2 : diffusion non
+    /// ciblee). Retourne le nombre de clients effectivement atteints.
+    /// Un client pas encore identifie (aucun message "identify" recu)
+    /// ne peut pas etre cible par uuid.
+    int sendToUuids(const QString &message, const QStringList &uuids);
+
     /// Port d'écoute.
     quint16 port() const;
 
@@ -81,6 +93,12 @@ private:
     SecurityService *m_securityService = nullptr;
     QObject *m_permissionManager = nullptr;
     QList<QWebSocket*> m_clients;
+
+    /// UUID utilisateur declare par chaque client via le message
+    /// "identify" envoye juste apres connexion (cf. MessagingService /
+    /// Application::sendIdentifyIfReady). Alimente sendToUuids() pour
+    /// ne relayer un message qu'aux destinataires reels (issue #2).
+    QHash<QWebSocket*, QString> m_clientUuids;
 };
 
 } // namespace network

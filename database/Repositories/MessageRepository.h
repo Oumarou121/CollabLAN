@@ -33,6 +33,13 @@ public:
     /// Recupere le nombre total de messages dans une conversation.
     int getMessageCount(qint64 conversationId);
 
+    /// Recupere le DERNIER message d'une conversation (le plus recent),
+    /// utilise par ConversationsView pour l'apercu de la liste des
+    /// conversations. A ne pas confondre avec getMessages(id, 1), qui
+    /// retourne le PREMIER message (ORDER BY id ASC, pense pour charger
+    /// l'historique de la plus ancienne a la plus recente dans ChatView).
+    std::optional<models::Message> getLastMessage(qint64 conversationId);
+
     /// Marque un message comme lu.
     bool markAsRead(qint64 messageId);
 

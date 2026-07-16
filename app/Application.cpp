@@ -184,6 +184,19 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_messagingManager, &core::MessagingManager::messageReceived,
             this, &Application::appendMessageSyncLog);
 
+    // Handshake d'identification (issue #2) : des que la connexion sortante
+    // vers le serveur actif est etablie ET/OU des qu'un utilisateur se
+    // connecte localement, on informe le serveur de notre userUuid. Les
+    // deux evenements (connexion reseau, login) peuvent survenir dans
+    // n'importe quel ordre selon le contexte de demarrage ; sendIdentifyIfReady()
+    // ne fait rien tant que les deux conditions ne sont pas reunies.
+    connect(m_messagingService, &network::MessagingService::connected,
+            this, &Application::sendIdentifyIfReady);
+    if (m_userManager) {
+        connect(m_userManager, &core::UserManager::loginSucceeded,
+                this, &Application::sendIdentifyIfReady);
+    }
+
     connect(m_groupManager, &core::GroupManager::groupCreated,
             this, [this](const models::Group &group) {
                 appendGroupSyncLog(group, models::SyncOperation::Insert);
@@ -1174,6 +1187,26 @@ QString Application::conversationUuidForId(qint64 conversationId) const
     return query.value(0).toString();
 }
 
+void Application::sendIdentifyIfReady()
+{
+    if (!m_messagingService || !m_messagingService->isConnected() || !m_userManager) {
+        return;
+    }
+    const auto uid = m_userManager->currentUserId();
+    if (!uid.has_value()) {
+        return;
+    }
+    const QString localUuid = userUuidForId(static_cast<qint64>(*uid));
+    if (localUuid.isEmpty()) {
+        return;
+    }
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("identify"));
+    payload.insert(QStringLiteral("userUuid"), localUuid);
+    m_messagingService->sendMessage(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+}
+
 void Application::handleIncomingPayload(const QString &message, bool relay)
 {
     // MessagingManager ne traite que les messages de type "message".
@@ -1181,15 +1214,24 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
     // "sync_ack", "sync_batch" (connecte separement sur les memes signaux).
     if (m_messagingManager->receiveMessage(message)) {
         if (relay && m_messagingServer) {
-            // Rediffuse a tous les clients connectes a NOTRE serveur (y
-            // compris, potentiellement, vers l'expediteur d'origine : sans
-            // gravite, MessagingManager::receiveMessage() deduplique par
-            // uuid, cf. m_repository.findByUuid ci-dessus). C'est ce relais
-            // qui manquait : jusqu'ici le SERVER se contentait de persister
-            // le message dans SA PROPRE base sans jamais le retransmettre,
-            // si bien qu'un destinataire connecte en CLIENT au meme SERVER
-            // ne le recevait jamais.
-            m_messagingServer->broadcastMessage(message);
+            // Rediffuse UNIQUEMENT aux destinataires reels (participants de
+            // la conversation ou membres du groupe), et non plus a tous les
+            // clients connectes (issue #2 : un tiers non concerne recevait
+            // et persistait silencieusement le message dans sa propre
+            // base). resolveTargetUuidsFromPayload() s'appuie sur les uuids
+            // stables presents dans le payload (et, pour un groupe, sur
+            // notre propre table Groups/GroupMembers resolue via
+            // conversationUuid).
+            const QStringList targetUuids = m_messagingManager->resolveTargetUuidsFromPayload(message);
+            if (!targetUuids.isEmpty()) {
+                m_messagingServer->sendToUuids(message, targetUuids);
+            } else {
+                // Repli de securite : mieux vaut sur-diffuser (comportement
+                // historique) que perdre le message si on n'a pas su
+                // resoudre le moindre destinataire.
+                qWarning() << "handleIncomingPayload: aucun destinataire resolu, repli sur broadcastMessage()";
+                m_messagingServer->broadcastMessage(message);
+            }
         }
         return;
     }

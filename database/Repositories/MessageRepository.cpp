@@ -99,6 +99,40 @@ QVector<models::Message> MessageRepository::getMessages(qint64 conversationId, i
     return messages;
 }
 
+std::optional<models::Message> MessageRepository::getLastMessage(qint64 conversationId)
+{
+    if (!m_dbManager) {
+        return std::nullopt;
+    }
+
+    QSqlDatabase db = m_dbManager->database();
+    QSqlQuery query(db);
+
+    query.prepare(QStringLiteral(
+        "SELECT id, conversationId, senderId, content, timestamp, is_read, uuid "
+        "FROM Messages "
+        "WHERE conversationId = :conversationId "
+        "ORDER BY id DESC "
+        "LIMIT 1"
+    ));
+    query.bindValue(QStringLiteral(":conversationId"), conversationId);
+
+    if (!query.exec() || !query.next()) {
+        return std::nullopt;
+    }
+
+    models::Message msg(
+        query.value(0).toLongLong(),
+        query.value(1).toLongLong(),
+        query.value(2).toLongLong(),
+        query.value(3).toString()
+    );
+    msg.setTimestamp(QDateTime::fromString(query.value(4).toString(), Qt::ISODate));
+    msg.setRead(query.value(5).toBool());
+    msg.setUuid(query.value(6).toString());
+    return msg;
+}
+
 int MessageRepository::getMessageCount(qint64 conversationId)
 {
     if (!m_dbManager) {

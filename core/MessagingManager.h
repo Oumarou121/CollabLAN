@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <optional>
 
@@ -78,6 +79,10 @@ public:
     /// Recupere tous les messages d'une conversation.
     QVector<models::Message> getMessages(qint64 conversationId, int limit = 100);
 
+    /// Recupere le dernier message (le plus recent) d'une conversation,
+    /// pour l'apercu affiche dans ConversationsView.
+    std::optional<models::Message> getLastMessage(qint64 conversationId);
+
     /// Recupere toutes les conversations d'un utilisateur.
     QVector<models::Conversation> getUserConversations(qint64 userId);
 
@@ -88,6 +93,16 @@ public:
     /// Nombre de messages non lus dans une conversation pour userId,
     /// utilise pour le badge dans ConversationsView.
     int getUnreadCount(qint64 conversationId, qint64 userId);
+
+    /// Resout les uuids des destinataires reels d'un payload "message" deja
+    /// recu du reseau (participant1Uuid/participant2Uuid s'ils sont
+    /// presents, sinon membres du groupe via conversationUuid), afin que
+    /// l'appelant (Application::handleIncomingPayload) puisse relayer ce
+    /// message uniquement a ces destinataires plutot que de le rediffuser
+    /// a tous les clients connectes (issue #2). Retourne une liste vide si
+    /// le payload n'est pas un message ou si aucun destinataire n'a pu
+    /// etre resolu.
+    QStringList resolveTargetUuidsFromPayload(const QString &jsonPayload) const;
 
     /// Derniere erreur survenue.
     MessagingManagerError lastError() const { return m_lastError; }
@@ -104,6 +119,12 @@ signals:
     void messageSendFailed(qint64 conversationId, const QString &error);
 
 private:
+    /// Uuids des membres du groupe associe a la conversation @p conversationId
+    /// (liste vide si ce n'est pas une conversation de groupe, ou si le
+    /// groupe/ses membres sont introuvables localement). Factorise entre
+    /// sendMessage() et resolveTargetUuidsFromPayload().
+    QStringList resolveGroupMemberUuids(qint64 conversationId) const;
+
     database::DatabaseManager *m_dbManager = nullptr;
     database::MessageRepository m_repository;
     network::MessagingService *m_messagingService = nullptr;

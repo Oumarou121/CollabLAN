@@ -209,6 +209,19 @@ private:
     /// "perdus" cote destinataire.
     void handleIncomingPayload(const QString &message, bool relay);
 
+    /// Envoie au serveur actif le handshake d'identification
+    /// {"type":"identify","userUuid":...} via m_messagingService, si la
+    /// connexion est etablie ET qu'un utilisateur est actuellement
+    /// connecte localement. Appele a la fois sur MessagingService::connected
+    /// et sur UserManager::loginSucceeded (l'ordre entre les deux n'est
+    /// pas garanti : connexion reseau et login peuvent survenir dans
+    /// n'importe quel ordre selon que ce poste redemarre avec un serveur
+    /// deja actif ou se connecte avant/apres l'authentification).
+    /// Sans ce handshake, MessagingServer ne peut jamais associer cette
+    /// connexion a un utilisateur, et sendToUuids() ne peut donc jamais
+    /// cibler ce poste (issue #2 : diffusion non ciblee).
+    void sendIdentifyIfReady();
+
     // TODO: instancier ici les autres services (Security, Settings...)
     std::unique_ptr<database::DatabaseManager> m_databaseManager;
     std::unique_ptr<database::ServerElectionRepository> m_serverElectionRepository;

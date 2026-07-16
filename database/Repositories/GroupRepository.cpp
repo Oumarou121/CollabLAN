@@ -92,10 +92,9 @@ bool GroupRepository::update(const models::Group &group)
 
     // Update members: remove all and re-add
     QSqlQuery deleteQuery(db);
-    const QString deleteQueryString = QStringLiteral(
-        "DELETE FROM GroupMembers WHERE group_id = %1"
-    ).arg(group.id());
-    deleteQuery.exec(deleteQueryString);
+    deleteQuery.prepare(QStringLiteral("DELETE FROM GroupMembers WHERE group_id = :group_id"));
+    deleteQuery.bindValue(QStringLiteral(":group_id"), group.id());
+    deleteQuery.exec();
 
     for (qint64 memberId : group.memberIds()) {
         addMember(group.id(), memberId);
@@ -135,17 +134,15 @@ bool GroupRepository::remove(qint64 groupId)
     QSqlQuery query(db);
 
     // Delete members first
-    const QString deleteMembersQuery = QStringLiteral(
-        "DELETE FROM GroupMembers WHERE group_id = %1"
-    ).arg(groupId);
-    query.exec(deleteMembersQuery);
+    QSqlQuery deleteMembers(db);
+    deleteMembers.prepare(QStringLiteral("DELETE FROM GroupMembers WHERE group_id = :group_id"));
+    deleteMembers.bindValue(QStringLiteral(":group_id"), groupId);
+    deleteMembers.exec();
 
     // Delete group
-    const QString deleteGroupQuery = QStringLiteral(
-        "DELETE FROM Groups WHERE id = %1"
-    ).arg(groupId);
-
-    return query.exec(deleteGroupQuery);
+    query.prepare(QStringLiteral("DELETE FROM Groups WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), groupId);
+    return query.exec();
 }
 
 std::optional<models::Group> GroupRepository::getById(qint64 groupId)
@@ -158,10 +155,11 @@ std::optional<models::Group> GroupRepository::getById(qint64 groupId)
     QSqlQuery query(db);
 
     const QString queryString = QStringLiteral(
-        "SELECT id, name, owner_id, conversation_id, uuid FROM Groups WHERE id = %1"
-    ).arg(groupId);
+        "SELECT id, name, owner_id, conversation_id, uuid FROM Groups WHERE id = :id");
+    query.prepare(queryString);
+    query.bindValue(QStringLiteral(":id"), groupId);
 
-    if (query.exec(queryString) && query.next()) {
+    if (query.exec() && query.next()) {
         models::Group group(
             query.value(0).toLongLong(),
             query.value(1).toString()
@@ -197,10 +195,11 @@ QVector<models::Group> GroupRepository::getByUserId(qint64 userId)
         "SELECT g.id, g.name, g.owner_id, g.conversation_id, g.uuid "
         "FROM Groups g "
         "INNER JOIN GroupMembers gm ON g.id = gm.group_id "
-        "WHERE gm.user_id = %1"
-    ).arg(userId);
+        "WHERE gm.user_id = :user_id");
+    query.prepare(queryString);
+    query.bindValue(QStringLiteral(":user_id"), userId);
 
-    if (query.exec(queryString)) {
+    if (query.exec()) {
         while (query.next()) {
             models::Group group(
                 query.value(0).toLongLong(),
@@ -239,10 +238,12 @@ bool GroupRepository::addMember(qint64 groupId, qint64 userId)
 
     const QString queryString = QStringLiteral(
         "INSERT INTO GroupMembers (group_id, user_id) "
-        "VALUES (%1, %2)"
-    ).arg(groupId).arg(userId);
+        "VALUES (:group_id, :user_id)");
+    query.prepare(queryString);
+    query.bindValue(QStringLiteral(":group_id"), groupId);
+    query.bindValue(QStringLiteral(":user_id"), userId);
 
-    if (!query.exec(queryString)) {
+    if (!query.exec()) {
         qWarning() << "Failed to add member to group:" << query.lastError().text();
         return false;
     }
@@ -261,10 +262,12 @@ bool GroupRepository::removeMember(qint64 groupId, qint64 userId)
 
     const QString queryString = QStringLiteral(
         "DELETE FROM GroupMembers "
-        "WHERE group_id = %1 AND user_id = %2"
-    ).arg(groupId).arg(userId);
+        "WHERE group_id = :group_id AND user_id = :user_id");
+    query.prepare(queryString);
+    query.bindValue(QStringLiteral(":group_id"), groupId);
+    query.bindValue(QStringLiteral(":user_id"), userId);
 
-    return query.exec(queryString);
+    return query.exec();
 }
 
 QVector<qint64> GroupRepository::getGroupMembers(qint64 groupId)
@@ -279,10 +282,11 @@ QVector<qint64> GroupRepository::getGroupMembers(qint64 groupId)
     QSqlQuery query(db);
 
     const QString queryString = QStringLiteral(
-        "SELECT user_id FROM GroupMembers WHERE group_id = %1"
-    ).arg(groupId);
+        "SELECT user_id FROM GroupMembers WHERE group_id = :group_id");
+    query.prepare(queryString);
+    query.bindValue(QStringLiteral(":group_id"), groupId);
 
-    if (query.exec(queryString)) {
+    if (query.exec()) {
         while (query.next()) {
             members.append(query.value(0).toLongLong());
         }
@@ -302,10 +306,12 @@ bool GroupRepository::isMember(qint64 groupId, qint64 userId)
 
     const QString queryString = QStringLiteral(
         "SELECT COUNT(*) FROM GroupMembers "
-        "WHERE group_id = %1 AND user_id = %2"
-    ).arg(groupId).arg(userId);
+        "WHERE group_id = :group_id AND user_id = :user_id");
+    query.prepare(queryString);
+    query.bindValue(QStringLiteral(":group_id"), groupId);
+    query.bindValue(QStringLiteral(":user_id"), userId);
 
-    if (query.exec(queryString) && query.next()) {
+    if (query.exec() && query.next()) {
         return query.value(0).toInt() > 0;
     }
 
