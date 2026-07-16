@@ -190,8 +190,8 @@ void MessagingServer::onTextMessageReceived(const QString &message)
     // Handshake d'identification : chaque client envoie son userUuid juste
     // apres connexion (cf. Application::sendIdentifyIfReady). On l'intercepte
     // ici plutot que de le laisser remonter jusqu'a MessagingManager, qui ne
-    // sait traiter que les types "message"/"group_created". Sans ce
-    // handshake, le serveur ne peut associer aucune connexion a un
+    // sait traiter que les types "message"/"group_created"/"member_added"/"member_removed".
+    // Sans ce handshake, le serveur ne peut associer aucune connexion a un
     // utilisateur, et sendToUuids() ne peut donc cibler personne (issue #2).
     QJsonParseError parseError;
     const QJsonDocument doc = QJsonDocument::fromJson(message.toUtf8(), &parseError);

@@ -39,6 +39,11 @@ void GroupManager::setMessagingService(network::MessagingService *messagingServi
     m_messagingService = messagingService;
 }
 
+void GroupManager::setLocalMachineUuid(const QString &machineUuid)
+{
+    m_localMachineUuid = machineUuid;
+}
+
 std::optional<models::Group> GroupManager::createGroup(const QString &name, qint64 ownerId, const QVector<qint64> &initialMembers)
 {
     if (!m_dbManager) {
@@ -190,6 +195,32 @@ bool GroupManager::addMember(qint64 groupId, qint64 memberId, qint64 requesterId
         return false;
     }
 
+    // Diffuser l'ajout du membre en temps réel à tous les postes connectés
+    if (m_messagingServer || m_messagingService) {
+        database::UserRepository users(m_dbManager->database());
+        
+        const auto group = m_repository.getById(groupId);
+        if (group.has_value()) {
+            QString memberUuid;
+            if (const auto member = users.findById(static_cast<int>(memberId)); member.has_value()) {
+                memberUuid = member->uuid();
+            }
+
+            QJsonObject payload;
+            payload.insert(QStringLiteral("type"), QStringLiteral("member_added"));
+            payload.insert(QStringLiteral("groupUuid"), group->uuid());
+            payload.insert(QStringLiteral("memberUuid"), memberUuid);
+            const QString jsonMessage = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+
+            if (m_messagingService && m_messagingService->isConnected()) {
+                m_messagingService->sendMessage(jsonMessage);
+            }
+            if (m_messagingServer) {
+                m_messagingServer->broadcastMessage(jsonMessage);
+            }
+        }
+    }
+
     emit memberAdded(groupId, memberId);
     return true;
 }
@@ -227,6 +258,32 @@ bool GroupManager::removeMember(qint64 groupId, qint64 memberId, qint64 requeste
         m_lastError = GroupManagerError::DatabaseError;
         m_lastErrorString = QStringLiteral("Failed to remove member from group");
         return false;
+    }
+
+    // Diffuser le retrait du membre en temps réel à tous les postes connectés
+    if (m_messagingServer || m_messagingService) {
+        database::UserRepository users(m_dbManager->database());
+        
+        const auto group = m_repository.getById(groupId);
+        if (group.has_value()) {
+            QString memberUuid;
+            if (const auto member = users.findById(static_cast<int>(memberId)); member.has_value()) {
+                memberUuid = member->uuid();
+            }
+
+            QJsonObject payload;
+            payload.insert(QStringLiteral("type"), QStringLiteral("member_removed"));
+            payload.insert(QStringLiteral("groupUuid"), group->uuid());
+            payload.insert(QStringLiteral("memberUuid"), memberUuid);
+            const QString jsonMessage = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+
+            if (m_messagingService && m_messagingService->isConnected()) {
+                m_messagingService->sendMessage(jsonMessage);
+            }
+            if (m_messagingServer) {
+                m_messagingServer->broadcastMessage(jsonMessage);
+            }
+        }
     }
 
     emit memberRemoved(groupId, memberId);
@@ -292,11 +349,32 @@ std::optional<models::Group> GroupManager::receiveGroupCreated(const QString &js
     // pour la meme problematique cote messages). applyBatch journalise en
     // plus l'entree dans SyncLog, ce qui la rend disponible pour une
     // future reconciliation si necessaire (idempotent par entry_uuid).
+    // CORRECTIF : origin_machine_id est NOT NULL en base (SyncLog), mais
+    // n'est jamais present dans le payload "group_created" temps reel lui-
+    // meme (contrairement aux entrees d'un sync_batch classique). Sans
+    // cette ligne, l'INSERT plus bas echouait systematiquement avec
+    // "NOT NULL constraint failed: SyncLog.origin_machine_id" et le
+    // groupe n'etait alors jamais cree via ce chemin temps reel (il ne
+    // finissait par apparaitre qu'a la prochaine reconciliation
+    // sync_batch, epoch suivant). On utilise l'uuid de CETTE machine (le
+    // recepteur), coherent avec le fait que c'est elle qui journalise
+    // localement cette entree SyncLog.
+    if (m_localMachineUuid.isEmpty()) {
+        m_lastError = GroupManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral(
+            "GroupManager::receiveGroupCreated: m_localMachineUuid non renseigne "
+            "(setLocalMachineUuid jamais appele) - abandon plutot que violer "
+            "SyncLog.origin_machine_id NOT NULL");
+        qWarning() << m_lastErrorString;
+        return std::nullopt;
+    }
+
     models::SyncLogEntry entry;
     entry.setTableName(QStringLiteral("Groups"));
     entry.setRecordUuid(groupUuid);
     entry.setOperation(models::SyncOperation::Insert);
     entry.setPayloadJson(jsonPayload);
+    entry.setOriginMachineId(m_localMachineUuid);
 
     database::SyncLogRepository syncRepo(m_dbManager->database());
     const int insertedCount = syncRepo.applyBatch({entry});
@@ -316,6 +394,126 @@ std::optional<models::Group> GroupManager::receiveGroupCreated(const QString &js
 
     emit groupCreated(*group);
     return group;
+}
+
+bool GroupManager::receiveMemberAdded(const QString &jsonPayload)
+{
+    if (!m_dbManager) {
+        m_lastError = GroupManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral("DatabaseManager not set");
+        return false;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonPayload.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        return false;
+    }
+
+    const QJsonObject obj = doc.object();
+    if (obj.value(QStringLiteral("type")).toString() != QStringLiteral("member_added")) {
+        return false;
+    }
+
+    const QString groupUuid = obj.value(QStringLiteral("groupUuid")).toString();
+    const QString memberUuid = obj.value(QStringLiteral("memberUuid")).toString();
+    
+    if (groupUuid.isEmpty() || memberUuid.isEmpty()) {
+        m_lastError = GroupManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral("Payload member_added invalide (groupUuid ou memberUuid manquant)");
+        return false;
+    }
+
+    // Résoudre les UUID vers les IDs locaux
+    const auto group = m_repository.findByUuid(groupUuid);
+    if (!group.has_value()) {
+        // Groupe pas encore connu localement : on diffère pour une future réconciliation
+        qWarning() << "GroupManager::receiveMemberAdded: groupe inconnu (uuid=" << groupUuid << "), différé";
+        return false;
+    }
+
+    database::UserRepository users(m_dbManager->database());
+    const auto member = users.findByUuid(memberUuid);
+    if (!member.has_value()) {
+        // Membre pas encore connu localement : on diffère pour une future réconciliation
+        qWarning() << "GroupManager::receiveMemberAdded: membre inconnu (uuid=" << memberUuid << "), différé";
+        return false;
+    }
+
+    // Vérifier si déjà membre (idempotent)
+    if (group->memberIds().contains(member->id())) {
+        return true;
+    }
+
+    // Ajouter le membre
+    if (!m_repository.addMember(group->id(), member->id())) {
+        m_lastError = GroupManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral("Failed to add member from network payload");
+        return false;
+    }
+
+    emit memberAdded(group->id(), member->id());
+    return true;
+}
+
+bool GroupManager::receiveMemberRemoved(const QString &jsonPayload)
+{
+    if (!m_dbManager) {
+        m_lastError = GroupManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral("DatabaseManager not set");
+        return false;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonPayload.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        return false;
+    }
+
+    const QJsonObject obj = doc.object();
+    if (obj.value(QStringLiteral("type")).toString() != QStringLiteral("member_removed")) {
+        return false;
+    }
+
+    const QString groupUuid = obj.value(QStringLiteral("groupUuid")).toString();
+    const QString memberUuid = obj.value(QStringLiteral("memberUuid")).toString();
+    
+    if (groupUuid.isEmpty() || memberUuid.isEmpty()) {
+        m_lastError = GroupManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral("Payload member_removed invalide (groupUuid ou memberUuid manquant)");
+        return false;
+    }
+
+    // Résoudre les UUID vers les IDs locaux
+    const auto group = m_repository.findByUuid(groupUuid);
+    if (!group.has_value()) {
+        // Groupe pas encore connu localement : on diffère pour une future réconciliation
+        qWarning() << "GroupManager::receiveMemberRemoved: groupe inconnu (uuid=" << groupUuid << "), différé";
+        return false;
+    }
+
+    database::UserRepository users(m_dbManager->database());
+    const auto member = users.findByUuid(memberUuid);
+    if (!member.has_value()) {
+        // Membre pas encore connu localement : on diffère pour une future réconciliation
+        qWarning() << "GroupManager::receiveMemberRemoved: membre inconnu (uuid=" << memberUuid << "), différé";
+        return false;
+    }
+
+    // Vérifier si déjà non-membre (idempotent)
+    if (!group->memberIds().contains(member->id())) {
+        return true;
+    }
+
+    // Retirer le membre
+    if (!m_repository.removeMember(group->id(), member->id())) {
+        m_lastError = GroupManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral("Failed to remove member from network payload");
+        return false;
+    }
+
+    emit memberRemoved(group->id(), member->id());
+    return true;
 }
 
 } // namespace core

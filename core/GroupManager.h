@@ -59,6 +59,13 @@ public:
     /// qu'a la prochaine reconciliation SyncLog.
     void setMessagingService(network::MessagingService *messagingService);
 
+    /// CORRECTIF : identifiant machine local (cf. ElectionService::localMachineUuid),
+    /// necessaire pour renseigner origin_machine_id sur l'entree SyncLog
+    /// journalisee lors de la reception d'un groupe cree en temps reel
+    /// (receiveGroupCreated) -- sans cela le champ restait vide et
+    /// l'INSERT violait la contrainte NOT NULL de SyncLog.origin_machine_id.
+    void setLocalMachineUuid(const QString &machineUuid);
+
     /// Cree un nouveau groupe avec un nom et des membres initiaux.
     std::optional<models::Group> createGroup(const QString &name, qint64 ownerId, const QVector<qint64> &initialMembers);
 
@@ -82,6 +89,16 @@ public:
     /// deja connu localement.
     std::optional<models::Group> receiveGroupCreated(const QString &jsonPayload);
 
+    /// Traite un message reseau de type "member_added" recu d'un autre
+    /// poste : ajoute le membre au groupe localement et emet memberAdded.
+    /// Retourne true si succès, false si échec (groupe ou membre inconnu).
+    bool receiveMemberAdded(const QString &jsonPayload);
+
+    /// Traite un message reseau de type "member_removed" recu d'un autre
+    /// poste : retire le membre du groupe localement et emet memberRemoved.
+    /// Retourne true si succès, false si échec (groupe ou membre inconnu).
+    bool receiveMemberRemoved(const QString &jsonPayload);
+
     /// Derniere erreur survenue.
     GroupManagerError lastError() const { return m_lastError; }
     QString lastErrorString() const { return m_lastErrorString; }
@@ -101,6 +118,7 @@ private:
     database::GroupRepository m_repository;
     network::MessagingServer *m_messagingServer = nullptr;
     network::MessagingService *m_messagingService = nullptr;
+    QString m_localMachineUuid;
     GroupManagerError m_lastError = GroupManagerError::None;
     QString m_lastErrorString;
 };

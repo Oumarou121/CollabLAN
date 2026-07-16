@@ -161,6 +161,19 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // (cf. ElectionService::messagingPort()/activeServerPort()).
     m_electionService->setMessagingPort(messagingServerPort);
 
+    // CORRECTIF : GroupManager::receiveGroupCreated a besoin de l'uuid de
+    // CETTE machine pour renseigner SyncLog.origin_machine_id (NOT NULL)
+    // lors de l'insertion d'un groupe recu en temps reel (le payload
+    // "group_created" lui-meme ne transporte pas ce champ, contrairement
+    // aux entrees d'un sync_batch). Sans cet appel, receiveGroupCreated()
+    // echouait systematiquement (violation de contrainte) puis, apres
+    // durcissement du garde-fou, echouait silencieusement au lieu de
+    // planter -- dans les deux cas le groupe restait invisible tant que
+    // la reconciliation periodique ne le rattrapait pas.
+    if (m_groupManager) {
+        m_groupManager->setLocalMachineUuid(m_electionService->localMachineUuid());
+    }
+
     // setInitialState() ne déclenche pas roleChanged (c'est un simple
     // réglage d'état avant démarrage) : si ce poste redémarre alors qu'il
     // était Server ou TempServer, il faut donc démarrer MessagingServer
@@ -183,6 +196,25 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             this, &Application::appendMessageSyncLog);
     connect(m_messagingManager, &core::MessagingManager::messageReceived,
             this, &Application::appendMessageSyncLog);
+
+    // CORRECTIF : un message temps reel dont l'expediteur n'est pas encore
+    // connu localement (Users pas encore reconcilie) etait jusqu'ici perdu
+    // pour de bon (cf. MessagingManager::unresolvedSenderMessage). On
+    // reagit en demandant une reconciliation complete au serveur actif
+    // (deja connecte, puisque c'est par lui que ce message temps reel
+    // vient d'arriver), puis en rejouant le payload une fois la
+    // reconciliation terminee -- l'expediteur devrait alors etre connu.
+    connect(m_messagingManager, &core::MessagingManager::unresolvedSenderMessage,
+            this, [this](const QString &senderUuid, const QString &jsonPayload) {
+                m_pendingUnresolvedMessages.append(jsonPayload);
+                qWarning() << "Message en attente de reconciliation pour sender inconnu"
+                           << senderUuid << "- declenchement d'une reconciliation";
+                if (m_syncService && m_messagingService && m_messagingService->isConnected()
+                    && m_electionService) {
+                    m_syncService->requestReconciliation(m_electionService->epoch(),
+                                                          m_electionService->localMachineUuid());
+                }
+            });
 
     // Handshake d'identification (issue #2) : des que la connexion sortante
     // vers le serveur actif est etablie ET/OU des qu'un utilisateur se
@@ -391,6 +423,20 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
 
     connect(m_electionService, &network::ElectionService::reconciliationRequired,
             this, [this](const QString &tempServerUuid) {
+                const int fromEpoch = m_electionService->epoch();
+
+                // Voir commentaire sur m_lastReconciledEpoch/m_reconciliationInFlight
+                // dans Application.h : sans cette garde, CHAQUE heartbeat du
+                // TempServer (recu toutes les quelques secondes tant qu'on
+                // reste Server officiel) redeclenchait une reconciliation
+                // complete identique.
+                if (m_reconciliationInFlight) {
+                    return;
+                }
+                if (m_lastReconciledEpoch == fromEpoch) {
+                    return;
+                }
+
                 const QHostAddress tempServerAddress = m_electionService->activeServerAddress();
                 const quint16 tempServerPort = m_electionService->activeServerPort();
                 if (tempServerAddress.isNull() || tempServerPort == 0) {
@@ -398,7 +444,8 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                     return;
                 }
 
-                const int fromEpoch = m_electionService->epoch();
+                m_reconciliationInFlight = true;
+
                 const QString localUuid = m_electionService->localMachineUuid();
                 connect(m_messagingService, &network::MessagingService::connected,
                         m_syncService, [this, fromEpoch, localUuid]() {
@@ -408,12 +455,29 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 if (!m_messagingService->connectToHost(tempServerAddress, tempServerPort)) {
                     qWarning() << "Reconciliation impossible: connexion au TEMP_SERVER refusee"
                                << tempServerAddress << tempServerPort;
+                    m_reconciliationInFlight = false;
                 }
             });
 
     connect(m_syncService, &network::SyncService::reconciliationCompleted,
             this, [this](int mergedEntryCount) {
                 qDebug() << "Reconciliation terminee, entrees fusionnees:" << mergedEntryCount;
+                m_lastReconciledEpoch = m_electionService->epoch();
+                m_reconciliationInFlight = false;
+
+                // Rejeu des messages temps reel mis en attente le temps que
+                // leur expediteur soit resolu (cf. connexion sur
+                // unresolvedSenderMessage plus haut). Si l'expediteur reste
+                // introuvable (reconciliation incomplete), receiveMessage()
+                // re-emettra unresolvedSenderMessage et le message sera
+                // simplement retente a la prochaine reconciliation.
+                if (!m_pendingUnresolvedMessages.isEmpty() && m_messagingManager) {
+                    const QStringList toReplay = m_pendingUnresolvedMessages;
+                    m_pendingUnresolvedMessages.clear();
+                    for (const QString &payload : toReplay) {
+                        m_messagingManager->receiveMessage(payload);
+                    }
+                }
                 m_serverElectionRepository->appendLogEntry(models::ServerElectionEvent::ServerReconciled,
                                                            m_electionService->epoch(),
                                                            m_electionService->activeServerUuid());
@@ -435,8 +499,13 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             });
 
     connect(m_syncService, &network::SyncService::reconciliationFailed,
-            this, [](const QString &reason) {
+            this, [this](const QString &reason) {
                 qWarning() << "Reconciliation echouee:" << reason;
+                // Sans ce reset, un premier essai qui echoue (ex. TEMP_SERVER
+                // injoignable momentanement) bloquait m_reconciliationInFlight
+                // a "true" pour toujours, empechant tout nouvel essai au
+                // prochain heartbeat.
+                m_reconciliationInFlight = false;
             });
 
     if (!m_electionService->start()) {
@@ -614,6 +683,22 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
         if (!admin.has_value()) {
             qWarning() << "Impossible de creer le compte admin par defaut (code erreur :"
                        << static_cast<int>(m_userManager->lastError()) << ")";
+        } else {
+            // CORRECTIF (root cause) : a ce stade, le role Server/TempServer
+            // de ce poste n'est pas forcement encore stabilise (ElectionService
+            // vient d'etre construit juste au-dessus mais son role effectif
+            // depend du heartbeat/de l'election), donc le signal userCreated
+            // -> appendUserSyncLog passait par shouldWriteSyncLog() et etait
+            // silencieusement ignore : admin n'etait alors JAMAIS journalise
+            // dans SyncLog. Consequence en cascade chez tout poste qui
+            // rejoint plus tard : son owner/sender uuid est introuvable
+            // localement, donc ses groupes restent differes indefiniment et
+            // ses messages sont jetes silencieusement (cf. diagnostic log
+            // "SyncLogRepository::applyGroupEntry: owner inconnu"). On force
+            // donc ici la journalisation de ce compte seed, quel que soit le
+            // role courant : c'est le tout premier utilisateur de la base et
+            // il DOIT etre connu de tout futur pair.
+            appendUserSyncLog(*admin, models::SyncOperation::Insert, /*bypassRoleCheck=*/true);
         }
     }
 
@@ -1138,9 +1223,25 @@ bool Application::shouldWriteSyncLog() const
 }
 
 void Application::appendSyncLogEntry(const QString &tableName, const QString &recordUuid,
-                                     const QString &operation, const QString &payloadJson)
+                                     const QString &operation, const QString &payloadJson,
+                                     bool bypassRoleCheck)
 {
-    if (!shouldWriteSyncLog()) {
+    // CORRECTIF (root cause groupes/messages invisibles) : le compte
+    // admin/seed est cree AVANT que le role Server/TempServer de ce poste
+    // ne soit necessairement stabilise (cf. le seed plus haut dans
+    // initialize()), donc shouldWriteSyncLog() le bloquait silencieusement
+    // -- admin n'etait alors JAMAIS journalise dans SyncLog. Toute
+    // nouvelle instance qui rejoint plus tard ne "connait" donc jamais
+    // admin (owner/sender uuid introuvable), ce qui fait echouer/differer
+    // indefiniment ses groupes et jeter silencieusement ses messages.
+    // bypassRoleCheck permet aux appelants qui savent que cette identite
+    // DOIT etre journalisee immediatement (le seed) de contourner ce
+    // garde-fou de role, sans l'affaiblir pour le reste des appels
+    // normaux (creation d'utilisateur via l'UI, messages, groupes).
+    if (!bypassRoleCheck && !shouldWriteSyncLog()) {
+        return;
+    }
+    if (bypassRoleCheck && (!m_syncLogRepository || !m_electionService)) {
         return;
     }
 
@@ -1249,6 +1350,22 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         return;
     }
 
+    // Traitement des ajouts de membres en temps réel (member_added)
+    if (m_groupManager->receiveMemberAdded(message)) {
+        if (relay && m_messagingServer) {
+            m_messagingServer->broadcastMessage(message);
+        }
+        return;
+    }
+
+    // Traitement des retraits de membres en temps réel (member_removed)
+    if (m_groupManager->receiveMemberRemoved(message)) {
+        if (relay && m_messagingServer) {
+            m_messagingServer->broadcastMessage(message);
+        }
+        return;
+    }
+
     // Ce n'est pas forcément une erreur : peut-être un message de sync
     qDebug() << "Message ignore par MessagingManager/GroupManager (probablement message de sync) :" << message.left(100);
 }
@@ -1347,7 +1464,7 @@ void Application::appendGroupSyncLog(const models::Group &group, const QString &
                        QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
 }
 
-void Application::appendUserSyncLog(const models::User &user, const QString &operation)
+void Application::appendUserSyncLog(const models::User &user, const QString &operation, bool bypassRoleCheck)
 {
     // Le uuid (pas l'id auto-incremente) sert de record_uuid : c'est ce que
     // SyncLogRepository::applyUserEntry utilise pour retrouver la bonne ligne
@@ -1373,5 +1490,6 @@ void Application::appendUserSyncLog(const models::User &user, const QString &ope
     appendSyncLogEntry(QStringLiteral("Users"),
                        user.uuid(),
                        operation,
-                       QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+                       QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)),
+                       bypassRoleCheck);
 }

@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 #include <memory>
 
@@ -179,10 +180,12 @@ public:
 private:
     bool shouldWriteSyncLog() const;
     void appendSyncLogEntry(const QString &tableName, const QString &recordUuid,
-                            const QString &operation, const QString &payloadJson);
+                            const QString &operation, const QString &payloadJson,
+                            bool bypassRoleCheck = false);
     void appendMessageSyncLog(const models::Message &message);
     void appendGroupSyncLog(const models::Group &group, const QString &operation);
-    void appendUserSyncLog(const models::User &user, const QString &operation);
+    void appendUserSyncLog(const models::User &user, const QString &operation,
+                           bool bypassRoleCheck = false);
 
     /// Uuid de l'utilisateur local d'id donne (chaine vide si introuvable).
     /// Utilise pour serialiser des references stables (senderUuid, ownerUuid,
@@ -221,6 +224,24 @@ private:
     /// connexion a un utilisateur, et sendToUuids() ne peut donc jamais
     /// cibler ce poste (issue #2 : diffusion non ciblee).
     void sendIdentifyIfReady();
+
+    /// CORRECTIF (bande passante) : ElectionService::reconciliationRequired
+    /// est emis a CHAQUE heartbeat recu du TempServer tant que ce poste
+    /// reste Server officiel (pas une seule fois), et chaque heartbeat
+    /// redemandait jusqu'ici une reconciliation complete avec le meme
+    /// fromEpoch -> le meme sync_batch (~20 entrees) etait retransmis
+    /// quasi identique des dizaines de fois. Ces deux champs permettent de
+    /// n'effectuer reellement la reconciliation qu'une fois par epoch
+    /// distincte, et d'ignorer les heartbeats suivants tant qu'elle est
+    /// deja en cours ou deja terminee pour cet epoch.
+    int m_lastReconciledEpoch = -1;
+    bool m_reconciliationInFlight = false;
+
+    /// Payloads JSON de messages temps reel dont l'expediteur (senderUuid)
+    /// n'etait pas encore connu localement au moment de la reception (cf.
+    /// MessagingManager::unresolvedSenderMessage) ; rejoues des qu'une
+    /// reconciliation se termine.
+    QStringList m_pendingUnresolvedMessages;
 
     // TODO: instancier ici les autres services (Security, Settings...)
     std::unique_ptr<database::DatabaseManager> m_databaseManager;

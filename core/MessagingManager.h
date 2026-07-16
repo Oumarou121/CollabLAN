@@ -118,6 +118,20 @@ signals:
     /// Emis en cas d'erreur lors de l'envoi.
     void messageSendFailed(qint64 conversationId, const QString &error);
 
+    /// CORRECTIF : emis quand un message temps reel arrive AVANT que son
+    /// expediteur (senderUuid) ne soit connu localement (Users pas encore
+    /// reconcilie). Contrairement aux entrees d'un sync_batch (rejouees
+    /// automatiquement tant qu'elles ne sont pas journalisees, cf.
+    /// SyncLogRepository::applyBatch), ce message temps reel etait
+    /// jusqu'ici perdu silencieusement ("Sender inconnu ... message
+    /// ignore") sans aucune reprise possible : la personne qui l'a envoye
+    /// n'obtenait ni erreur ni retransmission, et son destinataire ne
+    /// recevait jamais la notification correspondante. Ce signal permet a
+    /// l'appelant (Application) de declencher une reconciliation cote
+    /// pair pour rattraper l'utilisateur manquant, puis de rejouer ce
+    /// message une fois l'utilisateur connu.
+    void unresolvedSenderMessage(const QString &senderUuid, const QString &jsonPayload);
+
 private:
     /// Uuids des membres du groupe associe a la conversation @p conversationId
     /// (liste vide si ce n'est pas une conversation de groupe, ou si le

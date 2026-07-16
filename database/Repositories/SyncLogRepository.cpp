@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QDebug>
 
 #include "UserRepository.h"
 
@@ -91,6 +92,21 @@ std::vector<models::SyncLogEntry> SyncLogRepository::entriesSinceEpoch(int fromE
 int SyncLogRepository::applyBatch(const std::vector<models::SyncLogEntry> &batch)
 {
     int inserted = 0;
+
+    // CORRECTIF (retry des entrees differees) : le batch recu n'est PAS
+    // garanti d'etre trie par dependance (Users avant Groups avant
+    // GroupMembers/Messages) -- il est trie par lamport_clock, cf. le
+    // commentaire d'appelant. Une premiere passe suffit donc rarement a
+    // tout appliquer : un Groupe dont l'owner arrive plus tard DANS CE
+    // MEME BATCH echouait jusqu'ici definitivement (aucune deuxieme passe),
+    // et restait "differe" sans qu'aucune reconciliation ulterieure ne le
+    // rejoue jamais vraiment (fromEpoch=0 n'est redemande qu'une seule
+    // fois, a la connexion initiale). On boucle donc sur les entrees
+    // encore en echec jusqu'a ce qu'une passe complete n'apporte plus
+    // aucun progres (borne naturelle : au plus batch.size() passes).
+    std::vector<models::SyncLogEntry> pending;
+    pending.reserve(batch.size());
+
     for (const auto &entry : batch) {
         QSqlQuery check(m_db);
         check.prepare(QStringLiteral("SELECT 1 FROM SyncLog WHERE entry_uuid = :uuid"));
@@ -98,16 +114,41 @@ int SyncLogRepository::applyBatch(const std::vector<models::SyncLogEntry> &batch
         if (!check.exec()) { m_lastError = check.lastError().text(); continue; }
         if (check.next()) continue; // déjà journalisée ET déjà appliquée
 
-        if (!applyDomainEntry(entry)) {
-            // échec (dépendance pas encore connue) : on NE journalise PAS,
-            // pour que ce même entry soit retenté lors d'une prochaine
-            // réconciliation, une fois la dépendance résolue.
-            continue;
-        }
-        if (append(entry)) {
-            ++inserted;
-        }
+        pending.push_back(entry);
     }
+
+    bool progressed = true;
+    while (progressed && !pending.empty()) {
+        progressed = false;
+        std::vector<models::SyncLogEntry> stillPending;
+        stillPending.reserve(pending.size());
+
+        for (const auto &entry : pending) {
+            if (!applyDomainEntry(entry)) {
+                // échec (dépendance pas encore connue) : on NE journalise
+                // PAS, pour retenter cette meme entree a la passe suivante
+                // (si une autre entree du batch resout la dependance) ou,
+                // a defaut, lors d'une prochaine reconciliation complete.
+                stillPending.push_back(entry);
+                continue;
+            }
+            if (append(entry)) {
+                ++inserted;
+                progressed = true;
+                qInfo() << "SyncLogRepository::applyBatch: entree" << entry.tableName()
+                        << entry.recordUuid() << "rejouee avec succes apres resolution de sa dependance"
+                        << "(entry_uuid=" << entry.entryUuid() << ")";
+            }
+        }
+        pending.swap(stillPending);
+    }
+
+    if (!pending.empty()) {
+        qWarning() << "SyncLogRepository::applyBatch:" << pending.size()
+                   << "entree(s) toujours differee(s) apres ce batch (dependance introuvable localement),"
+                   << "en attente d'une prochaine reconciliation";
+    }
+
     return inserted;
 }
 
@@ -366,6 +407,7 @@ bool SyncLogRepository::applyGroupEntry(const models::SyncLogEntry &entry)
         // Meme logique que applyMessageEntry : l'owner doit deja etre connu
         // localement (Users reconcilie avant Groups), sinon on differe.
         m_lastError = QStringLiteral("Owner inconnu (uuid=%1), groupe differe").arg(ownerUuid);
+        qWarning() << "SyncLogRepository::applyGroupEntry: owner inconnu (uuid=" << ownerUuid << "), groupe differe pour prochaine reconciliation";
         return false;
     }
 
@@ -428,6 +470,7 @@ bool SyncLogRepository::applyGroupMemberEntry(const models::SyncLogEntry &entry)
         // sync_batch ulterieur (contenant l'entree Groups correspondante)
         // permettra de rejouer celle-ci.
         m_lastError = QStringLiteral("Groupe inconnu (uuid=%1), membre differe").arg(groupUuid);
+        qWarning() << "SyncLogRepository::applyGroupMemberEntry: groupe inconnu (uuid=" << groupUuid << "), membre differe pour prochaine reconciliation";
         return false;
     }
     const qint64 groupId = groupIdQuery.value(0).toLongLong();
@@ -436,6 +479,7 @@ bool SyncLogRepository::applyGroupMemberEntry(const models::SyncLogEntry &entry)
     const auto member = users.findByUuid(memberUuid);
     if (!member.has_value()) {
         m_lastError = QStringLiteral("Membre inconnu (uuid=%1), entree differee").arg(memberUuid);
+        qWarning() << "SyncLogRepository::applyGroupMemberEntry: membre inconnu (uuid=" << memberUuid << "), entree differee pour prochaine reconciliation";
         return false;
     }
     const qint64 memberId = member->id();

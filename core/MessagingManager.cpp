@@ -410,11 +410,16 @@ std::optional<models::Message> MessagingManager::receiveMessage(const QString &j
             senderId = sender->id();
         } else {
             // Utilisateur emetteur pas encore connu localement (Users pas
-            // encore reconcilie) : impossible d'inserer sans violer la FK,
-            // on abandonne plutot que de planter avec un id invalide.
+            // encore reconcilie) : impossible d'inserer sans violer la FK.
+            // CORRECTIF : on n'abandonne plus silencieusement -- on emet
+            // unresolvedSenderMessage pour que l'appelant (Application)
+            // puisse declencher une reconciliation et rejouer ce meme
+            // jsonPayload une fois senderUuid connu localement, au lieu de
+            // perdre le message pour de bon.
             m_lastError = MessagingManagerError::DatabaseError;
-            m_lastErrorString = QStringLiteral("Sender inconnu (uuid=%1), message ignore").arg(senderUuid);
+            m_lastErrorString = QStringLiteral("Sender inconnu (uuid=%1), message en attente de reconciliation").arg(senderUuid);
             qWarning() << m_lastErrorString;
+            emit unresolvedSenderMessage(senderUuid, jsonPayload);
             return std::nullopt;
         }
     }
