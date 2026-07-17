@@ -140,6 +140,16 @@ bool UserManagementModel::changeStatus(int id, const QString &status)
     return true;
 }
 
+QStringList UserManagementModel::names() const
+{
+    QStringList result;
+    result.reserve(m_users.size());
+    for (const auto &user : m_users) {
+        result.append(user.name());
+    }
+    return result;
+}
+
 void UserManagementModel::setUserManager(QObject *manager)
 {
     m_userManager = manager;

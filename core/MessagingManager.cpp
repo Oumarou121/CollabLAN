@@ -603,4 +603,67 @@ QStringList MessagingManager::resolveTargetUuidsFromPayload(const QString &jsonP
     return targetUuids;
 }
 
+bool MessagingManager::isLocalUserParticipant(const QString &jsonPayload) const
+{
+    if (!m_userManager) {
+        // Sans UserManager, on ne peut pas verifier : on accepte par defaut
+        // pour ne pas casser le comportement existant.
+        return true;
+    }
+
+    const auto localUserId = m_userManager->currentUserId();
+    if (!localUserId.has_value()) {
+        // Pas d'utilisateur connecte localement : on ne persiste pas
+        return false;
+    }
+
+    database::UserRepository users(m_dbManager ? m_dbManager->database() : QSqlDatabase());
+    const auto localUser = users.findById(static_cast<int>(localUserId.value()));
+    if (!localUser.has_value()) {
+        return false;
+    }
+    const QString localUserUuid = localUser->uuid();
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(jsonPayload.toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        return false;
+    }
+    const QJsonObject obj = doc.object();
+    if (obj.value(QStringLiteral("type")).toString() != QStringLiteral("message")) {
+        return false;
+    }
+
+    const QString senderUuid = obj.value(QStringLiteral("senderUuid")).toString();
+    const QString participant1Uuid = obj.value(QStringLiteral("participant1Uuid")).toString();
+    const QString participant2Uuid = obj.value(QStringLiteral("participant2Uuid")).toString();
+    const QString conversationType = obj.value(QStringLiteral("conversationType")).toString(QStringLiteral("individual"));
+
+    // Pour une conversation individuelle : l'utilisateur local doit etre
+    // l'expediteur ou l'un des deux participants.
+    if (conversationType == QStringLiteral("individual")) {
+        return (localUserUuid == senderUuid ||
+                localUserUuid == participant1Uuid ||
+                localUserUuid == participant2Uuid);
+    }
+
+    // Pour une conversation de groupe : verifier si l'utilisateur local
+    // est membre du groupe via conversationUuid.
+    if (conversationType == QStringLiteral("group") && m_dbManager) {
+        const QString conversationUuid = obj.value(QStringLiteral("conversationUuid")).toString();
+        if (!conversationUuid.isEmpty()) {
+            QSqlQuery convQuery(m_dbManager->database());
+            convQuery.prepare(QStringLiteral("SELECT id FROM Conversations WHERE uuid = :uuid"));
+            convQuery.bindValue(QStringLiteral(":uuid"), conversationUuid);
+            if (convQuery.exec() && convQuery.next()) {
+                const qint64 localConversationId = convQuery.value(0).toLongLong();
+                const QStringList memberUuids = resolveGroupMemberUuids(localConversationId);
+                return memberUuids.contains(localUserUuid);
+            }
+        }
+    }
+
+    return false;
+}
+
 } // namespace core

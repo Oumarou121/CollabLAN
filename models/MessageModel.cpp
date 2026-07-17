@@ -59,6 +59,21 @@ QHash<int, QByteArray> MessageModel::roleNames() const
     return roles;
 }
 
+QVariantMap MessageModel::get(int row) const
+{
+    QVariantMap result;
+    if (row < 0 || row >= m_messages.size()) {
+        return result;
+    }
+
+    const QModelIndex idx = index(row, 0);
+    const QHash<int, QByteArray> roles = roleNames();
+    for (auto it = roles.constBegin(); it != roles.constEnd(); ++it) {
+        result.insert(QString::fromUtf8(it.value()), data(idx, it.key()));
+    }
+    return result;
+}
+
 void MessageModel::addMessage(const Message &message)
 {
     beginInsertRows(QModelIndex(), m_messages.size(), m_messages.size());

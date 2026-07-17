@@ -112,7 +112,7 @@ ApplicationWindow {
                 stackView.push(usersViewComponent)
             }
             onChatRequested: {
-                stackView.push(conversationsViewComponent)
+                stackView.push(chatWorkspaceComponent)
             }
             onFileTransferRequested: {
                 stackView.push(fileTransferViewComponent)
@@ -181,15 +181,13 @@ ApplicationWindow {
     }
 
     Component {
-        id: conversationsViewComponent
+        id: chatWorkspaceComponent
 
-        ConversationsView {
+        ChatWorkspaceView {
+            objectName: "chatWorkspaceView"
             messagingContext: globalMessagingContext
             onBackRequested: {
                 stackView.pop()
-            }
-            onConversationSelected: function(conversationId, name) {
-                stackView.push(chatViewComponent, { conversationId: conversationId, name: name })
             }
             onCreateGroupRequested: {
                 stackView.push(createGroupViewComponent)
@@ -210,7 +208,15 @@ ApplicationWindow {
             }
             onConversationStarted: function(conversationId) {
                 stackView.pop()
-                stackView.push(chatViewComponent, { conversationId: conversationId })
+                // Le workspace (ChatWorkspaceView) est l'ecran qui redevient
+                // actif apres ce pop : on lui demande d'ouvrir directement
+                // la conversation fraichement creee dans le panneau de
+                // droite, plutot que de pousser un ChatView plein ecran
+                // par-dessus (ancien comportement, incompatible avec le
+                // split-view).
+                if (stackView.currentItem && stackView.currentItem.objectName === "chatWorkspaceView") {
+                    stackView.currentItem.openConversation(conversationId, "")
+                }
             }
         }
     }
@@ -228,20 +234,10 @@ ApplicationWindow {
                 // MessagingContext.createGroup() a deja appele setConversation()
                 // en interne : le messageModel pointe donc deja sur la bonne
                 // conversation de groupe.
-                if (globalMessagingContext && globalMessagingContext.messageModel.conversationId > 0) {
-                    stackView.push(chatViewComponent, { conversationId: globalMessagingContext.messageModel.conversationId })
+                if (stackView.currentItem && stackView.currentItem.objectName === "chatWorkspaceView"
+                        && globalMessagingContext && globalMessagingContext.messageModel.conversationId > 0) {
+                    stackView.currentItem.openConversation(globalMessagingContext.messageModel.conversationId, "")
                 }
-            }
-        }
-    }
-
-    Component {
-        id: chatViewComponent
-
-        ChatView {
-            messagingContext: globalMessagingContext
-            onBackRequested: {
-                stackView.pop()
             }
         }
     }

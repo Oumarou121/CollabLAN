@@ -16,12 +16,8 @@
 #include "CallContext.h"
 #include "NotificationManager.h"
 #include "AudioService.h"
-#include "AuditLogModel.h"
-#include "AuditManager.h"
 #include "CallHistoryManager.h"
 #include "CallHistoryModel.h"
-#include "PermissionManager.h"
-#include "AuthorizedMachineModel.h"
 #include "UserManagementModel.h"
 #include "SettingsModel.h"
 #include "Election/ElectionService.h"
@@ -200,20 +196,14 @@ int main(int argc, char *argv[])
     callHistoryModel->setCallHistoryManager(application.callHistoryManager());
     engine.rootContext()->setContextProperty("callHistoryModel", callHistoryModel);
 
-    // Créer et exposer le modèle du journal d'audit (issues #62/#63,
-    // UI #65) : consultation filtrable et export CSV depuis AdminView.qml.
-    core::AuditLogModel *auditLogModel = new core::AuditLogModel(&engine);
-    auditLogModel->setAuditManager(static_cast<QObject*>(application.auditManager()));
-    engine.rootContext()->setContextProperty("auditLogModel", auditLogModel);
-
-    // Exposer le PermissionManager pour la vérification des droits (issue #67).
-    engine.rootContext()->setContextProperty("permissionManager", application.permissionManager());
-
-    // Créer et exposer le modèle de machines autorisées (issue #68, #69).
-    core::AuthorizedMachineModel *authorizedMachineModel = new core::AuthorizedMachineModel(&engine);
-    authorizedMachineModel->setPermissionManager(application.permissionManager());
-    authorizedMachineModel->refresh();
-    engine.rootContext()->setContextProperty("authorizedMachineModel", authorizedMachineModel);
+    // CORRECTIF (refonte Admin) : AuditLogModel et AuthorizedMachineModel
+    // n'etaient consommes que par les onglets "Journal d'audit" et
+    // "Machines autorisees" d'AdminView.qml, retires car non utilises.
+    // AuditManager et PermissionManager restent actifs cote C++ (Application)
+    // -- ils continuent de journaliser les tentatives refusees et de faire
+    // respecter les machines autorisees au niveau reseau (MessagingService,
+    // MessagingServer, DiscoveryService) ; seule leur exposition/wrapper
+    // destines a cette UI admin disparaissent, pas la logique de securite.
 
     // Créer et exposer le modèle de gestion des utilisateurs (issue #69).
     core::UserManagementModel *userManagementModel = new core::UserManagementModel(&engine);

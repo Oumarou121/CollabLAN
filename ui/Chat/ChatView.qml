@@ -17,6 +17,12 @@ Item {
     property string name: ""
     property int currentUserId: messagingContext ? messagingContext.currentUserId() : 0
 
+    // CORRECTIF (refonte UI type WhatsApp Web) : quand ChatView est le
+    // panneau de droite de ChatWorkspaceView, il n'y a rien "en dessous"
+    // dans une pile -- la fleche retour n'a pas de sens et prenait de la
+    // place inutilement a cote du nom du contact.
+    property bool showBackButton: true
+
     // Nom reel du contact/groupe : priorite au nom transmis par ConversationsView,
     // sinon repli sur la resolution cote MessagingContext (utile si ouvert sans nom)
     readonly property string displayName: name.length > 0
@@ -80,6 +86,7 @@ Item {
                     Layout.preferredHeight: 36
                     radius: Theme.radiusMedium
                     color: backArea.containsMouse ? Theme.surfaceHover : "transparent"
+                    visible: root.showBackButton
 
                     Text {
                         anchors.centerIn: parent
@@ -173,13 +180,67 @@ Item {
 
             model: messagingContext ? messagingContext.messageModel : null
 
-            onCountChanged: Qt.callLater(function() { messageListView.positionViewAtEnd() })
+            // CORRECTIF : on capture "etait en bas ?" AVANT que contentHeight
+            // ne grandisse avec le nouveau message. Tester la condition dans
+            // onCountChanged (ou apres, via callLater) est trop tard : le
+            // modele a deja grandi et contentY n'a pas encore ete recalcule,
+            // ce qui fausse le test pile pour l'utilisateur qui est en bas.
+            // onModelAboutToBeReset n'est pas suffisant ici car l'ajout d'un
+            // message declenche un insert, pas un reset ; on ecoute donc le
+            // rowsAboutToBeInserted du modele sous-jacent.
+            property bool wasAtBottom: true
+            readonly property int autoScrollTolerance: 50
 
-            delegate: Item {
+            Connections {
+                target: messageListView.model
+                function onRowsAboutToBeInserted() {
+                    messageListView.wasAtBottom =
+                        messageListView.contentY >= messageListView.contentHeight - messageListView.height - messageListView.autoScrollTolerance
+                }
+                function onModelAboutToBeReset() {
+                    // Chargement d'une nouvelle conversation (setMessages) :
+                    // on veut toujours atterrir en bas de l'historique.
+                    messageListView.wasAtBottom = true
+                }
+            }
+
+            onCountChanged: Qt.callLater(function() {
+                if (messageListView.wasAtBottom) {
+                    messageListView.positionViewAtEnd()
+                }
+            })
+
+            delegate: Column {
                 id: messageDelegate
                 readonly property bool isMine: senderId === root.currentUserId
                 width: messageListView.width
-                height: bubble.height + 4
+                spacing: Theme.spacingXs
+
+                // Separateur de date : affiche si la date change par rapport au message precedent
+                Label {
+                    id: dateSeparator
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    text: {
+                        if (!timestamp) return ""
+                        const dateStr = Qt.formatDate(timestamp, "dd MMMM yyyy")
+                        const prevIndex = index - 1
+                        if (prevIndex >= 0 && messagingContext) {
+                            const prevTimestamp = messagingContext.messageModel.get(prevIndex).timestamp
+                            if (prevTimestamp) {
+                                const prevDateStr = Qt.formatDate(prevTimestamp, "dd MMMM yyyy")
+                                if (dateStr === prevDateStr) return ""
+                            }
+                        }
+                        return dateStr
+                    }
+                    visible: text.length > 0
+                    font.pixelSize: Theme.fontSizeCaption
+                    font.family: Theme.fontFamily
+                    color: Theme.textTertiary
+                    topPadding: Theme.spacingSmall
+                    bottomPadding: Theme.spacingSmall
+                }
 
                 Row {
                     anchors.right: messageDelegate.isMine ? parent.right : undefined

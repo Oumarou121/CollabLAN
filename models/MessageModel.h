@@ -2,6 +2,7 @@
 #define MODELS_MESSAGEMODEL_H
 
 #include <QAbstractListModel>
+#include <QVariantMap>
 #include <QVector>
 #include "Message.h"
 
@@ -46,6 +47,12 @@ public:
 
     /// Vide le modèle.
     void clear();
+
+    /// Accès par index depuis QML (equivalent de data() mais expose
+    /// toutes les proprietes d'une ligne sous forme de map, comme
+    /// le ferait un ListModel classique). Retourne une map vide si
+    /// l'index est hors bornes.
+    Q_INVOKABLE QVariantMap get(int row) const;
 
 signals:
     void conversationIdChanged();

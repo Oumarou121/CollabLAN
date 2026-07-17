@@ -38,6 +38,12 @@ public:
     Q_INVOKABLE bool changeRole(int id, bool isAdmin);
     Q_INVOKABLE bool changeStatus(int id, const QString &status);
 
+    /// Noms de tous les utilisateurs charges, dans l'ordre du modele.
+    /// Permet a la QML (AdminView) de calculer localement un compte de
+    /// resultats filtres pour la recherche, sans avoir a exposer rowCount()
+    /// ni un accesseur par index a l'API QML.
+    Q_INVOKABLE QStringList names() const;
+
     void setUserManager(QObject *manager);
 
 private:

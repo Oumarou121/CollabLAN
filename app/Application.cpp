@@ -1313,29 +1313,39 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
     // MessagingManager ne traite que les messages de type "message".
     // SyncService traite de son cote les messages de type "sync_request",
     // "sync_ack", "sync_batch" (connecte separement sur les memes signaux).
-    if (m_messagingManager->receiveMessage(message)) {
-        if (relay && m_messagingServer) {
-            // Rediffuse UNIQUEMENT aux destinataires reels (participants de
-            // la conversation ou membres du groupe), et non plus a tous les
-            // clients connectes (issue #2 : un tiers non concerne recevait
-            // et persistait silencieusement le message dans sa propre
-            // base). resolveTargetUuidsFromPayload() s'appuie sur les uuids
-            // stables presents dans le payload (et, pour un groupe, sur
-            // notre propre table Groups/GroupMembers resolue via
-            // conversationUuid).
-            const QStringList targetUuids = m_messagingManager->resolveTargetUuidsFromPayload(message);
-            if (!targetUuids.isEmpty()) {
-                m_messagingServer->sendToUuids(message, targetUuids);
-            } else {
-                // Repli de securite : mieux vaut sur-diffuser (comportement
-                // historique) que perdre le message si on n'a pas su
-                // resoudre le moindre destinataire.
-                qWarning() << "handleIncomingPayload: aucun destinataire resolu, repli sur broadcastMessage()";
-                m_messagingServer->broadcastMessage(message);
-            }
-        }
-        return;
+    // CORRECTIF : verifier si l'utilisateur local est reellement participant
+    // de la conversation avant de persister et notifier localement. Sans
+    // cette verification, le serveur (relay=true) persiste TOUS les messages
+    // qui transitent par lui, meme ceux entre deux autres clients, et
+    // notifie l'utilisateur connecte sur la machine serveur pour des
+    // conversations qui ne le concernent pas.
+    const bool shouldPersistLocally = m_messagingManager->isLocalUserParticipant(message);
+
+    if (shouldPersistLocally) {
+        m_messagingManager->receiveMessage(message);
     }
+
+    if (relay && m_messagingServer) {
+        // Rediffuse UNIQUEMENT aux destinataires reels (participants de
+        // la conversation ou membres du groupe), et non plus a tous les
+        // clients connectes (issue #2 : un tiers non concerne recevait
+        // et persistait silencieusement le message dans sa propre
+        // base). resolveTargetUuidsFromPayload() s'appuie sur les uuids
+        // stables presents dans le payload (et, pour un groupe, sur
+        // notre propre table Groups/GroupMembers resolue via
+        // conversationUuid).
+        const QStringList targetUuids = m_messagingManager->resolveTargetUuidsFromPayload(message);
+        if (!targetUuids.isEmpty()) {
+            m_messagingServer->sendToUuids(message, targetUuids);
+        } else {
+            // Repli de securite : mieux vaut sur-diffuser (comportement
+            // historique) que perdre le message si on n'a pas su
+            // resoudre le moindre destinataire.
+            qWarning() << "handleIncomingPayload: aucun destinataire resolu, repli sur broadcastMessage()";
+            m_messagingServer->broadcastMessage(message);
+        }
+    }
+    return;
 
     // Pas un message : peut-etre la creation d'un groupe diffusee en
     // temps reel par un autre poste (type "group_created", cf.

@@ -15,6 +15,21 @@ Item {
     property var messagingContext: null
     property var _allConversations: []
 
+    // CORRECTIF (refonte UI type WhatsApp Web) : cette vue est desormais
+    // utilisee a la fois en plein ecran (navigation classique par pile,
+    // showBackButton: true) et comme panneau de gauche embarque dans
+    // ChatWorkspaceView (showBackButton: false, pas de "retour" au sens
+    // pile puisqu'il n'y a rien en dessous). selectedConversationId permet
+    // au panneau de gauche de surligner la conversation actuellement
+    // affichee a droite -- essentiel en vue cote-a-cote ou l'utilisateur
+    // doit voir en un coup d'oeil laquelle est active.
+    property bool showBackButton: true
+    property var selectedConversationId: null
+    // Bascule les actions d'en-tete en icones seules (voir plus bas) --
+    // active par defaut quand la vue est utilisee comme panneau de gauche
+    // etroit dans ChatWorkspaceView.
+    property bool compactActions: false
+
     signal backRequested()
     signal conversationSelected(var conversationId, string name)
     signal createGroupRequested()
@@ -53,6 +68,7 @@ Item {
                     Layout.preferredHeight: 36
                     radius: Theme.radiusMedium
                     color: backArea.containsMouse ? Theme.surfaceHover : "transparent"
+                    visible: root.showBackButton
 
                     Text {
                         anchors.centerIn: parent
@@ -77,12 +93,66 @@ Item {
                     font.bold: true
                     font.family: Theme.fontFamily
                     color: Theme.text
+                    elide: Text.ElideRight
+                }
+
+                // CORRECTIF (refonte UI) : en panneau etroit (split-view type
+                // WhatsApp Web, ~340px), les boutons texte "Nouveau"/"Groupe"
+                // debordaient a cote du titre. root.compactActions bascule
+                // vers des boutons icone-seule (meme gabarit que la fleche
+                // retour), le texte complet restant disponible en plein ecran.
+                Rectangle {
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    radius: Theme.radiusMedium
+                    color: newConvArea.containsMouse ? Theme.surfaceHover : "transparent"
+                    visible: root.compactActions
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u2709"
+                        color: Theme.text
+                        font.pixelSize: 16
+                    }
+
+                    MouseArea {
+                        id: newConvArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.newConversationRequested()
+                    }
+                }
+
+                Rectangle {
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    radius: Theme.radiusMedium
+                    color: newGroupArea.containsMouse ? Theme.primaryHover : Theme.primary
+                    visible: root.compactActions
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "+"
+                        color: "#FFFFFF"
+                        font.pixelSize: 18
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        id: newGroupArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.createGroupRequested()
+                    }
                 }
 
                 AppButton {
                     variant: "ghost"
                     iconGlyph: "\u2709"
                     text: qsTr("Nouveau")
+                    visible: !root.compactActions
                     onClicked: root.newConversationRequested()
                 }
 
@@ -90,6 +160,7 @@ Item {
                     variant: "primary"
                     iconGlyph: "+"
                     text: qsTr("Groupe")
+                    visible: !root.compactActions
                     onClicked: root.createGroupRequested()
                 }
             }
@@ -187,12 +258,18 @@ Item {
             }
 
             delegate: Rectangle {
+                id: conversationDelegate
+                readonly property bool isSelected: root.selectedConversationId !== null
+                                                    && root.selectedConversationId !== undefined
+                                                    && conversationId === root.selectedConversationId
                 width: conversationsListView.width
                 height: 76
-                color: itemMouse.containsMouse ? Theme.surfaceHover : Theme.surface
+                color: isSelected
+                       ? Theme.selectionBackground
+                       : (itemMouse.containsMouse ? Theme.surfaceHover : Theme.surface)
                 radius: Theme.radiusMedium
-                border.color: Theme.border
-                border.width: 1
+                border.color: isSelected ? Theme.selectionBorder : Theme.border
+                border.width: isSelected ? 2 : 1
 
                 Behavior on color { ColorAnimation { duration: 100 } }
 

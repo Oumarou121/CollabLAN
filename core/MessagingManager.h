@@ -104,6 +104,13 @@ public:
     /// etre resolu.
     QStringList resolveTargetUuidsFromPayload(const QString &jsonPayload) const;
 
+    /// Verifie si l'utilisateur local est un participant de la conversation
+    /// decrite dans le payload (sender, participant1, participant2, ou membre
+    /// du groupe). Utilise par handleIncomingPayload pour eviter de persister
+    /// et notifier localement des messages qui ne concernent pas l'utilisateur
+    /// courant (ex: serveur qui relaye un message entre deux autres clients).
+    bool isLocalUserParticipant(const QString &jsonPayload) const;
+
     /// Derniere erreur survenue.
     MessagingManagerError lastError() const { return m_lastError; }
     QString lastErrorString() const { return m_lastErrorString; }
