@@ -32,11 +32,45 @@ Item {
     // cf. app/main.cpp). Repli a 0 en contexte preview/design sans backend.
     readonly property int peersCount: (typeof peersModel !== "undefined" && peersModel) ? peersModel.count : 0
 
-    // ---- Jetons locaux (accents institutionnels, sensibles au theme) ----
-    readonly property color blue700: Theme.darkMode ? "#5B8FB0" : "#2A5C85"
-    readonly property color blue600: Theme.darkMode ? "#79A8C6" : "#336F9E"
-    readonly property color blueTint: Theme.darkMode ? "#20303D" : "#E4EDF3"
-    readonly property color gold600: Theme.darkMode ? "#D6A94F" : "#B6862F"
+    // Etat de la bascule automatique de serveur (electionService, cf.
+    // app/main.cpp) - affiche desormais dans le menu profil plutot qu'en
+    // badge separe dans l'en-tete.
+    readonly property var election: (typeof electionService !== "undefined") ? electionService : null
+    property bool serverReconnecting: false
+
+    Connections {
+        target: root.election
+        function onHeartbeatLost() { root.serverReconnecting = true }
+        function onRoleChanged() { root.serverReconnecting = false }
+    }
+
+    readonly property string serverStatusLabel: {
+        if (!root.election)
+            return ""
+        if (root.serverReconnecting)
+            return qsTr("Reconnexion en cours...")
+        if (root.election.roleLabel === "TEMP_SERVER")
+            return qsTr("Mode secours (serveur de secours actif)")
+        if (root.election.roleLabel === "SERVER")
+            return qsTr("Serveur actif")
+        return qsTr("Connecté au serveur")
+    }
+
+    readonly property color serverStatusColor: {
+        if (!root.election)
+            return Theme.textSecondary
+        if (root.serverReconnecting)
+            return Theme.warning
+        if (root.election.roleLabel === "TEMP_SERVER")
+            return Theme.warning
+        return Theme.success
+    }
+
+    // ---- Jetons locaux (alignes sur la maquette de reference SIRH-DOC) ----
+    readonly property color blue700: Theme.darkMode ? "#3E6C99" : "#275F91"
+    readonly property color blue600: Theme.darkMode ? "#4E86B8" : "#337AB7"
+    readonly property color blueTint: Theme.darkMode ? "#1B2531" : "#E8F1F9"
+    readonly property color accentSky: "#4FC3F7"
 
     // Meme police d'accent embarquee que LoginView, pour un rendu identique
     // quel que soit le poste.
@@ -55,7 +89,7 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // ---- En-tete : marque, badges de statut, profil -------------------
+        // ---- En-tete : marque, badge central, profil -----------------------
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 76
@@ -63,26 +97,57 @@ Item {
             border.width: 1
             border.color: Theme.border
 
-            RowLayout {
+            Item {
                 anchors.fill: parent
                 anchors.margins: Theme.spacingLarge
-                spacing: Theme.spacingMedium
 
-                BrandMark { size: 40 }
+                // ---- Lockup de marque (logo + nom), aligne a gauche -------
+                RowLayout {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Theme.spacingSmall
 
-                Label {
-                    text: qsTr("CollabLAN")
-                    font.pixelSize: Theme.fontSizeHeading
-                    font.bold: true
-                    font.family: root.displayFont
-                    color: Theme.text
+                    Rectangle {
+                        width: 42
+                        height: 42
+                        radius: Theme.radiusMedium
+                        color: root.blue700
+
+                        Image {
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            source: "../Assets/logo.png"
+                            fillMode: Image.PreserveAspectFit
+                            smooth: true
+                            mipmap: true
+                        }
+                    }
+
+                    ColumnLayout {
+                        spacing: -2
+
+                        Label {
+                            text: qsTr("CollabLAN")
+                            font.pixelSize: 19
+                            font.bold: true
+                            font.family: root.displayFont
+                            font.letterSpacing: 0.4
+                            color: Theme.text
+                        }
+
+                        Label {
+                            text: qsTr("Réseau local")
+                            font.pixelSize: 11
+                            font.family: Theme.fontFamily
+                            color: root.blue600
+                        }
+                    }
                 }
 
-                Item { Layout.preferredWidth: Theme.spacingMedium }
-
-                // Badge : nombre de postes detectes sur le reseau local.
+                // ---- Badge central : nombre de postes en ligne ------------
                 Rectangle {
-                    Layout.preferredHeight: 30
+                    anchors.centerIn: parent
+                    height: 30
                     implicitWidth: peersPillContent.implicitWidth + Theme.spacingMedium * 2
                     radius: height / 2
                     color: root.blueTint
@@ -111,22 +176,12 @@ Item {
                     }
                 }
 
-                // Badge : etat de la bascule automatique de serveur
-                // (reutilise ServerStatusIndicator, deja au bon format
-                // "pastille + texte").
-                ServerStatusIndicator {}
-
-                Item { Layout.fillWidth: true }
-
-                ThemeToggleButton {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                }
-
                 // ---- Profil (avatar + nom + chevron), menu deroulant ------
                 Rectangle {
                     id: profileButton
-                    Layout.preferredHeight: 40
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: 40
                     implicitWidth: profileRow.implicitWidth + Theme.spacingMedium * 2
                     radius: height / 2
                     color: (profileArea.containsMouse || menuPopup.visible) ? Theme.surfaceAlt : Theme.surface
@@ -171,7 +226,7 @@ Item {
                         id: menuPopup
                         y: profileButton.height + 6
                         x: profileButton.width - width
-                        width: 200
+                        width: 230
                         padding: 6
                         modal: false
                         focus: true
@@ -187,6 +242,7 @@ Item {
                         contentItem: ColumnLayout {
                             spacing: 2
 
+                            // Statut du compte
                             RowLayout {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 32
@@ -205,6 +261,80 @@ Item {
                                     color: Theme.textSecondary
                                     font.pixelSize: Theme.fontSizeSmall
                                     font.family: Theme.fontFamily
+                                }
+                            }
+
+                            // Statut de la bascule automatique de serveur
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 32
+                                Layout.margins: Theme.spacingSmall
+                                spacing: 6
+                                visible: root.serverStatusLabel.length > 0
+
+                                Rectangle {
+                                    width: 8
+                                    height: 8
+                                    radius: 4
+                                    color: root.serverStatusColor
+                                }
+
+                                Label {
+                                    text: root.serverStatusLabel
+                                    color: Theme.textSecondary
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.family: Theme.fontFamily
+                                    wrapMode: Text.WordWrap
+                                    Layout.fillWidth: true
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 1
+                                Layout.topMargin: 2
+                                Layout.bottomMargin: 2
+                                color: Theme.border
+                            }
+
+                            // Bascule theme clair / sombre
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 36
+                                Layout.margins: Theme.spacingSmall
+                                spacing: 6
+
+                                Label {
+                                    text: Theme.darkMode ? qsTr("Thème sombre") : qsTr("Thème clair")
+                                    color: Theme.text
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.family: Theme.fontFamily
+                                    Layout.fillWidth: true
+                                }
+
+                                Rectangle {
+                                    id: themeSwitchTrack
+                                    width: 38
+                                    height: 22
+                                    radius: 11
+                                    color: Theme.darkMode ? root.blue600 : Theme.border
+                                    Behavior on color { ColorAnimation { duration: 120 } }
+
+                                    Rectangle {
+                                        width: 18
+                                        height: 18
+                                        radius: 9
+                                        color: "#FFFFFF"
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        x: Theme.darkMode ? parent.width - width - 2 : 2
+                                        Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: Theme.toggle()
+                                    }
                                 }
                             }
 
@@ -260,47 +390,18 @@ Item {
             ColumnLayout {
                 id: contentColumn
                 width: Math.min(parent.width - 2 * Theme.spacingXl, 1200)
-                x: Theme.spacingXl
+                x: (parent.width - width) / 2 
                 y: Theme.spacingXl
                 spacing: Theme.spacingLarge
 
-                // Bienvenue
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: Theme.spacingXs
-
-                    Label {
-                        text: qsTr("Bienvenue, %1").arg(root.username)
-                        font.pixelSize: 32
-                        font.bold: true
-                        font.family: root.displayFont
-                        color: Theme.text
-                    }
-
-                    Label {
-                        text: qsTr("Voici un aperçu de votre réseau local.")
-                        font.pixelSize: Theme.fontSizeBody
-                        font.family: Theme.fontFamily
-                        color: Theme.textSecondary
-                    }
-                }
-
-                // Section Acces rapide
+                // Grille d'acces rapide
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: Theme.spacingSmall
 
-                    Label {
-                        text: qsTr("Accès rapide")
-                        font.pixelSize: Theme.fontSizeSubheading
-                        font.bold: true
-                        font.family: Theme.fontFamily
-                        color: Theme.text
-                    }
-
                     GridLayout {
                         Layout.fillWidth: true
-                        columns: root.width > 1000 ? 4 : (root.width > 700 ? 3 : 2)
+                        columns: contentColumn.width > 900 ? 4 : (contentColumn.width > 620 ? 3 : 2)
                         columnSpacing: Theme.spacingMedium
                         rowSpacing: Theme.spacingMedium
 
