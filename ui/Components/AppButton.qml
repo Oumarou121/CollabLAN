@@ -8,7 +8,7 @@ import Themes
  * l'application (evite de redefinir background/contentItem a chaque
  * ecran, comme c'etait le cas auparavant).
  *
- * variant: "primary" | "secondary" | "ghost" | "danger"
+ * variant: "primary" | "secondary" | "ghost" | "danger" | "outline"
  * iconGlyph: glyphe unicode optionnel affiche avant le texte
  *
  * Note: on utilise "iconGlyph" et non "icon" car Button expose deja
@@ -26,6 +26,7 @@ Button {
     readonly property bool isPrimary: variant === "primary"
     readonly property bool isDanger: variant === "danger"
     readonly property bool isGhost: variant === "ghost"
+    readonly property bool isOutline: variant === "outline"
 
     readonly property color baseColor: {
         if (isPrimary) return Theme.primary
@@ -35,11 +36,13 @@ Button {
     readonly property color hoverColor: {
         if (isPrimary) return Theme.primaryHover
         if (isDanger) return Theme.error
+        if (isOutline) return Theme.primaryMuted
         if (isGhost) return Theme.surfaceHover
         return Theme.surfaceHover
     }
     readonly property color labelColor: {
         if (isPrimary || isDanger) return "#FFFFFF"
+        if (isOutline) return Theme.primary
         return Theme.text
     }
 
@@ -60,8 +63,8 @@ Button {
         radius: Theme.radiusMedium
         color: root.pressed ? Qt.darker(root.hovered ? root.hoverColor : root.baseColor, 1.08)
                              : (root.hovered ? root.hoverColor : root.baseColor)
-        border.width: (root.isGhost || root.variant === "secondary") ? 1 : 0
-        border.color: Theme.border
+        border.width: (root.isGhost || root.variant === "secondary" || root.isOutline) ? 1 : 0
+        border.color: root.isOutline ? Theme.primary : Theme.border
 
         Behavior on color { ColorAnimation { duration: 100 } }
     }

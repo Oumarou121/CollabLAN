@@ -54,11 +54,17 @@ ApplicationWindow {
 
     // Indicateur discret de bascule automatique de serveur (issue UI section
     // 9 etape 5) : place comme ToastHost, au-dessus du StackView, visible
-    // quel que soit l'ecran actif.
+    // sur tous les ecrans SAUF Login/Home, qui integrent desormais leur
+    // propre badge de statut dans l'en-tete (evite un double affichage /
+    // chevauchement avec le bouton de theme et le profil).
     ServerStatusIndicator {
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.margins: Theme.spacingMedium
+        visible: (typeof electionService !== "undefined" && electionService !== null)
+                 && !(stackView.currentItem
+                      && (stackView.currentItem.objectName === "loginView"
+                          || stackView.currentItem.objectName === "homeView"))
     }
 
     // Superposition globale des toasts (issue #58) : place en dernier
@@ -95,6 +101,7 @@ ApplicationWindow {
         id: loginViewComponent
 
         LoginView {
+            objectName: "loginView"
             onLoginSucceeded: function(username) {
                 stackView.push(homeViewComponent, { username: username })
             }
@@ -105,6 +112,7 @@ ApplicationWindow {
         id: homeViewComponent
 
         HomeView {
+            objectName: "homeView"
             onLogoutRequested: {
                 stackView.pop(null) // revient a l'ecran Login (racine de la pile)
             }

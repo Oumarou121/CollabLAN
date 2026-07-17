@@ -7,9 +7,13 @@ import "../Components"
 /*
  * HomeView - ecran "Home" (issue #6 : navigation de base Login -> Home)
  *
- * Point d'entree apres connexion. Navigation laterale (sidebar) vers les
- * modules Chat, Users, FileTransfer, Call et Administration, et un
- * tableau de bord avec acces rapides sous forme de cartes.
+ * Point d'entree apres connexion. Tableau de bord avec acces rapides sous
+ * forme de cartes.
+ *
+ * Design revu (juillet) : identite visuelle "dossier / portail institutionnel"
+ * alignee sur le portail web de reference (bandeau bleu + accents or, pastilles
+ * façon puce documentaire, cartes DashboardCard a bandeau colore). Tous les
+ * signaux et proprietes exposes par cet ecran restent inchanges.
  */
 Item {
     id: root
@@ -24,223 +28,279 @@ Item {
     signal adminRequested()
     signal sharedFoldersRequested()
 
+    // Nombre de postes detectes sur le reseau local (network::PeersModel,
+    // cf. app/main.cpp). Repli a 0 en contexte preview/design sans backend.
+    readonly property int peersCount: (typeof peersModel !== "undefined" && peersModel) ? peersModel.count : 0
+
+    // ---- Jetons locaux (accents institutionnels, sensibles au theme) ----
+    readonly property color blue700: Theme.darkMode ? "#5B8FB0" : "#2A5C85"
+    readonly property color blue600: Theme.darkMode ? "#79A8C6" : "#336F9E"
+    readonly property color blueTint: Theme.darkMode ? "#20303D" : "#E4EDF3"
+    readonly property color gold600: Theme.darkMode ? "#D6A94F" : "#B6862F"
+
+    // Meme police d'accent embarquee que LoginView, pour un rendu identique
+    // quel que soit le poste.
+    FontLoader {
+        id: serifFont
+        source: "../Assets/fonts/PTSerif-Bold.ttf"
+    }
+    readonly property string displayFont: serifFont.status === FontLoader.Ready ? serifFont.name : "serif"
+
     Rectangle {
         anchors.fill: parent
         color: Theme.background
     }
 
-    RowLayout {
+    ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // ---------------------------------------------------------------
-        // Sidebar de navigation
-        // ---------------------------------------------------------------
+        // ---- En-tete : marque, badges de statut, profil -------------------
         Rectangle {
-            Layout.preferredWidth: 248
-            Layout.fillHeight: true
-            color: Theme.sidebarBackground
+            Layout.fillWidth: true
+            Layout.preferredHeight: 76
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.border
 
-            ColumnLayout {
+            RowLayout {
                 anchors.fill: parent
-                anchors.margins: Theme.spacingMedium
-                spacing: Theme.spacingSmall
+                anchors.margins: Theme.spacingLarge
+                spacing: Theme.spacingMedium
 
-                // Logo / marque
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: Theme.spacingLarge
-                    spacing: Theme.spacingSmall
-
-                    Rectangle {
-                        width: 36
-                        height: 36
-                        radius: Theme.radiusMedium
-                        color: Theme.primary
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "CL"
-                            color: "#FFFFFF"
-                            font.pixelSize: 14
-                            font.bold: true
-                        }
-                    }
-
-                    Label {
-                        text: qsTr("CollabLAN")
-                        font.pixelSize: Theme.fontSizeHeading
-                        font.bold: true
-                        font.family: Theme.fontFamily
-                        color: Theme.sidebarText
-                    }
-
-                    Item { Layout.fillWidth: true }
-                }
+                BrandMark { size: 40 }
 
                 Label {
-                    text: qsTr("NAVIGATION")
-                    font.pixelSize: Theme.fontSizeCaption
+                    text: qsTr("CollabLAN")
+                    font.pixelSize: Theme.fontSizeHeading
                     font.bold: true
-                    font.family: Theme.fontFamily
-                    color: Theme.sidebarTextMuted
-                    Layout.bottomMargin: Theme.spacingXs
+                    font.family: root.displayFont
+                    color: Theme.text
                 }
 
-                SidebarNavItem {
-                    Layout.fillWidth: true
-                    icon: "\u2709"
-                    label: qsTr("Discussions")
-                    onClicked: root.chatRequested()
-                }
-                SidebarNavItem {
-                    Layout.fillWidth: true
-                    icon: "\u25CE"
-                    label: qsTr("Postes connectes")
-                    onClicked: root.usersRequested()
-                }
-                SidebarNavItem {
-                    Layout.fillWidth: true
-                    icon: "\u21C5"
-                    label: qsTr("Transfert de fichiers")
-                    onClicked: root.fileTransferRequested()
-                }
-                SidebarNavItem {
-                    Layout.fillWidth: true
-                    icon: "\u260E"
-                    label: qsTr("Appels")
-                    onClicked: root.callRequested()
-                }
-                SidebarNavItem {
-                    Layout.fillWidth: true
-                    icon: "📂"
-                    label: qsTr("Dossiers partagés")
-                    onClicked: root.sharedFoldersRequested()
-                }
+                Item { Layout.preferredWidth: Theme.spacingMedium }
 
-                Item { Layout.preferredHeight: Theme.spacingMedium }
-
-                Label {
-                    text: qsTr("SYSTEME")
-                    font.pixelSize: Theme.fontSizeCaption
-                    font.bold: true
-                    font.family: Theme.fontFamily
-                    color: Theme.sidebarTextMuted
-                    Layout.bottomMargin: Theme.spacingXs
-                }
-
-                SidebarNavItem {
-                    Layout.fillWidth: true
-                    icon: "\u2699"
-                    label: qsTr("Administration")
-                    onClicked: root.adminRequested()
-                }
-
-                Item { Layout.fillHeight: true }
-
+                // Badge : nombre de postes detectes sur le reseau local.
                 Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: Theme.sidebarBorder
+                    Layout.preferredHeight: 30
+                    implicitWidth: peersPillContent.implicitWidth + Theme.spacingMedium * 2
+                    radius: height / 2
+                    color: root.blueTint
+                    border.width: 1
+                    border.color: root.blue700
+
+                    RowLayout {
+                        id: peersPillContent
+                        anchors.centerIn: parent
+                        spacing: 6
+
+                        Rectangle {
+                            width: 7
+                            height: 7
+                            radius: 3.5
+                            color: root.blue700
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+
+                        Label {
+                            text: qsTr("%1 poste(s) en ligne").arg(root.peersCount)
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: "monospace"
+                            color: root.blue700
+                        }
+                    }
                 }
 
-                // Profil utilisateur + actions rapides (theme / deconnexion)
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.topMargin: Theme.spacingSmall
-                    spacing: Theme.spacingSmall
+                // Badge : etat de la bascule automatique de serveur
+                // (reutilise ServerStatusIndicator, deja au bon format
+                // "pastille + texte").
+                ServerStatusIndicator {}
 
-                    Avatar {
-                        name: root.username
-                        size: 34
-                    }
+                Item { Layout.fillWidth: true }
 
-                    Label {
-                        Layout.fillWidth: true
-                        text: root.username
-                        color: Theme.sidebarText
-                        font.pixelSize: Theme.fontSizeBody
-                        font.family: Theme.fontFamily
-                        elide: Text.ElideRight
-                    }
+                ThemeToggleButton {
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                }
 
-                    ThemeToggleButton {
-                        Layout.preferredWidth: 32
-                        Layout.preferredHeight: 32
-                    }
+                // ---- Profil (avatar + nom + chevron), menu deroulant ------
+                Rectangle {
+                    id: profileButton
+                    Layout.preferredHeight: 40
+                    implicitWidth: profileRow.implicitWidth + Theme.spacingMedium * 2
+                    radius: height / 2
+                    color: (profileArea.containsMouse || menuPopup.visible) ? Theme.surfaceAlt : Theme.surface
+                    border.width: 1
+                    border.color: Theme.border
+                    Behavior on color { ColorAnimation { duration: 100 } }
 
-                    Rectangle {
-                        Layout.preferredWidth: 32
-                        Layout.preferredHeight: 32
-                        radius: Theme.radiusMedium
-                        color: logoutArea.containsMouse ? Theme.sidebarHover : "transparent"
+                    RowLayout {
+                        id: profileRow
+                        anchors.centerIn: parent
+                        spacing: Theme.spacingSmall
+
+                        Avatar {
+                            name: root.username
+                            size: 28
+                        }
+
+                        Label {
+                            text: root.username
+                            color: Theme.text
+                            font.bold: true
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: Theme.fontFamily
+                        }
 
                         Text {
-                            anchors.centerIn: parent
-                            text: "\u23FB"
-                            color: Theme.sidebarTextMuted
-                            font.pixelSize: 14
+                            text: menuPopup.visible ? "\u25B4" : "\u25BE"
+                            color: Theme.textSecondary
+                            font.pixelSize: 10
+                        }
+                    }
+
+                    MouseArea {
+                        id: profileArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: menuPopup.visible = !menuPopup.visible
+                    }
+
+                    Popup {
+                        id: menuPopup
+                        y: profileButton.height + 6
+                        x: profileButton.width - width
+                        width: 200
+                        padding: 6
+                        modal: false
+                        focus: true
+                        closePolicy: Popup.CloseOnPressOutside | Popup.CloseOnEscape
+
+                        background: Rectangle {
+                            radius: Theme.radiusMedium
+                            color: Theme.surface
+                            border.width: 1
+                            border.color: Theme.border
                         }
 
-                        MouseArea {
-                            id: logoutArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.logoutRequested()
-                        }
+                        contentItem: ColumnLayout {
+                            spacing: 2
 
-                        ToolTip.visible: logoutArea.containsMouse
-                        ToolTip.delay: 400
-                        ToolTip.text: qsTr("Se deconnecter")
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 32
+                                Layout.margins: Theme.spacingSmall
+                                spacing: 6
+
+                                Rectangle {
+                                    width: 8
+                                    height: 8
+                                    radius: 4
+                                    color: Theme.success
+                                }
+
+                                Label {
+                                    text: qsTr("En ligne")
+                                    color: Theme.textSecondary
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.family: Theme.fontFamily
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 1
+                                color: Theme.border
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 38
+                                radius: Theme.radiusSmall
+                                color: logoutArea.containsMouse ? Theme.errorMuted : "transparent"
+                                Behavior on color { ColorAnimation { duration: 100 } }
+
+                                Label {
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.leftMargin: Theme.spacingSmall
+                                    text: qsTr("Se déconnecter")
+                                    color: Theme.error
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.bold: true
+                                    font.family: Theme.fontFamily
+                                }
+
+                                MouseArea {
+                                    id: logoutArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        menuPopup.close()
+                                        root.logoutRequested()
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // ---------------------------------------------------------------
-        // Contenu principal : tableau de bord
-        // ---------------------------------------------------------------
-        Item {
+        // ---- Contenu principal --------------------------------------------
+        Flickable {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            contentWidth: width
+            contentHeight: contentColumn.implicitHeight + 2 * Theme.spacingXl
+            clip: true
 
-            Flickable {
-                anchors.fill: parent
-                contentWidth: width
-                contentHeight: contentColumn.implicitHeight + 2 * Theme.spacingXl
-                clip: true
+            ColumnLayout {
+                id: contentColumn
+                width: Math.min(parent.width - 2 * Theme.spacingXl, 1200)
+                x: Theme.spacingXl
+                y: Theme.spacingXl
+                spacing: Theme.spacingLarge
 
+                // Bienvenue
                 ColumnLayout {
-                    id: contentColumn
-                    width: Math.min(parent.width - 2 * Theme.spacingXl, 960)
-                    x: Theme.spacingXl
-                    y: Theme.spacingXl
-                    spacing: Theme.spacingLarge
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingXs
 
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: Theme.spacingXs
+                    Label {
+                        text: qsTr("Bienvenue, %1").arg(root.username)
+                        font.pixelSize: 32
+                        font.bold: true
+                        font.family: root.displayFont
+                        color: Theme.text
+                    }
 
-                        Label {
-                            text: qsTr("Bienvenue, %1").arg(root.username)
-                            font.pixelSize: Theme.fontSizeTitle
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                            color: Theme.text
-                        }
+                    Label {
+                        text: qsTr("Voici un aperçu de votre réseau local.")
+                        font.pixelSize: Theme.fontSizeBody
+                        font.family: Theme.fontFamily
+                        color: Theme.textSecondary
+                    }
+                }
 
-                        Label {
-                            text: qsTr("Voici un acces rapide aux modules de votre reseau local.")
-                            font.pixelSize: Theme.fontSizeBody
-                            font.family: Theme.fontFamily
-                            color: Theme.textSecondary
-                        }
+                // Section Acces rapide
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingSmall
+
+                    Label {
+                        text: qsTr("Accès rapide")
+                        font.pixelSize: Theme.fontSizeSubheading
+                        font.bold: true
+                        font.family: Theme.fontFamily
+                        color: Theme.text
                     }
 
                     GridLayout {
                         Layout.fillWidth: true
-                        columns: root.width > 760 ? 3 : (root.width > 520 ? 2 : 1)
+                        columns: root.width > 1000 ? 4 : (root.width > 700 ? 3 : 2)
                         columnSpacing: Theme.spacingMedium
                         rowSpacing: Theme.spacingMedium
 
@@ -274,7 +334,7 @@ Item {
                         }
                         DashboardCard {
                             Layout.fillWidth: true
-                            icon: "📂"
+                            icon: "📂\uFE0E"
                             title: qsTr("Dossiers partagés")
                             description: qsTr("Partagez un dossier local avec votre réseau.")
                             onClicked: root.sharedFoldersRequested()
@@ -288,8 +348,8 @@ Item {
                         }
                     }
                 }
+
             }
         }
     }
-
 }

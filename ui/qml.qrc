@@ -22,6 +22,7 @@
         <file>Components/ThemeToggleButton.qml</file>
         <file>Components/AppButton.qml</file>
         <file>Components/Avatar.qml</file>
+        <file>Components/BrandMark.qml</file>
         <file>Components/SidebarNavItem.qml</file>
         <file>Components/TabPill.qml</file>
         <file>Components/DashboardCard.qml</file>
@@ -31,5 +32,8 @@
         <file>Components/ToastHost.qml</file>
         <file>Components/FolderTransferProgressHost.qml</file>
         <file>Components/ServerStatusIndicator.qml</file>
+        <file>Assets/logo.png</file>
+        <file>Assets/fonts/PTSerif-Bold.ttf</file>
+        <file>Assets/fonts/PTSerif-Regular.ttf</file>
     </qresource>
 </RCC>
