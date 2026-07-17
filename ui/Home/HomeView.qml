@@ -14,6 +14,9 @@ import "../Components"
  * alignee sur le portail web de reference (bandeau bleu + accents or, pastilles
  * façon puce documentaire, cartes DashboardCard a bandeau colore). Tous les
  * signaux et proprietes exposes par cet ecran restent inchanges.
+ *
+ * Grille realignee sur admin-home.component.scss :
+ * max-width 1400px, gap 20px, 3 colonnes par defaut, 2 sous 980px, 1 sous 560px.
  */
 Item {
     id: root
@@ -389,8 +392,10 @@ Item {
 
             ColumnLayout {
                 id: contentColumn
-                width: Math.min(parent.width - 2 * Theme.spacingXl, 1200)
-                x: (parent.width - width) / 2 
+                // max-width: 1400px comme la reference SCSS (.card-grid)
+                width: Math.min(parent.width - 2 * Theme.spacingXl, 1400)
+                // Centre horizontalement le bloc de contenu (margin: 0 auto)
+                x: (parent.width - width) / 2
                 y: Theme.spacingXl
                 spacing: Theme.spacingLarge
 
@@ -401,9 +406,11 @@ Item {
 
                     GridLayout {
                         Layout.fillWidth: true
-                        columns: contentColumn.width > 900 ? 4 : (contentColumn.width > 620 ? 3 : 2)
-                        columnSpacing: Theme.spacingMedium
-                        rowSpacing: Theme.spacingMedium
+                        // Seuils alignes sur .card-grid : 3 colonnes par
+                        // defaut, 2 sous 980px, 1 sous 560px.
+                        columns: contentColumn.width > 980 ? 3 : (contentColumn.width > 560 ? 2 : 1)
+                        columnSpacing: 20
+                        rowSpacing: 20
 
                         DashboardCard {
                             Layout.fillWidth: true

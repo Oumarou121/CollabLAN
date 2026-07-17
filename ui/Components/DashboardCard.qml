@@ -11,6 +11,9 @@ import Themes
  * degrade avec grande icone, indicateur "main" decoratif en coin, cercle
  * decoratif en fond de bandeau, pied de carte avec titre + chevron circulaire,
  * leger effet de "lift" (translation + bordure accentuee) au survol.
+ *
+ * Dimensions realignees sur la reference (admin-home.component.scss) :
+ * bandeau 120px, radius 20px, icone ~2.8rem (45px).
  */
 Rectangle {
     id: root
@@ -29,15 +32,17 @@ Rectangle {
     readonly property color primaryMid: Theme.darkMode ? "#2E3D4E" : "#C2D9EE"
     readonly property color borderIdle: Theme.darkMode ? Theme.border : "#24337AB7"
 
-    readonly property int bannerHeight: 108
+    readonly property int bannerHeight: 120
 
-    Layout.preferredHeight: 196
-    radius: 18
+    Layout.preferredHeight: 180
+    Layout.minimumWidth: 220
+    radius: 20
     color: Theme.surface
     border.width: 1
     border.color: mouseArea.containsMouse ? root.primaryMid : root.borderIdle
     clip: true
-    
+    antialiasing: true
+
     Behavior on border.color { ColorAnimation { duration: 150 } }
 
     // Effet de "lift" au survol (equivalent translateY(-4px) de la maquette).
@@ -54,22 +59,41 @@ Rectangle {
         anchors.fill: parent
         spacing: 0
 
-        // ---- Bandeau degrade (coins hauts arrondis, alignes sur le
-        // rayon de la carte) ------------------------------------------------
+        // ---- Bandeau degrade -----------------------------------------------
+        // root est desormais clip:true et porte le radius : plus besoin du
+        // hack "hauteur+18 / radius dupplique" pour masquer les coins bas du
+        // bandeau, ce qui evitait un leger artefact de rendu (liseré) sur les
+        // coins hauts (deux rectangles arrondis superposes).
         Item {
             Layout.fillWidth: true
             Layout.preferredHeight: root.bannerHeight
             clip: true
 
             Rectangle {
-                width: parent.width
-                height: parent.height + 18
-                radius: 18
+                anchors.fill: parent
+                topLeftRadius: 20
+                topRightRadius: 20
+                bottomLeftRadius: 0
+                bottomRightRadius: 0
 
                 gradient: Gradient {
                     orientation: Gradient.Vertical
                     GradientStop { position: 0.0; color: root.primary }
                     GradientStop { position: 1.0; color: root.primaryDark }
+                }
+
+                // Cercle decoratif en fond de bandeau (cf. reference SCSS
+                // ::after - width/height 110px, decale en bas-droite).
+                Rectangle {
+                    width: 110
+                    height: 110
+                    radius: 55
+                    color: "#ffffff"
+                    opacity: 0.07
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.rightMargin: -24
+                    anchors.bottomMargin: -28
                 }
 
                 // Grande icone, alignee en haut a gauche
@@ -78,7 +102,7 @@ Rectangle {
                     anchors.top: parent.top
                     anchors.margins: Theme.spacingMedium
                     text: root.icon
-                    font.pixelSize: 34
+                    font.pixelSize: 45
                     color: "#ffffff"
                     opacity: 0.94
                 }
@@ -102,20 +126,15 @@ Rectangle {
             }
         }
 
-        // ---- Separateur bandeau / pied --------------------------------------
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: root.borderIdle
-        }
-
         // ---- Pied : titre + chevron circulaire ------------------------------
         RowLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.leftMargin: Theme.spacingMedium
-            Layout.rightMargin: Theme.spacingMedium
-            spacing: Theme.spacingSmall
+                Layout.fillWidth: true
+                Layout.preferredHeight: 46          // hauteur fixe au lieu de fillHeight
+                Layout.alignment: Qt.AlignVCenter        // colle le pied en haut de sa zone
+                Layout.topMargin: 14                 // padding-top: 14px (reference SCSS)
+                Layout.leftMargin: Theme.spacingMedium
+                Layout.rightMargin: Theme.spacingMedium
+                spacing: Theme.spacingSmall
 
             Label {
                 Layout.fillWidth: true
