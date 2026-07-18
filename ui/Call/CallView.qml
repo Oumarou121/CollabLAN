@@ -2,29 +2,37 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Themes
+import "../Components"
 
 /*
  * CallView - ecran d'appel vocal P2P, fusionnant l'ancien duo
  * CallView / CallHistoryView (issues #60/#61/#64) en une seule vue.
+ *
+ * Refonte design (juillet 2026) : alignement complet sur le style
+ * "portail corporate" deja retenu pour Login/Home/Parametres/Discussions/
+ * Postes connectes -- barre superieure identique (bouton retour circulaire
+ * + titre + badge), contenu centre a largeur maximale, police d'icones
+ * Font Awesome 4.7.0 (au lieu des glyphes Unicode "systeme"), composant
+ * Avatar partage (au lieu de cercles dessines a la main), et memes seuils
+ * de grille que Postes connectes/Home (900 / 560) pour un rendu coherent
+ * sur les differentes resolutions/tailles de fenetre desktop.
  *
  * Pense pour du desktop grand ecran plutot que pour un layout mobile :
  *  - Contacts (postes du reseau local a appeler, "peersModel") et Recents
  *    (historique persiste en base, "callHistoryModel", voir
  *    core::CallHistoryManager / database::CallHistoryRepository) sont
  *    affiches simultanement, cote a cote, plutot que derriere un
- *    selecteur d'onglets : pas de bascule a faire, toute l'information
- *    utile est visible d'un coup d'oeil. En dessous de 760px de large,
- *    les deux panneaux s'empilent (meme convention que la grille de
- *    cartes de HomeView) ;
+ *    selecteur d'onglets. En dessous de 900px de large (meme seuil que
+ *    la grille de Postes connectes), les deux panneaux s'empilent ;
  *  - un appel en cours (calling/ringing/connecting/connected/ending) est
  *    represente par une carte compacte centree, superposee (avec fond
  *    assombri) a la liste plutot que par un ecran plein ecran : evite un
  *    grand vide sur les moniteurs larges, a la maniere d'un softphone de
- *    bureau (Teams/Skype).
+ *    bureau (Teams/Skype). Sa largeur s'adapte aussi aux petites fenetres.
  *
  * S'appuie, comme avant, sur les contextes QML globaux "callContext"
  * (core::CallContext) et "peersModel" / "callHistoryModel", exposes
- * depuis app/main.cpp.
+ * depuis app/main.cpp. API publique (proprietes/signaux) inchangee.
  */
 Item {
     id: root
@@ -39,6 +47,21 @@ Item {
     readonly property bool inCall: root.callState !== "idle"
 
     signal backRequested()
+
+    // ---- Jetons locaux "portail corporate", alignes sur LoginView/
+    // HomeView/DashboardCard (meme palette navy dans toute l'app). ----
+    readonly property color blue700: Theme.darkMode ? "#3E6C99" : "#1E3A5F"
+    readonly property color blue600: Theme.darkMode ? "#4E86B8" : "#2E6BAA"
+    readonly property color blueTint: Theme.darkMode ? "#1B2531" : "#E8F1F9"
+
+    // Police d'icones Font Awesome 4.7.0, memes glyphes que Home/Postes
+    // connectes/Discussions - pour un rendu monochrome coherent d'un
+    // ecran a l'autre au lieu des glyphes Unicode "systeme".
+    FontLoader {
+        id: iconFont
+        source: "../Assets/fonts/fontawesome-webfont.ttf"
+    }
+    readonly property string iconFontFamily: iconFont.name
 
     // ---- Historique : formatage / libelles --------------------------------
     function statusLabel(status) {
@@ -63,9 +86,13 @@ Item {
         }
     }
 
-    // Icone directionnelle façon "recents" : fleche pleine.
-    function directionArrow(direction) {
-        return direction === "outgoing" ? "\u2197" : "\u2199"
+    // Icone directionnelle (fleche pleine Font Awesome, rotation appliquee
+    // au rendu) : sortant = vers le haut/droite, entrant = vers le bas/gauche.
+    function directionGlyph(direction) {
+        return direction === "outgoing" ? "\uf062" : "\uf063"
+    }
+    function directionRotation(direction) {
+        return direction === "outgoing" ? 45 : -45
     }
 
     function formatDuration(seconds) {
@@ -128,6 +155,7 @@ Item {
             width: parent.width - Theme.spacingLarge * 2
             color: "#FFFFFF"
             font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
         }
@@ -155,220 +183,280 @@ Item {
         }
     }
 
-    // ======================================================================
-    // Contenu principal : Contacts + Recents cote a cote
-    // ======================================================================
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: Theme.spacingLarge
-        spacing: Theme.spacingMedium
+        spacing: 0
 
-        RowLayout {
+        // ---- Barre superieure (identique au style Home/Parametres/
+        // Postes connectes) : retour circulaire + titre + badge. ----------
+        Rectangle {
             Layout.fillWidth: true
-            spacing: Theme.spacingSmall
+            Layout.preferredHeight: 64
+            color: Theme.surface
 
-            Button {
-                text: qsTr("< Retour")
-                Layout.preferredHeight: 32
-
-                background: Rectangle {
-                    radius: Theme.radiusSmall
-                    color: parent.hovered ? Theme.surfaceAlt : "transparent"
-                    border.width: 1
-                    border.color: Theme.border
-                }
-
-                contentItem: Text {
-                    text: qsTr("< Retour")
-                    color: Theme.text
-                    font.pixelSize: Theme.fontSizeSmall
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                onClicked: root.backRequested()
-            }
-
-            Label {
-                text: qsTr("Appels")
-                font.pixelSize: Theme.fontSizeHeading
-                font.bold: true
-                font.family: Theme.fontFamily
-                color: Theme.text
-            }
-
-            Item { Layout.fillWidth: true }
-        }
-
-        // ---- Panneaux Contacts / Recents, cote a cote sur grand ecran,
-        // empiles en dessous de 760px (meme seuil que HomeView). --------
-        GridLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            columns: root.width > 760 ? 2 : 1
-            columnSpacing: Theme.spacingMedium
-            rowSpacing: Theme.spacingMedium
-
-            // -- Panneau Contacts ---------------------------------------
             Rectangle {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                radius: Theme.radiusLarge
-                color: Theme.surface
-                border.color: Theme.border
-                border.width: 1
-                clip: true
+                anchors.bottom: parent.bottom
+                width: parent.width
+                height: 1
+                color: Theme.border
+            }
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: Theme.spacingSmall
-                    spacing: Theme.spacingSmall
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.spacingMedium
+                anchors.rightMargin: Theme.spacingMedium
+                spacing: Theme.spacingMedium
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: Theme.spacingXs
-                        Layout.topMargin: Theme.spacingXs
-                        spacing: Theme.spacingSmall
+                Rectangle {
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    radius: Theme.radiusMedium
+                    color: callBackArea.containsMouse ? Theme.surfaceHover : "transparent"
 
-                        Label {
-                            text: qsTr("Contacts")
-                            font.pixelSize: Theme.fontSizeSubheading
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                            color: Theme.text
-                        }
-
-                        Item { Layout.fillWidth: true }
-
-                        Label {
-                            text: root.peers ? qsTr("%n poste(s)", "", root.peers.count) : ""
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
-                        }
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u2190"
+                        color: Theme.text
+                        font.pixelSize: 18
                     }
 
-                    Item {
+                    MouseArea {
+                        id: callBackArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.backRequested()
+                    }
+                }
+
+                Rectangle {
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    radius: Theme.radiusMedium
+                    color: root.blueTint
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\uf095"
+                        font.family: root.iconFontFamily
+                        font.pixelSize: 15
+                        color: root.blue700
+                    }
+                }
+
+                Label {
+                    text: qsTr("Appels")
+                    font.pixelSize: Theme.fontSizeSubheading
+                    font.bold: true
+                    font.family: Theme.fontFamily
+                    color: Theme.text
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Rectangle {
+                    Layout.preferredWidth: peersCountLabel.implicitWidth + Theme.spacingMedium * 2
+                    Layout.preferredHeight: 28
+                    radius: height / 2
+                    color: Theme.surfaceAlt
+                    border.color: Theme.border
+                    border.width: 1
+
+                    Label {
+                        id: peersCountLabel
+                        anchors.centerIn: parent
+                        text: root.peers ? qsTr("%n poste(s) en ligne", "", root.peers.count) : qsTr("0 poste")
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                    }
+                }
+            }
+        }
+
+        // ---- Contenu principal : deux panneaux, centres a largeur
+        // maximale (memes seuils que la grille de Postes connectes). ------
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
+            ColumnLayout {
+                id: contentColumn
+                width: Math.min(parent.width - 2 * Theme.spacingXl, 1200)
+                height: parent.height - 2 * Theme.spacingLarge
+                x: (parent.width - width) / 2
+                y: Theme.spacingLarge
+                spacing: 0
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    // Seuil aligne sur la grille de Postes connectes : deux
+                    // panneaux cote a cote par defaut, empiles en dessous
+                    // de 900px de large.
+                    columns: contentColumn.width > 900 ? 2 : 1
+                    columnSpacing: Theme.spacingMedium
+                    rowSpacing: Theme.spacingMedium
+
+                    // ================================================
+                    // Panneau Contacts
+                    // ================================================
+                    Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        radius: Theme.radiusLarge
+                        color: Theme.surface
+                        border.color: Theme.border
+                        border.width: 1
+                        clip: true
 
                         ColumnLayout {
-                            anchors.centerIn: parent
-                            spacing: Theme.spacingSmall
-                            visible: contactsListView.count === 0
-                            width: parent.width * 0.8
-
-                            Label {
-                                Layout.alignment: Qt.AlignHCenter
-                                text: qsTr("Aucun poste detecte pour le moment")
-                                font.pixelSize: Theme.fontSizeBody
-                                font.bold: true
-                                color: Theme.text
-                                horizontalAlignment: Text.AlignHCenter
-                            }
-
-                            Label {
-                                Layout.alignment: Qt.AlignHCenter
-                                Layout.fillWidth: true
-                                text: qsTr("Choisissez un poste des que quelqu'un est detecte pour l'appeler.")
-                                color: Theme.textSecondary
-                                font.pixelSize: Theme.fontSizeSmall
-                                horizontalAlignment: Text.AlignHCenter
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-
-                        ListView {
-                            id: contactsListView
                             anchors.fill: parent
+                            anchors.margins: Theme.spacingMedium
                             spacing: Theme.spacingSmall
-                            clip: true
-                            model: root.peers
 
-                            delegate: Rectangle {
-                                width: contactsListView.width
-                                height: 64
-                                radius: Theme.radiusMedium
-                                color: contactArea.containsMouse ? Theme.surfaceHover : Theme.surfaceAlt
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: Theme.spacingXs
+                                Layout.topMargin: Theme.spacingXs
+                                spacing: Theme.spacingMedium
 
-                                Behavior on color { ColorAnimation { duration: 100 } }
+                                Rectangle {
+                                    Layout.preferredWidth: 32
+                                    Layout.preferredHeight: 32
+                                    radius: Theme.radiusMedium
+                                    color: Theme.primaryMuted
 
-                                MouseArea {
-                                    id: contactArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    acceptedButtons: Qt.NoButton
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "\uf0c0"
+                                        font.family: root.iconFontFamily
+                                        font.pixelSize: 13
+                                        color: Theme.primary
+                                    }
                                 }
 
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: Theme.spacingMedium
-                                    anchors.rightMargin: Theme.spacingMedium
-                                    spacing: Theme.spacingMedium
+                                Label {
+                                    text: qsTr("Contacts")
+                                    font.pixelSize: Theme.fontSizeSubheading
+                                    font.bold: true
+                                    font.family: Theme.fontFamily
+                                    color: Theme.text
+                                }
 
-                                    Rectangle {
-                                        width: 42
-                                        height: 42
-                                        radius: 21
-                                        color: Theme.colorForName(name)
+                                Item { Layout.fillWidth: true }
 
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: name && name.length > 0 ? name.charAt(0).toUpperCase() : "?"
-                                            color: "#FFFFFF"
-                                            font.pixelSize: 16
-                                            font.bold: true
-                                        }
+                                Label {
+                                    text: root.peers ? qsTr("%n poste(s)", "", root.peers.count) : ""
+                                    color: Theme.textSecondary
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.family: Theme.fontFamily
+                                }
+                            }
+
+                            Item {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+
+                                ColumnLayout {
+                                    anchors.centerIn: parent
+                                    spacing: Theme.spacingSmall
+                                    visible: contactsListView.count === 0
+                                    width: parent.width * 0.8
+
+                                    Label {
+                                        Layout.alignment: Qt.AlignHCenter
+                                        text: qsTr("Aucun poste detecte pour le moment")
+                                        font.pixelSize: Theme.fontSizeBody
+                                        font.bold: true
+                                        font.family: Theme.fontFamily
+                                        color: Theme.text
+                                        horizontalAlignment: Text.AlignHCenter
                                     }
 
-                                    ColumnLayout {
+                                    Label {
+                                        Layout.alignment: Qt.AlignHCenter
                                         Layout.fillWidth: true
-                                        spacing: 2
-
-                                        Label {
-                                            text: name
-                                            color: Theme.text
-                                            font.pixelSize: Theme.fontSizeBody
-                                            font.bold: true
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
-                                        }
-
-                                        Label {
-                                            text: address + " \u00B7 " + qsTr("port %1").arg(signalingPort)
-                                            color: Theme.textSecondary
-                                            font.pixelSize: Theme.fontSizeSmall
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
-                                        }
+                                        text: qsTr("Choisissez un poste des que quelqu'un est detecte pour l'appeler.")
+                                        color: Theme.textSecondary
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.family: Theme.fontFamily
+                                        horizontalAlignment: Text.AlignHCenter
+                                        wrapMode: Text.WordWrap
                                     }
+                                }
 
-                                    Rectangle {
-                                        width: 40
-                                        height: 40
-                                        radius: 20
-                                        color: !root.call ? Theme.surfaceAlt
-                                               : (callBtnArea.containsMouse ? Theme.primaryHover : Theme.primary)
-                                        opacity: root.call ? 1 : 0.5
+                                ListView {
+                                    id: contactsListView
+                                    anchors.fill: parent
+                                    spacing: Theme.spacingSmall
+                                    clip: true
+                                    model: root.peers
+
+                                    delegate: Rectangle {
+                                        width: contactsListView.width
+                                        height: 64
+                                        radius: Theme.radiusMedium
+                                        color: contactArea.containsMouse ? Theme.surfaceHover : Theme.surfaceAlt
+                                        border.width: 1
+                                        border.color: Theme.border
 
                                         Behavior on color { ColorAnimation { duration: 100 } }
 
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: "\u260E"
-                                            color: root.call ? Theme.primaryText : Theme.textSecondary
-                                            font.pixelSize: 17
-                                        }
-
                                         MouseArea {
-                                            id: callBtnArea
+                                            id: contactArea
                                             anchors.fill: parent
                                             hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            enabled: root.call !== null
-                                            onClicked: {
-                                                console.log("CallView: Appel vers", address, "sur port", signalingPort)
-                                                if (!root.call.call(address, signalingPort)) {
-                                                    errorBanner.show(qsTr("Impossible d'appeler %1").arg(name))
+                                            acceptedButtons: Qt.NoButton
+                                        }
+
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: Theme.spacingMedium
+                                            anchors.rightMargin: Theme.spacingMedium
+                                            spacing: Theme.spacingMedium
+
+                                            Avatar {
+                                                name: name
+                                                size: 42
+                                                showStatus: true
+                                                online: true
+                                            }
+
+                                            ColumnLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 2
+
+                                                Label {
+                                                    text: name
+                                                    color: Theme.text
+                                                    font.pixelSize: Theme.fontSizeBody
+                                                    font.bold: true
+                                                    font.family: Theme.fontFamily
+                                                    elide: Text.ElideRight
+                                                    Layout.fillWidth: true
+                                                }
+
+                                                Label {
+                                                    text: address + " \u00B7 " + qsTr("port %1").arg(signalingPort)
+                                                    color: Theme.textSecondary
+                                                    font.pixelSize: Theme.fontSizeSmall
+                                                    font.family: Theme.fontFamily
+                                                    elide: Text.ElideRight
+                                                    Layout.fillWidth: true
+                                                }
+                                            }
+
+                                            IconButton {
+                                                glyph: "\uf095"
+                                                variant: "primary"
+                                                size: 40
+                                                enabledLook: root.call !== null
+                                                onClicked: {
+                                                    console.log("CallView: Appel vers", address, "sur port", signalingPort)
+                                                    if (!root.call.call(address, signalingPort)) {
+                                                        errorBanner.show(qsTr("Impossible d'appeler %1").arg(name))
+                                                    }
                                                 }
                                             }
                                         }
@@ -377,193 +465,185 @@ Item {
                             }
                         }
                     }
-                }
-            }
 
-            // -- Panneau Recents -----------------------------------------
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                radius: Theme.radiusLarge
-                color: Theme.surface
-                border.color: Theme.border
-                border.width: 1
-                clip: true
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: Theme.spacingSmall
-                    spacing: Theme.spacingSmall
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: Theme.spacingXs
-                        Layout.topMargin: Theme.spacingXs
-                        spacing: Theme.spacingSmall
-
-                        Label {
-                            text: qsTr("Recents")
-                            font.pixelSize: Theme.fontSizeSubheading
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                            color: Theme.text
-                        }
-
-                        Item { Layout.fillWidth: true }
-
-                        Label {
-                            text: root.history ? qsTr("%n appel(s)", "", root.history.count) : ""
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
-                        }
-
-                        Rectangle {
-                            Layout.preferredWidth: 26
-                            Layout.preferredHeight: 26
-                            radius: 13
-                            color: refreshArea.containsMouse ? Theme.surfaceAlt : "transparent"
-                            border.width: 1
-                            border.color: Theme.border
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "\u27F3"
-                                color: Theme.textSecondary
-                                font.pixelSize: 13
-                            }
-
-                            MouseArea {
-                                id: refreshArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: if (root.history) root.history.refresh()
-                            }
-
-                            ToolTip.visible: refreshArea.containsMouse
-                            ToolTip.delay: 400
-                            ToolTip.text: qsTr("Actualiser")
-                        }
-                    }
-
-                    Item {
+                    // ================================================
+                    // Panneau Recents
+                    // ================================================
+                    Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        radius: Theme.radiusLarge
+                        color: Theme.surface
+                        border.color: Theme.border
+                        border.width: 1
+                        clip: true
 
                         ColumnLayout {
-                            anchors.centerIn: parent
-                            spacing: Theme.spacingSmall
-                            visible: recentsListView.count === 0
-                            width: parent.width * 0.8
-
-                            Label {
-                                Layout.alignment: Qt.AlignHCenter
-                                text: qsTr("Aucun appel dans l'historique")
-                                font.pixelSize: Theme.fontSizeBody
-                                font.bold: true
-                                color: Theme.text
-                                horizontalAlignment: Text.AlignHCenter
-                            }
-
-                            Label {
-                                Layout.alignment: Qt.AlignHCenter
-                                Layout.fillWidth: true
-                                text: qsTr("Vos appels emis et recus apparaitront ici automatiquement.")
-                                color: Theme.textSecondary
-                                font.pixelSize: Theme.fontSizeSmall
-                                horizontalAlignment: Text.AlignHCenter
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-
-                        ListView {
-                            id: recentsListView
                             anchors.fill: parent
+                            anchors.margins: Theme.spacingMedium
                             spacing: Theme.spacingSmall
-                            clip: true
-                            model: root.history
 
-                            delegate: Rectangle {
-                                width: recentsListView.width
-                                height: 64
-                                radius: Theme.radiusMedium
-                                color: Theme.surfaceAlt
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: Theme.spacingXs
+                                Layout.topMargin: Theme.spacingXs
+                                spacing: Theme.spacingMedium
 
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: Theme.spacingMedium
-                                    anchors.rightMargin: Theme.spacingMedium
-                                    spacing: Theme.spacingMedium
+                                Rectangle {
+                                    Layout.preferredWidth: 32
+                                    Layout.preferredHeight: 32
+                                    radius: Theme.radiusMedium
+                                    color: Theme.primaryMuted
 
-                                    // Avatar avec badge directionnel superpose.
-                                    Item {
-                                        width: 42
-                                        height: 42
-
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            radius: 21
-                                            color: Theme.colorForName((peerName && peerName.length > 0) ? peerName : peerAddress)
-
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: (peerName && peerName.length > 0)
-                                                      ? peerName.charAt(0).toUpperCase()
-                                                      : (peerAddress && peerAddress.length > 0 ? peerAddress.charAt(0).toUpperCase() : "?")
-                                                color: "#FFFFFF"
-                                                font.pixelSize: 16
-                                                font.bold: true
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            width: 18
-                                            height: 18
-                                            radius: 9
-                                            anchors.right: parent.right
-                                            anchors.bottom: parent.bottom
-                                            anchors.margins: -2
-                                            color: root.statusColor(status)
-                                            border.width: 2
-                                            border.color: Theme.surfaceAlt
-
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: root.directionArrow(direction)
-                                                color: "#FFFFFF"
-                                                font.pixelSize: 9
-                                                font.bold: true
-                                            }
-                                        }
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "\uf1da"
+                                        font.family: root.iconFontFamily
+                                        font.pixelSize: 13
+                                        color: Theme.primary
                                     }
+                                }
 
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 2
+                                Label {
+                                    text: qsTr("Recents")
+                                    font.pixelSize: Theme.fontSizeSubheading
+                                    font.bold: true
+                                    font.family: Theme.fontFamily
+                                    color: Theme.text
+                                }
 
-                                        Label {
-                                            text: (peerName && peerName.length > 0) ? peerName : peerAddress
-                                            color: status === "missed" ? Theme.error : Theme.text
-                                            font.pixelSize: Theme.fontSizeBody
-                                            font.bold: true
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
-                                        }
+                                Item { Layout.fillWidth: true }
 
-                                        Label {
-                                            text: root.statusLabel(status)
-                                                   + (durationSeconds >= 0 ? (" \u2022 " + root.formatDuration(durationSeconds)) : "")
-                                            color: Theme.textSecondary
-                                            font.pixelSize: Theme.fontSizeSmall
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
-                                        }
+                                IconButton {
+                                    id: refreshHistoryButton
+                                    glyph: "\uf021"
+                                    variant: "ghost"
+                                    size: 32
+                                    onClicked: if (root.history) root.history.refresh()
+
+                                    ToolTip.visible: refreshHistoryButton.hovered
+                                    ToolTip.delay: 400
+                                    ToolTip.text: qsTr("Actualiser")
+                                }
+                            }
+
+                            Item {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+
+                                ColumnLayout {
+                                    anchors.centerIn: parent
+                                    spacing: Theme.spacingSmall
+                                    visible: recentsListView.count === 0
+                                    width: parent.width * 0.8
+
+                                    Label {
+                                        Layout.alignment: Qt.AlignHCenter
+                                        text: qsTr("Aucun appel dans l'historique")
+                                        font.pixelSize: Theme.fontSizeBody
+                                        font.bold: true
+                                        font.family: Theme.fontFamily
+                                        color: Theme.text
+                                        horizontalAlignment: Text.AlignHCenter
                                     }
 
                                     Label {
-                                        text: root.formatDate(startedAt)
-                                        color: Theme.textTertiary
-                                        font.pixelSize: Theme.fontSizeCaption
+                                        Layout.alignment: Qt.AlignHCenter
+                                        Layout.fillWidth: true
+                                        text: qsTr("Vos appels emis et recus apparaitront ici automatiquement.")
+                                        color: Theme.textSecondary
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.family: Theme.fontFamily
+                                        horizontalAlignment: Text.AlignHCenter
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+
+                                ListView {
+                                    id: recentsListView
+                                    anchors.fill: parent
+                                    spacing: Theme.spacingSmall
+                                    clip: true
+                                    model: root.history
+
+                                    delegate: Rectangle {
+                                        width: recentsListView.width
+                                        height: 64
+                                        radius: Theme.radiusMedium
+                                        color: Theme.surfaceAlt
+                                        border.width: 1
+                                        border.color: Theme.border
+
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: Theme.spacingMedium
+                                            anchors.rightMargin: Theme.spacingMedium
+                                            spacing: Theme.spacingMedium
+
+                                            // Avatar avec badge directionnel superpose.
+                                            Item {
+                                                Layout.preferredWidth: 42
+                                                Layout.preferredHeight: 42
+
+                                                Avatar {
+                                                    anchors.fill: parent
+                                                    name: (peerName && peerName.length > 0) ? peerName : peerAddress
+                                                }
+
+                                                Rectangle {
+                                                    width: 18
+                                                    height: 18
+                                                    radius: 9
+                                                    anchors.right: parent.right
+                                                    anchors.bottom: parent.bottom
+                                                    anchors.margins: -2
+                                                    color: root.statusColor(status)
+                                                    border.width: 2
+                                                    border.color: Theme.surfaceAlt
+
+                                                    Text {
+                                                        anchors.centerIn: parent
+                                                        text: root.directionGlyph(direction)
+                                                        rotation: root.directionRotation(direction)
+                                                        color: "#FFFFFF"
+                                                        font.family: root.iconFontFamily
+                                                        font.pixelSize: 8
+                                                    }
+                                                }
+                                            }
+
+                                            ColumnLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 2
+
+                                                Label {
+                                                    text: (peerName && peerName.length > 0) ? peerName : peerAddress
+                                                    color: status === "missed" ? Theme.error : Theme.text
+                                                    font.pixelSize: Theme.fontSizeBody
+                                                    font.bold: true
+                                                    font.family: Theme.fontFamily
+                                                    elide: Text.ElideRight
+                                                    Layout.fillWidth: true
+                                                }
+
+                                                Label {
+                                                    text: root.statusLabel(status)
+                                                           + (durationSeconds >= 0 ? (" \u2022 " + root.formatDuration(durationSeconds)) : "")
+                                                    color: Theme.textSecondary
+                                                    font.pixelSize: Theme.fontSizeSmall
+                                                    font.family: Theme.fontFamily
+                                                    elide: Text.ElideRight
+                                                    Layout.fillWidth: true
+                                                }
+                                            }
+
+                                            Label {
+                                                text: root.formatDate(startedAt)
+                                                color: Theme.textTertiary
+                                                font.pixelSize: Theme.fontSizeCaption
+                                                font.family: Theme.fontFamily
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -576,8 +656,11 @@ Item {
 
     // ======================================================================
     // Appel en cours : fond assombri + carte compacte centree (pas de
-    // plein ecran, pour rester ergonomique sur un grand moniteur).
+    // plein ecran, pour rester ergonomique sur un grand moniteur). Largeur
+    // adaptee aux petites fenetres via callCardWidth.
     // ======================================================================
+    readonly property int callCardWidth: Math.min(380, root.width - Theme.spacingLarge * 2)
+
     Rectangle {
         id: backdrop
         anchors.fill: parent
@@ -595,7 +678,7 @@ Item {
     Rectangle {
         id: callCard
         anchors.centerIn: parent
-        width: 380
+        width: root.callCardWidth
         height: callCardColumn.implicitHeight + Theme.spacingXl * 2
         radius: Theme.radiusLarge
         color: Theme.surface
@@ -632,7 +715,7 @@ Item {
                         radius: 48
                         color: "transparent"
                         border.width: 2
-                        border.color: Theme.primary
+                        border.color: root.blue600
 
                         SequentialAnimation on opacity {
                             loops: Animation.Infinite
@@ -647,21 +730,10 @@ Item {
                     }
                 }
 
-                Rectangle {
+                Avatar {
                     anchors.centerIn: parent
-                    width: 96
-                    height: 96
-                    radius: 48
-                    color: root.call ? Theme.colorForName(root.call.remoteAddress) : Theme.primary
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: root.call && root.call.remoteAddress.length > 0
-                              ? root.call.remoteAddress.charAt(0).toUpperCase() : "?"
-                        color: "#FFFFFF"
-                        font.pixelSize: 34
-                        font.bold: true
-                    }
+                    size: 96
+                    name: root.call ? root.call.remoteAddress : ""
                 }
             }
 
@@ -678,6 +750,7 @@ Item {
                 Layout.alignment: Qt.AlignHCenter
                 color: Theme.textSecondary
                 font.pixelSize: Theme.fontSizeBody
+                font.family: Theme.fontFamily
                 text: {
                     switch (root.callState) {
                     case "calling":    return qsTr("Appel en cours...")
@@ -698,7 +771,7 @@ Item {
                 visible: root.callState === "ringing"
 
                 CallActionButton {
-                    icon: "\u260E"
+                    glyph: "\uf095"
                     iconRotation: 135
                     label: qsTr("Refuser")
                     bgColor: Theme.error
@@ -706,7 +779,7 @@ Item {
                 }
 
                 CallActionButton {
-                    icon: "\u260E"
+                    glyph: "\uf095"
                     label: qsTr("Repondre")
                     bgColor: Theme.success
                     diameter: 64
@@ -722,7 +795,7 @@ Item {
                 visible: root.callState === "calling" || root.callState === "connecting"
 
                 CallActionButton {
-                    icon: "\u260E"
+                    glyph: "\uf095"
                     iconRotation: 135
                     label: qsTr("Annuler")
                     bgColor: Theme.error
@@ -739,7 +812,7 @@ Item {
                 visible: root.callState === "connected"
 
                 CallActionButton {
-                    icon: root.call && root.call.muted ? "\u2298" : "\u25CF"
+                    glyph: root.call && root.call.muted ? "\uf131" : "\uf130"
                     label: root.call && root.call.muted ? qsTr("Reactiver") : qsTr("Muet")
                     bgColor: root.call && root.call.muted ? Theme.warning : Theme.surfaceAlt
                     iconColor: root.call && root.call.muted ? Theme.primaryText : Theme.text
@@ -747,7 +820,7 @@ Item {
                 }
 
                 CallActionButton {
-                    icon: "\u260E"
+                    glyph: "\uf095"
                     iconRotation: 135
                     label: qsTr("Raccrocher")
                     bgColor: Theme.error
@@ -758,11 +831,12 @@ Item {
         }
     }
 
-    // Bouton d'action rond (raccrocher/decrocher/mute...) avec libelle.
+    // Bouton d'action rond (raccrocher/decrocher/mute...) avec libelle,
+    // en Font Awesome pour rester coherent avec le reste de l'application.
     component CallActionButton: ColumnLayout {
         id: actionBtn
 
-        property string icon: ""
+        property string glyph: ""
         property string label: ""
         property color bgColor: Theme.primary
         property color iconColor: "#FFFFFF"
@@ -785,9 +859,10 @@ Item {
 
             Text {
                 anchors.centerIn: parent
-                text: actionBtn.icon
+                text: actionBtn.glyph
                 color: actionBtn.iconColor
-                font.pixelSize: actionBtn.diameter * 0.38
+                font.family: root.iconFontFamily
+                font.pixelSize: actionBtn.diameter * 0.34
                 rotation: actionBtn.iconRotation
             }
 
@@ -805,6 +880,7 @@ Item {
             text: actionBtn.label
             color: Theme.textSecondary
             font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
             visible: actionBtn.label.length > 0
         }
     }

@@ -29,6 +29,10 @@ Item {
     property bool enabledLook: true
     property bool bold: false
 
+    // Permet d'attacher un ToolTip depuis l'exterieur (ex. CallView) sans
+    // dupliquer de MouseArea par-dessus le composant.
+    readonly property alias hovered: mouseArea.containsMouse
+
     signal clicked()
 
     FontLoader {

@@ -31,7 +31,7 @@ ApplicationWindow {
     // fraction de seconde avant d'etre remplace par Home ("Se souvenir de
     // moi", migration #026).
     visible: false
-    title: qsTr("CollabLAN")
+    title: qsTr("Collab LAN")
     color: Theme.background
 
     // Référence à la propriété globale messagingContext pour l'utiliser dans les Components
@@ -99,15 +99,15 @@ ApplicationWindow {
     // sur tous les ecrans SAUF Login/Home, qui integrent desormais leur
     // propre badge de statut dans l'en-tete (evite un double affichage /
     // chevauchement avec le bouton de theme et le profil).
-    ServerStatusIndicator {
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.margins: Theme.spacingMedium
-        visible: (typeof electionService !== "undefined" && electionService !== null)
-                 && !(stackView.currentItem
-                      && (stackView.currentItem.objectName === "loginView"
-                          || stackView.currentItem.objectName === "homeView"))
-    }
+    // ServerStatusIndicator {
+    //     anchors.top: parent.top
+    //     anchors.right: parent.right
+    //     anchors.margins: Theme.spacingMedium
+    //     visible: (typeof electionService !== "undefined" && electionService !== null)
+    //              && !(stackView.currentItem
+    //                   && (stackView.currentItem.objectName === "loginView"
+    //                       || stackView.currentItem.objectName === "homeView"))
+    // }
 
     // Superposition globale des toasts (issue #58) : place en dernier
     // pour rester au-dessus du StackView quelle que soit la vue active.
