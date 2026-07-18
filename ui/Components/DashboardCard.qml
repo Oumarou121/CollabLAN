@@ -24,13 +24,22 @@ Rectangle {
 
     signal clicked()
 
-    // Jetons alignes sur la maquette de reference (primary / primary-dark /
-    // primary-light / primary-mid).
-    readonly property color primary: Theme.darkMode ? "#4E86B8" : "#337AB7"
-    readonly property color primaryDark: Theme.darkMode ? "#3E6C99" : "#275F91"
+    // Police d'icones Font Awesome 4.7.0 (memes glyphes que la reference
+    // admin-home.component.html/scss, fa fa-*), pour un rendu monochrome
+    // fiable au lieu de "Segoe UI Symbol" (glyphes couleur selon l'OS).
+    FontLoader {
+        id: iconFont
+        source: "../Assets/fonts/fontawesome-webfont.ttf"
+    }
+    readonly property string iconFontFamily: iconFont.name
+
+    // Jetons alignes sur LoginView (meme palette navy que le reste de
+    // l'app : primary / primary-dark / primary-light / primary-mid).
+    readonly property color primary: Theme.darkMode ? "#4E86B8" : "#2E6BAA"
+    readonly property color primaryDark: Theme.darkMode ? "#3E6C99" : "#1E3A5F"
     readonly property color primaryLight: Theme.darkMode ? "#1B2531" : "#E8F1F9"
     readonly property color primaryMid: Theme.darkMode ? "#2E3D4E" : "#C2D9EE"
-    readonly property color borderIdle: Theme.darkMode ? Theme.border : "#24337AB7"
+    readonly property color borderIdle: Theme.darkMode ? Theme.border : "#242E6BAA"
 
     readonly property int bannerHeight: 126
 
@@ -101,7 +110,7 @@ Rectangle {
                     anchors.left: parent.left
                     anchors.top: parent.top
                     anchors.margins: Theme.spacingMedium
-                    font.family: "Segoe UI Symbol" 
+                    font.family: root.iconFontFamily
                     text: root.icon
                     font.pixelSize: 45
                     color: "#ffffff"

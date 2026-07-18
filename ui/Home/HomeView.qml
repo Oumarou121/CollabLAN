@@ -69,9 +69,9 @@ Item {
         return Theme.success
     }
 
-    // ---- Jetons locaux (alignes sur la maquette de reference SIRH-DOC) ----
-    readonly property color blue700: Theme.darkMode ? "#3E6C99" : "#275F91"
-    readonly property color blue600: Theme.darkMode ? "#4E86B8" : "#337AB7"
+    // ---- Jetons locaux (alignes sur LoginView, meme palette navy) ----
+    readonly property color blue700: Theme.darkMode ? "#3E6C99" : "#1E3A5F"
+    readonly property color blue600: Theme.darkMode ? "#4E86B8" : "#2E6BAA"
     readonly property color blueTint: Theme.darkMode ? "#1B2531" : "#E8F1F9"
     readonly property color accentSky: "#4FC3F7"
 
@@ -426,35 +426,35 @@ Item {
 
                         DashboardCard {
                             Layout.fillWidth: true
-                            icon: "\u2709"
+                            icon: "\uf0e0"
                             title: qsTr("Discussions")
                             description: qsTr("Retrouvez vos conversations et groupes.")
                             onClicked: root.chatRequested()
                         }
                         DashboardCard {
                             Layout.fillWidth: true
-                            icon: "\u21C5"
+                            icon: "\uf0ec"
                             title: qsTr("Transfert de fichiers")
                             description: qsTr("Envoyez et recevez des fichiers.")
                             onClicked: root.fileTransferRequested()
                         }
                         DashboardCard {
                             Layout.fillWidth: true
-                            icon: "\u260E"
+                            icon: "\uf095"
                             title: qsTr("Appels")
                             description: qsTr("Demarrez un appel ou consultez votre historique.")
                             onClicked: root.callRequested()
                         }
                         DashboardCard {
                             Layout.fillWidth: true
-                            icon: "\u{1F5C1}"
+                            icon: "\uf07c"
                             title: qsTr("Dossiers partagés")
                             description: qsTr("Partagez un dossier local avec votre réseau.")
                             onClicked: root.sharedFoldersRequested()
                         }
                         DashboardCard {
                             Layout.fillWidth: true
-                            icon: "\u{2699}"
+                            icon: "\uf013"
                             title: qsTr("Administration")
                             description: qsTr("Gerez les utilisateurs et les postes.")
                             onClicked: root.adminRequested()

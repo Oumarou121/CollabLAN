@@ -35,5 +35,6 @@
         <file>Assets/logo.png</file>
         <file>Assets/fonts/PTSerif-Bold.ttf</file>
         <file>Assets/fonts/PTSerif-Regular.ttf</file>
+        <file>Assets/fonts/fontawesome-webfont.ttf</file>
     </qresource>
 </RCC>
