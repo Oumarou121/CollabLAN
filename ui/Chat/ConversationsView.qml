@@ -306,12 +306,16 @@ Item {
         }
     }
 
-    // Modal de choix d'action
+    // Modal de choix d'action (Rectangle plein-ecran + carte, pas un
+    // QQC2 Dialog -- ouvert/ferme via `visible`, pas open()/close() --
+    // donc laisse tel quel plutot que migre vers AppDialog, mais aligne
+    // sur Theme.overlay pour la coherence visuelle avec les autres
+    // modals de l'application.
     Rectangle {
         id: actionMenu
         anchors.fill: parent
         visible: false
-        color: "#40000000"
+        color: Theme.overlay
 
         MouseArea {
             anchors.fill: parent

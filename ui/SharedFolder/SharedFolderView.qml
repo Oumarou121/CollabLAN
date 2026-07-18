@@ -311,13 +311,12 @@ Item {
     }
 
     // ---- dialogue de création ----
-    Dialog {
+    AppDialog {
         id: createDialog
         title: qsTr("Nouveau dossier partagé")
-        modal: true
-        anchors.centerIn: parent
-        width: 420
-        height: 680
+        headerIcon: "\uf07b"
+        dialogWidth: 420
+        dialogHeight: 680
         standardButtons: Dialog.NoButton
 
         property string localPath: ""
@@ -347,15 +346,16 @@ Item {
             }
         }
 
-        background: Rectangle {
-            radius: Theme.radiusMedium
-            color: Theme.surface
-            border.width: 1
-            border.color: Theme.border
-        }
-
-        ColumnLayout {
+        // Contenu scrollable : dialogHeight (680) peut etre plafonnee sur
+        // petite fenetre (minimumHeight 480, cf. Main.qml), donc le
+        // contenu doit pouvoir defiler plutot que deborder de la carte.
+        ScrollView {
             anchors.fill: parent
+            contentWidth: availableWidth
+            clip: true
+
+            ColumnLayout {
+            width: parent.width
             spacing: Theme.spacingMedium
 
             Label {
@@ -523,15 +523,15 @@ Item {
             }
         }
     }
+    }
 
     // ---- dialogue de modification des motifs d'exclusion (debrief point #4) ----
-    Dialog {
+    AppDialog {
         id: editExcludePatternsDialog
         title: qsTr("Exclusions — %1").arg(editExcludePatternsDialog.targetFolderName)
-        modal: true
-        anchors.centerIn: parent
-        width: 420
-        height: 320
+        headerIcon: "\uf05e"
+        dialogWidth: 420
+        dialogHeight: 320
         standardButtons: Dialog.NoButton
 
         property int targetFolderId: -1
@@ -556,13 +556,6 @@ Item {
             // donc l'impact initial est toujours vide -- pas la peine
             // d'attendre le debounce pour l'afficher.
             editExcludePatternsDialog.impactedPaths = []
-        }
-
-        background: Rectangle {
-            radius: Theme.radiusMedium
-            color: Theme.surface
-            border.width: 1
-            border.color: Theme.border
         }
 
         ColumnLayout {
@@ -659,13 +652,12 @@ Item {
     }
 
     // ---- dialogue de définition du chemin local pour dossiers distants ----
-    Dialog {
+    AppDialog {
         id: setLocalPathDialog
         title: qsTr("Définir le dossier local — %1").arg(setLocalPathDialog.targetFolderName)
-        modal: true
-        anchors.centerIn: parent
-        width: 420
-        height: 280
+        headerIcon: "\uf07c"
+        dialogWidth: 420
+        dialogHeight: 280
         standardButtons: Dialog.NoButton
 
         property int targetFolderId: -1
@@ -675,13 +667,6 @@ Item {
 
         onOpened: {
             setLocalPathDialog.localPath = ""
-        }
-
-        background: Rectangle {
-            radius: Theme.radiusMedium
-            color: Theme.surface
-            border.width: 1
-            border.color: Theme.border
         }
 
         ColumnLayout {
@@ -771,15 +756,15 @@ Item {
     // l'utilisateur avant de commencer quoi que ce soit sur son disque
     // (au lieu d'auto-provisionner silencieusement), tout en lui montrant OÙ
     // le contenu serait placé s'il accepte.
-    Dialog {
+    AppDialog {
         id: shareConfirmDialog
         title: qsTr("Nouveau dossier partagé — %1").arg(shareConfirmDialog.targetFolderName)
-        modal: true
-        anchors.centerIn: parent
-        width: 440
-        height: 300
+        headerIcon: "\uf07b"
+        dialogWidth: 440
+        dialogHeight: 300
         standardButtons: Dialog.NoButton
         closePolicy: Popup.NoAutoClose
+        showCloseButton: false
 
         property int targetFolderId: -1
         property string targetFolderName: ""
@@ -787,13 +772,6 @@ Item {
         property string suggestedPath: ""
 
         onClosed: root.showNextShareConfirmation()
-
-        background: Rectangle {
-            radius: Theme.radiusMedium
-            color: Theme.surface
-            border.width: 1
-            border.color: Theme.border
-        }
 
         ColumnLayout {
             anchors.fill: parent
@@ -869,13 +847,12 @@ Item {
     }
 
     // ---- dialogue de gestion des accès (voir / révoquer / ajouter) ----
-    Dialog {
+    AppDialog {
         id: manageAccessDialog
         title: qsTr("Gérer les accès — %1").arg(manageAccessDialog.targetFolderName)
-        modal: true
-        anchors.centerIn: parent
-        width: 460
-        height: 560
+        headerIcon: "\uf0c0"
+        dialogWidth: 460
+        dialogHeight: 560
         standardButtons: Dialog.NoButton
 
         property int    targetFolderId: -1
@@ -896,13 +873,6 @@ Item {
                 manageAccessDialog.grants = []
             }
             addUserCombo.reloadCandidates()
-        }
-
-        background: Rectangle {
-            radius: Theme.radiusMedium
-            color: Theme.surface
-            border.width: 1
-            border.color: Theme.border
         }
 
         ColumnLayout {
@@ -1181,23 +1151,15 @@ Item {
     }
 
     // ---- dialogue de confirmation de suppression ----
-    Dialog {
+    AppDialog {
         id: removeConfirmDialog
         title: qsTr("Supprimer ce dossier partagé ?")
-        modal: true
-        anchors.centerIn: parent
-        width: 380
+        headerIcon: "\uf1f8"
+        dialogWidth: 380
         standardButtons: Dialog.NoButton
 
         property int targetFolderId: -1
         property string targetFolderName: ""
-
-        background: Rectangle {
-            radius: Theme.radiusMedium
-            color: Theme.surface
-            border.width: 1
-            border.color: Theme.border
-        }
 
         ColumnLayout {
             anchors.fill: parent

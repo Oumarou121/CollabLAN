@@ -24,6 +24,14 @@ Item {
     property string selectedFilePath: ""
     property string selectedFileName: ""
 
+    // Sous ce seuil (fenetre partagee / petit ecran, minimum 640px pour
+    // la fenetre entiere - cf. Main.qml), les colonnes secondaires de la
+    // vue "Détails" (Sens, Date de modification) sont masquees : a 640px
+    // de large, une fois le panneau lateral de 168px et les colonnes
+    // fixes (Taille/Sens/Statut/Date = ~360px) deduits, il ne restait
+    // presque plus de place pour le nom du fichier.
+    readonly property bool compactList: root.width < 900
+
     signal backRequested()
 
     // ---- fonctions utilitaires ----
@@ -1080,6 +1088,7 @@ Item {
                                             }
                                             Label {
                                                 Layout.preferredWidth: 60
+                                                visible: !root.compactList
                                                 text: qsTr("Sens")
                                                 font.bold: true
                                                 color: Theme.textSecondary
@@ -1096,6 +1105,7 @@ Item {
                                             }
                                             Label {
                                                 Layout.preferredWidth: 130
+                                                visible: !root.compactList
                                                 text: qsTr("Date de modification")
                                                 font.bold: true
                                                 color: Theme.textSecondary
@@ -1158,6 +1168,7 @@ Item {
                                                 }
                                                 Label {
                                                     Layout.preferredWidth: 60
+                                                    visible: !root.compactList
                                                     text: modelData.direction === qsTr("Réception") ? "\u2193" : "\u2191"
                                                     color: modelData.direction === qsTr("Réception") ? Theme.accent : Theme.primary
                                                     font.pixelSize: Theme.fontSizeBody
@@ -1175,6 +1186,7 @@ Item {
                                                 }
                                                 Label {
                                                     Layout.preferredWidth: 130
+                                                    visible: !root.compactList
                                                     text: root.formatDate(modelData.timestamp)
                                                     color: Theme.textSecondary
                                                     font.pixelSize: Theme.fontSizeSmall

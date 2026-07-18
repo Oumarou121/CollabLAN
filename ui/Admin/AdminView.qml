@@ -15,9 +15,22 @@ import "../Components"
  * Gestion des machines autorisées/révoquées (issue #68).
  *
  * Accès réservé aux administrateurs (issue #67).
+ *
+ * Refonte design (juillet 2026) : alignement sur le style deja retenu
+ * pour Login/Home/Settings/Users -- header en deux lignes (actions puis
+ * onglets), contenu centre a largeur maximale (comme les autres ecrans),
+ * grilles de cartes responsives (1/2/3 colonnes, memes seuils 900/560 que
+ * HomeView/UsersView) pour "Machines autorisées" et "Utilisateurs" au lieu
+ * de lignes de tableau a colonnes figees, et entrees empilees verticalement
+ * (au lieu de colonnes de largeur fixe) pour le journal d'audit et
+ * l'historique de bascule, afin que rien ne se chevauche ni ne soit
+ * tronque, y compris a la largeur minimale de la fenetre (640px, cf.
+ * Main.qml). Les boutons d'action de l'en-tete masquent leur libelle sous
+ * ~700px pour ne garder que l'icone.
  */
 Item {
     id: root
+    objectName: "adminView"
 
     signal backRequested()
 
@@ -27,6 +40,10 @@ Item {
     // désormais accessible à tous les utilisateurs depuis le menu profil
     // de HomeView (Ports réseau y reste réservé aux
     // administrateurs).
+
+    // Sous ce seuil, les boutons d'action de l'en-tete masquent leur texte
+    // pour ne garder que l'icone (fenetre partagee / petits ecrans).
+    readonly property bool headerCompact: root.width < 700
 
     // Historique des bascules (ServerElectionLog), pour l'onglet "Bascule
     // serveur" (HYBRID_SERVER_FAILOVER.md section 9, etape 5). Pas de
@@ -39,6 +56,16 @@ Item {
     function refreshElectionHistory() {
         if (typeof application !== "undefined" && application)
             root.electionHistoryEntries = application.electionHistory(100)
+    }
+
+    function electionEventColor(eventName) {
+        switch (eventName) {
+        case "HEARTBEAT_LOST": return Theme.error
+        case "TEMP_PROMOTED": return Theme.warning
+        case "SERVER_RECONCILED": return Theme.primary
+        case "SERVER_RESTORED": return Theme.success
+        default: return Theme.textSecondary
+        }
     }
 
     onCurrentTabChanged: {
@@ -69,10 +96,14 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // Barre superieure
+        // ---- Barre superieure : deux lignes ------------------------------
+        // Ligne 1 (64px) : retour, titre, action contextuelle.
+        // Ligne 2 (56px) : selecteur d'onglets, dans un conteneur qui
+        // defile horizontalement si la largeur disponible ne suffit pas a
+        // afficher les 4 onglets (au lieu de les tasser/tronquer).
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 64
+            Layout.preferredHeight: 120
             color: Theme.surface
 
             Rectangle {
@@ -82,246 +113,285 @@ Item {
                 color: Theme.border
             }
 
-            RowLayout {
+            Column {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.spacingMedium
-                anchors.rightMargin: Theme.spacingMedium
-                spacing: Theme.spacingMedium
+                spacing: 0
 
-                Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    radius: Theme.radiusMedium
-                    color: backArea.containsMouse ? Theme.surfaceHover : "transparent"
+                Item {
+                    width: parent.width
+                    height: 64
 
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\u2190"
-                        color: Theme.text
-                        font.pixelSize: 18
-                    }
-
-                    MouseArea {
-                        id: backArea
+                    RowLayout {
                         anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.backRequested()
-                    }
-                }
+                        anchors.leftMargin: Theme.spacingMedium
+                        anchors.rightMargin: Theme.spacingMedium
+                        spacing: Theme.spacingMedium
 
-                Label {
-                    text: qsTr("Administration")
-                    font.pixelSize: Theme.fontSizeSubheading
-                    font.bold: true
-                    font.family: Theme.fontFamily
-                    color: Theme.text
-                    Layout.rightMargin: Theme.spacingMedium
-                }
+                        IconButton {
+                            glyph: "\uf060"
+                            size: 36
+                            onClicked: root.backRequested()
+                        }
 
-                Rectangle {
-                    Layout.preferredHeight: 40
-                    Layout.fillWidth: false
-                    implicitWidth: tabRow.implicitWidth + Theme.spacingXs * 2
-                    radius: Theme.radiusPill
-                    color: Theme.surfaceAlt
+                        Label {
+                            text: qsTr("Administration")
+                            font.pixelSize: Theme.fontSizeSubheading
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                            color: Theme.text
+                            elide: Text.ElideRight
+                        }
 
-                    Row {
-                        id: tabRow
-                        anchors.centerIn: parent
-                        spacing: 2
+                        Item { Layout.fillWidth: true }
 
-                        TabPill { label: qsTr("Journal d'audit"); active: root.currentTab === 0; onClicked: root.currentTab = 0 }
-                        TabPill { label: qsTr("Machines autorisées"); active: root.currentTab === 1; onClicked: root.currentTab = 1 }
-                        TabPill { label: qsTr("Utilisateurs"); active: root.currentTab === 2; onClicked: root.currentTab = 2 }
-                        TabPill { label: qsTr("Bascule serveur"); active: root.currentTab === 3; onClicked: root.currentTab = 3 }
+                        AppButton {
+                            variant: "secondary"
+                            iconGlyph: "\u21E9"
+                            text: root.headerCompact ? "" : qsTr("Exporter CSV")
+                            visible: root.currentTab === 0
+                            onClicked: exportDialog.open()
+                        }
+
+                        AppButton {
+                            variant: "primary"
+                            iconGlyph: "+"
+                            text: root.headerCompact ? "" : qsTr("Ajouter machine")
+                            visible: root.currentTab === 1
+                            onClicked: addMachineDialog.open()
+                        }
+
+                        AppButton {
+                            variant: "primary"
+                            iconGlyph: "+"
+                            text: root.headerCompact ? "" : qsTr("Ajouter utilisateur")
+                            visible: root.currentTab === 2
+                            onClicked: addUserDialog.open()
+                        }
+
+                        AppButton {
+                            variant: "secondary"
+                            iconGlyph: "\u21BB"
+                            text: root.headerCompact ? "" : qsTr("Rafraîchir")
+                            visible: root.currentTab === 3
+                            onClicked: root.refreshElectionHistory()
+                        }
                     }
                 }
 
                 Item {
-                    Layout.fillWidth: true
-                }
+                    width: parent.width
+                    height: 56
 
-                AppButton {
-                    variant: "secondary"
-                    iconGlyph: "\u21E9"
-                    text: qsTr("Exporter CSV")
-                    visible: root.currentTab === 0
-                    onClicked: exportDialog.open()
-                }
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: Math.min(parent.width - Theme.spacingMedium * 2, tabRow.implicitWidth + Theme.spacingXs * 2)
+                        height: 40
+                        radius: Theme.radiusPill
+                        color: Theme.surfaceAlt
+                        clip: true
 
-                AppButton {
-                    variant: "primary"
-                    iconGlyph: "+"
-                    text: qsTr("Ajouter machine")
-                    visible: root.currentTab === 1
-                    onClicked: addMachineDialog.open()
-                }
+                        Flickable {
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingXs
+                            contentWidth: tabRow.implicitWidth
+                            contentHeight: height
+                            clip: true
+                            interactive: tabRow.implicitWidth > width
+                            boundsBehavior: Flickable.StopAtBounds
 
-                AppButton {
-                    variant: "primary"
-                    iconGlyph: "+"
-                    text: qsTr("Ajouter utilisateur")
-                    visible: root.currentTab === 2
-                    onClicked: addUserDialog.open()
-                }
+                            Row {
+                                id: tabRow
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 2
 
-                AppButton {
-                    variant: "secondary"
-                    iconGlyph: "\u21BB"
-                    text: qsTr("Rafraîchir")
-                    visible: root.currentTab === 3
-                    onClicked: root.refreshElectionHistory()
+                                TabPill { label: qsTr("Journal d'audit"); active: root.currentTab === 0; onClicked: root.currentTab = 0 }
+                                TabPill { label: qsTr("Machines autorisées"); active: root.currentTab === 1; onClicked: root.currentTab = 1 }
+                                TabPill { label: qsTr("Utilisateurs"); active: root.currentTab === 2; onClicked: root.currentTab = 2 }
+                                TabPill { label: qsTr("Bascule serveur"); active: root.currentTab === 3; onClicked: root.currentTab = 3 }
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // Contenu de l'onglet Journal d'audit
+        // ---- Contenu de l'onglet Journal d'audit --------------------------
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.currentTab === 0
 
             ColumnLayout {
-                anchors.fill: parent
-                spacing: 0
+                width: Math.min(parent.width - 2 * Theme.spacingLarge, 1200)
+                height: parent.height - Theme.spacingLarge
+                x: (parent.width - width) / 2
+                y: Theme.spacingMedium
+                spacing: Theme.spacingMedium
 
-                // Filtres
+                // Filtres : Flow plutot que RowLayout, pour que les
+                // groupes label+champ passent a la ligne des que la
+                // largeur disponible ne suffit plus (au lieu de deborder
+                // ou de se tasser illisiblement sur un petit ecran).
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 72
+                    Layout.preferredHeight: filterFlow.height + Theme.spacingMedium * 2
+                    radius: Theme.radiusMedium
                     color: Theme.surfaceAlt
 
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.margins: Theme.spacingMedium
+                    Flow {
+                        id: filterFlow
+                        x: Theme.spacingMedium
+                        y: Theme.spacingMedium
+                        width: parent.width - Theme.spacingMedium * 2
                         spacing: Theme.spacingSmall
 
-                        Label {
-                            text: qsTr("Type :")
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: Theme.fontFamily
+                        RowLayout {
+                            spacing: Theme.spacingSmall
+                            Label {
+                                Layout.alignment: Qt.AlignVCenter
+                                text: qsTr("Type :")
+                                color: Theme.textSecondary
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.family: Theme.fontFamily
+                            }
+                            ComboBox {
+                                id: eventTypeFilter
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: 160
+                                Layout.preferredHeight: 36
+                                model: ["Tous", "connection", "message", "transfer", "call", "access_denied"]
+                                background: Rectangle {
+                                    radius: Theme.radiusMedium
+                                    color: Theme.surface
+                                    border.width: 1
+                                    border.color: Theme.border
+                                }
+                                onCurrentTextChanged: {
+                                    if (currentIndex === 0)
+                                        auditLogModel.clearFilters()
+                                    else
+                                        auditLogModel.setEventTypeFilter(currentText)
+                                }
+                            }
                         }
 
-                        ComboBox {
-                            id: eventTypeFilter
-                            Layout.preferredWidth: 160
-                            Layout.preferredHeight: 36
-                            model: ["Tous", "connection", "message", "transfer", "call", "access_denied"]
-                            background: Rectangle {
-                                radius: Theme.radiusMedium
-                                color: Theme.surface
-                                border.width: 1
-                                border.color: Theme.border
+                        RowLayout {
+                            spacing: Theme.spacingSmall
+                            Label {
+                                Layout.alignment: Qt.AlignVCenter
+                                text: qsTr("Du :")
+                                color: Theme.textSecondary
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.family: Theme.fontFamily
                             }
-                            onCurrentTextChanged: {
-                                if (currentIndex === 0)
+                            TextField {
+                                id: dateFrom
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: 130
+                                Layout.preferredHeight: 36
+                                placeholderText: "YYYY-MM-DD"
+                                color: Theme.text
+                                font.pixelSize: Theme.fontSizeSmall
+                                leftPadding: Theme.spacingSmall
+                                background: Rectangle {
+                                    radius: Theme.radiusMedium
+                                    color: Theme.surface
+                                    border.width: dateFrom.activeFocus ? 2 : 1
+                                    border.color: dateFrom.activeFocus ? Theme.primary : Theme.border
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            spacing: Theme.spacingSmall
+                            Label {
+                                Layout.alignment: Qt.AlignVCenter
+                                text: qsTr("Au :")
+                                color: Theme.textSecondary
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.family: Theme.fontFamily
+                            }
+                            TextField {
+                                id: dateTo
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: 130
+                                Layout.preferredHeight: 36
+                                placeholderText: "YYYY-MM-DD"
+                                color: Theme.text
+                                font.pixelSize: Theme.fontSizeSmall
+                                leftPadding: Theme.spacingSmall
+                                background: Rectangle {
+                                    radius: Theme.radiusMedium
+                                    color: Theme.surface
+                                    border.width: dateTo.activeFocus ? 2 : 1
+                                    border.color: dateTo.activeFocus ? Theme.primary : Theme.border
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            spacing: Theme.spacingSmall
+                            AppButton {
+                                Layout.alignment: Qt.AlignVCenter
+                                variant: "primary"
+                                text: qsTr("Filtrer")
+                                onClicked: auditLogModel.setDateRange(dateFrom.text, dateTo.text)
+                            }
+                            AppButton {
+                                Layout.alignment: Qt.AlignVCenter
+                                variant: "ghost"
+                                text: qsTr("Réinitialiser")
+                                onClicked: {
+                                    eventTypeFilter.currentIndex = 0
+                                    dateFrom.text = ""
+                                    dateTo.text = ""
                                     auditLogModel.clearFilters()
-                                else
-                                    auditLogModel.setEventTypeFilter(currentText)
+                                }
                             }
-                        }
-
-                        Label {
-                            text: qsTr("Du :")
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: Theme.fontFamily
-                        }
-
-                        TextField {
-                            id: dateFrom
-                            Layout.preferredWidth: 130
-                            Layout.preferredHeight: 36
-                            placeholderText: "YYYY-MM-DD"
-                            color: Theme.text
-                            font.pixelSize: Theme.fontSizeSmall
-                            leftPadding: Theme.spacingSmall
-                            background: Rectangle {
-                                radius: Theme.radiusMedium
-                                color: Theme.surface
-                                border.width: dateFrom.activeFocus ? 2 : 1
-                                border.color: dateFrom.activeFocus ? Theme.primary : Theme.border
-                            }
-                        }
-
-                        Label {
-                            text: qsTr("Au :")
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: Theme.fontFamily
-                        }
-
-                        TextField {
-                            id: dateTo
-                            Layout.preferredWidth: 130
-                            Layout.preferredHeight: 36
-                            placeholderText: "YYYY-MM-DD"
-                            color: Theme.text
-                            font.pixelSize: Theme.fontSizeSmall
-                            leftPadding: Theme.spacingSmall
-                            background: Rectangle {
-                                radius: Theme.radiusMedium
-                                color: Theme.surface
-                                border.width: dateTo.activeFocus ? 2 : 1
-                                border.color: dateTo.activeFocus ? Theme.primary : Theme.border
-                            }
-                        }
-
-                        AppButton {
-                            variant: "primary"
-                            text: qsTr("Filtrer")
-                            onClicked: auditLogModel.setDateRange(dateFrom.text, dateTo.text)
-                        }
-
-                        AppButton {
-                            variant: "ghost"
-                            text: qsTr("Réinitialiser")
-                            onClicked: {
-                                eventTypeFilter.currentIndex = 0
-                                dateFrom.text = ""
-                                dateTo.text = ""
-                                auditLogModel.clearFilters()
-                            }
-                        }
-
-                        Item {
-                            Layout.fillWidth: true
                         }
                     }
                 }
 
-                // Liste des entrées d'audit
+                // Liste des entrées d'audit : chaque entree est empilee
+                // verticalement (horodatage + type, description, acteur)
+                // plutot que reparties sur des colonnes de largeur fixe,
+                // et la hauteur suit le contenu (le texte peut s'etaler
+                // sur plusieurs lignes sans etre tronque a l'ecran).
                 ScrollView {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    contentWidth: availableWidth
 
                     ListView {
                         id: auditListView
+                        width: parent.width
                         model: auditLogModel
-                        spacing: Theme.spacingXs
+                        spacing: Theme.spacingSmall
                         delegate: Rectangle {
                             width: auditListView.width
-                            height: 78
+                            height: auditEntryColumn.implicitHeight + Theme.spacingMedium * 2
                             radius: Theme.radiusMedium
                             color: Theme.surface
                             border.width: 1
                             border.color: Theme.border
 
-                            RowLayout {
-                                anchors.fill: parent
+                            ColumnLayout {
+                                id: auditEntryColumn
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
                                 anchors.margins: Theme.spacingMedium
-                                spacing: Theme.spacingMedium
+                                spacing: Theme.spacingXs
 
-                                ColumnLayout {
-                                    Layout.preferredWidth: 150
-                                    spacing: 4
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spacingSmall
 
                                     Label {
                                         text: model.timestamp
                                         font.pixelSize: Theme.fontSizeSmall
                                         color: Theme.textSecondary
+                                        font.family: Theme.fontFamily
                                     }
 
                                     Rectangle {
@@ -339,25 +409,23 @@ Item {
                                             color: Theme.primary
                                         }
                                     }
+
+                                    Item { Layout.fillWidth: true }
                                 }
 
-                                ColumnLayout {
+                                Label {
+                                    text: model.description
+                                    font.pixelSize: Theme.fontSizeBody
+                                    color: Theme.text
+                                    wrapMode: Text.WordWrap
                                     Layout.fillWidth: true
-                                    spacing: 4
+                                }
 
-                                    Label {
-                                        text: model.description
-                                        font.pixelSize: Theme.fontSizeBody
-                                        color: Theme.text
-                                        wrapMode: Text.WordWrap
-                                        Layout.fillWidth: true
-                                    }
-
-                                    Label {
-                                        text: qsTr("Acteur : %1").arg(model.actorLabel || "N/A")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.textSecondary
-                                    }
+                                Label {
+                                    text: qsTr("Acteur : %1").arg(model.actorLabel || "N/A")
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.textSecondary
+                                    font.family: Theme.fontFamily
                                 }
                             }
                         }
@@ -366,99 +434,163 @@ Item {
             }
         }
 
-        // Contenu de l'onglet Machines autorisées (issue #68)
+        // ---- Contenu de l'onglet Machines autorisées (issue #68) ---------
+        // Grille de cartes (au lieu d'un tableau a colonnes figees), sur le
+        // meme principe que la grille "Postes connectés" de UsersView :
+        // 3/2/1 colonnes selon la largeur disponible.
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.currentTab === 1
 
-            ScrollView {
-                anchors.fill: parent
-                contentWidth: availableWidth
+            Item {
+                width: Math.min(parent.width - 2 * Theme.spacingLarge, 1200)
+                height: parent.height - Theme.spacingLarge
+                x: (parent.width - width) / 2
+                y: Theme.spacingMedium
 
-                ListView {
-                    id: machinesListView
-                    model: authorizedMachineModel
-                    spacing: Theme.spacingXs
-                    delegate: Rectangle {
-                        width: machinesListView.width
-                        height: 64
-                        radius: Theme.radiusMedium
-                        color: Theme.surface
-                        border.width: 1
-                        border.color: Theme.border
+                Rectangle {
+                    anchors.fill: parent
+                    radius: Theme.radiusLarge
+                    color: Theme.surface
+                    border.width: 1
+                    border.color: Theme.border
+                    clip: true
 
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingMedium
-                            spacing: Theme.spacingMedium
+                    ColumnLayout {
+                        anchors.centerIn: parent
+                        spacing: Theme.spacingSmall
+                        visible: machinesGrid.count === 0
+                        width: parent.width * 0.6
 
-                            ColumnLayout {
-                                Layout.preferredWidth: 160
-                                spacing: 4
+                        Label {
+                            Layout.alignment: Qt.AlignHCenter
+                            text: qsTr("Aucune machine autorisée pour le moment")
+                            font.pixelSize: Theme.fontSizeBody
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                            color: Theme.text
+                            horizontalAlignment: Text.AlignHCenter
+                        }
 
-                                Label {
-                                    text: model.ipAddress
-                                    font.pixelSize: Theme.fontSizeBody
-                                    font.bold: true
-                                    color: Theme.text
-                                }
+                        Label {
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.fillWidth: true
+                            text: qsTr("Utilisez « Ajouter machine » pour autoriser un poste par son adresse IP.")
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: Theme.fontFamily
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                        }
+                    }
 
-                                Label {
-                                    text: model.hostname || "N/A"
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.textSecondary
-                                }
-                            }
+                    GridView {
+                        id: machinesGrid
+                        anchors.fill: parent
+                        anchors.margins: Theme.spacingMedium
+                        clip: true
+                        model: authorizedMachineModel
 
-                            ColumnLayout {
-                                Layout.preferredWidth: 130
-                                spacing: 4
+                        readonly property int columns: width > 900 ? 3 : (width > 560 ? 2 : 1)
+                        cellWidth: width / columns
+                        cellHeight: 168
 
-                                Rectangle {
-                                    implicitWidth: statusLabel.implicitWidth + Theme.spacingSmall
-                                    implicitHeight: 20
-                                    radius: Theme.radiusSmall
-                                    color: model.authorized ? Theme.successMuted : Theme.errorMuted
+                        delegate: Item {
+                            width: machinesGrid.cellWidth
+                            height: machinesGrid.cellHeight
+
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: Theme.spacingSmall / 2
+                                radius: Theme.radiusMedium
+                                color: Theme.surfaceAlt
+                                border.width: 1
+                                border.color: Theme.border
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.spacingMedium
+                                    spacing: Theme.spacingSmall
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spacingSmall
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 2
+
+                                            Label {
+                                                text: model.ipAddress
+                                                font.pixelSize: Theme.fontSizeBody
+                                                font.bold: true
+                                                font.family: Theme.fontFamily
+                                                color: Theme.text
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
+                                            }
+
+                                            Label {
+                                                text: model.hostname || "N/A"
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                font.family: Theme.fontFamily
+                                                color: Theme.textSecondary
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            Layout.alignment: Qt.AlignTop
+                                            implicitWidth: machineStatusLabel.implicitWidth + Theme.spacingSmall
+                                            implicitHeight: 20
+                                            radius: Theme.radiusSmall
+                                            color: model.authorized ? Theme.successMuted : Theme.errorMuted
+
+                                            Label {
+                                                id: machineStatusLabel
+                                                anchors.centerIn: parent
+                                                text: model.authorized ? qsTr("Autorisée") : qsTr("Révoquée")
+                                                font.pixelSize: Theme.fontSizeCaption
+                                                font.bold: true
+                                                color: model.authorized ? Theme.success : Theme.error
+                                            }
+                                        }
+                                    }
 
                                     Label {
-                                        id: statusLabel
-                                        anchors.centerIn: parent
-                                        text: model.authorized ? qsTr("Autorisée") : qsTr("Révoquée")
+                                        text: qsTr("Ajoutée : %1").arg(model.addedAt)
                                         font.pixelSize: Theme.fontSizeCaption
-                                        font.bold: true
-                                        color: model.authorized ? Theme.success : Theme.error
+                                        font.family: Theme.fontFamily
+                                        color: Theme.textTertiary
                                     }
-                                }
 
-                                Label {
-                                    text: qsTr("Ajoutée : %1").arg(model.addedAt)
-                                    font.pixelSize: Theme.fontSizeCaption
-                                    color: Theme.textTertiary
-                                }
-                            }
+                                    Item { Layout.fillHeight: true }
 
-                            Item {
-                                Layout.fillWidth: true
-                            }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spacingSmall
 
-                            AppButton {
-                                variant: "secondary"
-                                text: model.authorized ? qsTr("Révoquer") : qsTr("Autoriser")
-                                onClicked: {
-                                    if (model.authorized) {
-                                        authorizedMachineModel.revokeMachine(model.id, "Révoqué par admin")
-                                    } else {
-                                        authorizedMachineModel.authorizeMachine(model.id, "Autorisé par admin")
+                                        AppButton {
+                                            variant: "secondary"
+                                            fullWidth: true
+                                            text: model.authorized ? qsTr("Révoquer") : qsTr("Autoriser")
+                                            onClicked: {
+                                                if (model.authorized) {
+                                                    authorizedMachineModel.revokeMachine(model.id, "Révoqué par admin")
+                                                } else {
+                                                    authorizedMachineModel.authorizeMachine(model.id, "Autorisé par admin")
+                                                }
+                                            }
+                                        }
+
+                                        AppButton {
+                                            variant: "danger"
+                                            text: qsTr("Supprimer")
+                                            onClicked: authorizedMachineModel.removeMachine(model.id)
+                                        }
                                     }
-                                }
-                            }
-
-                            AppButton {
-                                variant: "danger"
-                                text: qsTr("Supprimer")
-                                onClicked: {
-                                    authorizedMachineModel.removeMachine(model.id)
                                 }
                             }
                         }
@@ -467,100 +599,160 @@ Item {
             }
         }
 
-        // Contenu de l'onglet Gestion des utilisateurs (issue #69)
+        // ---- Contenu de l'onglet Gestion des utilisateurs (issue #69) ----
+        // Meme principe de grille responsive que l'onglet Machines.
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.currentTab === 2
 
-            ScrollView {
-                anchors.fill: parent
-                contentWidth: availableWidth
+            Item {
+                width: Math.min(parent.width - 2 * Theme.spacingLarge, 1200)
+                height: parent.height - Theme.spacingLarge
+                x: (parent.width - width) / 2
+                y: Theme.spacingMedium
 
-                ListView {
-                    id: usersListView
-                    model: userManagementModel
-                    spacing: Theme.spacingXs
-                    delegate: Rectangle {
-                        width: usersListView.width
-                        height: 68
-                        radius: Theme.radiusMedium
-                        color: Theme.surface
-                        border.width: 1
-                        border.color: Theme.border
+                Rectangle {
+                    anchors.fill: parent
+                    radius: Theme.radiusLarge
+                    color: Theme.surface
+                    border.width: 1
+                    border.color: Theme.border
+                    clip: true
 
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingMedium
-                            spacing: Theme.spacingMedium
+                    ColumnLayout {
+                        anchors.centerIn: parent
+                        spacing: Theme.spacingSmall
+                        visible: usersGrid.count === 0
+                        width: parent.width * 0.6
 
-                            Avatar {
-                                name: model.name
-                                size: 36
-                            }
+                        Label {
+                            Layout.alignment: Qt.AlignHCenter
+                            text: qsTr("Aucun utilisateur pour le moment")
+                            font.pixelSize: Theme.fontSizeBody
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                            color: Theme.text
+                            horizontalAlignment: Text.AlignHCenter
+                        }
 
-                            ColumnLayout {
-                                Layout.preferredWidth: 150
-                                spacing: 4
+                        Label {
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.fillWidth: true
+                            text: qsTr("Utilisez « Ajouter utilisateur » pour créer un compte.")
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: Theme.fontFamily
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                        }
+                    }
 
-                                Label {
-                                    text: model.name
-                                    font.pixelSize: Theme.fontSizeBody
-                                    font.bold: true
-                                    color: Theme.text
-                                }
+                    GridView {
+                        id: usersGrid
+                        anchors.fill: parent
+                        anchors.margins: Theme.spacingMedium
+                        clip: true
+                        model: userManagementModel
 
-                                Label {
-                                    text: model.ipAddress || "N/A"
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.textSecondary
-                                }
-                            }
+                        readonly property int columns: width > 900 ? 3 : (width > 560 ? 2 : 1)
+                        cellWidth: width / columns
+                        cellHeight: 188
 
-                            ColumnLayout {
-                                Layout.preferredWidth: 110
-                                spacing: 4
+                        delegate: Item {
+                            width: usersGrid.cellWidth
+                            height: usersGrid.cellHeight
 
-                                Rectangle {
-                                    implicitWidth: roleLabel.implicitWidth + Theme.spacingSmall
-                                    implicitHeight: 20
-                                    radius: Theme.radiusSmall
-                                    color: model.isAdmin ? Theme.primaryMuted : Theme.surfaceAlt
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: Theme.spacingSmall / 2
+                                radius: Theme.radiusMedium
+                                color: Theme.surfaceAlt
+                                border.width: 1
+                                border.color: Theme.border
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.spacingMedium
+                                    spacing: Theme.spacingSmall
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spacingMedium
+
+                                        Avatar {
+                                            name: model.name
+                                            size: 40
+                                        }
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 2
+
+                                            Label {
+                                                text: model.name
+                                                font.pixelSize: Theme.fontSizeBody
+                                                font.bold: true
+                                                font.family: Theme.fontFamily
+                                                color: Theme.text
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
+                                            }
+
+                                            Label {
+                                                text: model.ipAddress || "N/A"
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                font.family: Theme.fontFamily
+                                                color: Theme.textSecondary
+                                                elide: Text.ElideRight
+                                                Layout.fillWidth: true
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            Layout.alignment: Qt.AlignTop
+                                            implicitWidth: roleLabel.implicitWidth + Theme.spacingSmall
+                                            implicitHeight: 20
+                                            radius: Theme.radiusSmall
+                                            color: model.isAdmin ? Theme.primaryMuted : Theme.surface
+
+                                            Label {
+                                                id: roleLabel
+                                                anchors.centerIn: parent
+                                                text: model.isAdmin ? qsTr("Admin") : qsTr("Utilisateur")
+                                                font.pixelSize: Theme.fontSizeCaption
+                                                font.bold: true
+                                                color: model.isAdmin ? Theme.primary : Theme.textSecondary
+                                            }
+                                        }
+                                    }
 
                                     Label {
-                                        id: roleLabel
-                                        anchors.centerIn: parent
-                                        text: model.role === "admin" ? qsTr("Admin") : qsTr("Utilisateur")
+                                        text: qsTr("Statut : %1").arg(model.status)
                                         font.pixelSize: Theme.fontSizeCaption
-                                        font.bold: true
-                                        color: model.isAdmin ? Theme.primary : Theme.textSecondary
+                                        font.family: Theme.fontFamily
+                                        color: Theme.textTertiary
                                     }
-                                }
 
-                                Label {
-                                    text: qsTr("Statut : %1").arg(model.status)
-                                    font.pixelSize: Theme.fontSizeCaption
-                                    color: Theme.textTertiary
-                                }
-                            }
+                                    Item { Layout.fillHeight: true }
 
-                            Item {
-                                Layout.fillWidth: true
-                            }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spacingSmall
 
-                            AppButton {
-                                variant: "secondary"
-                                text: model.isAdmin ? qsTr("Rétrograder") : qsTr("Promouvoir")
-                                onClicked: {
-                                    userManagementModel.changeRole(model.id, !model.isAdmin)
-                                }
-                            }
+                                        AppButton {
+                                            variant: "secondary"
+                                            fullWidth: true
+                                            text: model.isAdmin ? qsTr("Rétrograder") : qsTr("Promouvoir")
+                                            onClicked: userManagementModel.changeRole(model.id, !model.isAdmin)
+                                        }
 
-                            AppButton {
-                                variant: "danger"
-                                text: qsTr("Supprimer")
-                                onClicked: {
-                                    userManagementModel.deleteUser(model.id)
+                                        AppButton {
+                                            variant: "danger"
+                                            text: qsTr("Supprimer")
+                                            onClicked: userManagementModel.deleteUser(model.id)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -569,31 +761,37 @@ Item {
             }
         }
 
-        // Contenu de l'onglet "Bascule serveur" (HYBRID_SERVER_FAILOVER.md
-        // section 9, etape 5) : historique des elections/reconciliations
-        // (ServerElectionLog), utile pour diagnostiquer une instabilite
-        // reseau.
+        // ---- Contenu de l'onglet "Bascule serveur" ------------------------
+        // (HYBRID_SERVER_FAILOVER.md section 9, etape 5) : historique des
+        // elections/reconciliations (ServerElectionLog), utile pour
+        // diagnostiquer une instabilite reseau. Entrees empilees
+        // verticalement (au lieu de colonnes de largeur fixe) pour rester
+        // lisibles a toute largeur.
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.currentTab === 3
 
             ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: Theme.spacingLarge
+                width: Math.min(parent.width - 2 * Theme.spacingLarge, 1200)
+                height: parent.height - Theme.spacingLarge
+                x: (parent.width - width) / 2
+                y: Theme.spacingMedium
                 spacing: Theme.spacingMedium
 
                 Label {
-                    text: "Historique des bascules"
+                    text: qsTr("Historique des bascules")
                     font.pixelSize: Theme.fontSizeHeading
                     font.bold: true
+                    font.family: Theme.fontFamily
                     color: Theme.text
                 }
 
                 Label {
-                    text: "Chaque ligne correspond a un evenement du protocole d'election (perte de heartbeat, promotion en serveur de secours, reconciliation, reprise du serveur officiel)."
+                    text: qsTr("Chaque ligne correspond à un événement du protocole d'élection (perte de heartbeat, promotion en serveur de secours, réconciliation, reprise du serveur officiel).")
                     color: Theme.textSecondary
                     font.pixelSize: Theme.fontSizeSmall
+                    font.family: Theme.fontFamily
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
                 }
@@ -606,72 +804,79 @@ Item {
 
                 Label {
                     visible: root.electionHistoryEntries.length === 0
-                    text: "Aucun evenement enregistre pour l'instant."
+                    text: qsTr("Aucun événement enregistré pour l'instant.")
                     color: Theme.textSecondary
+                    font.family: Theme.fontFamily
                 }
 
                 ListView {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
-                    spacing: Theme.spacingXs
+                    spacing: Theme.spacingSmall
                     visible: root.electionHistoryEntries.length > 0
                     model: root.electionHistoryEntries
 
                     delegate: Rectangle {
                         width: ListView.view ? ListView.view.width : 0
-                        height: entryRow.implicitHeight + Theme.spacingMedium
+                        height: electionEntryColumn.implicitHeight + Theme.spacingMedium
                         radius: Theme.radiusMedium
                         color: Theme.surface
                         border.width: 1
                         border.color: Theme.border
 
-                        RowLayout {
-                            id: entryRow
-                            anchors.fill: parent
+                        ColumnLayout {
+                            id: electionEntryColumn
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
                             anchors.margins: Theme.spacingSmall
-                            spacing: Theme.spacingMedium
+                            spacing: Theme.spacingXs
 
-                            Rectangle {
-                                width: 10
-                                height: 10
-                                radius: 5
-                                Layout.alignment: Qt.AlignVCenter
-                                color: {
-                                    switch (modelData.event) {
-                                    case "HEARTBEAT_LOST": return Theme.error
-                                    case "TEMP_PROMOTED": return Theme.warning
-                                    case "SERVER_RECONCILED": return Theme.primary
-                                    case "SERVER_RESTORED": return Theme.success
-                                    default: return Theme.textSecondary
-                                    }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spacingSmall
+
+                                Rectangle {
+                                    Layout.preferredWidth: 10
+                                    Layout.preferredHeight: 10
+                                    Layout.alignment: Qt.AlignVCenter
+                                    radius: 5
+                                    color: root.electionEventColor(modelData.event)
                                 }
-                            }
 
-                            Label {
-                                text: modelData.event
-                                color: Theme.text
-                                font.bold: true
-                                Layout.preferredWidth: 180
-                            }
+                                Label {
+                                    text: modelData.event
+                                    color: Theme.text
+                                    font.bold: true
+                                    font.family: Theme.fontFamily
+                                    elide: Text.ElideRight
+                                }
 
-                            Label {
-                                text: "epoch " + modelData.epoch
-                                color: Theme.textSecondary
-                                Layout.preferredWidth: 80
+                                Item { Layout.fillWidth: true }
+
+                                Label {
+                                    text: qsTr("epoch %1").arg(modelData.epoch)
+                                    color: Theme.textSecondary
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.family: Theme.fontFamily
+                                }
                             }
 
                             Label {
                                 text: modelData.machineUuid
                                 color: Theme.textSecondary
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.family: Theme.fontFamily
                                 elide: Text.ElideMiddle
                                 Layout.fillWidth: true
                             }
 
                             Label {
                                 text: modelData.createdAt
-                                color: Theme.textSecondary
-                                font.pixelSize: Theme.fontSizeSmall
+                                color: Theme.textTertiary
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.family: Theme.fontFamily
                             }
                         }
                     }
@@ -682,7 +887,7 @@ Item {
 
     FileDialog {
         id: exportDialog
-        title: "Exporter le journal d'audit"
+        title: qsTr("Exporter le journal d'audit")
         nameFilters: ["Fichiers CSV (*.csv)"]
         onAccepted: {
             const filePath = selectedFile
@@ -695,21 +900,14 @@ Item {
         }
     }
 
-    Dialog {
+    AppDialog {
         id: addMachineDialog
         title: qsTr("Ajouter une machine autorisée")
-        modal: true
-        anchors.centerIn: parent
-        padding: Theme.spacingLarge
-
-        background: Rectangle {
-            radius: Theme.radiusLarge
-            color: Theme.surface
-            border.width: 1
-            border.color: Theme.border
-        }
+        headerIcon: "\uf109"
+        dialogWidth: 340
 
         ColumnLayout {
+            anchors.fill: parent
             spacing: Theme.spacingSmall
 
             Label {
@@ -720,7 +918,7 @@ Item {
 
             TextField {
                 id: newMachineIp
-                Layout.preferredWidth: 260
+                Layout.fillWidth: true
                 Layout.preferredHeight: 40
                 placeholderText: "192.168.1.x"
                 color: Theme.text
@@ -742,7 +940,7 @@ Item {
 
             TextField {
                 id: newMachineHostname
-                Layout.preferredWidth: 260
+                Layout.fillWidth: true
                 Layout.preferredHeight: 40
                 placeholderText: qsTr("Nom de la machine")
                 color: Theme.text
@@ -756,9 +954,11 @@ Item {
             }
 
             RowLayout {
+                Layout.fillWidth: true
                 Layout.topMargin: Theme.spacingMedium
-                Layout.alignment: Qt.AlignRight
                 spacing: Theme.spacingSmall
+
+                Item { Layout.fillWidth: true }
 
                 AppButton {
                     variant: "ghost"
@@ -778,21 +978,14 @@ Item {
         }
     }
 
-    Dialog {
+    AppDialog {
         id: addUserDialog
         title: qsTr("Ajouter un utilisateur")
-        modal: true
-        anchors.centerIn: parent
-        padding: Theme.spacingLarge
-
-        background: Rectangle {
-            radius: Theme.radiusLarge
-            color: Theme.surface
-            border.width: 1
-            border.color: Theme.border
-        }
+        headerIcon: "\uf234"
+        dialogWidth: 340
 
         ColumnLayout {
+            anchors.fill: parent
             spacing: Theme.spacingSmall
 
             Label {
@@ -803,7 +996,7 @@ Item {
 
             TextField {
                 id: newUserName
-                Layout.preferredWidth: 260
+                Layout.fillWidth: true
                 Layout.preferredHeight: 40
                 placeholderText: qsTr("Nom d'utilisateur")
                 color: Theme.text
@@ -825,7 +1018,7 @@ Item {
 
             TextField {
                 id: newUserPassword
-                Layout.preferredWidth: 260
+                Layout.fillWidth: true
                 Layout.preferredHeight: 40
                 placeholderText: qsTr("Mot de passe")
                 echoMode: TextInput.Password
@@ -848,7 +1041,7 @@ Item {
 
             ComboBox {
                 id: newUserRole
-                Layout.preferredWidth: 260
+                Layout.fillWidth: true
                 Layout.preferredHeight: 40
                 model: [qsTr("Utilisateur"), qsTr("Administrateur")]
                 background: Rectangle {
@@ -860,9 +1053,11 @@ Item {
             }
 
             RowLayout {
+                Layout.fillWidth: true
                 Layout.topMargin: Theme.spacingMedium
-                Layout.alignment: Qt.AlignRight
                 spacing: Theme.spacingSmall
+
+                Item { Layout.fillWidth: true }
 
                 AppButton {
                     variant: "ghost"
@@ -883,24 +1078,36 @@ Item {
         }
     }
 
-    Dialog {
+    AppDialog {
         id: accessDeniedDialog
-        title: "Accès refusé"
-        modal: true
-        anchors.centerIn: parent
+        title: qsTr("Accès refusé")
+        headerIcon: "\uf071"
+        dialogWidth: 360
+        showCloseButton: false
+        closePolicy: Popup.NoAutoClose
 
-        Label {
-            text: "Vous n'avez pas les droits administrateur pour accéder à cette page."
-            color: Theme.text
-        }
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: Theme.spacingMedium
 
-        Button {
-            text: "OK"
-            onClicked: {
-                accessDeniedDialog.close()
-                root.backRequested()
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Vous n'avez pas les droits administrateur pour accéder à cette page.")
+                color: Theme.text
+                font.pixelSize: Theme.fontSizeBody
+                font.family: Theme.fontFamily
+                wrapMode: Text.WordWrap
+            }
+
+            AppButton {
+                Layout.alignment: Qt.AlignRight
+                variant: "primary"
+                text: qsTr("OK")
+                onClicked: {
+                    accessDeniedDialog.close()
+                    root.backRequested()
+                }
             }
         }
     }
 }
-
