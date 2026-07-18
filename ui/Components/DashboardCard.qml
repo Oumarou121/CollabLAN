@@ -32,9 +32,9 @@ Rectangle {
     readonly property color primaryMid: Theme.darkMode ? "#2E3D4E" : "#C2D9EE"
     readonly property color borderIdle: Theme.darkMode ? Theme.border : "#24337AB7"
 
-    readonly property int bannerHeight: 120
+    readonly property int bannerHeight: 126
 
-    Layout.preferredHeight: 180
+    Layout.preferredHeight: 170
     Layout.minimumWidth: 220
     radius: 20
     color: Theme.surface
@@ -101,6 +101,7 @@ Rectangle {
                     anchors.left: parent.left
                     anchors.top: parent.top
                     anchors.margins: Theme.spacingMedium
+                    font.family: "Segoe UI Symbol" 
                     text: root.icon
                     font.pixelSize: 45
                     color: "#ffffff"
@@ -109,29 +110,29 @@ Rectangle {
 
                 // Indicateur "main" decoratif, en haut a droite - glisse
                 // legerement au survol pour suggerer l'interaction.
-                Text {
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.margins: Theme.spacingMedium
-                    text: "\u261D"
-                    font.pixelSize: 22
-                    color: "#ffffff"
-                    opacity: mouseArea.containsMouse ? 0.9 : 0.5
-                    x: mouseArea.containsMouse ? 2 : 0
-                    y: mouseArea.containsMouse ? -2 : 0
-                    Behavior on opacity { NumberAnimation { duration: 150 } }
-                    Behavior on x { NumberAnimation { duration: 150 } }
-                    Behavior on y { NumberAnimation { duration: 150 } }
-                }
+                // Text {
+                //     anchors.right: parent.right
+                //     anchors.top: parent.top
+                //     anchors.margins: Theme.spacingMedium
+                //     text: "\u261D"
+                //     font.pixelSize: 22
+                //     color: "#ffffff"
+                //     opacity: mouseArea.containsMouse ? 0.9 : 0.5
+                //     x: mouseArea.containsMouse ? 2 : 0
+                //     y: mouseArea.containsMouse ? -2 : 0
+                //     Behavior on opacity { NumberAnimation { duration: 150 } }
+                //     Behavior on x { NumberAnimation { duration: 150 } }
+                //     Behavior on y { NumberAnimation { duration: 150 } }
+                // }
             }
         }
 
         // ---- Pied : titre + chevron circulaire ------------------------------
         RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 46          // hauteur fixe au lieu de fillHeight
+                Layout.preferredHeight: 35          // hauteur fixe au lieu de fillHeight
                 Layout.alignment: Qt.AlignVCenter        // colle le pied en haut de sa zone
-                Layout.topMargin: 14                 // padding-top: 14px (reference SCSS)
+                Layout.bottomMargin: 7                 // padding-top: 14px (reference SCSS)
                 Layout.leftMargin: Theme.spacingMedium
                 Layout.rightMargin: Theme.spacingMedium
                 spacing: Theme.spacingSmall

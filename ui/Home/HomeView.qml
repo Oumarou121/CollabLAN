@@ -149,13 +149,15 @@ Item {
 
                 // ---- Badge central : nombre de postes en ligne ------------
                 Rectangle {
+                    id: peersBadge
                     anchors.centerIn: parent
                     height: 30
                     implicitWidth: peersPillContent.implicitWidth + Theme.spacingMedium * 2
                     radius: height / 2
-                    color: root.blueTint
+                    color: peersBadgeArea.containsMouse ? root.blue700 : root.blueTint
                     border.width: 1
                     border.color: root.blue700
+                    Behavior on color { ColorAnimation { duration: 120 } }
 
                     RowLayout {
                         id: peersPillContent
@@ -166,16 +168,26 @@ Item {
                             width: 7
                             height: 7
                             radius: 3.5
-                            color: root.blue700
+                            color: peersBadgeArea.containsMouse ? "#ffffff" : root.blue700
                             Layout.alignment: Qt.AlignVCenter
+                            Behavior on color { ColorAnimation { duration: 120 } }
                         }
 
                         Label {
                             text: qsTr("%1 poste(s) en ligne").arg(root.peersCount)
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: "monospace"
-                            color: root.blue700
+                            color: peersBadgeArea.containsMouse ? "#ffffff" : root.blue700
+                            Behavior on color { ColorAnimation { duration: 120 } }
                         }
+                    }
+
+                    MouseArea {
+                        id: peersBadgeArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.usersRequested()
                     }
                 }
 
@@ -421,13 +433,6 @@ Item {
                         }
                         DashboardCard {
                             Layout.fillWidth: true
-                            icon: "\u25CE"
-                            title: qsTr("Postes connectes")
-                            description: qsTr("Voir qui est present sur le reseau.")
-                            onClicked: root.usersRequested()
-                        }
-                        DashboardCard {
-                            Layout.fillWidth: true
                             icon: "\u21C5"
                             title: qsTr("Transfert de fichiers")
                             description: qsTr("Envoyez et recevez des fichiers.")
@@ -442,14 +447,14 @@ Item {
                         }
                         DashboardCard {
                             Layout.fillWidth: true
-                            icon: "📂\uFE0E"
+                            icon: "\u{1F5C1}"
                             title: qsTr("Dossiers partagés")
                             description: qsTr("Partagez un dossier local avec votre réseau.")
                             onClicked: root.sharedFoldersRequested()
                         }
                         DashboardCard {
                             Layout.fillWidth: true
-                            icon: "\u2699"
+                            icon: "\u{2699}"
                             title: qsTr("Administration")
                             description: qsTr("Gerez les utilisateurs et les postes.")
                             onClicked: root.adminRequested()
