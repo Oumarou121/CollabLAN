@@ -28,6 +28,25 @@ Item {
     // Bascule "afficher le mot de passe"
     property bool showPassword: false
 
+    // "Se souvenir de moi" - persiste uniquement le nom d'utilisateur
+    // (jamais le mot de passe) via core::SettingsModel/QSettings
+    // (settingsModel.rememberedUsername, expose depuis app/main.cpp).
+    // UserManager::login(username, password) n'a pas de flag de session
+    // persistante cote C++ ; ce mecanisme reste donc purement local au
+    // formulaire (pre-remplissage du champ, pas de "rester connecte").
+    property bool rememberMe: false
+
+    // Garde-fou : ne devient true que le temps d'un login() declenche
+    // depuis CE formulaire (attemptLogin ci-dessous). Necessaire car cette
+    // instance de LoginView reste vivante (StackView.push ne la detruit
+    // pas) meme apres l'auto-login au demarrage (Main.qml) : sans ce
+    // garde-fou, ses Connections{ target: userManager } ci-dessous
+    // reagiraient AUSSI a l'auto-login (qui emet le meme signal C++
+    // loginSucceeded pour que Application/SharedFolderContext s'initialisent),
+    // regenerant un jeton "Se souvenir de moi" et re-empilant un second
+    // ecran Home a chaque demarrage.
+    property bool manualLoginPending: false
+
     // Bascule a chaque nouvelle erreur : sert de "trigger" pour lancer le
     // shake + la surbrillance rouge des champs (voir shakeAnim ci-dessous).
     property bool errorPulse: false
@@ -53,6 +72,7 @@ Item {
         }
 
         errorLabel.text = ""
+        root.manualLoginPending = true
         userManager.login(username, password)
     }
 
@@ -65,6 +85,8 @@ Item {
     readonly property color blue600: Theme.darkMode ? "#4E86B8" : "#2E6BAA"
     readonly property color borderCol: Theme.darkMode ? "#2A2E37" : "#DDE3E8"
     readonly property color errorText: Theme.darkMode ? "#FF9A8A" : "#E5484D"
+    readonly property color onAccent: "#FFFFFF"
+    readonly property color disabledBg: Theme.darkMode ? "#3A4048" : "#9CA3AF"
 
     // Panneau de marque : bleu profond institutionnel, quasi noir en dark mode.
     readonly property color brandBg: Theme.darkMode ? "#0F1720" : "#1E3A5F"
@@ -83,6 +105,24 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: root.paper
+    }
+
+    // Focus automatique sur le champ nom d'utilisateur des l'ouverture de
+    // l'ecran, pour eviter a l'utilisateur d'avoir a cliquer avant de
+    // pouvoir taper. Qt.callLater garantit que le layout (formCard,
+    // formColumn) est bien construit avant de tenter le focus.
+    // Pre-remplit aussi le nom d'utilisateur memorise (case "Se souvenir
+    // de moi" cochee lors d'une connexion precedente), le cas echeant.
+    Component.onCompleted: {
+        const remembered = (typeof settingsModel !== "undefined" && settingsModel)
+                ? settingsModel.rememberedUsername : ""
+        if (remembered.length > 0) {
+            usernameField.text = remembered
+            root.rememberMe = true
+            Qt.callLater(passwordField.forceActiveFocus)
+        } else {
+            Qt.callLater(usernameField.forceActiveFocus)
+        }
     }
 
     ThemeToggleButton {
@@ -371,7 +411,7 @@ Item {
                         font.pixelSize: Theme.fontSizeBody
                         font.family: Theme.fontFamily
                         leftPadding: 12
-                        rightPadding: 36
+                        rightPadding: 40
                         onAccepted: root.attemptLogin()
 
                         background: Rectangle {
@@ -389,7 +429,7 @@ Item {
                     // oeil dessinee en vectoriel (pas d'emoji : ignore la
                     // couleur du theme).
                     Item {
-                        width: 28
+                        width: 32
                         height: parent.height
                         anchors.right: parent.right
 
@@ -464,6 +504,55 @@ Item {
                     }
                 }
 
+                Item {
+                    Layout.topMargin: Theme.spacingSmall
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: rememberRow.implicitHeight
+
+                    RowLayout {
+                        id: rememberRow
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        spacing: Theme.spacingSmall
+
+                        Rectangle {
+                            id: rememberCheckbox
+                            Layout.preferredWidth: 18
+                            Layout.preferredHeight: 18
+                            radius: 4
+                            color: root.rememberMe ? root.blue700 : "transparent"
+                            border.width: 1.4
+                            border.color: root.rememberMe ? root.blue700 : root.borderCol
+                            Behavior on color { ColorAnimation { duration: 150 } }
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "\u2713"
+                                color: root.onAccent
+                                font.pixelSize: 11
+                                font.bold: true
+                                visible: root.rememberMe
+                            }
+                        }
+
+                        Label {
+                            text: qsTr("Se souvenir de moi")
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: Theme.fontFamily
+                            color: root.inkMuted
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.rememberMe = !root.rememberMe
+                    }
+                }
+
                 RowLayout {
                     visible: errorLabel.text.length > 0
                     Layout.topMargin: Theme.spacingSmall
@@ -500,7 +589,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 44
                     radius: Theme.radiusMedium
-                    color: userManager.busy ? "#9ca3af" : (loginMouseArea.containsMouse ? root.blue600 : root.blue700)
+                    color: userManager.busy ? root.disabledBg : (loginMouseArea.containsMouse ? root.blue600 : root.blue700)
                     Behavior on color { ColorAnimation { duration: 100 } }
 
                     RowLayout {
@@ -520,7 +609,7 @@ Item {
                                     ctx.clearRect(0, 0, width, height)
                                     ctx.lineWidth = 2
                                     ctx.lineCap = "round"
-                                    ctx.strokeStyle = "#ffffff"
+                                    ctx.strokeStyle = root.onAccent
                                     ctx.beginPath()
                                     ctx.arc(width / 2, height / 2, width / 2 - 1.5, 0, Math.PI * 1.4)
                                     ctx.stroke()
@@ -539,7 +628,7 @@ Item {
 
                         Text {
                             text: userManager.busy ? qsTr("Connexion...") : qsTr("Se connecter")
-                            color: "#ffffff"
+                            color: root.onAccent
                             font.pixelSize: Theme.fontSizeBody
                             font.bold: true
                             font.family: Theme.fontFamily
@@ -606,12 +695,48 @@ Item {
         target: userManager
 
         function onLoginSucceeded(username) {
+            // Ignore les emissions de loginSucceeded qui ne viennent pas
+            // d'un attemptLogin() sur CE formulaire (typiquement l'auto-login
+            // silencieux de Main.qml au demarrage, qui gere lui-meme sa
+            // propre navigation vers Home) : sans cette garde, ce
+            // Connections - reste actif meme apres qu'un Home ait ete
+            // empile par-dessus - regenererait un jeton et re-empilerait
+            // un second Home a chaque auto-login reussi.
+            if (!root.manualLoginPending) {
+                return
+            }
+            root.manualLoginPending = false
+
             errorLabel.text = ""
             passwordField.text = ""
+
+            if (typeof settingsModel !== "undefined" && settingsModel) {
+                if (root.rememberMe) {
+                    // Genere un nouveau jeton d'auto-login (core::UserManager,
+                    // migration #026) et ne persiste QUE cote client : la
+                    // base ne recoit jamais que son hash SHA-256.
+                    const token = userManager.rememberThisDevice()
+                    console.log("[LoginView] rememberThisDevice -> tokenPresent=" + (token.length > 0))
+                    settingsModel.rememberedUsername = username
+                    settingsModel.rememberedSessionToken = token
+                } else {
+                    // Case decochee : invalide un eventuel jeton laisse par
+                    // une session precedente sur ce poste, plutot que de le
+                    // laisser trainer en base sans que personne ne s'en serve.
+                    if (settingsModel.rememberedSessionToken.length > 0) {
+                        userManager.forgetRememberedToken(settingsModel.rememberedSessionToken)
+                    }
+                    settingsModel.rememberedUsername = ""
+                    settingsModel.rememberedSessionToken = ""
+                }
+                settingsModel.save()
+            }
+
             root.loginSucceeded(username)
         }
 
         function onLoginFailed(reason) {
+            root.manualLoginPending = false
             errorLabel.text = reason
             root.errorPulse = !root.errorPulse
         }

@@ -6,6 +6,7 @@
 #include <optional>
 #include <vector>
 
+#include "database/Repositories/SessionRepository.h"
 #include "database/Repositories/UserRepository.h"
 #include "models/User.h"
 
@@ -57,6 +58,27 @@ public:
     // loginFailed(reason) avec un message destine a l'utilisateur.
     Q_INVOKABLE bool login(const QString &username, const QString &password);
     Q_INVOKABLE void logout();
+
+    // --- "Se souvenir de moi" (migration #026, database::SessionRepository) --
+
+    // A appeler juste apres un login() reussi si la case "Se souvenir de
+    // moi" est cochee. Genere un jeton aleatoire haute-entropie, n'en
+    // persiste que le hash SHA-256 en base (table UserSessions), et
+    // retourne le jeton en clair pour que la QML le stocke localement
+    // (settingsModel.rememberedSessionToken, jamais en base). Chaine vide
+    // en cas d'echec (utilisateur non authentifie ou erreur base).
+    Q_INVOKABLE QString rememberThisDevice();
+
+    // Tentative d'auto-login silencieuse au demarrage (Main.qml), a partir
+    // du nom d'utilisateur et du jeton persistes localement. Ne emet PAS
+    // loginFailed en cas d'echec (jeton expire/invalide) : l'appelant doit
+    // simplement retomber sur l'ecran Login sans afficher d'erreur. Emet
+    // loginSucceeded sur reussite, exactement comme login().
+    Q_INVOKABLE bool loginWithRememberedToken(const QString &username, const QString &token);
+
+    // Invalide explicitement un jeton "Se souvenir de moi" (ex: la case
+    // est decochee sans se deconnecter). N'affecte pas la session en cours.
+    Q_INVOKABLE void forgetRememberedToken(const QString &token);
 
     bool isAuthenticated() const;
     QString currentUsername() const;
@@ -152,6 +174,7 @@ private:
 
     database::DatabaseManager *m_databaseManager;
     database::UserRepository m_userRepository;
+    database::SessionRepository m_sessionRepository;
 
     bool m_authenticated = false;
     bool m_busy = false;

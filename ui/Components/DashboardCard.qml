@@ -43,7 +43,7 @@ Rectangle {
 
     readonly property int bannerHeight: 126
 
-    Layout.preferredHeight: 170
+    Layout.preferredHeight: 210
     Layout.minimumWidth: 220
     radius: 20
     color: Theme.surface
@@ -61,7 +61,7 @@ Rectangle {
     // chevauchement visuel entre les cartes.
     transform: Translate {
         y: mouseArea.containsMouse ? -4 : 0
-        Behavior on y { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+        Behavior on y { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
     }
 
     ColumnLayout {
@@ -76,6 +76,7 @@ Rectangle {
         Item {
             Layout.fillWidth: true
             Layout.preferredHeight: root.bannerHeight
+            Layout.minimumHeight: root.bannerHeight
             clip: true
 
             Rectangle {
@@ -93,12 +94,15 @@ Rectangle {
 
                 // Cercle decoratif en fond de bandeau (cf. reference SCSS
                 // ::after - width/height 110px, decale en bas-droite).
+                // Opacite plus elevee en dark mode : le degrade y est plus
+                // clair (#4E86B8->#3E6C99) qu'en mode clair (#2E6BAA->#1E3A5F),
+                // donc le cercle blanc s'y fondait davantage a opacite egale.
                 Rectangle {
                     width: 110
                     height: 110
                     radius: 55
                     color: "#ffffff"
-                    opacity: 0.07
+                    opacity: Theme.darkMode ? 0.12 : 0.07
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     anchors.rightMargin: -24
@@ -136,28 +140,48 @@ Rectangle {
             }
         }
 
-        // ---- Pied : titre + chevron circulaire ------------------------------
+        // ---- Pied : titre + description + chevron circulaire ----------------
         RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 35          // hauteur fixe au lieu de fillHeight
-                Layout.alignment: Qt.AlignVCenter        // colle le pied en haut de sa zone
-                Layout.bottomMargin: 7                 // padding-top: 14px (reference SCSS)
+                Layout.fillHeight: true
+                Layout.minimumHeight: 48
+                Layout.topMargin: 10
+                Layout.bottomMargin: 10
                 Layout.leftMargin: Theme.spacingMedium
                 Layout.rightMargin: Theme.spacingMedium
                 spacing: Theme.spacingSmall
 
-            Label {
+            ColumnLayout {
                 Layout.fillWidth: true
-                text: root.title
-                font.pixelSize: Theme.fontSizeSubheading
-                font.bold: true
-                font.family: Theme.fontFamily
-                font.letterSpacing: -0.1
-                color: Theme.text
-                elide: Text.ElideRight
+                Layout.alignment: Qt.AlignVCenter
+                spacing: 2
+
+                Label {
+                    Layout.fillWidth: true
+                    text: root.title
+                    font.pixelSize: Theme.fontSizeSubheading
+                    font.bold: true
+                    font.family: Theme.fontFamily
+                    font.letterSpacing: -0.1
+                    color: Theme.text
+                    elide: Text.ElideRight
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: root.description
+                    visible: root.description.length > 0
+                    font.pixelSize: Theme.fontSizeSmall
+                    font.family: Theme.fontFamily
+                    color: Theme.textSecondary
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                }
             }
 
             Rectangle {
+                Layout.alignment: Qt.AlignVCenter
                 Layout.preferredWidth: 28
                 Layout.preferredHeight: 28
                 radius: 14

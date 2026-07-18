@@ -24,12 +24,53 @@ ApplicationWindow {
     height: 720
     minimumWidth: 640
     minimumHeight: 480
-    visible: true
+    // Reste invisible tant que la tentative d'auto-login (voir
+    // Component.onCompleted ci-dessous) n'a pas tranche entre Login et
+    // Home : evite que l'utilisateur voie l'ecran Login clignoter une
+    // fraction de seconde avant d'etre remplace par Home ("Se souvenir de
+    // moi", migration #026).
+    visible: false
     title: qsTr("CollabLAN")
     color: Theme.background
 
     // Référence à la propriété globale messagingContext pour l'utiliser dans les Components
     property var globalMessagingContext: messagingContext
+
+    // Tentative d'auto-login silencieuse a partir du jeton persiste
+    // localement (core::SettingsModel.rememberedSessionToken, jamais en
+    // base - voir migration #026). userManager.loginWithRememberedToken()
+    // est un appel C++ synchrone : au moment ou la fenetre devient visible,
+    // on sait deja si on doit afficher Home ou Login, donc pas de flash de
+    // l'ecran Login. Un jeton absent/expire/invalide echoue silencieusement
+    // (pas de loginFailed) et laisse simplement l'ecran Login initial en place.
+    Component.onCompleted: {
+        const hasRememberedSession = (typeof settingsModel !== "undefined" && settingsModel)
+                && settingsModel.rememberedUsername.length > 0
+                && settingsModel.rememberedSessionToken.length > 0
+
+        console.log("[Main.qml] rememberedUsername=" + (settingsModel ? settingsModel.rememberedUsername : "<settingsModel indisponible>")
+                     + " tokenPresent=" + (settingsModel ? (settingsModel.rememberedSessionToken.length > 0) : false)
+                     + " hasRememberedSession=" + hasRememberedSession)
+
+        if (hasRememberedSession) {
+            const restored = userManager.loginWithRememberedToken(
+                        settingsModel.rememberedUsername,
+                        settingsModel.rememberedSessionToken)
+            console.log("[Main.qml] loginWithRememberedToken -> " + restored)
+            if (restored) {
+                stackView.push(homeViewComponent, { username: settingsModel.rememberedUsername })
+            } else {
+                // Jeton perime/invalide : on efface la trace locale pour ne
+                // pas retenter a chaque demarrage (le hash en base a deja
+                // ete nettoye cote C++ si expire).
+                settingsModel.rememberedUsername = ""
+                settingsModel.rememberedSessionToken = ""
+                settingsModel.save()
+            }
+        }
+
+        window.visible = true
+    }
 
     StackView {
         id: stackView

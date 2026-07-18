@@ -1,5 +1,6 @@
 #include "SettingsModel.h"
 #include <QSettings>
+#include <QDebug>
 
 namespace core {
 
@@ -89,6 +90,32 @@ void SettingsModel::setDiscoveryPort(int port)
     }
 }
 
+QString SettingsModel::rememberedUsername() const
+{
+    return m_rememberedUsername;
+}
+
+void SettingsModel::setRememberedUsername(const QString &username)
+{
+    if (m_rememberedUsername != username) {
+        m_rememberedUsername = username;
+        emit rememberedUsernameChanged();
+    }
+}
+
+QString SettingsModel::rememberedSessionToken() const
+{
+    return m_rememberedSessionToken;
+}
+
+void SettingsModel::setRememberedSessionToken(const QString &token)
+{
+    if (m_rememberedSessionToken != token) {
+        m_rememberedSessionToken = token;
+        emit rememberedSessionTokenChanged();
+    }
+}
+
 void SettingsModel::save()
 {
     QSettings settings;
@@ -98,6 +125,13 @@ void SettingsModel::save()
     settings.setValue("enableSounds", m_enableSounds);
     settings.setValue("messagingPort", m_messagingPort);
     settings.setValue("discoveryPort", m_discoveryPort);
+    settings.setValue("rememberedUsername", m_rememberedUsername);
+    settings.setValue("rememberedSessionToken", m_rememberedSessionToken);
+    settings.sync();
+    qDebug().noquote() << "[SettingsModel::save] fichier=" << settings.fileName()
+                        << "rememberedUsername=" << m_rememberedUsername
+                        << "tokenPresent=" << !m_rememberedSessionToken.isEmpty()
+                        << "status=" << settings.status();
 }
 
 void SettingsModel::load()
@@ -109,6 +143,12 @@ void SettingsModel::load()
     m_enableSounds = settings.value("enableSounds", true).toBool();
     m_messagingPort = settings.value("messagingPort", 12345).toInt();
     m_discoveryPort = settings.value("discoveryPort", 45454).toInt();
+    m_rememberedUsername = settings.value("rememberedUsername", "").toString();
+    m_rememberedSessionToken = settings.value("rememberedSessionToken", "").toString();
+    qDebug().noquote() << "[SettingsModel::load] fichier=" << settings.fileName()
+                        << "rememberedUsername=" << m_rememberedUsername
+                        << "tokenPresent=" << !m_rememberedSessionToken.isEmpty()
+                        << "status=" << settings.status();
 }
 
 } // namespace core

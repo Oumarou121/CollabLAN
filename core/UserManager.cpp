@@ -1,6 +1,7 @@
 #include "UserManager.h"
 
 #include <QDateTime>
+#include <QDebug>
 
 #include "DatabaseManager.h"
 #include "PasswordHasher.h"
@@ -9,13 +10,22 @@ namespace core {
 
 namespace {
 constexpr int kMinPasswordLength = 4;
+// Duree de vie d'un jeton "Se souvenir de moi" avant expiration forcee.
+constexpr int kRememberMeSessionDays = 30;
 } // namespace
 
 UserManager::UserManager(database::DatabaseManager *databaseManager, QObject *parent)
     : QObject(parent)
     , m_databaseManager(databaseManager)
     , m_userRepository(databaseManager ? databaseManager->database() : QSqlDatabase())
+    , m_sessionRepository(databaseManager ? databaseManager->database() : QSqlDatabase())
 {
+    // Nettoyage ponctuel des jetons "Se souvenir de moi" perimes : evite
+    // une accumulation indefinie de lignes mortes dans UserSessions au fil
+    // des mois (pas besoin d'un cycle recurrent, un coup par demarrage suffit).
+    if (m_databaseManager && m_databaseManager->isOpen()) {
+        m_sessionRepository.removeExpired();
+    }
 }
 
 UserManager::~UserManager() = default;
@@ -57,6 +67,13 @@ void UserManager::logout()
 {
     if (m_currentUserId.has_value()) {
         m_userRepository.updateStatus(*m_currentUserId, models::UserStatus::Offline);
+        // Une deconnexion explicite invalide aussi tout jeton "Se souvenir
+        // de moi" persiste pour cet utilisateur sur ce poste : sans cela,
+        // le prochain demarrage de l'application reconnecterait silencieusement
+        // l'utilisateur malgre le logout, ce qui surprendrait plus qu'autre
+        // chose. La table etant locale (non synchronisee), ceci n'affecte
+        // que ce poste.
+        m_sessionRepository.removeAllForUser(*m_currentUserId);
         m_currentUserId.reset();
         m_currentUserUuid.clear();
     }
@@ -68,6 +85,97 @@ void UserManager::logout()
     m_currentUsername.clear();
     m_currentUserIsAdmin = false;
     emit authenticationChanged();
+}
+
+QString UserManager::rememberThisDevice()
+{
+    if (!m_authenticated || !m_currentUserId.has_value()) {
+        qDebug() << "[UserManager::rememberThisDevice] non authentifie, abandon";
+        return QString();
+    }
+    if (!m_databaseManager || !m_databaseManager->isOpen()) {
+        qDebug() << "[UserManager::rememberThisDevice] base de donnees indisponible";
+        return QString();
+    }
+
+    // Le jeton brut est une valeur aleatoire haute-entropie (128 bits,
+    // meme generateur que les sels de mot de passe) : inutile de la saler
+    // a nouveau avant de la hacher, contrairement a un mot de passe humain
+    // a faible entropie (cf. core::PasswordHasher, doc de classe).
+    const QString rawToken = PasswordHasher::generateSalt();
+    const QString tokenHash = PasswordHasher::hash(rawToken, QString());
+    const QDateTime expiresAt = QDateTime::currentDateTimeUtc().addDays(kRememberMeSessionDays);
+
+    const int sessionId = m_sessionRepository.create(*m_currentUserId, tokenHash, expiresAt);
+    if (sessionId < 0) {
+        qDebug() << "[UserManager::rememberThisDevice] echec ecriture UserSessions :"
+                  << m_sessionRepository.lastError();
+        return QString();
+    }
+    qDebug() << "[UserManager::rememberThisDevice] session" << sessionId << "creee pour utilisateur"
+              << *m_currentUserId << "expire le" << expiresAt;
+    return rawToken;
+}
+
+bool UserManager::loginWithRememberedToken(const QString &username, const QString &token)
+{
+    const QString trimmedUsername = username.trimmed();
+    if (trimmedUsername.isEmpty() || token.isEmpty()) {
+        qDebug() << "[UserManager::loginWithRememberedToken] username ou token vide, abandon";
+        return false;
+    }
+    if (!m_databaseManager || !m_databaseManager->isOpen()) {
+        qDebug() << "[UserManager::loginWithRememberedToken] base de donnees indisponible";
+        return false;
+    }
+
+    const QString tokenHash = PasswordHasher::hash(token, QString());
+    const auto session = m_sessionRepository.findByTokenHash(tokenHash);
+    if (!session.has_value()) {
+        qDebug() << "[UserManager::loginWithRememberedToken] aucune session trouvee pour ce hash de jeton"
+                  << "(lastError=" << m_sessionRepository.lastError() << ")";
+        return false;
+    }
+    if (session->isExpired()) {
+        // Nettoyage immediat : pas la peine d'attendre un cycle de
+        // removeExpired() pour un jeton qu'on sait deja perime.
+        qDebug() << "[UserManager::loginWithRememberedToken] session expiree (expiresAt="
+                 << session->expiresAt() << ")";
+        m_sessionRepository.remove(session->id());
+        return false;
+    }
+
+    const auto user = m_userRepository.findById(session->userId());
+    if (!user.has_value() || user->name() != trimmedUsername) {
+        // Le jeton ne correspond pas au nom d'utilisateur attendu (compte
+        // supprime/renomme depuis, ou jeton corrompu) : on refuse plutot
+        // que de connecter la mauvaise identite.
+        qDebug() << "[UserManager::loginWithRememberedToken] utilisateur introuvable ou nom different"
+                  << "(attendu=" << trimmedUsername
+                  << ", trouve=" << (user.has_value() ? user->name() : QStringLiteral("<aucun>")) << ")";
+        return false;
+    }
+
+    m_userRepository.updateStatus(user->id(), models::UserStatus::Online);
+
+    m_currentUsername = user->name();
+    m_currentUserIsAdmin = user->isAdmin();
+    m_currentUserId = user->id();
+    m_currentUserUuid = user->uuid();
+    m_authenticated = true;
+    qDebug() << "[UserManager::loginWithRememberedToken] auto-login reussi pour" << m_currentUsername;
+    emit authenticationChanged();
+    emit loginSucceeded(m_currentUsername);
+    return true;
+}
+
+void UserManager::forgetRememberedToken(const QString &token)
+{
+    if (token.isEmpty()) {
+        return;
+    }
+    const QString tokenHash = PasswordHasher::hash(token, QString());
+    m_sessionRepository.removeByTokenHash(tokenHash);
 }
 
 bool UserManager::isAuthenticated() const

@@ -157,7 +157,7 @@ Item {
                     color: peersBadgeArea.containsMouse ? root.blue700 : root.blueTint
                     border.width: 1
                     border.color: root.blue700
-                    Behavior on color { ColorAnimation { duration: 120 } }
+                    Behavior on color { ColorAnimation { duration: 150 } }
 
                     RowLayout {
                         id: peersPillContent
@@ -165,20 +165,35 @@ Item {
                         spacing: 6
 
                         Rectangle {
+                            id: peersDot
                             width: 7
                             height: 7
                             radius: 3.5
                             color: peersBadgeArea.containsMouse ? "#ffffff" : root.blue700
                             Layout.alignment: Qt.AlignVCenter
-                            Behavior on color { ColorAnimation { duration: 120 } }
+                            Behavior on color { ColorAnimation { duration: 150 } }
+
+                            // Pastille pulsante tant qu'aucun poste n'est
+                            // encore detecte sur le reseau (decouverte en
+                            // cours), pour eviter l'impression d'un badge
+                            // fige/casse a "0 poste(s) en ligne".
+                            SequentialAnimation on opacity {
+                                running: root.peersCount === 0
+                                loops: Animation.Infinite
+                                NumberAnimation { to: 0.25; duration: 650; easing.type: Easing.InOutQuad }
+                                NumberAnimation { to: 1.0; duration: 650; easing.type: Easing.InOutQuad }
+                                onRunningChanged: if (!running) peersDot.opacity = 1.0
+                            }
                         }
 
                         Label {
-                            text: qsTr("%1 poste(s) en ligne").arg(root.peersCount)
+                            text: root.peersCount === 0
+                                  ? qsTr("Recherche des postes...")
+                                  : qsTr("%1 poste(s) en ligne").arg(root.peersCount)
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: "monospace"
                             color: peersBadgeArea.containsMouse ? "#ffffff" : root.blue700
-                            Behavior on color { ColorAnimation { duration: 120 } }
+                            Behavior on color { ColorAnimation { duration: 150 } }
                         }
                     }
 
@@ -202,7 +217,7 @@ Item {
                     color: (profileArea.containsMouse || menuPopup.visible) ? Theme.surfaceAlt : Theme.surface
                     border.width: 1
                     border.color: Theme.border
-                    Behavior on color { ColorAnimation { duration: 100 } }
+                    Behavior on color { ColorAnimation { duration: 150 } }
 
                     RowLayout {
                         id: profileRow
@@ -333,7 +348,7 @@ Item {
                                     height: 22
                                     radius: 11
                                     color: Theme.darkMode ? root.blue600 : Theme.border
-                                    Behavior on color { ColorAnimation { duration: 120 } }
+                                    Behavior on color { ColorAnimation { duration: 150 } }
 
                                     Rectangle {
                                         width: 18
@@ -342,7 +357,7 @@ Item {
                                         color: "#FFFFFF"
                                         anchors.verticalCenter: parent.verticalCenter
                                         x: Theme.darkMode ? parent.width - width - 2 : 2
-                                        Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                                        Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
                                     }
 
                                     MouseArea {
@@ -364,7 +379,7 @@ Item {
                                 Layout.preferredHeight: 38
                                 radius: Theme.radiusSmall
                                 color: logoutArea.containsMouse ? Theme.errorMuted : "transparent"
-                                Behavior on color { ColorAnimation { duration: 100 } }
+                                Behavior on color { ColorAnimation { duration: 150 } }
 
                                 Label {
                                     anchors.left: parent.left
@@ -415,6 +430,15 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: Theme.spacingSmall
+
+                    Label {
+                        text: qsTr("Accès rapides")
+                        font.pixelSize: Theme.fontSizeSubheading
+                        font.bold: true
+                        font.family: Theme.fontFamily
+                        color: Theme.text
+                        Layout.bottomMargin: 4
+                    }
 
                     GridLayout {
                         Layout.fillWidth: true

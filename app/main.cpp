@@ -57,6 +57,17 @@ int main(int argc, char *argv[])
 
     QGuiApplication app(argc, argv);
 
+    // CORRECTIF : sans ces deux appels, QSettings (core::SettingsModel,
+    // "Se souvenir de moi") n'a pas d'organisation/application stable pour
+    // determiner OU stocker ses valeurs (registre Windows / fichier .conf
+    // sous Linux) -- QCoreApplication::organizationName()/applicationName()
+    // restent vides par defaut, ce qui rend QSettings() peu fiable d'un
+    // lancement a l'autre (cle vide ou emplacement incoherent selon l'OS).
+    // A definir AVANT toute construction de QSettings (SettingsModel est
+    // cree plus bas, mais reste prudent de le faire au plus tot).
+    QCoreApplication::setOrganizationName(QStringLiteral("CollabLAN"));
+    QCoreApplication::setApplicationName(QStringLiteral("CollabLAN"));
+
     // Parser les arguments de ligne de commande
     QCommandLineParser parser;
     parser.setApplicationDescription("CollabLAN - Application de collaboration locale");

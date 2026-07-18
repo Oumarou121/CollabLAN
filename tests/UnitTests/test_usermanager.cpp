@@ -180,6 +180,97 @@ private slots:
         QVERIFY(onlineStatus.has_value());
         QCOMPARE(*onlineStatus, models::UserStatus::Online);
     }
+
+    // --- "Se souvenir de moi" (migration #026, SessionRepository) --------
+
+    void rememberThisDeviceThenAutoLoginSucceeds()
+    {
+        database::DatabaseManager *db = freshDatabase();
+        core::UserManager manager(db);
+
+        QVERIFY(manager.login(QStringLiteral("admin"), QStringLiteral("admin123")));
+        const QString token = manager.rememberThisDevice();
+        QVERIFY(!token.isEmpty());
+
+        // Simule un redemarrage de l'application : nouvelle instance de
+        // UserManager (donc etat en memoire perdu), meme base SQLite.
+        core::UserManager restarted(db);
+        QSignalSpy successSpy(&restarted, &core::UserManager::loginSucceeded);
+        QSignalSpy failureSpy(&restarted, &core::UserManager::loginFailed);
+
+        QVERIFY(restarted.loginWithRememberedToken(QStringLiteral("admin"), token));
+
+        QCOMPARE(successSpy.count(), 1);
+        QCOMPARE(failureSpy.count(), 0);
+        QVERIFY(restarted.isAuthenticated());
+        QCOMPARE(restarted.currentUsername(), QStringLiteral("admin"));
+        QVERIFY(restarted.isCurrentUserAdmin());
+    }
+
+    void autoLoginWithWrongTokenFailsSilently()
+    {
+        database::DatabaseManager *db = freshDatabase();
+        core::UserManager manager(db);
+        QVERIFY(manager.login(QStringLiteral("admin"), QStringLiteral("admin123")));
+        QVERIFY(!manager.rememberThisDevice().isEmpty());
+
+        core::UserManager restarted(db);
+        QSignalSpy failureSpy(&restarted, &core::UserManager::loginFailed);
+
+        QVERIFY(!restarted.loginWithRememberedToken(QStringLiteral("admin"), QStringLiteral("bogus-token")));
+
+        // Un jeton invalide ne doit jamais emettre loginFailed (auto-login
+        // silencieux : l'echec doit se traduire par un simple retour a
+        // l'ecran Login, pas par un message d'erreur).
+        QCOMPARE(failureSpy.count(), 0);
+        QVERIFY(!restarted.isAuthenticated());
+    }
+
+    void autoLoginWithMismatchedUsernameFails()
+    {
+        database::DatabaseManager *db = freshDatabase();
+        core::UserManager manager(db);
+        QVERIFY(manager.createUser(QStringLiteral("gina"), QStringLiteral("password1")).has_value());
+
+        QVERIFY(manager.login(QStringLiteral("admin"), QStringLiteral("admin123")));
+        const QString token = manager.rememberThisDevice();
+        QVERIFY(!token.isEmpty());
+
+        core::UserManager restarted(db);
+        // Le jeton appartient a "admin", pas a "gina" : doit etre refuse.
+        QVERIFY(!restarted.loginWithRememberedToken(QStringLiteral("gina"), token));
+        QVERIFY(!restarted.isAuthenticated());
+    }
+
+    void logoutInvalidatesRememberedToken()
+    {
+        database::DatabaseManager *db = freshDatabase();
+        core::UserManager manager(db);
+
+        QVERIFY(manager.login(QStringLiteral("admin"), QStringLiteral("admin123")));
+        const QString token = manager.rememberThisDevice();
+        QVERIFY(!token.isEmpty());
+
+        manager.logout();
+
+        core::UserManager restarted(db);
+        QVERIFY(!restarted.loginWithRememberedToken(QStringLiteral("admin"), token));
+    }
+
+    void forgetRememberedTokenPreventsFutureAutoLogin()
+    {
+        database::DatabaseManager *db = freshDatabase();
+        core::UserManager manager(db);
+
+        QVERIFY(manager.login(QStringLiteral("admin"), QStringLiteral("admin123")));
+        const QString token = manager.rememberThisDevice();
+        QVERIFY(!token.isEmpty());
+
+        manager.forgetRememberedToken(token);
+
+        core::UserManager restarted(db);
+        QVERIFY(!restarted.loginWithRememberedToken(QStringLiteral("admin"), token));
+    }
 };
 
 QTEST_MAIN(TestUserManager)
