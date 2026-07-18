@@ -12,19 +12,6 @@ SettingsModel::SettingsModel(QObject *parent)
 
 SettingsModel::~SettingsModel() = default;
 
-QString SettingsModel::organizationName() const
-{
-    return m_organizationName;
-}
-
-void SettingsModel::setOrganizationName(const QString &name)
-{
-    if (m_organizationName != name) {
-        m_organizationName = name;
-        emit organizationNameChanged();
-    }
-}
-
 QString SettingsModel::defaultDownloadPath() const
 {
     return m_defaultDownloadPath;
@@ -38,6 +25,19 @@ void SettingsModel::setDefaultDownloadPath(const QString &path)
     }
 }
 
+QString SettingsModel::defaultSharedFolderPath() const
+{
+    return m_defaultSharedFolderPath;
+}
+
+void SettingsModel::setDefaultSharedFolderPath(const QString &path)
+{
+    if (m_defaultSharedFolderPath != path) {
+        m_defaultSharedFolderPath = path;
+        emit defaultSharedFolderPathChanged();
+    }
+}
+
 bool SettingsModel::enableNotifications() const
 {
     return m_enableNotifications;
@@ -48,19 +48,6 @@ void SettingsModel::setEnableNotifications(bool enabled)
     if (m_enableNotifications != enabled) {
         m_enableNotifications = enabled;
         emit enableNotificationsChanged();
-    }
-}
-
-bool SettingsModel::enableSounds() const
-{
-    return m_enableSounds;
-}
-
-void SettingsModel::setEnableSounds(bool enabled)
-{
-    if (m_enableSounds != enabled) {
-        m_enableSounds = enabled;
-        emit enableSoundsChanged();
     }
 }
 
@@ -119,10 +106,9 @@ void SettingsModel::setRememberedSessionToken(const QString &token)
 void SettingsModel::save()
 {
     QSettings settings;
-    settings.setValue("organizationName", m_organizationName);
     settings.setValue("defaultDownloadPath", m_defaultDownloadPath);
+    settings.setValue("defaultSharedFolderPath", m_defaultSharedFolderPath);
     settings.setValue("enableNotifications", m_enableNotifications);
-    settings.setValue("enableSounds", m_enableSounds);
     settings.setValue("messagingPort", m_messagingPort);
     settings.setValue("discoveryPort", m_discoveryPort);
     settings.setValue("rememberedUsername", m_rememberedUsername);
@@ -137,14 +123,17 @@ void SettingsModel::save()
 void SettingsModel::load()
 {
     QSettings settings;
-    m_organizationName = settings.value("organizationName", "CollabLAN").toString();
-    m_defaultDownloadPath = settings.value("defaultDownloadPath", "").toString();
-    m_enableNotifications = settings.value("enableNotifications", true).toBool();
-    m_enableSounds = settings.value("enableSounds", true).toBool();
-    m_messagingPort = settings.value("messagingPort", 12345).toInt();
-    m_discoveryPort = settings.value("discoveryPort", 45454).toInt();
-    m_rememberedUsername = settings.value("rememberedUsername", "").toString();
-    m_rememberedSessionToken = settings.value("rememberedSessionToken", "").toString();
+    // Important : on passe par les setters (et non une affectation directe
+    // aux membres) pour que les signaux *Changed soient emis - sans quoi
+    // les bindings QML (TextField.text, etc.) ne se rafraichissent pas
+    // quand load() est appele apres la construction (ex. bouton "Annuler").
+    setDefaultDownloadPath(settings.value("defaultDownloadPath", "").toString());
+    setDefaultSharedFolderPath(settings.value("defaultSharedFolderPath", "").toString());
+    setEnableNotifications(settings.value("enableNotifications", true).toBool());
+    setMessagingPort(settings.value("messagingPort", 12345).toInt());
+    setDiscoveryPort(settings.value("discoveryPort", 45454).toInt());
+    setRememberedUsername(settings.value("rememberedUsername", "").toString());
+    setRememberedSessionToken(settings.value("rememberedSessionToken", "").toString());
     qDebug().noquote() << "[SettingsModel::load] fichier=" << settings.fileName()
                         << "rememberedUsername=" << m_rememberedUsername
                         << "tokenPresent=" << !m_rememberedSessionToken.isEmpty()

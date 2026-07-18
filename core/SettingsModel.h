@@ -13,10 +13,9 @@ class SettingsModel : public QObject
 {
     Q_OBJECT
 
-    Q_PROPERTY(QString organizationName READ organizationName WRITE setOrganizationName NOTIFY organizationNameChanged)
     Q_PROPERTY(QString defaultDownloadPath READ defaultDownloadPath WRITE setDefaultDownloadPath NOTIFY defaultDownloadPathChanged)
+    Q_PROPERTY(QString defaultSharedFolderPath READ defaultSharedFolderPath WRITE setDefaultSharedFolderPath NOTIFY defaultSharedFolderPathChanged)
     Q_PROPERTY(bool enableNotifications READ enableNotifications WRITE setEnableNotifications NOTIFY enableNotificationsChanged)
-    Q_PROPERTY(bool enableSounds READ enableSounds WRITE setEnableSounds NOTIFY enableSoundsChanged)
     Q_PROPERTY(int messagingPort READ messagingPort WRITE setMessagingPort NOTIFY messagingPortChanged)
     Q_PROPERTY(int discoveryPort READ discoveryPort WRITE setDiscoveryPort NOTIFY discoveryPortChanged)
     Q_PROPERTY(QString rememberedUsername READ rememberedUsername WRITE setRememberedUsername NOTIFY rememberedUsernameChanged)
@@ -26,17 +25,17 @@ public:
     explicit SettingsModel(QObject *parent = nullptr);
     ~SettingsModel() override;
 
-    QString organizationName() const;
-    void setOrganizationName(const QString &name);
-
     QString defaultDownloadPath() const;
     void setDefaultDownloadPath(const QString &path);
 
+    // Repertoire local propose par defaut lors de la creation d'un
+    // nouveau dossier partage (SharedFolderView.qml) - distinct du
+    // repertoire de telechargement (fichiers recus en pair-a-pair).
+    QString defaultSharedFolderPath() const;
+    void setDefaultSharedFolderPath(const QString &path);
+
     bool enableNotifications() const;
     void setEnableNotifications(bool enabled);
-
-    bool enableSounds() const;
-    void setEnableSounds(bool enabled);
 
     int messagingPort() const;
     void setMessagingPort(int port);
@@ -61,20 +60,18 @@ public:
     Q_INVOKABLE void load();
 
 signals:
-    void organizationNameChanged();
     void defaultDownloadPathChanged();
+    void defaultSharedFolderPathChanged();
     void enableNotificationsChanged();
-    void enableSoundsChanged();
     void messagingPortChanged();
     void discoveryPortChanged();
     void rememberedUsernameChanged();
     void rememberedSessionTokenChanged();
 
 private:
-    QString m_organizationName = "CollabLAN";
     QString m_defaultDownloadPath = "";
+    QString m_defaultSharedFolderPath = "";
     bool m_enableNotifications = true;
-    bool m_enableSounds = true;
     int m_messagingPort = 12345;
     int m_discoveryPort = 45454;
     QString m_rememberedUsername = "";

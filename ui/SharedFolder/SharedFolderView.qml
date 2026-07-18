@@ -201,6 +201,8 @@ Item {
     FolderDialog {
         id: folderPickerDialog
         title: qsTr("Choisir un dossier local à partager")
+        currentFolder: createDialog.localPath.length > 0 ? createDialog.localPath
+                       : ((typeof settingsModel !== "undefined" && settingsModel) ? settingsModel.defaultSharedFolderPath : "")
         onAccepted: {
             // selectedFolder est une URL (ex: "file:///C:/Users/..." sous Windows,
             // "file:///home/..." sous Linux/macOS). On ne peut pas juste retirer
@@ -322,7 +324,11 @@ Item {
 
         onOpened: {
             nameField.text = ""
-            localPath = ""
+            // Propose le repertoire de partage par defaut configure dans
+            // Parametres (settingsModel.defaultSharedFolderPath), sinon
+            // aucune selection (comportement precedent).
+            localPath = (typeof settingsModel !== "undefined" && settingsModel && settingsModel.defaultSharedFolderPath.length > 0)
+                        ? settingsModel.defaultSharedFolderPath : ""
             allowWriteCheckBox.checked = true
             excludePatternsField.text = ""
             reloadUsers()
@@ -746,6 +752,7 @@ Item {
     FolderDialog {
         id: remoteFolderPickerDialog
         title: qsTr("Choisir le dossier local")
+        currentFolder: (typeof settingsModel !== "undefined" && settingsModel) ? settingsModel.defaultSharedFolderPath : ""
         onAccepted: {
             let path = decodeURIComponent(selectedFolder.toString())
             path = path.replace(/^file:\/\//, "")

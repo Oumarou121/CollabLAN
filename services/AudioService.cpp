@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSettings>
 #include <QSoundEffect>
 #include <QStandardPaths>
 #include <QUrl>
@@ -13,6 +14,17 @@ namespace services {
 AudioService::AudioService(QObject *parent)
     : QObject(parent)
 {
+    // CORRECTIF : soundEnabled/volume n'etaient jamais persistes -- reglages
+    // remis a true/1.0 a chaque redemarrage de l'application, meme apres
+    // que l'utilisateur les ait changes depuis Parametres > Sons &
+    // notifications. On charge les valeurs sauvegardees avant de creer les
+    // QSoundEffect (pour que le volume initial soit applique directement).
+    {
+        QSettings settings;
+        m_soundEnabled = settings.value(QStringLiteral("audio/soundEnabled"), true).toBool();
+        m_volume = qBound(0.0, settings.value(QStringLiteral("audio/volume"), 1.0).toReal(), 1.0);
+    }
+
     // Chargement des sons par type d'evenement (issue #56). Chaque
     // QSoundEffect est preload() des la construction pour que la
     // premiere lecture ne subisse pas le cout du decodage.
@@ -94,6 +106,7 @@ void AudioService::setSoundEnabled(bool enabled)
     if (m_soundEnabled == enabled)
         return;
     m_soundEnabled = enabled;
+    QSettings().setValue(QStringLiteral("audio/soundEnabled"), m_soundEnabled);
     emit soundEnabledChanged();
 }
 
@@ -106,6 +119,7 @@ void AudioService::setVolume(qreal volume)
     for (auto *effect : std::as_const(m_sounds)) {
         effect->setVolume(m_volume);
     }
+    QSettings().setValue(QStringLiteral("audio/volume"), m_volume);
     emit volumeChanged();
 }
 

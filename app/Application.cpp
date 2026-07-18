@@ -60,6 +60,16 @@ void Application::initialize(quint16 messagingServerPort)
     initialize(messagingServerPort, QString());
 }
 
+void Application::setDiscoveryPort(quint16 port)
+{
+    if (m_discoveryService) {
+        qWarning() << "Application::setDiscoveryPort: appele apres initialize(), "
+                       "sans effet (DiscoveryService deja demarre) - appeler avant initialize().";
+        return;
+    }
+    m_discoveryPortOverride = port;
+}
+
 void Application::initialize(quint16 messagingServerPort, const QString &dbFilePath)
 {
     initialize(messagingServerPort, dbFilePath, QString(), -1);
@@ -735,6 +745,9 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     m_discoveryService->setPermissionManager(m_permissionManager);
     m_discoveryService->setTransferPort(static_cast<quint16>(messagingServerPort + 1));
     m_discoveryService->setSignalingPort(static_cast<quint16>(messagingServerPort + 2));
+    if (m_discoveryPortOverride != 0) {
+        m_discoveryService->setPort(m_discoveryPortOverride);
+    }
     m_peersModel = new network::PeersModel(m_discoveryService, this);
 
     // Un poste qui apparait/disparait du reseau local declenche une

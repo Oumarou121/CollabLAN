@@ -30,6 +30,14 @@ Item {
     // etroit dans ChatWorkspaceView.
     property bool compactActions: false
 
+    // Police d'icones Font Awesome 4.7.0, memes glyphes que Home
+    // (Components/DashboardCard.qml) - utilisee pour la loupe de recherche.
+    FontLoader {
+        id: iconFont
+        source: "../Assets/fonts/fontawesome-webfont.ttf"
+    }
+    readonly property string iconFontFamily: iconFont.name
+
     signal backRequested()
     signal conversationSelected(var conversationId, string name)
     signal createGroupRequested()
@@ -63,27 +71,11 @@ Item {
                 anchors.rightMargin: Theme.spacingMedium
                 spacing: Theme.spacingSmall
 
-                Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    radius: Theme.radiusMedium
-                    color: backArea.containsMouse ? Theme.surfaceHover : "transparent"
+                IconButton {
+                    glyph: "\uf060"
+                    variant: "ghost"
                     visible: root.showBackButton
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\u2190"
-                        color: Theme.text
-                        font.pixelSize: 18
-                    }
-
-                    MouseArea {
-                        id: backArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.backRequested()
-                    }
+                    onClicked: root.backRequested()
                 }
 
                 Label {
@@ -99,53 +91,22 @@ Item {
                 // CORRECTIF (refonte UI) : en panneau etroit (split-view type
                 // WhatsApp Web, ~340px), les boutons texte "Nouveau"/"Groupe"
                 // debordaient a cote du titre. root.compactActions bascule
-                // vers des boutons icone-seule (meme gabarit que la fleche
-                // retour), le texte complet restant disponible en plein ecran.
-                Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    radius: Theme.radiusMedium
-                    color: newConvArea.containsMouse ? Theme.surfaceHover : "transparent"
+                // vers des boutons icone-seule (IconButton, meme gabarit que
+                // la fleche retour), le texte complet restant disponible en
+                // plein ecran.
+                IconButton {
+                    glyph: "\uf0e0"
+                    variant: "ghost"
                     visible: root.compactActions
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\u2709"
-                        color: Theme.text
-                        font.pixelSize: 16
-                    }
-
-                    MouseArea {
-                        id: newConvArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.newConversationRequested()
-                    }
+                    onClicked: root.newConversationRequested()
                 }
 
-                Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    radius: Theme.radiusMedium
-                    color: newGroupArea.containsMouse ? Theme.primaryHover : Theme.primary
+                IconButton {
+                    glyph: "\uf067"
+                    variant: "primary"
+                    iconSize: Theme.fontSizeHeading
                     visible: root.compactActions
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "+"
-                        color: "#FFFFFF"
-                        font.pixelSize: 18
-                        font.bold: true
-                    }
-
-                    MouseArea {
-                        id: newGroupArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.createGroupRequested()
-                    }
+                    onClicked: root.createGroupRequested()
                 }
 
                 AppButton {
@@ -187,16 +148,17 @@ Item {
                     color: Theme.surfaceAlt
                     radius: Theme.radiusPill
                     border.width: searchField.activeFocus ? 2 : 0
-                    border.color: Theme.primary
+                    border.color: Theme.navy700
                 }
 
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: Theme.spacingMedium
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "\u2315"
+                    text: "\uf002"
                     color: Theme.textTertiary
-                    font.pixelSize: 14
+                    font.family: root.iconFontFamily
+                    font.pixelSize: 13
                 }
 
                 onTextChanged: conversationsListView.applyFilter(text)
@@ -338,7 +300,7 @@ Item {
                                 font.pixelSize: Theme.fontSizeCaption
                                 font.bold: true
                                 font.family: Theme.fontFamily
-                                color: "#FFFFFF"
+                                color: Theme.primaryText
                             }
                         }
                     }

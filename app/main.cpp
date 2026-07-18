@@ -3,6 +3,7 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QCommandLineParser>
+#include <QSettings>
 #include <QDebug>
 
 #include "Application.h"
@@ -21,6 +22,7 @@
 #include "UserManagementModel.h"
 #include "SettingsModel.h"
 #include "Election/ElectionService.h"
+#include "Transfer/TransferService.h"
 
 #include <rtc/rtc.hpp>
 
@@ -68,6 +70,23 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationName(QStringLiteral("CollabLAN"));
     QCoreApplication::setApplicationName(QStringLiteral("CollabLAN"));
 
+    // CORRECTIF (persistance des ports reseau, ecran Parametres > Ports
+    // reseau) : messagingPort/discoveryPort etaient bien sauvegardes dans
+    // QSettings par SettingsModel::save(), mais jamais relus au demarrage
+    // -- le port de messagerie venait uniquement de --port (defaut 12345
+    // code en dur) et le port de decouverte UDP restait fige a 45454 dans
+    // DiscoveryService. On les relit ici, tot, pour servir de valeur par
+    // defaut : un --port explicite en ligne de commande reste prioritaire
+    // (utile pour les tests multi-instances), mais en usage normal c'est
+    // desormais bien le reglage enregistre dans Parametres qui s'applique
+    // (au prochain lancement : un socket deja lie ne peut pas changer de
+    // port a chaud).
+    QSettings persistedSettings;
+    const quint16 persistedMessagingPort =
+        static_cast<quint16>(persistedSettings.value("messagingPort", 12345).toUInt());
+    const quint16 persistedDiscoveryPort =
+        static_cast<quint16>(persistedSettings.value("discoveryPort", 45454).toUInt());
+
     // Parser les arguments de ligne de commande
     QCommandLineParser parser;
     parser.setApplicationDescription("CollabLAN - Application de collaboration locale");
@@ -75,8 +94,8 @@ int main(int argc, char *argv[])
     parser.addVersionOption();
 
     QCommandLineOption portOption(QStringList() << "p" << "port",
-        "Port pour le serveur de messagerie (défaut: 12345)",
-        "port", "12345");
+        "Port pour le serveur de messagerie (défaut: valeur enregistrée dans Paramètres, 12345 sinon)",
+        "port", QString::number(persistedMessagingPort));
     parser.addOption(portOption);
 
     QCommandLineOption dbOption(QStringList() << "db",
@@ -110,15 +129,23 @@ int main(int argc, char *argv[])
         "poids", "-1");
     parser.addOption(priorityWeightOption);
 
+    QCommandLineOption discoveryPortOption(QStringList() << "discovery-port",
+        "Port UDP pour la découverte réseau (défaut: valeur enregistrée dans "
+        "Paramètres, 45454 sinon).",
+        "port", QString::number(persistedDiscoveryPort));
+    parser.addOption(discoveryPortOption);
+
     parser.process(app);
 
     quint16 messagingPort = parser.value(portOption).toUShort();
+    const quint16 discoveryPort = parser.value(discoveryPortOption).toUShort();
     const QString dbFilePath = parser.value(dbOption);
     const QString roleOverride = parser.value(roleOption);
     const int priorityWeightOverride = parser.value(priorityWeightOption).toInt();
-    qDebug() << "MessagingServer port:" << messagingPort;
+    qDebug() << "MessagingServer port:" << messagingPort << "- DiscoveryService port:" << discoveryPort;
 
     Application application;
+    application.setDiscoveryPort(discoveryPort);
     application.initialize(messagingPort, dbFilePath, roleOverride, priorityWeightOverride);
 
     if (parser.isSet(createUserOption)) {
@@ -225,6 +252,36 @@ int main(int argc, char *argv[])
     // Créer et exposer le modèle de paramètres globaux (issue #69).
     core::SettingsModel *settingsModel = new core::SettingsModel(&engine);
     engine.rootContext()->setContextProperty("settingsModel", settingsModel);
+
+    // CORRECTIF : defaultDownloadPath restait une simple valeur d'affichage
+    // dans SettingsView.qml, jamais consommee par le reseau -- les fichiers
+    // recus continuaient d'atterrir dans le repertoire par defaut de
+    // TransferService (~/Documents/CollabLAN Transfers) quel que soit le
+    // reglage. On applique la valeur persistee au demarrage, puis on
+    // repercute tout changement ulterieur (ecran Parametres) en temps reel.
+    if (application.transferService() && !settingsModel->defaultDownloadPath().isEmpty()) {
+        application.transferService()->setReceiveDirectory(settingsModel->defaultDownloadPath());
+    }
+    QObject::connect(settingsModel, &core::SettingsModel::defaultDownloadPathChanged,
+                      &application, [settingsModel, &application]() {
+        if (application.transferService())
+            application.transferService()->setReceiveDirectory(settingsModel->defaultDownloadPath());
+    });
+
+    // CORRECTIF : enableNotifications restait une simple valeur d'affichage
+    // dans SettingsView.qml, jamais consommee -- NotificationManager expose
+    // pourtant deja setNotificationsEnabled()/notificationsEnabled(), il
+    // manquait juste le branchement. On applique la valeur persistee au
+    // demarrage, puis on repercute tout changement ulterieur (ecran
+    // Parametres) en temps reel.
+    if (application.notificationManager()) {
+        application.notificationManager()->setNotificationsEnabled(settingsModel->enableNotifications());
+    }
+    QObject::connect(settingsModel, &core::SettingsModel::enableNotificationsChanged,
+                      &application, [settingsModel, &application]() {
+        if (application.notificationManager())
+            application.notificationManager()->setNotificationsEnabled(settingsModel->enableNotifications());
+    });
 
     // Créer et exposer le contexte "Shared Folder" (1ère tranche : creer/
     // lister/supprimer des dossiers partages + indexation locale de leur

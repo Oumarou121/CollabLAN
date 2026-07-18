@@ -79,50 +79,43 @@ Item {
                 anchors.fill: parent
                 anchors.leftMargin: Theme.spacingMedium
                 anchors.rightMargin: Theme.spacingMedium
-                spacing: Theme.spacingSmall
+                spacing: Theme.spacingMedium
 
-                Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    radius: Theme.radiusMedium
-                    color: backArea.containsMouse ? Theme.surfaceHover : "transparent"
+                IconButton {
+                    glyph: "\uf060"
+                    variant: "ghost"
                     visible: root.showBackButton
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\u2190"
-                        color: Theme.text
-                        font.pixelSize: 18
-                    }
-
-                    MouseArea {
-                        id: backArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.backRequested()
-                    }
+                    onClicked: root.backRequested()
                 }
 
-                Avatar {
-                    name: root.displayName
-                    size: 36
-                }
-
-                ColumnLayout {
+                // Avatar + nom regroupes cote a cote (meme cluster, faible
+                // espacement) plutot qu'espaces uniformement avec le
+                // bouton retour -- rendu "identite du contact" a la
+                // WhatsApp Web, ou l'avatar colle au nom.
+                RowLayout {
                     Layout.fillWidth: true
-                    spacing: 0
+                    spacing: Theme.spacingSmall
 
-                    Label {
-                        text: root.displayName
-                        font.pixelSize: Theme.fontSizeSubheading
-                        font.bold: true
-                        font.family: Theme.fontFamily
-                        color: Theme.text
+                    Avatar {
+                        name: root.displayName
+                        size: 36
                     }
 
-                    // Le statut "En ligne" fige a ete retire : il n'y a pas
-                    // encore de vrai suivi de presence par conversation.
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 0
+
+                        Label {
+                            text: root.displayName
+                            font.pixelSize: Theme.fontSizeSubheading
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                            color: Theme.text
+                        }
+
+                        // Le statut "En ligne" fige a ete retire : il n'y a pas
+                        // encore de vrai suivi de presence par conversation.
+                    }
                 }
             }
         }
@@ -133,7 +126,7 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: visible ? 36 : 0
             visible: false
-            color: "#D93025"
+            color: Theme.error
             clip: true
 
             Behavior on Layout.preferredHeight { NumberAnimation { duration: 120 } }
@@ -147,7 +140,7 @@ Item {
                 Label {
                     Layout.fillWidth: true
                     text: root.sendErrorMessage
-                    color: "#FFFFFF"
+                    color: Theme.primaryText
                     font.pixelSize: Theme.fontSizeCaption
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
@@ -155,7 +148,7 @@ Item {
 
                 Text {
                     text: "\u2715"
-                    color: "#FFFFFF"
+                    color: Theme.primaryText
                     font.pixelSize: 12
 
                     MouseArea {
@@ -245,8 +238,12 @@ Item {
                 Row {
                     anchors.right: messageDelegate.isMine ? parent.right : undefined
                     anchors.left: messageDelegate.isMine ? undefined : parent.left
+                    // Plafond absolu (640px) en plus du pourcentage : sur un
+                    // ecran desktop tres large, une bulle a 72% de la
+                    // largeur de la liste peut depasser 1000px et devenir
+                    // difficile a lire malgre le wrapMode.
                     width: Math.min(bubbleColumn.implicitWidth + 2 * Theme.spacingMedium,
-                                    messageListView.width * 0.72)
+                                    Math.min(messageListView.width * 0.72, 640))
                     spacing: Theme.spacingXs
 
                     Rectangle {
@@ -278,7 +275,7 @@ Item {
                                 Layout.fillWidth: true
                                 text: content
                                 wrapMode: Text.WordWrap
-                                color: messageDelegate.isMine ? "#FFFFFF" : Theme.text
+                                color: messageDelegate.isMine ? Theme.primaryText : Theme.text
                                 font.pixelSize: Theme.fontSizeBody
                                 font.family: Theme.fontFamily
                             }
@@ -341,34 +338,18 @@ Item {
                     onAccepted: sendButton.clicked()
                 }
 
-                Rectangle {
+                IconButton {
                     id: sendButton
-                    Layout.preferredWidth: 44
-                    Layout.preferredHeight: 44
+                    size: 44
                     radius: Theme.radiusPill
-                    color: messageInput.text.trim().length > 0
-                           ? (sendArea.pressed ? Theme.primaryHover : Theme.primary)
-                           : Theme.surfaceAlt
-                    Behavior on color { ColorAnimation { duration: 100 } }
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\u27A4"
-                        color: messageInput.text.trim().length > 0 ? "#FFFFFF" : Theme.textTertiary
-                        font.pixelSize: 16
-                    }
-
-                    MouseArea {
-                        id: sendArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (messageInput.text.trim() !== "" && messagingContext) {
-                                messagingContext.sendMessage(messageInput.text)
-                                messageInput.text = ""
-                                messageInput.forceActiveFocus()
-                            }
+                    variant: "primary"
+                    glyph: "\uf1d8"
+                    enabledLook: messageInput.text.trim().length > 0
+                    onClicked: {
+                        if (messageInput.text.trim() !== "" && messagingContext) {
+                            messagingContext.sendMessage(messageInput.text)
+                            messageInput.text = ""
+                            messageInput.forceActiveFocus()
                         }
                     }
                 }

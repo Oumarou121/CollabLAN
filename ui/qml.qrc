@@ -21,6 +21,7 @@
         <file>Themes/qmldir</file>
         <file>Components/ThemeToggleButton.qml</file>
         <file>Components/AppButton.qml</file>
+        <file>Components/IconButton.qml</file>
         <file>Components/Avatar.qml</file>
         <file>Components/BrandMark.qml</file>
         <file>Components/SidebarNavItem.qml</file>

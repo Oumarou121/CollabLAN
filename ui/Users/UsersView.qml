@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Themes
+import "../Components"
 
 /*
  * UsersView - liste des postes decouverts en temps reel sur le reseau
@@ -12,7 +13,17 @@ import Themes
  * app/main.cpp), lequel est mis a jour ligne par ligne par
  * DiscoveryService a chaque decouverte / mise a jour / perte de poste.
  * Aucune action manuelle (bouton "rafraichir"...) n'est necessaire : la
- * ListView se met a jour automatiquement via les signaux du modele.
+ * GridView se met a jour automatiquement via les signaux du modele.
+ *
+ * Refonte design (juillet 2026) : alignement sur le style deja retenu
+ * pour LoginView/HomeView/SettingsView -- barre superieure identique
+ * (bouton retour circulaire + titre), contenu centre a largeur maximale,
+ * et grille de cartes "poste" (au lieu d'une simple liste) qui se
+ * reorganise en 1/2/3 colonnes selon la largeur disponible (memes seuils
+ * que la grille d'acces rapide de HomeView), pour un rendu adapte aux
+ * differentes resolutions/tailles de fenetre sur desktop. Chaque carte
+ * reutilise le composant Avatar (pastille de statut incluse) deja
+ * partage avec Chat/Call/FileTransfer/SharedFolder.
  */
 Item {
     id: root
@@ -24,6 +35,32 @@ Item {
 
     signal backRequested()
 
+    // Libelle + couleurs (badge) associes a un statut de poste.
+    function statusLabel(status) {
+        switch (status) {
+        case "online": return qsTr("En ligne")
+        case "busy": return qsTr("Occupé")
+        case "away": return qsTr("Absent")
+        default: return status
+        }
+    }
+    function statusColor(status) {
+        switch (status) {
+        case "online": return Theme.success
+        case "busy": return Theme.error
+        case "away": return Theme.warning
+        default: return Theme.textSecondary
+        }
+    }
+    function statusMutedColor(status) {
+        switch (status) {
+        case "online": return Theme.successMuted
+        case "busy": return Theme.errorMuted
+        case "away": return Theme.warningMuted
+        default: return Theme.surfaceAlt
+        }
+    }
+
     Rectangle {
         anchors.fill: parent
         color: Theme.background
@@ -31,188 +68,235 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: Theme.spacingLarge
-        spacing: Theme.spacingMedium
+        spacing: 0
 
-        RowLayout {
+        // ---- Barre superieure (identique au style HomeView/SettingsView) --
+        Rectangle {
             Layout.fillWidth: true
-            spacing: Theme.spacingSmall
-
-            Button {
-                text: qsTr("< Retour")
-                Layout.preferredHeight: 32
-
-                background: Rectangle {
-                    radius: Theme.radiusSmall
-                    color: parent.hovered ? Theme.surfaceAlt : "transparent"
-                    border.width: 1
-                    border.color: Theme.border
-                }
-
-                contentItem: Text {
-                    text: qsTr("< Retour")
-                    color: Theme.text
-                    font.pixelSize: Theme.fontSizeSmall
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                onClicked: root.backRequested()
-            }
-
-            Label {
-                text: qsTr("Postes connectes")
-                font.pixelSize: Theme.fontSizeHeading
-                font.bold: true
-                font.family: Theme.fontFamily
-                color: Theme.text
-            }
-
-            Item { Layout.fillWidth: true }
+            Layout.preferredHeight: 64
+            color: Theme.surface
 
             Rectangle {
-                Layout.preferredWidth: countLabel.implicitWidth + Theme.spacingMedium
-                Layout.preferredHeight: 28
-                radius: height / 2
-                color: Theme.surfaceAlt
-                border.color: Theme.border
-                border.width: 1
+                anchors.bottom: parent.bottom
+                width: parent.width
+                height: 1
+                color: Theme.border
+            }
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.spacingMedium
+                anchors.rightMargin: Theme.spacingMedium
+                spacing: Theme.spacingMedium
+
+                Rectangle {
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    radius: Theme.radiusMedium
+                    color: usersBackArea.containsMouse ? Theme.surfaceHover : "transparent"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u2190"
+                        color: Theme.text
+                        font.pixelSize: 18
+                    }
+
+                    MouseArea {
+                        id: usersBackArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.backRequested()
+                    }
+                }
 
                 Label {
-                    id: countLabel
-                    anchors.centerIn: parent
-                    text: root.model ? qsTr("%n poste(s)", "", root.model.count) : qsTr("0 poste")
-                    color: Theme.textSecondary
-                    font.pixelSize: Theme.fontSizeSmall
+                    text: qsTr("Postes connectés")
+                    font.pixelSize: Theme.fontSizeSubheading
+                    font.bold: true
+                    font.family: Theme.fontFamily
+                    color: Theme.text
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Rectangle {
+                    Layout.preferredWidth: countLabel.implicitWidth + Theme.spacingMedium * 2
+                    Layout.preferredHeight: 28
+                    radius: height / 2
+                    color: Theme.surfaceAlt
+                    border.color: Theme.border
+                    border.width: 1
+
+                    Label {
+                        id: countLabel
+                        anchors.centerIn: parent
+                        text: root.model ? qsTr("%n poste(s)", "", root.model.count) : qsTr("0 poste")
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                    }
                 }
             }
         }
 
-        Rectangle {
+        // ---- Contenu principal : grille centree, largeur maximale ---------
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            radius: Theme.radiusLarge
-            color: Theme.surface
-            border.color: Theme.border
-            border.width: 1
-            clip: true
 
-            // Etat vide : affiche tant qu'aucun poste n'a ete decouvert.
             ColumnLayout {
-                anchors.centerIn: parent
-                spacing: Theme.spacingSmall
-                visible: listView.count === 0
-                width: parent.width * 0.7
+                id: contentColumn
+                width: Math.min(parent.width - 2 * Theme.spacingXl, 1200)
+                height: parent.height - 2 * Theme.spacingLarge
+                x: (parent.width - width) / 2
+                y: Theme.spacingLarge
+                spacing: 0
 
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("Aucun poste detecte pour le moment")
-                    font.pixelSize: Theme.fontSizeBody
-                    font.bold: true
-                    color: Theme.text
-                    horizontalAlignment: Text.AlignHCenter
-                }
-
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
+                Rectangle {
                     Layout.fillWidth: true
-                    text: qsTr("Les postes du reseau local apparaissent ici automatiquement des qu'ils sont detectes.")
-                    color: Theme.textSecondary
-                    font.pixelSize: Theme.fontSizeSmall
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.WordWrap
-                }
-            }
+                    Layout.fillHeight: true
+                    radius: Theme.radiusLarge
+                    color: Theme.surface
+                    border.color: Theme.border
+                    border.width: 1
+                    clip: true
 
-            ListView {
-                id: listView
-                anchors.fill: parent
-                anchors.margins: Theme.spacingSmall
-                spacing: Theme.spacingSmall
-                clip: true
-                model: root.model
+                    // Etat vide : affiche tant qu'aucun poste n'a ete decouvert.
+                    ColumnLayout {
+                        anchors.centerIn: parent
+                        spacing: Theme.spacingSmall
+                        visible: gridView.count === 0
+                        width: parent.width * 0.6
 
-                // Anime discretement les postes qui apparaissent/disparaissent,
-                // pour que la mise a jour "temps reel" soit lisible a l'oeil.
-                add: Transition {
-                    NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
-                }
-                remove: Transition {
-                    NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 150 }
-                }
-                displaced: Transition {
-                    NumberAnimation { properties: "y"; duration: 150 }
-                }
-
-                delegate: Rectangle {
-                    width: listView.width
-                    height: 60
-                    radius: Theme.radiusMedium
-                    color: Theme.surfaceAlt
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: Theme.spacingMedium
-                        anchors.rightMargin: Theme.spacingMedium
-                        spacing: Theme.spacingMedium
-
-                        Rectangle {
-                            width: 36
-                            height: 36
-                            radius: 18
-                            color: Theme.primary
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: name && name.length > 0 ? name.charAt(0).toUpperCase() : "?"
-                                color: Theme.primaryText
-                                font.pixelSize: 14
-                                font.bold: true
-                            }
+                        Label {
+                            Layout.alignment: Qt.AlignHCenter
+                            text: qsTr("Aucun poste détecté pour le moment")
+                            font.pixelSize: Theme.fontSizeBody
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                            color: Theme.text
+                            horizontalAlignment: Text.AlignHCenter
                         }
 
-                        ColumnLayout {
+                        Label {
+                            Layout.alignment: Qt.AlignHCenter
                             Layout.fillWidth: true
-                            spacing: 2
+                            text: qsTr("Les postes du réseau local apparaissent ici automatiquement dès qu'ils sont détectés.")
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: Theme.fontFamily
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                        }
+                    }
 
-                            Label {
-                                text: name
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeBody
-                                font.bold: true
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true
-                            }
+                    GridView {
+                        id: gridView
+                        anchors.fill: parent
+                        anchors.margins: Theme.spacingMedium
+                        clip: true
+                        model: root.model
 
-                            Label {
-                                text: address + (port ? (":" + port) : "")
-                                color: Theme.textSecondary
-                                font.pixelSize: Theme.fontSizeSmall
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true
-                            }
+                        // Seuils alignes sur la grille d'acces rapide de
+                        // HomeView (.card-grid) : 3 colonnes par defaut,
+                        // 2 sous 900px, 1 sous 560px - la grille se
+                        // reorganise donc selon la resolution/largeur de
+                        // fenetre disponible sur desktop.
+                        readonly property int columns: width > 900 ? 3 : (width > 560 ? 2 : 1)
+                        cellWidth: width / columns
+                        cellHeight: 112
+
+                        // Anime discretement les postes qui apparaissent/
+                        // disparaissent, pour que la mise a jour "temps
+                        // reel" soit lisible a l'oeil.
+                        add: Transition {
+                            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+                        }
+                        remove: Transition {
+                            NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 150 }
+                        }
+                        displaced: Transition {
+                            NumberAnimation { properties: "x,y"; duration: 150 }
                         }
 
-                        // Pastille de statut ("online"/"away"/"busy"...) mise a
-                        // jour automatiquement en cas de peerUpdated (ex.
-                        // changement de statut cote poste distant).
-                        RowLayout {
-                            spacing: Theme.spacingSmall / 2
+                        delegate: Item {
+                            width: gridView.cellWidth
+                            height: gridView.cellHeight
 
                             Rectangle {
-                                width: 8
-                                height: 8
-                                radius: 4
-                                color: status === "online" ? Theme.success
-                                       : status === "busy" ? Theme.error
-                                       : Theme.textSecondary
-                            }
+                                anchors.fill: parent
+                                anchors.margins: Theme.spacingSmall / 2
+                                radius: Theme.radiusMedium
+                                color: Theme.surfaceAlt
+                                border.width: 1
+                                border.color: Theme.border
 
-                            Label {
-                                text: status
-                                color: Theme.textSecondary
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.capitalization: Font.Capitalize
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.spacingMedium
+                                    spacing: Theme.spacingMedium
+
+                                    Avatar {
+                                        name: model.name
+                                        size: 44
+                                        showStatus: true
+                                        online: model.status === "online"
+                                    }
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 3
+
+                                        Label {
+                                            text: model.name
+                                            color: Theme.text
+                                            font.pixelSize: Theme.fontSizeBody
+                                            font.bold: true
+                                            font.family: Theme.fontFamily
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Label {
+                                            text: model.address + (model.port ? (":" + model.port) : "")
+                                            color: Theme.textSecondary
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.family: Theme.fontFamily
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Rectangle {
+                                            Layout.topMargin: 2
+                                            Layout.preferredWidth: statusRow.implicitWidth + Theme.spacingSmall * 2
+                                            Layout.preferredHeight: 20
+                                            radius: height / 2
+                                            color: root.statusMutedColor(model.status)
+
+                                            RowLayout {
+                                                id: statusRow
+                                                anchors.centerIn: parent
+                                                spacing: 5
+
+                                                Rectangle {
+                                                    width: 6
+                                                    height: 6
+                                                    radius: 3
+                                                    color: root.statusColor(model.status)
+                                                }
+
+                                                Label {
+                                                    text: root.statusLabel(model.status)
+                                                    color: root.statusColor(model.status)
+                                                    font.pixelSize: Theme.fontSizeCaption
+                                                    font.family: Theme.fontFamily
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

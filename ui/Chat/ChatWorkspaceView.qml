@@ -11,9 +11,10 @@ import "../Components"
  * Remplace l'ancienne navigation plein ecran (ConversationsView -> push ->
  * ChatView -> pop pour revenir) par une disposition maitre/detail : la liste
  * des conversations reste visible en permanence dans un panneau de gauche
- * de largeur fixe, et la conversation active s'affiche a droite dans le
- * reste de l'espace. Basculer d'une conversation a l'autre ne recharge donc
- * plus l'ecran entier -- seul le panneau de droite change.
+ * (largeur proportionnelle a la fenetre, entre 280 et 400px - cf.
+ * conversationsPanelWidth), et la conversation active s'affiche a droite
+ * dans le reste de l'espace. Basculer d'une conversation a l'autre ne
+ * recharge donc plus l'ecran entier -- seul le panneau de droite change.
  *
  * ConversationsView et ChatView sont reutilisees telles quelles (avec les
  * proprietes showBackButton / compactActions / selectedConversationId
@@ -44,6 +45,21 @@ Item {
         root.currentConversationName = name || ""
     }
 
+    // Largeur du panneau de gauche : proportionnelle a la largeur de la
+    // fenetre plutot que figee, pour rester confortable aussi bien en
+    // fenetre partagee (proche du minimum) que sur un grand ecran desktop
+    // (plafonnee pour ne pas empieter sur l'espace de lecture a droite).
+    readonly property int conversationsPanelWidth: Math.max(280, Math.min(400, Math.round(root.width * 0.26)))
+
+    // Police d'icones Font Awesome 4.7.0, meme jeu de glyphes que Home
+    // (Components/DashboardCard.qml) - utilisee pour l'icone decorative
+    // de l'etat vide (aucune conversation selectionnee).
+    FontLoader {
+        id: iconFont
+        source: "../Assets/fonts/fontawesome-webfont.ttf"
+    }
+    readonly property string iconFontFamily: iconFont.name
+
     Rectangle {
         anchors.fill: parent
         color: Theme.background
@@ -54,12 +70,9 @@ Item {
         spacing: 0
 
         // Panneau de gauche : liste des conversations, toujours visible.
-        // Largeur fixe a la WhatsApp Web / Telegram Desktop -- assez large
-        // pour lire le dernier message sans tronquer excessivement, mais
-        // sans empieter sur l'espace de lecture de la conversation active.
         ConversationsView {
             id: conversationsPanel
-            Layout.preferredWidth: 340
+            Layout.preferredWidth: root.conversationsPanelWidth
             Layout.minimumWidth: 280
             Layout.fillHeight: true
 
@@ -115,7 +128,8 @@ Item {
 
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: "\u2709"
+                    text: "\uf0e0"
+                    font.family: root.iconFontFamily
                     font.pixelSize: 48
                     color: Theme.textTertiary
                 }

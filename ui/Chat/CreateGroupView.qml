@@ -3,15 +3,30 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Themes
 import Core
+import "../Components"
 
 /*
  * CreateGroupView - Écran de création de groupe
  * Permet de créer un nouveau groupe avec nom et sélection de membres
+ *
+ * Refonte design (juillet 2026) : meme alignement que NewConversationView
+ * -- en-tete 64px a bordure basse seule, contenu centre a largeur
+ * maximale, lignes de membre "carte" avec etat selectionne visible via
+ * une pastille + une teinte primaire attenuee (plutot que le fond plein
+ * Theme.accent d'origine, illisible avec Theme.text par-dessus).
  */
 Item {
     id: root
 
     property var messagingContext: null
+    property var _allUsers: []
+
+    // Police d'icones Font Awesome 4.7.0, memes glyphes que Home.
+    FontLoader {
+        id: iconFont
+        source: "../Assets/fonts/fontawesome-webfont.ttf"
+    }
+    readonly property string iconFontFamily: iconFont.name
 
     signal backRequested()
     signal groupCreated(var groupId)
@@ -25,67 +40,65 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // Header
+        // ---- En-tete --------------------------------------------------
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 60
+            Layout.preferredHeight: 64
             color: Theme.surface
-            border.color: Theme.border
-            border.width: 1
+
+            Rectangle {
+                anchors.bottom: parent.bottom
+                width: parent.width
+                height: 1
+                color: Theme.border
+            }
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 10
-                anchors.rightMargin: 10
-                spacing: 10
+                anchors.leftMargin: Theme.spacingMedium
+                anchors.rightMargin: Theme.spacingMedium
+                spacing: Theme.spacingSmall
 
-                Button {
-                    text: "←"
-                    Layout.preferredWidth: 40
-                    Layout.preferredHeight: 40
-                    background: Rectangle {
-                        color: parent.pressed ? Theme.accentDark : Theme.accent
-                        radius: 5
-                    }
-                    contentItem: Label {
-                        text: parent.text
-                        color: Theme.text
-                        font.pixelSize: 20
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
+                IconButton {
+                    glyph: "\uf060"
+                    variant: "ghost"
                     onClicked: root.backRequested()
                 }
 
                 Label {
                     Layout.fillWidth: true
-                    text: "Créer un groupe"
-                    font.pixelSize: 18
+                    text: qsTr("Créer un groupe")
+                    font.pixelSize: Theme.fontSizeHeading
                     font.bold: true
+                    font.family: Theme.fontFamily
                     color: Theme.text
+                    elide: Text.ElideRight
                 }
             }
         }
 
-        // Contenu principal
-        Rectangle {
+        // ---- Contenu principal : centre, largeur maximale --------------
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: Theme.background
 
             ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 20
-                spacing: 20
+                width: Math.min(parent.width - 2 * Theme.spacingXl, 720)
+                height: parent.height - 2 * Theme.spacingLarge
+                x: (parent.width - width) / 2
+                y: Theme.spacingLarge
+                spacing: Theme.spacingLarge
 
                 // Nom du groupe
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 8
+                    spacing: Theme.spacingSmall
 
                     Label {
-                        text: "Nom du groupe"
-                        font.pixelSize: 14
+                        text: qsTr("Nom du groupe")
+                        font.pixelSize: Theme.fontSizeSubheading
+                        font.bold: true
+                        font.family: Theme.fontFamily
                         color: Theme.text
                     }
 
@@ -93,12 +106,17 @@ Item {
                         id: groupNameField
                         Layout.fillWidth: true
                         Layout.preferredHeight: 40
-                        placeholderText: "Entrez le nom du groupe"
+                        placeholderText: qsTr("Entrez le nom du groupe")
                         color: Theme.text
+                        font.pixelSize: Theme.fontSizeBody
+                        font.family: Theme.fontFamily
+                        leftPadding: Theme.spacingMedium
+                        selectByMouse: true
+
                         background: Rectangle {
-                            color: Theme.surface
-                            radius: 5
-                            border.color: groupNameField.activeFocus ? Theme.accent : Theme.border
+                            color: Theme.surfaceAlt
+                            radius: Theme.radiusMedium
+                            border.color: groupNameField.activeFocus ? Theme.navy700 : Theme.border
                             border.width: groupNameField.activeFocus ? 2 : 1
                         }
                     }
@@ -108,96 +126,216 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    spacing: 8
+                    spacing: Theme.spacingSmall
 
-                    Label {
-                        text: "Membres"
-                        font.pixelSize: 14
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        Label {
+                            text: qsTr("Membres")
+                            font.pixelSize: Theme.fontSizeSubheading
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                            color: Theme.text
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Rectangle {
+                            visible: selectedCount.count > 0
+                            Layout.preferredWidth: selectedLabel.implicitWidth + Theme.spacingMedium * 2
+                            Layout.preferredHeight: 24
+                            radius: height / 2
+                            color: Theme.primaryMuted
+
+                            Label {
+                                id: selectedLabel
+                                anchors.centerIn: parent
+                                text: qsTr("%n sélectionné(s)", "", selectedCount.count)
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.family: Theme.fontFamily
+                                color: Theme.primary
+                            }
+                        }
+                    }
+
+                    // Compteur reactif des membres actuellement selectionnes.
+                    QtObject {
+                        id: selectedCount
+                        property int count: 0
+                    }
+
+                    TextField {
+                        id: memberSearchField
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 40
+                        placeholderText: qsTr("Rechercher un utilisateur...")
                         color: Theme.text
+                        font.pixelSize: Theme.fontSizeBody
+                        font.family: Theme.fontFamily
+                        leftPadding: Theme.spacingLarge
+                        selectByMouse: true
+
+                        background: Rectangle {
+                            color: Theme.surfaceAlt
+                            radius: Theme.radiusPill
+                            border.width: memberSearchField.activeFocus ? 2 : 0
+                            border.color: Theme.navy700
+                        }
+
+                        Text {
+                            anchors.left: parent.left
+                            anchors.leftMargin: Theme.spacingMedium
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "\uf002"
+                            color: Theme.textTertiary
+                            font.family: root.iconFontFamily
+                            font.pixelSize: 13
+                        }
+
+                        onTextChanged: membersListView.applyFilter(text)
                     }
 
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        radius: Theme.radiusLarge
                         color: Theme.surface
-                        radius: 5
                         border.color: Theme.border
                         border.width: 1
+                        clip: true
+
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            spacing: Theme.spacingSmall
+                            visible: membersListView.count === 0
+                            width: parent.width * 0.7
+
+                            Label {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: memberSearchField.text.length > 0
+                                      ? qsTr("Aucun utilisateur ne correspond a votre recherche.")
+                                      : qsTr("Aucun autre utilisateur disponible")
+                                font.pixelSize: Theme.fontSizeBody
+                                font.family: Theme.fontFamily
+                                color: Theme.textSecondary
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                            }
+                        }
 
                         ListView {
                             id: membersListView
                             anchors.fill: parent
-                            anchors.margins: 5
-                            spacing: 5
+                            anchors.margins: Theme.spacingMedium
+                            spacing: Theme.spacingSmall
                             clip: true
 
                             model: ListModel {
                                 id: availableUsersModel
                             }
 
-                            Component.onCompleted: {
-                                reloadUsers()
-                            }
+                            Component.onCompleted: reloadUsers()
 
                             Connections {
                                 target: root.messagingContext
                                 function onAvailableUsersChanged() {
-                                    console.log("CreateGroupView: onAvailableUsersChanged called")
-                                    reloadUsers()
+                                    membersListView.reloadUsers()
                                 }
                             }
 
                             function reloadUsers() {
-                                console.log("CreateGroupView: reloadUsers called")
-                                console.log("CreateGroupView: root.messagingContext =", root.messagingContext)
                                 if (root.messagingContext) {
-                                    availableUsersModel.clear()
-                                    const users = root.messagingContext.availableUsers()
-                                    console.log("CreateGroupView: got", users.length, "users from availableUsers()")
-                                    for (let i = 0; i < users.length; ++i) {
-                                        console.log("  User:", users[i].userId, users[i].username)
-                                        availableUsersModel.append({
-                                            userId: users[i].userId,
-                                            username: users[i].username,
-                                            selected: false
-                                        })
-                                    }
-                                } else {
-                                    console.log("CreateGroupView: messagingContext is null!")
+                                    root._allUsers = root.messagingContext.availableUsers()
                                 }
+                                applyFilter(memberSearchField.text)
+                            }
+
+                            function applyFilter(query) {
+                                availableUsersModel.clear()
+                                const needle = (query || "").toLowerCase()
+                                for (let i = 0; i < root._allUsers.length; ++i) {
+                                    const u = root._allUsers[i]
+                                    if (needle.length > 0 && u.username.toLowerCase().indexOf(needle) === -1)
+                                        continue
+                                    availableUsersModel.append({
+                                        userId: u.userId,
+                                        username: u.username,
+                                        selected: false
+                                    })
+                                }
+                                recomputeSelectedCount()
+                            }
+
+                            function recomputeSelectedCount() {
+                                let n = 0
+                                for (let i = 0; i < availableUsersModel.count; ++i) {
+                                    if (availableUsersModel.get(i).selected) n++
+                                }
+                                selectedCount.count = n
                             }
 
                             delegate: Rectangle {
+                                id: memberDelegate
                                 width: membersListView.width
-                                height: 40
-                                color: selected ? Theme.accent : Theme.surfaceAlt
-                                radius: 5
+                                height: 56
+                                color: selected
+                                       ? Theme.primaryMuted
+                                       : (itemMouse.containsMouse ? Theme.surfaceHover : Theme.surfaceAlt)
+                                radius: Theme.radiusMedium
+                                border.color: selected ? Theme.primary : Theme.border
+                                border.width: selected ? 2 : 1
+
+                                Behavior on color { ColorAnimation { duration: 100 } }
 
                                 RowLayout {
                                     anchors.fill: parent
-                                    anchors.leftMargin: 10
-                                    anchors.rightMargin: 10
-                                    spacing: 10
+                                    anchors.leftMargin: Theme.spacingMedium
+                                    anchors.rightMargin: Theme.spacingMedium
+                                    spacing: Theme.spacingMedium
 
-                                    CheckBox {
-                                        checked: selected
-                                        onCheckedChanged: {
-                                            availableUsersModel.setProperty(index, "selected", checked)
-                                        }
+                                    Avatar {
+                                        name: username
+                                        size: 34
                                     }
 
                                     Label {
                                         Layout.fillWidth: true
                                         text: username
-                                        font.pixelSize: 14
+                                        font.pixelSize: Theme.fontSizeBody
+                                        font.family: Theme.fontFamily
                                         color: Theme.text
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 22
+                                        Layout.preferredHeight: 22
+                                        radius: Theme.radiusSmall
+                                        color: selected ? Theme.primary : "transparent"
+                                        border.color: selected ? Theme.primary : Theme.border
+                                        border.width: 2
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            visible: selected
+                                            text: "\uf00c"
+                                            color: Theme.primaryText
+                                            font.family: root.iconFontFamily
+                                            font.pixelSize: 11
+                                        }
                                     }
                                 }
 
                                 MouseArea {
+                                    id: itemMouse
                                     anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
                                     onClicked: {
                                         availableUsersModel.setProperty(index, "selected", !selected)
+                                        membersListView.recomputeSelectedCount()
                                     }
                                 }
                             }
@@ -212,61 +350,31 @@ Item {
                 // Boutons d'action
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 10
+                    spacing: Theme.spacingMedium
 
-                    Button {
+                    AppButton {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 40
-                        text: "Annuler"
-
-                        background: Rectangle {
-                            color: parent.pressed ? Theme.surfaceAlt : Theme.surface
-                            radius: 5
-                            border.color: Theme.border
-                            border.width: 1
-                        }
-
-                        contentItem: Label {
-                            text: parent.text
-                            color: Theme.text
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-
+                        variant: "outline"
+                        text: qsTr("Annuler")
                         onClicked: root.backRequested()
                     }
 
-                    Button {
+                    AppButton {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 40
-                        text: "Créer le groupe"
-
-                        background: Rectangle {
-                            color: parent.pressed ? Theme.accentDark : Theme.accent
-                            radius: 5
-                        }
-
-                        contentItem: Label {
-                            text: parent.text
-                            color: Theme.text
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-
+                        variant: "primary"
+                        text: qsTr("Créer le groupe")
+                        enabled: groupNameField.text.trim().length > 0
                         onClicked: {
-                            if (groupNameField.text.trim() !== "" && root.messagingContext) {
-                                // Récupérer les membres sélectionnés
-                                var selectedMembers = []
-                                for (var i = 0; i < availableUsersModel.count; i++) {
-                                    if (availableUsersModel.get(i).selected) {
-                                        selectedMembers.push(availableUsersModel.get(i).userId)
-                                    }
+                            var selectedMembers = []
+                            for (var i = 0; i < availableUsersModel.count; i++) {
+                                if (availableUsersModel.get(i).selected) {
+                                    selectedMembers.push(availableUsersModel.get(i).userId)
                                 }
+                            }
 
-                                const groupId = root.messagingContext.createGroup(groupNameField.text, selectedMembers)
-                                if (groupId > 0) {
-                                    root.groupCreated(groupId)
-                                }
+                            const groupId = root.messagingContext.createGroup(groupNameField.text, selectedMembers)
+                            if (groupId > 0) {
+                                root.groupCreated(groupId)
                             }
                         }
                     }

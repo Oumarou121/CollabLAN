@@ -8,6 +8,7 @@ import "Chat"
 import "FileTransfer"
 import "Call"
 import "Admin"
+import "Settings"
 import "SharedFolder"
 import "Components"
 
@@ -172,6 +173,9 @@ ApplicationWindow {
             onAdminRequested: {
                 stackView.push(adminViewComponent)
             }
+            onSettingsRequested: {
+                stackView.push(settingsViewComponent)
+            }
             onSharedFoldersRequested: {
                 stackView.push(sharedFolderViewComponent)
             }
@@ -203,6 +207,16 @@ ApplicationWindow {
         id: adminViewComponent
 
         AdminView {
+            onBackRequested: {
+                stackView.pop()
+            }
+        }
+    }
+
+    Component {
+        id: settingsViewComponent
+
+        SettingsView {
             onBackRequested: {
                 stackView.pop()
             }

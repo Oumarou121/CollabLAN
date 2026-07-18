@@ -21,7 +21,12 @@ Item {
 
     signal backRequested()
 
-    property int currentTab: 0  // 0 = Audit log, 1 = Machines autorisées, 2 = Utilisateurs, 3 = Paramètres, 4 = Bascule serveur
+    property int currentTab: 0  // 0 = Audit log, 1 = Machines autorisées, 2 = Utilisateurs, 3 = Bascule serveur
+    // Note : l'onglet "Paramètres" (Préférences / Ports
+    // réseau) a été retiré d'ici et déplacé dans SettingsView.qml,
+    // désormais accessible à tous les utilisateurs depuis le menu profil
+    // de HomeView (Ports réseau y reste réservé aux
+    // administrateurs).
 
     // Historique des bascules (ServerElectionLog), pour l'onglet "Bascule
     // serveur" (HYBRID_SERVER_FAILOVER.md section 9, etape 5). Pas de
@@ -37,13 +42,13 @@ Item {
     }
 
     onCurrentTabChanged: {
-        if (currentTab === 4)
+        if (currentTab === 3)
             refreshElectionHistory()
     }
 
     Timer {
         interval: 5000
-        running: root.currentTab === 4
+        running: root.currentTab === 3
         repeat: true
         onTriggered: root.refreshElectionHistory()
     }
@@ -129,8 +134,7 @@ Item {
                         TabPill { label: qsTr("Journal d'audit"); active: root.currentTab === 0; onClicked: root.currentTab = 0 }
                         TabPill { label: qsTr("Machines autorisées"); active: root.currentTab === 1; onClicked: root.currentTab = 1 }
                         TabPill { label: qsTr("Utilisateurs"); active: root.currentTab === 2; onClicked: root.currentTab = 2 }
-                        TabPill { label: qsTr("Paramètres"); active: root.currentTab === 3; onClicked: root.currentTab = 3 }
-                        TabPill { label: qsTr("Bascule serveur"); active: root.currentTab === 4; onClicked: root.currentTab = 4 }
+                        TabPill { label: qsTr("Bascule serveur"); active: root.currentTab === 3; onClicked: root.currentTab = 3 }
                     }
                 }
 
@@ -166,7 +170,7 @@ Item {
                     variant: "secondary"
                     iconGlyph: "\u21BB"
                     text: qsTr("Rafraîchir")
-                    visible: root.currentTab === 4
+                    visible: root.currentTab === 3
                     onClicked: root.refreshElectionHistory()
                 }
             }
@@ -565,271 +569,6 @@ Item {
             }
         }
 
-        // Contenu de l'onglet Paramètres globaux (issue #69)
-        Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            visible: root.currentTab === 3
-
-            ScrollView {
-                anchors.fill: parent
-                contentWidth: availableWidth
-
-                ColumnLayout {
-                    width: parent.width
-                    anchors.margins: Theme.spacingLarge
-                    spacing: Theme.spacingLarge
-
-                    Label {
-                        Layout.margins: Theme.spacingLarge
-                        text: qsTr("Paramètres globaux")
-                        font.pixelSize: Theme.fontSizeHeading
-                        font.bold: true
-                        font.family: Theme.fontFamily
-                        color: Theme.text
-                    }
-
-                    // Organisation
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: Theme.spacingLarge
-                        Layout.rightMargin: Theme.spacingLarge
-                        Layout.preferredHeight: orgColumn.implicitHeight + Theme.spacingMedium * 2
-                        radius: Theme.radiusLarge
-                        color: Theme.surface
-                        border.width: 1
-                        border.color: Theme.border
-
-                        ColumnLayout {
-                            id: orgColumn
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingMedium
-                            spacing: Theme.spacingSmall
-
-                            Label {
-                                text: qsTr("Organisation")
-                                font.pixelSize: Theme.fontSizeSubheading
-                                font.bold: true
-                                font.family: Theme.fontFamily
-                                color: Theme.text
-                            }
-
-                            Label {
-                                text: qsTr("Nom de l'organisation")
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.family: Theme.fontFamily
-                                color: Theme.textSecondary
-                            }
-
-                            TextField {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 40
-                                text: settingsModel.organizationName
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeBody
-                                leftPadding: Theme.spacingMedium
-                                onTextChanged: settingsModel.organizationName = text
-
-                                background: Rectangle {
-                                    radius: Theme.radiusMedium
-                                    color: Theme.background
-                                    border.width: 1
-                                    border.color: Theme.border
-                                }
-                            }
-                        }
-                    }
-
-                    // Telechargements + Notifications
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: Theme.spacingLarge
-                        Layout.rightMargin: Theme.spacingLarge
-                        Layout.preferredHeight: prefsColumn.implicitHeight + Theme.spacingMedium * 2
-                        radius: Theme.radiusLarge
-                        color: Theme.surface
-                        border.width: 1
-                        border.color: Theme.border
-
-                        ColumnLayout {
-                            id: prefsColumn
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingMedium
-                            spacing: Theme.spacingSmall
-
-                            Label {
-                                text: qsTr("Préférences")
-                                font.pixelSize: Theme.fontSizeSubheading
-                                font.bold: true
-                                font.family: Theme.fontFamily
-                                color: Theme.text
-                            }
-
-                            Label {
-                                text: qsTr("Répertoire de téléchargement par défaut")
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.family: Theme.fontFamily
-                                color: Theme.textSecondary
-                                Layout.topMargin: Theme.spacingSmall
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: Theme.spacingSmall
-
-                                TextField {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 40
-                                    text: settingsModel.defaultDownloadPath
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeBody
-                                    leftPadding: Theme.spacingMedium
-                                    onTextChanged: settingsModel.defaultDownloadPath = text
-
-                                    background: Rectangle {
-                                        radius: Theme.radiusMedium
-                                        color: Theme.background
-                                        border.width: 1
-                                        border.color: Theme.border
-                                    }
-                                }
-
-                                AppButton {
-                                    variant: "secondary"
-                                    text: qsTr("Parcourir...")
-                                    onClicked: folderDialog.open()
-                                }
-                            }
-
-                            Label {
-                                text: qsTr("Notifications")
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.family: Theme.fontFamily
-                                color: Theme.textSecondary
-                                Layout.topMargin: Theme.spacingSmall
-                            }
-
-                            CheckBox {
-                                text: qsTr("Activer les notifications")
-                                checked: settingsModel.enableNotifications
-                                onCheckedChanged: settingsModel.enableNotifications = checked
-                                contentItem: Label {
-                                    text: qsTr("Activer les notifications")
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeBody
-                                    leftPadding: 28
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                            }
-
-                            CheckBox {
-                                text: qsTr("Activer les sons")
-                                checked: settingsModel.enableSounds
-                                onCheckedChanged: settingsModel.enableSounds = checked
-                                contentItem: Label {
-                                    text: qsTr("Activer les sons")
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeBody
-                                    leftPadding: 28
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                            }
-                        }
-                    }
-
-                    // Ports reseau
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: Theme.spacingLarge
-                        Layout.rightMargin: Theme.spacingLarge
-                        Layout.preferredHeight: portsColumn.implicitHeight + Theme.spacingMedium * 2
-                        radius: Theme.radiusLarge
-                        color: Theme.surface
-                        border.width: 1
-                        border.color: Theme.border
-
-                        ColumnLayout {
-                            id: portsColumn
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingMedium
-                            spacing: Theme.spacingSmall
-
-                            Label {
-                                text: qsTr("Ports réseau")
-                                font.pixelSize: Theme.fontSizeSubheading
-                                font.bold: true
-                                font.family: Theme.fontFamily
-                                color: Theme.text
-                            }
-
-                            RowLayout {
-                                spacing: Theme.spacingMedium
-
-                                Label {
-                                    text: qsTr("Port messagerie")
-                                    color: Theme.textSecondary
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    Layout.preferredWidth: 140
-                                }
-
-                                SpinBox {
-                                    from: 1024
-                                    to: 65535
-                                    value: settingsModel.messagingPort
-                                    onValueChanged: settingsModel.messagingPort = value
-                                }
-                            }
-
-                            RowLayout {
-                                spacing: Theme.spacingMedium
-
-                                Label {
-                                    text: qsTr("Port découverte")
-                                    color: Theme.textSecondary
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    Layout.preferredWidth: 140
-                                }
-
-                                SpinBox {
-                                    from: 1024
-                                    to: 65535
-                                    value: settingsModel.discoveryPort
-                                    onValueChanged: settingsModel.discoveryPort = value
-                                }
-                            }
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: Theme.spacingLarge
-                        Layout.rightMargin: Theme.spacingLarge
-                        spacing: Theme.spacingMedium
-
-                        Item {
-                            Layout.fillWidth: true
-                        }
-
-                        AppButton {
-                            variant: "ghost"
-                            text: qsTr("Annuler")
-                            onClicked: settingsModel.load()
-                        }
-
-                        AppButton {
-                            variant: "primary"
-                            text: qsTr("Enregistrer")
-                            onClicked: settingsModel.save()
-                        }
-                    }
-
-                    Item {
-                        Layout.preferredHeight: Theme.spacingLarge
-                    }
-                }
-            }
-        }
-
         // Contenu de l'onglet "Bascule serveur" (HYBRID_SERVER_FAILOVER.md
         // section 9, etape 5) : historique des elections/reconciliations
         // (ServerElectionLog), utile pour diagnostiquer une instabilite
@@ -837,7 +576,7 @@ Item {
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: root.currentTab === 4
+            visible: root.currentTab === 3
 
             ColumnLayout {
                 anchors.fill: parent
@@ -1161,15 +900,6 @@ Item {
                 accessDeniedDialog.close()
                 root.backRequested()
             }
-        }
-    }
-
-    FolderDialog {
-        id: folderDialog
-        title: "Sélectionner le répertoire de téléchargement"
-        currentFolder: settingsModel.defaultDownloadPath
-        onAccepted: {
-            settingsModel.defaultDownloadPath = selectedFolder
         }
     }
 }

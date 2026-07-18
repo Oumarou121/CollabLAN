@@ -23,12 +23,17 @@ Item {
 
     property string username: ""
 
+    // Reserve l'acces a la carte "Administration" aux administrateurs
+    // (les autres utilisateurs ne doivent plus la voir sur le Home).
+    readonly property bool isAdmin: (typeof userManager !== "undefined" && userManager) ? userManager.currentUserIsAdmin : false
+
     signal logoutRequested()
     signal usersRequested()
     signal chatRequested()
     signal fileTransferRequested()
     signal callRequested()
     signal adminRequested()
+    signal settingsRequested()
     signal sharedFoldersRequested()
 
     // Nombre de postes detectes sur le reseau local (network::PeersModel,
@@ -374,6 +379,45 @@ Item {
                                 color: Theme.border
                             }
 
+                            // Acces aux parametres (issue : disponible a
+                            // tous les utilisateurs, plus seulement aux
+                            // administrateurs - Ports
+                            // reseau restent filtres dans SettingsView).
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 38
+                                radius: Theme.radiusSmall
+                                color: settingsArea.containsMouse ? Theme.surfaceHover : "transparent"
+                                Behavior on color { ColorAnimation { duration: 150 } }
+
+                                Label {
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.leftMargin: Theme.spacingSmall
+                                    text: qsTr("Paramètres")
+                                    color: Theme.text
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.family: Theme.fontFamily
+                                }
+
+                                MouseArea {
+                                    id: settingsArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        menuPopup.close()
+                                        root.settingsRequested()
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 1
+                                color: Theme.border
+                            }
+
                             Rectangle {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 38
@@ -478,6 +522,7 @@ Item {
                         }
                         DashboardCard {
                             Layout.fillWidth: true
+                            visible: root.isAdmin
                             icon: "\uf013"
                             title: qsTr("Administration")
                             description: qsTr("Gerez les utilisateurs et les postes.")

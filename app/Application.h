@@ -93,6 +93,16 @@ public:
                      const QString &roleOverride, int priorityWeightOverride,
                      quint16 electionPort);
 
+    /// Applique un port UDP de decouverte different du defaut (45454,
+    /// DiscoveryService::m_port) - a appeler AVANT initialize() (le port
+    /// d'un socket deja lie/en ecoute ne peut pas etre change a chaud).
+    /// Reflete settingsModel.discoveryPort (ecran Parametres > Ports
+    /// reseau, cf. app/main.cpp) : le changement ne prend donc effet qu'au
+    /// prochain lancement de l'application, comme pour le port de
+    /// messagerie (--port).
+    /// port == 0 => garde le port par defaut de DiscoveryService.
+    void setDiscoveryPort(quint16 port);
+
     // Expose au bootstrap QML (voir app/main.cpp) l'objet a brancher sur
     // LoginView.qml via setContextProperty("userManager", ...).
     core::UserManager *userManager() const;
@@ -244,6 +254,7 @@ private:
     QStringList m_pendingUnresolvedMessages;
 
     // TODO: instancier ici les autres services (Security, Settings...)
+    quint16 m_discoveryPortOverride = 0; // 0 = port par defaut de DiscoveryService (voir setDiscoveryPort())
     std::unique_ptr<database::DatabaseManager> m_databaseManager;
     std::unique_ptr<database::ServerElectionRepository> m_serverElectionRepository;
     std::unique_ptr<database::SyncLogRepository> m_syncLogRepository;
