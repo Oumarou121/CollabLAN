@@ -32,6 +32,9 @@ Item {
     id: root
     objectName: "adminView"
 
+    // Police d'icone (Font Awesome) utilisee dans les etats vides
+    readonly property string iconFontFamily: "FontAwesome"
+
     signal backRequested()
 
     property int currentTab: 0  // 0 = Audit log, 1 = Machines autorisées, 2 = Utilisateurs, 3 = Bascule serveur
@@ -96,16 +99,13 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // ---- Barre superieure : deux lignes ------------------------------
-        // Ligne 1 (64px) : retour, titre, action contextuelle.
-        // Ligne 2 (56px) : selecteur d'onglets, dans un conteneur qui
-        // defile horizontalement si la largeur disponible ne suffit pas a
-        // afficher les 4 onglets (au lieu de les tasser/tronquer).
+        // ---- Header personnalisé pour Administration -----------------------
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 120
             color: Theme.surface
 
+            // Séparateur bas
             Rectangle {
                 anchors.bottom: parent.bottom
                 width: parent.width
@@ -113,102 +113,98 @@ Item {
                 color: Theme.border
             }
 
-            Column {
+            ColumnLayout {
                 anchors.fill: parent
-                spacing: 0
+                anchors.leftMargin: Theme.spacingLarge
+                anchors.rightMargin: Theme.spacingLarge
+                spacing: Theme.spacingMedium
 
-                Item {
-                    width: parent.width
-                    height: 64
+                // Ligne supérieure : titre + bouton retour
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 64
+                    spacing: Theme.spacingMedium
+
+                    IconButton {
+                        variant: "ghost"
+                        glyph: "\uf060"
+                        size: 40
+                        onClicked: root.backRequested()
+                    }
+
+                    Text {
+                        text: qsTr("Administration")
+                        font.pixelSize: Theme.fontSizeHeading
+                        font.bold: true
+                        font.family: Theme.fontFamily
+                        color: Theme.text
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
 
                     RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: Theme.spacingMedium
-                        anchors.rightMargin: Theme.spacingMedium
-                        spacing: Theme.spacingMedium
+                        spacing: Theme.spacingSmall
 
                         IconButton {
-                            glyph: "\uf060"
-                            size: 36
-                            onClicked: root.backRequested()
-                        }
-
-                        Label {
-                            text: qsTr("Administration")
-                            font.pixelSize: Theme.fontSizeSubheading
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                            color: Theme.text
-                            elide: Text.ElideRight
-                        }
-
-                        Item { Layout.fillWidth: true }
-
-                        AppButton {
                             variant: "secondary"
-                            iconGlyph: "\u21E9"
-                            text: root.headerCompact ? "" : qsTr("Exporter CSV")
+                            glyph: "\u21E9"
+                            size: 36
                             visible: root.currentTab === 0
                             onClicked: exportDialog.open()
                         }
 
-                        AppButton {
+                        IconButton {
                             variant: "primary"
-                            iconGlyph: "+"
-                            text: root.headerCompact ? "" : qsTr("Ajouter machine")
+                            glyph: "+"
+                            size: 36
                             visible: root.currentTab === 1
                             onClicked: addMachineDialog.open()
                         }
 
-                        AppButton {
+                        IconButton {
                             variant: "primary"
-                            iconGlyph: "+"
-                            text: root.headerCompact ? "" : qsTr("Ajouter utilisateur")
+                            glyph: "+"
+                            size: 36
                             visible: root.currentTab === 2
                             onClicked: addUserDialog.open()
                         }
 
-                        AppButton {
+                        IconButton {
                             variant: "secondary"
-                            iconGlyph: "\u21BB"
-                            text: root.headerCompact ? "" : qsTr("Rafraîchir")
+                            glyph: "\u21BB"
+                            size: 36
                             visible: root.currentTab === 3
                             onClicked: root.refreshElectionHistory()
                         }
                     }
                 }
 
-                Item {
-                    width: parent.width
-                    height: 56
+                // Ligne inférieure : onglets
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    radius: Theme.radiusPill
+                    color: Theme.surfaceAlt
+                    clip: true
 
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: Math.min(parent.width - Theme.spacingMedium * 2, tabRow.implicitWidth + Theme.spacingXs * 2)
-                        height: 40
-                        radius: Theme.radiusPill
-                        color: Theme.surfaceAlt
+                    Flickable {
+                        anchors.fill: parent
+                        anchors.margins: Theme.spacingXs
+                        contentWidth: tabRow.implicitWidth
+                        contentHeight: height
                         clip: true
+                        interactive: tabRow.implicitWidth > width
+                        boundsBehavior: Flickable.StopAtBounds
 
-                        Flickable {
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingXs
-                            contentWidth: tabRow.implicitWidth
-                            contentHeight: height
-                            clip: true
-                            interactive: tabRow.implicitWidth > width
-                            boundsBehavior: Flickable.StopAtBounds
+                        Row {
+                            id: tabRow
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 2
 
-                            Row {
-                                id: tabRow
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 2
-
-                                TabPill { label: qsTr("Journal d'audit"); active: root.currentTab === 0; onClicked: root.currentTab = 0 }
-                                TabPill { label: qsTr("Machines autorisées"); active: root.currentTab === 1; onClicked: root.currentTab = 1 }
-                                TabPill { label: qsTr("Utilisateurs"); active: root.currentTab === 2; onClicked: root.currentTab = 2 }
-                                TabPill { label: qsTr("Bascule serveur"); active: root.currentTab === 3; onClicked: root.currentTab = 3 }
-                            }
+                            TabPill { label: qsTr("Journal d'audit"); active: root.currentTab === 0; onClicked: root.currentTab = 0 }
+                            TabPill { label: qsTr("Machines autorisées"); active: root.currentTab === 1; onClicked: root.currentTab = 1 }
+                            TabPill { label: qsTr("Utilisateurs"); active: root.currentTab === 2; onClicked: root.currentTab = 2 }
+                            TabPill { label: qsTr("Bascule serveur"); active: root.currentTab === 3; onClicked: root.currentTab = 3 }
                         }
                     }
                 }
@@ -235,34 +231,37 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: filterFlow.height + Theme.spacingMedium * 2
-                    radius: Theme.radiusMedium
-                    color: Theme.surfaceAlt
+                    radius: Theme.radiusLarge
+                    color: Theme.surface
+                    border.width: 1
+                    border.color: Theme.border
 
                     Flow {
                         id: filterFlow
                         x: Theme.spacingMedium
                         y: Theme.spacingMedium
                         width: parent.width - Theme.spacingMedium * 2
-                        spacing: Theme.spacingSmall
+                        spacing: Theme.spacingMedium
 
                         RowLayout {
                             spacing: Theme.spacingSmall
                             Label {
                                 Layout.alignment: Qt.AlignVCenter
-                                text: qsTr("Type :")
-                                color: Theme.textSecondary
+                                text: qsTr("Type")
+                                color: Theme.text
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.family: Theme.fontFamily
+                                font.bold: true
                             }
                             ComboBox {
                                 id: eventTypeFilter
                                 Layout.alignment: Qt.AlignVCenter
-                                Layout.preferredWidth: 160
-                                Layout.preferredHeight: 36
+                                Layout.preferredWidth: 180
+                                Layout.preferredHeight: 40
                                 model: ["Tous", "connection", "message", "transfer", "call", "access_denied"]
                                 background: Rectangle {
                                     radius: Theme.radiusMedium
-                                    color: Theme.surface
+                                    color: Theme.background
                                     border.width: 1
                                     border.color: Theme.border
                                 }
@@ -279,23 +278,24 @@ Item {
                             spacing: Theme.spacingSmall
                             Label {
                                 Layout.alignment: Qt.AlignVCenter
-                                text: qsTr("Du :")
-                                color: Theme.textSecondary
+                                text: qsTr("Du")
+                                color: Theme.text
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.family: Theme.fontFamily
+                                font.bold: true
                             }
                             TextField {
                                 id: dateFrom
                                 Layout.alignment: Qt.AlignVCenter
-                                Layout.preferredWidth: 130
-                                Layout.preferredHeight: 36
+                                Layout.preferredWidth: 150
+                                Layout.preferredHeight: 40
                                 placeholderText: "YYYY-MM-DD"
                                 color: Theme.text
                                 font.pixelSize: Theme.fontSizeSmall
-                                leftPadding: Theme.spacingSmall
+                                leftPadding: Theme.spacingMedium
                                 background: Rectangle {
                                     radius: Theme.radiusMedium
-                                    color: Theme.surface
+                                    color: Theme.background
                                     border.width: dateFrom.activeFocus ? 2 : 1
                                     border.color: dateFrom.activeFocus ? Theme.primary : Theme.border
                                 }
@@ -306,23 +306,24 @@ Item {
                             spacing: Theme.spacingSmall
                             Label {
                                 Layout.alignment: Qt.AlignVCenter
-                                text: qsTr("Au :")
-                                color: Theme.textSecondary
+                                text: qsTr("Au")
+                                color: Theme.text
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.family: Theme.fontFamily
+                                font.bold: true
                             }
                             TextField {
                                 id: dateTo
                                 Layout.alignment: Qt.AlignVCenter
-                                Layout.preferredWidth: 130
-                                Layout.preferredHeight: 36
+                                Layout.preferredWidth: 150
+                                Layout.preferredHeight: 40
                                 placeholderText: "YYYY-MM-DD"
                                 color: Theme.text
                                 font.pixelSize: Theme.fontSizeSmall
-                                leftPadding: Theme.spacingSmall
+                                leftPadding: Theme.spacingMedium
                                 background: Rectangle {
                                     radius: Theme.radiusMedium
-                                    color: Theme.surface
+                                    color: Theme.background
                                     border.width: dateTo.activeFocus ? 2 : 1
                                     border.color: dateTo.activeFocus ? Theme.primary : Theme.border
                                 }
@@ -366,11 +367,11 @@ Item {
                         id: auditListView
                         width: parent.width
                         model: auditLogModel
-                        spacing: Theme.spacingSmall
+                        spacing: Theme.spacingMedium
                         delegate: Rectangle {
                             width: auditListView.width
-                            height: auditEntryColumn.implicitHeight + Theme.spacingMedium * 2
-                            radius: Theme.radiusMedium
+                            height: auditEntryColumn.implicitHeight + Theme.spacingLarge * 2
+                            radius: Theme.radiusLarge
                             color: Theme.surface
                             border.width: 1
                             border.color: Theme.border
@@ -380,8 +381,8 @@ Item {
                                 anchors.left: parent.left
                                 anchors.right: parent.right
                                 anchors.top: parent.top
-                                anchors.margins: Theme.spacingMedium
-                                spacing: Theme.spacingXs
+                                anchors.margins: Theme.spacingLarge
+                                spacing: Theme.spacingSmall
 
                                 RowLayout {
                                     Layout.fillWidth: true
@@ -389,15 +390,15 @@ Item {
 
                                     Label {
                                         text: model.timestamp
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.textSecondary
+                                        font.pixelSize: Theme.fontSizeCaption
+                                        color: Theme.textTertiary
                                         font.family: Theme.fontFamily
                                     }
 
                                     Rectangle {
-                                        implicitWidth: eventTypeLabel.implicitWidth + Theme.spacingSmall
-                                        implicitHeight: 20
-                                        radius: Theme.radiusSmall
+                                        implicitWidth: eventTypeLabel.implicitWidth + Theme.spacingMedium
+                                        implicitHeight: 24
+                                        radius: Theme.radiusPill
                                         color: Theme.primaryMuted
 
                                         Label {
@@ -419,6 +420,7 @@ Item {
                                     color: Theme.text
                                     wrapMode: Text.WordWrap
                                     Layout.fillWidth: true
+                                    font.family: Theme.fontFamily
                                 }
 
                                 Label {
@@ -426,6 +428,7 @@ Item {
                                     font.pixelSize: Theme.fontSizeSmall
                                     color: Theme.textSecondary
                                     font.family: Theme.fontFamily
+                                    Layout.topMargin: Theme.spacingXs
                                 }
                             }
                         }
@@ -459,14 +462,30 @@ Item {
 
                     ColumnLayout {
                         anchors.centerIn: parent
-                        spacing: Theme.spacingSmall
+                        spacing: Theme.spacingMedium
                         visible: machinesGrid.count === 0
                         width: parent.width * 0.6
 
+                        Rectangle {
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.preferredWidth: 80
+                            Layout.preferredHeight: 80
+                            radius: 40
+                            color: Theme.surfaceAlt
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "\uf109"
+                                font.family: root.iconFontFamily
+                                font.pixelSize: 32
+                                color: Theme.textSecondary
+                            }
+                        }
+
                         Label {
                             Layout.alignment: Qt.AlignHCenter
-                            text: qsTr("Aucune machine autorisée pour le moment")
-                            font.pixelSize: Theme.fontSizeBody
+                            text: qsTr("Aucune machine autorisée")
+                            font.pixelSize: Theme.fontSizeSubheading
                             font.bold: true
                             font.family: Theme.fontFamily
                             color: Theme.text
@@ -476,7 +495,7 @@ Item {
                         Label {
                             Layout.alignment: Qt.AlignHCenter
                             Layout.fillWidth: true
-                            text: qsTr("Utilisez « Ajouter machine » pour autoriser un poste par son adresse IP.")
+                            text: qsTr("Utilisez le bouton « Ajouter machine » pour autoriser un poste par son adresse IP.")
                             color: Theme.textSecondary
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: Theme.fontFamily
@@ -494,7 +513,7 @@ Item {
 
                         readonly property int columns: width > 900 ? 3 : (width > 560 ? 2 : 1)
                         cellWidth: width / columns
-                        cellHeight: 168
+                        cellHeight: 180
 
                         delegate: Item {
                             width: machinesGrid.cellWidth
@@ -503,19 +522,34 @@ Item {
                             Rectangle {
                                 anchors.fill: parent
                                 anchors.margins: Theme.spacingSmall / 2
-                                radius: Theme.radiusMedium
-                                color: Theme.surfaceAlt
+                                radius: Theme.radiusLarge
+                                color: Theme.surface
                                 border.width: 1
                                 border.color: Theme.border
 
                                 ColumnLayout {
                                     anchors.fill: parent
-                                    anchors.margins: Theme.spacingMedium
-                                    spacing: Theme.spacingSmall
+                                    anchors.margins: Theme.spacingLarge
+                                    spacing: Theme.spacingMedium
 
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        spacing: Theme.spacingSmall
+                                        spacing: Theme.spacingMedium
+
+                                        Rectangle {
+                                            Layout.preferredWidth: 48
+                                            Layout.preferredHeight: 48
+                                            radius: Theme.radiusMedium
+                                            color: Theme.surfaceAlt
+
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: "\uf109"
+                                                font.family: root.iconFontFamily
+                                                font.pixelSize: 20
+                                                color: Theme.textSecondary
+                                            }
+                                        }
 
                                         ColumnLayout {
                                             Layout.fillWidth: true
@@ -543,9 +577,9 @@ Item {
 
                                         Rectangle {
                                             Layout.alignment: Qt.AlignTop
-                                            implicitWidth: machineStatusLabel.implicitWidth + Theme.spacingSmall
-                                            implicitHeight: 20
-                                            radius: Theme.radiusSmall
+                                            implicitWidth: machineStatusLabel.implicitWidth + Theme.spacingMedium
+                                            implicitHeight: 24
+                                            radius: Theme.radiusPill
                                             color: model.authorized ? Theme.successMuted : Theme.errorMuted
 
                                             Label {
@@ -560,7 +594,7 @@ Item {
                                     }
 
                                     Label {
-                                        text: qsTr("Ajoutée : %1").arg(model.addedAt)
+                                        text: qsTr("Ajoutée le %1").arg(model.addedAt)
                                         font.pixelSize: Theme.fontSizeCaption
                                         font.family: Theme.fontFamily
                                         color: Theme.textTertiary
@@ -622,14 +656,30 @@ Item {
 
                     ColumnLayout {
                         anchors.centerIn: parent
-                        spacing: Theme.spacingSmall
+                        spacing: Theme.spacingMedium
                         visible: usersGrid.count === 0
                         width: parent.width * 0.6
 
+                        Rectangle {
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.preferredWidth: 80
+                            Layout.preferredHeight: 80
+                            radius: 40
+                            color: Theme.surfaceAlt
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "\uf234"
+                                font.family: root.iconFontFamily
+                                font.pixelSize: 32
+                                color: Theme.textSecondary
+                            }
+                        }
+
                         Label {
                             Layout.alignment: Qt.AlignHCenter
-                            text: qsTr("Aucun utilisateur pour le moment")
-                            font.pixelSize: Theme.fontSizeBody
+                            text: qsTr("Aucun utilisateur")
+                            font.pixelSize: Theme.fontSizeSubheading
                             font.bold: true
                             font.family: Theme.fontFamily
                             color: Theme.text
@@ -639,7 +689,7 @@ Item {
                         Label {
                             Layout.alignment: Qt.AlignHCenter
                             Layout.fillWidth: true
-                            text: qsTr("Utilisez « Ajouter utilisateur » pour créer un compte.")
+                            text: qsTr("Utilisez le bouton « Ajouter utilisateur » pour créer un compte.")
                             color: Theme.textSecondary
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: Theme.fontFamily
@@ -657,7 +707,7 @@ Item {
 
                         readonly property int columns: width > 900 ? 3 : (width > 560 ? 2 : 1)
                         cellWidth: width / columns
-                        cellHeight: 188
+                        cellHeight: 200
 
                         delegate: Item {
                             width: usersGrid.cellWidth
@@ -666,15 +716,15 @@ Item {
                             Rectangle {
                                 anchors.fill: parent
                                 anchors.margins: Theme.spacingSmall / 2
-                                radius: Theme.radiusMedium
-                                color: Theme.surfaceAlt
+                                radius: Theme.radiusLarge
+                                color: Theme.surface
                                 border.width: 1
                                 border.color: Theme.border
 
                                 ColumnLayout {
                                     anchors.fill: parent
-                                    anchors.margins: Theme.spacingMedium
-                                    spacing: Theme.spacingSmall
+                                    anchors.margins: Theme.spacingLarge
+                                    spacing: Theme.spacingMedium
 
                                     RowLayout {
                                         Layout.fillWidth: true
@@ -682,7 +732,7 @@ Item {
 
                                         Avatar {
                                             name: model.name
-                                            size: 40
+                                            size: 48
                                         }
 
                                         ColumnLayout {
@@ -711,10 +761,10 @@ Item {
 
                                         Rectangle {
                                             Layout.alignment: Qt.AlignTop
-                                            implicitWidth: roleLabel.implicitWidth + Theme.spacingSmall
-                                            implicitHeight: 20
-                                            radius: Theme.radiusSmall
-                                            color: model.isAdmin ? Theme.primaryMuted : Theme.surface
+                                            implicitWidth: roleLabel.implicitWidth + Theme.spacingMedium
+                                            implicitHeight: 24
+                                            radius: Theme.radiusPill
+                                            color: model.isAdmin ? Theme.primaryMuted : Theme.surfaceAlt
 
                                             Label {
                                                 id: roleLabel
@@ -802,11 +852,46 @@ Item {
                     color: Theme.border
                 }
 
-                Label {
+                ColumnLayout {
                     visible: root.electionHistoryEntries.length === 0
-                    text: qsTr("Aucun événement enregistré pour l'instant.")
-                    color: Theme.textSecondary
-                    font.family: Theme.fontFamily
+                    spacing: Theme.spacingMedium
+                    anchors.centerIn: parent
+
+                    Rectangle {
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.preferredWidth: 80
+                        Layout.preferredHeight: 80
+                        radius: 40
+                        color: Theme.surfaceAlt
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "\uf021"
+                            font.family: root.iconFontFamily
+                            font.pixelSize: 32
+                            color: Theme.textSecondary
+                        }
+                    }
+
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: qsTr("Aucun événement enregistré")
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSubheading
+                        font.bold: true
+                        font.family: Theme.fontFamily
+                    }
+
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.fillWidth: true
+                        text: qsTr("L'historique des bascules de serveur apparaîtra ici dès qu'un événement d'élection se produira.")
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                    }
                 }
 
                 ListView {
@@ -819,8 +904,8 @@ Item {
 
                     delegate: Rectangle {
                         width: ListView.view ? ListView.view.width : 0
-                        height: electionEntryColumn.implicitHeight + Theme.spacingMedium
-                        radius: Theme.radiusMedium
+                        height: electionEntryColumn.implicitHeight + Theme.spacingLarge * 2
+                        radius: Theme.radiusLarge
                         color: Theme.surface
                         border.width: 1
                         border.color: Theme.border
@@ -830,18 +915,18 @@ Item {
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.top: parent.top
-                            anchors.margins: Theme.spacingSmall
-                            spacing: Theme.spacingXs
+                            anchors.margins: Theme.spacingLarge
+                            spacing: Theme.spacingSmall
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: Theme.spacingSmall
+                                spacing: Theme.spacingMedium
 
                                 Rectangle {
-                                    Layout.preferredWidth: 10
-                                    Layout.preferredHeight: 10
+                                    Layout.preferredWidth: 12
+                                    Layout.preferredHeight: 12
                                     Layout.alignment: Qt.AlignVCenter
-                                    radius: 5
+                                    radius: 6
                                     color: root.electionEventColor(modelData.event)
                                 }
 
@@ -851,6 +936,7 @@ Item {
                                     font.bold: true
                                     font.family: Theme.fontFamily
                                     elide: Text.ElideRight
+                                    font.pixelSize: Theme.fontSizeBody
                                 }
 
                                 Item { Layout.fillWidth: true }
@@ -877,6 +963,7 @@ Item {
                                 color: Theme.textTertiary
                                 font.pixelSize: Theme.fontSizeCaption
                                 font.family: Theme.fontFamily
+                                Layout.topMargin: Theme.spacingXs
                             }
                         }
                     }

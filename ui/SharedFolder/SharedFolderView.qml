@@ -46,6 +46,17 @@ Item {
     // plutôt que d'empiler des dialogues.
     property var pendingShareConfirmations: []
 
+    // Filtre rapide du panneau lateral (meme principe que FileTransferView).
+    property string activeFilter: "all"   // "all" | "mine" | "received"
+
+    function folderMatchesFilter(isLocalOrigin) {
+        switch (root.activeFilter) {
+        case "mine": return isLocalOrigin
+        case "received": return !isLocalOrigin
+        default: return true
+        }
+    }
+
     function showNextShareConfirmation() {
         if (shareConfirmDialog.visible || root.pendingShareConfirmations.length === 0) {
             return
@@ -1204,122 +1215,109 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // Barre d'adresse
-        Rectangle {
+        // Barre d'adresse (composant partage)
+        ExplorerAddressBar {
             Layout.fillWidth: true
-            Layout.preferredHeight: 48
-            color: Theme.addressBarBackground
-            border.width: 1
-            border.color: Theme.border
-            z: 2
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: Theme.spacingMedium
-                anchors.rightMargin: Theme.spacingMedium
-                spacing: Theme.spacingSmall
-
-                Button {
-                    implicitWidth: 32
-                    implicitHeight: 32
-                    background: Rectangle {
-                        radius: Theme.radiusSmall
-                        color: parent.hovered ? Theme.surfaceHover : "transparent"
+            rootLabel: qsTr("Dossiers partagés")
+            currentLabel: root.openedFolderId >= 0 ? root.openedFolderName : ""
+            showSearch: false
+            onBackClicked: {
+                if (root.openedFolderId >= 0) {
+                    if (root.browsedRelativePath.length > 0) {
+                        root.goUpInBrowser()
+                    } else {
+                        root.openedFolderId = -1
                     }
-                    contentItem: Text {
-                        text: "\u2190"
-                        color: Theme.text
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    onClicked: {
-                        if (root.openedFolderId >= 0) {
-                            if (root.browsedRelativePath.length > 0) {
-                                root.goUpInBrowser()
-                            } else {
-                                root.openedFolderId = -1
-                            }
-                        } else {
-                            root.backRequested()
-                        }
-                    }
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    text: root.openedFolderId >= 0
-                          ? qsTr("Dossiers partagés  ›  %1").arg(root.openedFolderName)
-                          : qsTr("Dossiers partagés")
-                    font.pixelSize: Theme.fontSizeBody
-                    font.bold: true
-                    color: Theme.text
-                    elide: Text.ElideRight
-                }
-
-                AppButton {
-                    visible: root.openedFolderId >= 0
-                    text: root.showHistory ? qsTr("Fichiers") : qsTr("Historique")
-                    variant: "ghost"
-                    onClicked: root.showHistory = !root.showHistory
-                }
-
-                AppButton {
-                    visible: root.openedFolderId >= 0
-                    enabled: root.openedFolderIsLocalOrigin
-                    text: qsTr("Réindexer")
-                    variant: "secondary"
-                    onClicked: {
-                        if (root.context) {
-                            root.context.shareFolder(root.openedFolderId)
-                            root.refreshFiles()
-                            root.refreshHistory()
-                        }
-                    }
-                }
-
-                // ---- Menu « ⋯ » regroupant les actions secondaires ----
-                // Exclusions et Gérer les accès sont fusionnés ici pour
-                // éviter le débordement horizontal de la barre d'actions
-                // quand la fenêtre n'est pas assez large.
-                AppButton {
-                    id: moreActionsBtn
-                    visible: root.openedFolderId >= 0
-                    text: qsTr("⋯")
-                    variant: "secondary"
-                    onClicked: moreActionsMenu.open()
-
-                    Menu {
-                        id: moreActionsMenu
-                        // Ancré sous le bouton pour rester dans l'écran
-                        y: parent.height + 2
-
-                        MenuItem {
-                            text: qsTr("Exclusions…")
-                            onTriggered: {
-                                editExcludePatternsDialog.targetFolderId = root.openedFolderId
-                                editExcludePatternsDialog.targetFolderName = root.openedFolderName
-                                editExcludePatternsDialog.open()
-                            }
-                        }
-                        MenuItem {
-                            text: qsTr("Gérer les accès…")
-                            onTriggered: {
-                                manageAccessDialog.targetFolderId = root.openedFolderId
-                                manageAccessDialog.targetFolderName = root.openedFolderName
-                                manageAccessDialog.open()
-                            }
-                        }
-                    }
-                }
-
-                AppButton {
-                    visible: root.openedFolderId < 0
-                    text: qsTr("+ Nouveau dossier")
-                    variant: "primary"
-                    onClicked: createDialog.open()
+                } else {
+                    root.backRequested()
                 }
             }
+            onRefreshClicked: root.refreshFiles()
+            onRootClicked: root.openedFolderId = -1
+
+            AppButton {
+                visible: root.openedFolderId >= 0
+                text: root.showHistory ? qsTr("Fichiers") : qsTr("Historique")
+                variant: "ghost"
+                onClicked: root.showHistory = !root.showHistory
+            }
+
+            AppButton {
+                visible: root.openedFolderId >= 0
+                enabled: root.openedFolderIsLocalOrigin
+                text: qsTr("Réindexer")
+                variant: "secondary"
+                onClicked: {
+                    if (root.context) {
+                        root.context.shareFolder(root.openedFolderId)
+                        root.refreshFiles()
+                        root.refreshHistory()
+                    }
+                }
+            }
+
+            // ---- Menu « ⋯ » regroupant les actions secondaires ----
+            // Exclusions et Gérer les accès sont fusionnés ici pour
+            // éviter le débordement horizontal de la barre d'actions
+            // quand la fenêtre n'est pas assez large.
+            AppButton {
+                id: moreActionsBtn
+                visible: root.openedFolderId >= 0
+                text: qsTr("⋯")
+                variant: "secondary"
+                onClicked: moreActionsMenu.open()
+
+                Menu {
+                    id: moreActionsMenu
+                    // Ancré sous le bouton pour rester dans l'écran
+                    y: parent.height + 2
+
+                    MenuItem {
+                        text: qsTr("Exclusions…")
+                        onTriggered: {
+                            editExcludePatternsDialog.targetFolderId = root.openedFolderId
+                            editExcludePatternsDialog.targetFolderName = root.openedFolderName
+                            editExcludePatternsDialog.open()
+                        }
+                    }
+                    MenuItem {
+                        text: qsTr("Gérer les accès…")
+                        onTriggered: {
+                            manageAccessDialog.targetFolderId = root.openedFolderId
+                            manageAccessDialog.targetFolderName = root.openedFolderName
+                            manageAccessDialog.open()
+                        }
+                    }
+                }
+            }
+
+            AppButton {
+                visible: root.openedFolderId < 0
+                text: qsTr("+ Nouveau dossier")
+                variant: "primary"
+                onClicked: createDialog.open()
+            }
         }
+
+        // ---- Vue racine : sidebar de filtres + grille des dossiers partagés ----
+        RowLayout {
+            visible: root.openedFolderId < 0
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 0
+
+            // Panneau lateral (filtres rapides, composant partage).
+            ExplorerSidebar {
+                Layout.preferredWidth: 168
+                Layout.fillHeight: true
+                activeFilter: root.activeFilter
+                quickFilters: [
+                    { key: "all", label: qsTr("Tout"), color: Theme.textTertiary, dim: true },
+                    { key: "mine", label: qsTr("Mes dossiers"), color: Theme.primary },
+                    { key: "received", label: qsTr("Reçus"), color: Theme.accent }
+                ]
+                onFilterSelected: function(key) { root.activeFilter = key }
+            }
 
         // ---- Vue grille des dossiers partagés ----
         ScrollView {
@@ -1339,6 +1337,13 @@ Item {
                 delegate: Item {
                     width: gridView.cellWidth
                     height: gridView.cellHeight
+                    // Filtre visuel (panneau lateral) : le modele racine
+                    // reste celui de SharedFolderModel (C++), donc on masque
+                    // les tuiles hors filtre plutot que de reconstruire un
+                    // modele filtre - laisse d'eventuels espaces vides dans
+                    // la grille, a revoir avec un QSortFilterProxyModel si
+                    // besoin d'un rendu sans trous.
+                    visible: root.folderMatchesFilter(model.isLocalOrigin)
 
                     FolderTile {
                         anchors.centerIn: parent
@@ -1384,6 +1389,7 @@ Item {
                 }
             }
         }
+        }
 
         // ---- Vue liste des fichiers d'un dossier partagé ----
         ScrollView {
@@ -1415,6 +1421,7 @@ Item {
                         Label { Layout.fillWidth: true; text: qsTr("Nom"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
                         Label { Layout.preferredWidth: 90; text: qsTr("Taille"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
                         Label { Layout.preferredWidth: 60; text: qsTr("Version"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
+                        Label { Layout.preferredWidth: 90; text: qsTr("Statut"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
                     }
                 }
 
@@ -1505,6 +1512,11 @@ Item {
                                 text: fileRow.isFolder ? "" : "v" + modelData.version
                                 color: Theme.textSecondary
                                 font.pixelSize: Theme.fontSizeSmall
+                            }
+                            StatusBadge {
+                                visible: !fileRow.isFolder
+                                text: fileRow.hasConflict ? qsTr("Conflit") : qsTr("Synchronisé")
+                                tone: fileRow.hasConflict ? "warning" : "success"
                             }
                         }
 
@@ -1715,6 +1727,50 @@ Item {
                     color: Theme.textTertiary
                     horizontalAlignment: Text.AlignHCenter
                     font.pixelSize: Theme.fontSizeBody
+                }
+            }
+        }
+
+        // =========================================================
+        // Barre d'état inférieure (même style que FileTransferView)
+        // =========================================================
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 26
+            color: Theme.statusBarBackground
+            border.width: 1
+            border.color: Theme.border
+            visible: gridView.count > 0 || root.openedFolderId >= 0
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.spacingMedium
+                anchors.rightMargin: Theme.spacingMedium
+                spacing: Theme.spacingMedium
+
+                Label {
+                    text: qsTr("%1 dossier(s)").arg(gridView.count)
+                    font.pixelSize: Theme.fontSizeCaption
+                    color: Theme.textSecondary
+                    visible: root.openedFolderId < 0
+                }
+                Label {
+                    text: qsTr("%1 élément(s)").arg(filesListView.count)
+                    font.pixelSize: Theme.fontSizeCaption
+                    color: Theme.textSecondary
+                    visible: root.openedFolderId >= 0 && !root.showHistory
+                }
+                Label {
+                    text: qsTr("%1 entrée(s) d'historique").arg(historyListView.count)
+                    font.pixelSize: Theme.fontSizeCaption
+                    color: Theme.textSecondary
+                    visible: root.openedFolderId >= 0 && root.showHistory
+                }
+                Item { Layout.fillWidth: true }
+                Label {
+                    text: root.activeFilter !== "all" ? qsTr("🔍 Filtres actifs") : ""
+                    font.pixelSize: Theme.fontSizeCaption
+                    color: Theme.primary
                 }
             }
         }

@@ -64,57 +64,10 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // ---- Barre superieure (identique au style HomeView) ---------------
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            color: Theme.surface
-
-            Rectangle {
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 1
-                color: Theme.border
-            }
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: Theme.spacingMedium
-                anchors.rightMargin: Theme.spacingMedium
-                spacing: Theme.spacingMedium
-
-                Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    radius: Theme.radiusMedium
-                    color: settingsBackArea.containsMouse ? Theme.surfaceHover : "transparent"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\u2190"
-                        color: Theme.text
-                        font.pixelSize: 18
-                    }
-
-                    MouseArea {
-                        id: settingsBackArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.backRequested()
-                    }
-                }
-
-                Label {
-                    text: qsTr("Paramètres")
-                    font.pixelSize: Theme.fontSizeSubheading
-                    font.bold: true
-                    font.family: Theme.fontFamily
-                    color: Theme.text
-                }
-
-                Item { Layout.fillWidth: true }
-            }
+        // ---- Barre superieure (composant partage, cf. Components/AppHeader.qml) --
+        AppHeader {
+            title: qsTr("Paramètres")
+            onBackRequested: root.backRequested()
         }
 
         // ---- Contenu principal : colonne centree, largeur maximale --------

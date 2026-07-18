@@ -20,9 +20,11 @@
         <file>Themes/Theme.qml</file>
         <file>Themes/qmldir</file>
         <file>Components/ThemeToggleButton.qml</file>
+        <file>Components/AppHeader.qml</file>
         <file>Components/AppButton.qml</file>
         <file>Components/AppDialog.qml</file>
         <file>Components/IconButton.qml</file>
+        <file>Components/FaIcon.qml</file>
         <file>Components/Avatar.qml</file>
         <file>Components/BrandMark.qml</file>
         <file>Components/SidebarNavItem.qml</file>
@@ -33,6 +35,9 @@
         <file>Components/Toast.qml</file>
         <file>Components/ToastHost.qml</file>
         <file>Components/FolderTransferProgressHost.qml</file>
+        <file>Components/StatusBadge.qml</file>
+        <file>Components/ExplorerSidebar.qml</file>
+        <file>Components/ExplorerAddressBar.qml</file>
         <file>Components/ServerStatusIndicator.qml</file>
         <file>Assets/logo.png</file>
         <file>Assets/fonts/PTSerif-Bold.ttf</file>

@@ -88,6 +88,15 @@ Item {
     }
     readonly property string displayFont: serifFont.status === FontLoader.Ready ? serifFont.name : "serif"
 
+    // Le badge "postes en ligne" est centre sur toute la largeur de
+    // l'en-tete (anchors.centerIn), independamment du lockup a gauche et
+    // du profil a droite : sous une certaine largeur de fenetre (proche du
+    // minimumWidth de 640px defini dans Main.qml), son texte le plus long
+    // ("Recherche des postes...") peut chevaucher ces deux blocs. Sous ce
+    // seuil, on bascule sur une version compacte (pastille seule, sans
+    // libelle) pour eviter tout chevauchement visuel.
+    readonly property bool showPeersLabel: root.width >= 760
+
     Rectangle {
         anchors.fill: parent
         color: Theme.background
@@ -100,14 +109,19 @@ Item {
         // ---- En-tete : marque, badge central, profil -----------------------
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 76
+            // Alignee sur la hauteur (64px) utilisee par tous les autres
+            // ecrans (Postes connectes, Parametres, Appels, Discussions -
+            // cf. Components/AppHeader.qml) : Home restait a 76px, ce qui
+            // produisait un leger "saut" visuel de l'en-tete en naviguant
+            // depuis l'accueil.
+            Layout.preferredHeight: 64
             color: Theme.surface
             border.width: 1
             border.color: Theme.border
 
             Item {
                 anchors.fill: parent
-                anchors.margins: Theme.spacingLarge
+                anchors.margins: Theme.spacingMedium
 
                 // ---- Lockup de marque (logo + nom), aligne a gauche -------
                 RowLayout {
@@ -192,6 +206,7 @@ Item {
                         }
 
                         Label {
+                            visible: root.showPeersLabel
                             text: root.peersCount === 0
                                   ? qsTr("Recherche des postes...")
                                   : qsTr("%1 poste(s) en ligne").arg(root.peersCount)
@@ -208,6 +223,12 @@ Item {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: root.usersRequested()
+
+                        ToolTip.visible: !root.showPeersLabel && containsMouse
+                        ToolTip.delay: 300
+                        ToolTip.text: root.peersCount === 0
+                                      ? qsTr("Recherche des postes...")
+                                      : qsTr("%1 poste(s) en ligne").arg(root.peersCount)
                     }
                 }
 

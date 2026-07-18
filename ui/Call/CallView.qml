@@ -205,89 +205,28 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // ---- Barre superieure (identique au style Home/Parametres/
-        // Postes connectes) : retour circulaire + titre + badge. ----------
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            color: Theme.surface
+        // ---- Barre superieure (composant partage, cf. Components/AppHeader.qml) --
+        AppHeader {
+            title: qsTr("Appels")
+            leadingIcon: "\uf095"
+            leadingIconFontFamily: root.iconFontFamily
+            onBackRequested: root.backRequested()
 
             Rectangle {
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 1
-                color: Theme.border
-            }
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: Theme.spacingMedium
-                anchors.rightMargin: Theme.spacingMedium
-                spacing: Theme.spacingMedium
-
-                Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    radius: Theme.radiusMedium
-                    color: callBackArea.containsMouse ? Theme.surfaceHover : "transparent"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\u2190"
-                        color: Theme.text
-                        font.pixelSize: 18
-                    }
-
-                    MouseArea {
-                        id: callBackArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.backRequested()
-                    }
-                }
-
-                Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    radius: Theme.radiusMedium
-                    color: root.blueTint
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\uf095"
-                        font.family: root.iconFontFamily
-                        font.pixelSize: 15
-                        color: root.blue700
-                    }
-                }
+                Layout.preferredWidth: peersCountLabel.implicitWidth + Theme.spacingMedium * 2
+                Layout.preferredHeight: 28
+                radius: height / 2
+                color: Theme.surfaceAlt
+                border.color: Theme.border
+                border.width: 1
 
                 Label {
-                    text: qsTr("Appels")
-                    font.pixelSize: Theme.fontSizeSubheading
-                    font.bold: true
+                    id: peersCountLabel
+                    anchors.centerIn: parent
+                    text: root.peers ? qsTr("%n poste(s) en ligne", "", root.peers.count) : qsTr("0 poste")
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeSmall
                     font.family: Theme.fontFamily
-                    color: Theme.text
-                }
-
-                Item { Layout.fillWidth: true }
-
-                Rectangle {
-                    Layout.preferredWidth: peersCountLabel.implicitWidth + Theme.spacingMedium * 2
-                    Layout.preferredHeight: 28
-                    radius: height / 2
-                    color: Theme.surfaceAlt
-                    border.color: Theme.border
-                    border.width: 1
-
-                    Label {
-                        id: peersCountLabel
-                        anchors.centerIn: parent
-                        text: root.peers ? qsTr("%n poste(s) en ligne", "", root.peers.count) : qsTr("0 poste")
-                        color: Theme.textSecondary
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: Theme.fontFamily
-                    }
                 }
             }
         }

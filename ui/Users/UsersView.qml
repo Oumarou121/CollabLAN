@@ -70,73 +70,26 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // ---- Barre superieure (identique au style HomeView/SettingsView) --
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            color: Theme.surface
+        // ---- Barre superieure (composant partage, cf. Components/AppHeader.qml) --
+        AppHeader {
+            title: qsTr("Postes connectés")
+            onBackRequested: root.backRequested()
 
             Rectangle {
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 1
-                color: Theme.border
-            }
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: Theme.spacingMedium
-                anchors.rightMargin: Theme.spacingMedium
-                spacing: Theme.spacingMedium
-
-                Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    radius: Theme.radiusMedium
-                    color: usersBackArea.containsMouse ? Theme.surfaceHover : "transparent"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\u2190"
-                        color: Theme.text
-                        font.pixelSize: 18
-                    }
-
-                    MouseArea {
-                        id: usersBackArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.backRequested()
-                    }
-                }
+                Layout.preferredWidth: countLabel.implicitWidth + Theme.spacingMedium * 2
+                Layout.preferredHeight: 28
+                radius: height / 2
+                color: Theme.surfaceAlt
+                border.color: Theme.border
+                border.width: 1
 
                 Label {
-                    text: qsTr("Postes connectés")
-                    font.pixelSize: Theme.fontSizeSubheading
-                    font.bold: true
+                    id: countLabel
+                    anchors.centerIn: parent
+                    text: root.model ? qsTr("%n poste(s)", "", root.model.count) : qsTr("0 poste")
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeSmall
                     font.family: Theme.fontFamily
-                    color: Theme.text
-                }
-
-                Item { Layout.fillWidth: true }
-
-                Rectangle {
-                    Layout.preferredWidth: countLabel.implicitWidth + Theme.spacingMedium * 2
-                    Layout.preferredHeight: 28
-                    radius: height / 2
-                    color: Theme.surfaceAlt
-                    border.color: Theme.border
-                    border.width: 1
-
-                    Label {
-                        id: countLabel
-                        anchors.centerIn: parent
-                        text: root.model ? qsTr("%n poste(s)", "", root.model.count) : qsTr("0 poste")
-                        color: Theme.textSecondary
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: Theme.fontFamily
-                    }
                 }
             }
         }
