@@ -20,6 +20,8 @@
 #include "CallHistoryManager.h"
 #include "CallHistoryModel.h"
 #include "UserManagementModel.h"
+#include "AuditLogModel.h"
+#include "AuthorizedMachineModel.h"
 #include "SettingsModel.h"
 #include "Election/ElectionService.h"
 #include "Transfer/TransferService.h"
@@ -234,14 +236,28 @@ int main(int argc, char *argv[])
     callHistoryModel->setCallHistoryManager(application.callHistoryManager());
     engine.rootContext()->setContextProperty("callHistoryModel", callHistoryModel);
 
-    // CORRECTIF (refonte Admin) : AuditLogModel et AuthorizedMachineModel
-    // n'etaient consommes que par les onglets "Journal d'audit" et
-    // "Machines autorisees" d'AdminView.qml, retires car non utilises.
-    // AuditManager et PermissionManager restent actifs cote C++ (Application)
-    // -- ils continuent de journaliser les tentatives refusees et de faire
-    // respecter les machines autorisees au niveau reseau (MessagingService,
-    // MessagingServer, DiscoveryService) ; seule leur exposition/wrapper
-    // destines a cette UI admin disparaissent, pas la logique de securite.
+    // CORRECTIF : auditLogModel et authorizedMachineModel avaient ete retires
+    // du contexte QML lors d'une precedente passe de nettoyage ("non
+    // utilises"), en se basant sur le fait qu'AuditManager/PermissionManager
+    // restent actifs cote C++ (journalisation des tentatives refusees,
+    // controle des machines autorisees au niveau reseau - MessagingService/
+    // MessagingServer/DiscoveryService, voir plus haut). C'etait une erreur :
+    // AdminView.qml consomme directement "auditLogModel" (onglet "Journal
+    // d'audit" - model, filtres, export CSV) et "authorizedMachineModel"
+    // (onglet "Machines autorisees" - liste, ajout/revocation/suppression),
+    // par leur nom en tant que proprietes de contexte globales. Sans cette
+    // exposition, les deux onglets referencaient des identifiants QML
+    // indefinis : listes vides, boutons inoperants, warnings QML silencieux
+    // a l'exécution plutot qu'une erreur visible. On les recree ici, sur le
+    // meme patron que callHistoryModel/userManagementModel ci-dessus.
+    core::AuditLogModel *auditLogModel = new core::AuditLogModel(&engine);
+    auditLogModel->setAuditManager(reinterpret_cast<QObject*>(application.auditManager()));
+    engine.rootContext()->setContextProperty("auditLogModel", auditLogModel);
+
+    core::AuthorizedMachineModel *authorizedMachineModel = new core::AuthorizedMachineModel(&engine);
+    authorizedMachineModel->setPermissionManager(application.permissionManager());
+    authorizedMachineModel->refresh();
+    engine.rootContext()->setContextProperty("authorizedMachineModel", authorizedMachineModel);
 
     // Créer et exposer le modèle de gestion des utilisateurs (issue #69).
     core::UserManagementModel *userManagementModel = new core::UserManagementModel(&engine);

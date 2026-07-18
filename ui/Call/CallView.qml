@@ -119,6 +119,24 @@ Item {
                        : d.toLocaleString(Qt.locale(), "dd/MM/yyyy HH:mm")
     }
 
+    // Nom affiche pour le correspondant courant : core::CallContext ne
+    // connait que l'adresse IP (remoteAddress), donc on resout le nom via
+    // peersModel (network::PeersModel::nameForAddress) - celui-ci connait
+    // les postes actuellement detectes sur le reseau local. Repli sur
+    // l'adresse IP brute si le correspondant n'est pas (ou plus) dans la
+    // liste des postes decouverts (ex. appel recu d'un poste deja perdu).
+    readonly property string remoteDisplayName: {
+        const addr = root.call ? root.call.remoteAddress : ""
+        if (!addr)
+            return ""
+        // Force la reevaluation quand la liste de postes change (un
+        // correspondant peut etre (re)decouvert pendant que la sonnerie
+        // est deja affichee).
+        const _dep = root.peers ? root.peers.count : 0
+        const resolved = root.peers ? root.peers.nameForAddress(addr) : ""
+        return (resolved && resolved.length > 0) ? resolved : addr
+    }
+
     // Duree ecoulee affichee pendant un appel en cours.
     property int connectedSeconds: 0
     Timer {
@@ -733,13 +751,13 @@ Item {
                 Avatar {
                     anchors.centerIn: parent
                     size: 96
-                    name: root.call ? root.call.remoteAddress : ""
+                    name: root.remoteDisplayName
                 }
             }
 
             Label {
                 Layout.alignment: Qt.AlignHCenter
-                text: root.call ? root.call.remoteAddress : ""
+                text: root.remoteDisplayName
                 color: Theme.text
                 font.pixelSize: Theme.fontSizeHeading
                 font.bold: true

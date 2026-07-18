@@ -74,6 +74,15 @@ int PeersModel::count() const
     return m_peers.size();
 }
 
+QString PeersModel::nameForAddress(const QString &address) const
+{
+    for (const DiscoveredPeer &peer : m_peers) {
+        if (peer.address.toString() == address)
+            return peer.name;
+    }
+    return QString();
+}
+
 int PeersModel::indexOfPeer(const QString &id) const
 {
     for (int i = 0; i < m_peers.size(); ++i) {

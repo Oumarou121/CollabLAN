@@ -7,6 +7,8 @@
 
 namespace core {
 
+class PermissionManager;
+
 /**
  * @brief Modèle QML pour la liste des machines autorisées/révoquées (issue #68, #69).
  */
@@ -38,11 +40,11 @@ public:
     Q_INVOKABLE bool authorizeMachine(int id, const QString &reason);
     Q_INVOKABLE bool removeMachine(int id);
 
-    void setPermissionManager(QObject *manager);
+    void setPermissionManager(core::PermissionManager *manager);
 
 private:
     QVector<models::AuthorizedMachine> m_machines;
-    QObject *m_permissionManager = nullptr;
+    core::PermissionManager *m_permissionManager = nullptr;
 };
 
 } // namespace core

@@ -43,6 +43,14 @@ public:
 
     int count() const;
 
+    /// Nom du poste correspondant a l'adresse IP donnee, tel que decouvert
+    /// sur le reseau local, ou chaine vide si aucun poste connu ne
+    /// correspond (ex. le correspondant a ete perdu depuis, ou l'appel a
+    /// ete recu d'une adresse jamais annoncee). Utilise par CallView.qml
+    /// pour afficher un nom plutot que l'adresse IP brute exposee par
+    /// core::CallContext::remoteAddress.
+    Q_INVOKABLE QString nameForAddress(const QString &address) const;
+
 signals:
     void countChanged();
 
