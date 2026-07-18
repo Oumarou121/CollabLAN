@@ -16,6 +16,7 @@ Item {
     property var conversationId: 0
     property string name: ""
     property int currentUserId: messagingContext ? messagingContext.currentUserId() : 0
+    readonly property bool isGroup: messagingContext ? messagingContext.isGroupConversation(conversationId) : false
 
     // CORRECTIF (refonte UI type WhatsApp Web) : quand ChatView est le
     // panneau de droite de ChatWorkspaceView, il n'y a rien "en dessous"
@@ -264,7 +265,7 @@ Item {
                             Label {
                                 Layout.fillWidth: true
                                 text: messagingContext ? messagingContext.userName(senderId) : ""
-                                visible: !messageDelegate.isMine
+                                visible: !messageDelegate.isMine && root.isGroup
                                 font.pixelSize: Theme.fontSizeCaption
                                 font.bold: true
                                 font.family: Theme.fontFamily

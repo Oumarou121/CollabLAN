@@ -25,7 +25,7 @@ Item {
     implicitHeight: size
 
     readonly property bool hasName: name && name.length > 0
-    readonly property color bgColor: root.hasName ? Theme.colorForName(name) : Theme.textTertiary
+    readonly property color bgColor: root.hasName ? Theme.primary : Theme.textTertiary
     readonly property string initial: root.hasName ? name.charAt(0).toUpperCase() : ""
 
     FontLoader {

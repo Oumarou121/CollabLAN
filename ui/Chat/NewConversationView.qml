@@ -108,12 +108,12 @@ Item {
                     color: Theme.text
                     font.pixelSize: Theme.fontSizeBody
                     font.family: Theme.fontFamily
-                    leftPadding: Theme.spacingLarge
+                    leftPadding: 40
                     selectByMouse: true
 
                     background: Rectangle {
                         color: Theme.surfaceAlt
-                        radius: Theme.radiusPill
+                        radius: Theme.radiusLarge
                         border.width: searchField.activeFocus ? 2 : 0
                         border.color: Theme.primary
                     }

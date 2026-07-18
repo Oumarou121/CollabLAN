@@ -88,41 +88,13 @@ Item {
                     elide: Text.ElideRight
                 }
 
-                // CORRECTIF (refonte UI) : en panneau etroit (split-view type
-                // WhatsApp Web, ~340px), les boutons texte "Nouveau"/"Groupe"
-                // debordaient a cote du titre. root.compactActions bascule
-                // vers des boutons icone-seule (IconButton, meme gabarit que
-                // la fleche retour), le texte complet restant disponible en
-                // plein ecran.
-                IconButton {
-                    glyph: "\uf0e0"
-                    variant: "ghost"
-                    visible: root.compactActions
-                    onClicked: root.newConversationRequested()
-                }
-
+                // Bouton unique qui ouvre un modal pour choisir entre
+                // nouvelle conversation et nouveau groupe
                 IconButton {
                     glyph: "\uf067"
                     variant: "primary"
                     iconSize: Theme.fontSizeHeading
-                    visible: root.compactActions
-                    onClicked: root.createGroupRequested()
-                }
-
-                AppButton {
-                    variant: "ghost"
-                    iconGlyph: "\u2709"
-                    text: qsTr("Nouveau")
-                    visible: !root.compactActions
-                    onClicked: root.newConversationRequested()
-                }
-
-                AppButton {
-                    variant: "primary"
-                    iconGlyph: "+"
-                    text: qsTr("Groupe")
-                    visible: !root.compactActions
-                    onClicked: root.createGroupRequested()
+                    onClicked: actionMenu.visible = true
                 }
             }
         }
@@ -130,7 +102,7 @@ Item {
         // Barre de recherche
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: 56
+            Layout.preferredHeight: 75
             Layout.margins: 0
 
             TextField {
@@ -141,12 +113,12 @@ Item {
                 color: Theme.text
                 font.pixelSize: Theme.fontSizeBody
                 font.family: Theme.fontFamily
-                leftPadding: Theme.spacingLarge
+                leftPadding: 40
                 selectByMouse: true
 
                 background: Rectangle {
                     color: Theme.surfaceAlt
-                    radius: Theme.radiusPill
+                    radius: Theme.radiusLarge
                     border.width: searchField.activeFocus ? 2 : 0
                     border.color: Theme.primary
                 }
@@ -330,6 +302,78 @@ Item {
                 color: Theme.textSecondary
                 font.pixelSize: Theme.fontSizeBody
                 font.family: Theme.fontFamily
+            }
+        }
+    }
+
+    // Modal de choix d'action
+    Rectangle {
+        id: actionMenu
+        anchors.fill: parent
+        visible: false
+        color: "#40000000"
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: actionMenu.visible = false
+        }
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: Math.min(320, parent.width - Theme.spacingXl * 2)
+            height: actionColumn.implicitHeight + Theme.spacingLarge * 2
+            radius: Theme.radiusLarge
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.border
+
+            ColumnLayout {
+                id: actionColumn
+                anchors.fill: parent
+                anchors.margins: Theme.spacingLarge
+                spacing: Theme.spacingMedium
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Nouvelle action")
+                    font.pixelSize: Theme.fontSizeSubheading
+                    font.bold: true
+                    font.family: Theme.fontFamily
+                    color: Theme.text
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: Theme.border
+                }
+
+                AppButton {
+                    Layout.fillWidth: true
+                    variant: "ghost"
+                    text: qsTr("Nouvelle conversation")
+                    onClicked: {
+                        actionMenu.visible = false
+                        root.newConversationRequested()
+                    }
+                }
+
+                AppButton {
+                    Layout.fillWidth: true
+                    variant: "ghost"
+                    text: qsTr("Nouveau groupe")
+                    onClicked: {
+                        actionMenu.visible = false
+                        root.createGroupRequested()
+                    }
+                }
+
+                AppButton {
+                    Layout.fillWidth: true
+                    variant: "ghost"
+                    text: qsTr("Annuler")
+                    onClicked: actionMenu.visible = false
+                }
             }
         }
     }

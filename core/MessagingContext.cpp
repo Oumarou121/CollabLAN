@@ -329,6 +329,25 @@ QString MessagingContext::conversationDisplayName(qint64 conversationId) const
     return QString();
 }
 
+bool MessagingContext::isGroupConversation(qint64 conversationId) const
+{
+    if (conversationId <= 0) {
+        return false;
+    }
+
+    // Vérifie si la conversation correspond à un groupe
+    if (m_groupManager) {
+        const auto groups = m_groupManager->getUserGroups(currentUserId());
+        for (const auto &group : groups) {
+            if (group.conversationId() == conversationId) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 void MessagingContext::sendMessage(const QString &content)
 {
     if (!m_messagingManager) {

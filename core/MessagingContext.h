@@ -55,6 +55,11 @@ public:
     /// la conversation est inconnue.
     Q_INVOKABLE QString conversationDisplayName(qint64 conversationId) const;
 
+    /// Détermine si une conversation est un groupe (true) ou une
+    /// conversation individuelle (false). Utilisé par ChatView pour
+    /// décider d'afficher ou non le nom de l'expéditeur sur chaque message.
+    Q_INVOKABLE bool isGroupConversation(qint64 conversationId) const;
+
     /// Envoie un message dans la conversation active.
     Q_INVOKABLE void sendMessage(const QString &content);
 
