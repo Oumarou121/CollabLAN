@@ -148,7 +148,7 @@ Item {
                     color: Theme.surfaceAlt
                     radius: Theme.radiusPill
                     border.width: searchField.activeFocus ? 2 : 0
-                    border.color: Theme.navy700
+                    border.color: Theme.primary
                 }
 
                 Text {

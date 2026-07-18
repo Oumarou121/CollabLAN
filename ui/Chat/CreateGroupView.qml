@@ -116,7 +116,7 @@ Item {
                         background: Rectangle {
                             color: Theme.surfaceAlt
                             radius: Theme.radiusMedium
-                            border.color: groupNameField.activeFocus ? Theme.navy700 : Theme.border
+                            border.color: groupNameField.activeFocus ? Theme.primary : Theme.border
                             border.width: groupNameField.activeFocus ? 2 : 1
                         }
                     }
@@ -181,7 +181,7 @@ Item {
                             color: Theme.surfaceAlt
                             radius: Theme.radiusPill
                             border.width: memberSearchField.activeFocus ? 2 : 0
-                            border.color: Theme.navy700
+                            border.color: Theme.primary
                         }
 
                         Text {

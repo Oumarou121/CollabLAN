@@ -49,13 +49,13 @@ Item {
         if (!root.enabledLook) return Theme.surfaceAlt
         if (isPrimary) return mouseArea.pressed ? Theme.primaryHover : Theme.primary
         if (isDanger) return mouseArea.pressed ? Theme.error : Theme.errorMuted
-        return mouseArea.containsMouse ? Theme.navyTint : "transparent"
+        return mouseArea.containsMouse ? Theme.surfaceHover : "transparent"
     }
 
     readonly property color glyphColor: {
         if (!root.enabledLook) return Theme.textTertiary
         if (isPrimary || isDanger) return Theme.primaryText
-        return Theme.navy700
+        return Theme.text
     }
 
     Rectangle {

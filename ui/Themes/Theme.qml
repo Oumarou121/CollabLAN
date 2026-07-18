@@ -44,14 +44,6 @@ QtObject {
     readonly property color accentDark: primaryHover
     readonly property color primaryText: "#FFFFFF"
 
-    // Bleu marine institutionnel (identite Login/Home/Postes connectes) --
-    // jusqu'ici duplique localement dans chaque ecran (blue700/blue600/
-    // blueTint) ; expose ici comme jeton partage pour que d'autres ecrans
-    // (Chat) puissent s'y aligner sans le redupliquer une 4e fois.
-    readonly property color navy700: darkMode ? "#3E6C99" : "#1E3A5F"
-    readonly property color navy600: darkMode ? "#4E86B8" : "#2E6BAA"
-    readonly property color navyTint: darkMode ? "#1B2531" : "#E8F1F9"
-
     readonly property color text: darkMode ? "#F2F3F7" : "#1A1D29"
     readonly property color textSecondary: darkMode ? "#9AA0B2" : "#616881"
     readonly property color textTertiary: darkMode ? "#6E7486" : "#8B92A6"
