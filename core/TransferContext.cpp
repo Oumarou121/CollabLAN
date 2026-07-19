@@ -1,4 +1,4 @@
-#include "TransferContext.h"
+﻿#include "TransferContext.h"
 
 #include <QDebug>
 #include <QDateTime>
@@ -77,11 +77,27 @@ void TransferContext::setPeersModel(network::PeersModel *model)
 
 void TransferContext::setUserManager(UserManager *manager)
 {
+    if (m_userManager == manager) {
+        return;
+    }
+
+    if (m_userManager) {
+        disconnect(m_userManager, nullptr, this, nullptr);
+    }
+
     m_userManager = manager;
+
+    if (m_userManager) {
+        connect(m_userManager, &UserManager::authenticationChanged,
+                this, &TransferContext::loadHistory);
+        connect(m_userManager, &UserManager::usersChanged,
+                this, &TransferContext::loadHistory);
+    }
 
     // Refait le calcul Envoi/Reception de l'historique deja charge
     // (base sur senderUuid == utilisateur courant), potentiellement
-    // indetermine si setUserManager() est appele apres setTransferManager().
+    // indetermine si setUserManager() est appele apres setTransferManager()
+    // ou avant la connexion effective de l'utilisateur.
     loadHistory();
 }
 
