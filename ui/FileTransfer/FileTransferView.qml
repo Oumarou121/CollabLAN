@@ -102,17 +102,24 @@ Item {
         for (let i = 0; i < transfers.length; i++) {
             const item = transfers[i]
             const rawAddress = item.peerAddress || ""
-            const key = rawAddress.length > 0
-                        ? root.normalizePeerAddress(rawAddress)
-                        : "__unknown__"
+            const peerMachineId = item.peerMachineId || ""
+
+            // CORRECTIF : utiliser peerMachineId (UUID) comme clé primaire
+            // pour garantir un dossier unique par correspondant. L'UUID est
+            // unique même si plusieurs utilisateurs partagent la même adresse
+            // IP (cas NAT). En repli, utiliser l'adresse IP normalisée.
+            const key = peerMachineId.length > 0
+                        ? "uuid:" + peerMachineId
+                        : (rawAddress.length > 0 ? root.normalizePeerAddress(rawAddress) : "__unknown__")
 
             if (!groupsByKey[key]) {
                 groupsByKey[key] = {
                     peerKey: key,
                     peerLabel: (item.peerName && item.peerName.length > 0) ? item.peerName
-                               : (rawAddress.length > 0) ? rawAddress
-                               : qsTr("Correspondant inconnu"),
+                               : (rawAddress.length > 0 ? rawAddress
+                               : qsTr("Correspondant inconnu")),
                     peerAddress: rawAddress,
+                    peerMachineId: peerMachineId,
                     items: [],
                     lastTimestampMs: 0
                 }
@@ -120,8 +127,12 @@ Item {
             }
 
             const group = groupsByKey[key]
+            // Mettre à jour peerLabel si on reçoit un nom plus tard
+            // (seulement si le label actuel est l'adresse ou "Correspondant inconnu")
             if (item.peerName && item.peerName.length > 0) {
-                group.peerLabel = item.peerName
+                if (group.peerLabel === rawAddress || group.peerLabel === qsTr("Correspondant inconnu")) {
+                    group.peerLabel = item.peerName
+                }
             }
             if (rawAddress.length > 0 && group.peerAddress.toLowerCase().indexOf("::ffff:") === 0
                     && rawAddress.toLowerCase().indexOf("::ffff:") !== 0) {
@@ -604,7 +615,12 @@ Item {
                             result.push({
                                 label: peers[i].name + " (" + peers[i].address + ")",
                                 address: peers[i].address,
-                                port: peers[i].port
+                                port: peers[i].port,
+                                // CORRECTIF : UUID du pair choisi, transmis a sendFile()
+                                // pour que l'envoi et la reception d'un meme correspondant
+                                // se regroupent dans le meme dossier/tuile (voir
+                                // buildPeerGroups() plus haut et TransferManager::sendFile()).
+                                machineId: peers[i].id
                             })
                         }
                         return result
@@ -701,7 +717,7 @@ Item {
                     onClicked: {
                         const selected = recipientCombo.model[recipientCombo.currentIndex]
                         if (!selected || !root.context) return
-                        if (root.context.sendFile(root.selectedFilePath.toString(), selected.address, selected.port)) {
+                        if (root.context.sendFile(root.selectedFilePath.toString(), selected.address, selected.port, selected.machineId)) {
                             root.selectedFilePath = ""
                             root.selectedFileName = ""
                         } else {

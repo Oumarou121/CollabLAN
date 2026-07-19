@@ -116,6 +116,16 @@ void DiscoveryService::setLocalName(const QString &name)
     m_localName = name;
 }
 
+QString DiscoveryService::localUserUuid() const
+{
+    return m_localUserUuid;
+}
+
+void DiscoveryService::setLocalUserUuid(const QString &uuid)
+{
+    m_localUserUuid = uuid;
+}
+
 QString DiscoveryService::localStatus() const
 {
     return m_localStatus;
@@ -201,6 +211,11 @@ void DiscoveryService::sendAnnounce()
     packet["version"] = kPacketVersion;
     packet["id"] = m_localId;
     packet["name"] = m_localName;
+    // Bug #2 (recipient_uuid toujours vide) : diffuse aussi le compte
+    // utilisateur actuellement connecte, comme le fait deja "name" pour le
+    // nom d'utilisateur. Absent (chaine vide) tant qu'aucune authentification
+    // n'a reussi sur ce poste, cf. setLocalUserUuid().
+    packet["userUuid"] = m_localUserUuid;
     packet["status"] = m_localStatus;
     packet["port"] = m_port;
     packet["transferPort"] = static_cast<int>(m_transferPort);
@@ -259,6 +274,7 @@ void DiscoveryService::handleAnnouncePacket(const QByteArray &data, const QHostA
     DiscoveredPeer peer;
     peer.id = peerId;
     peer.name = obj.value("name").toString();
+    peer.userUuid = obj.value("userUuid").toString();
     peer.status = obj.value("status").toString(QStringLiteral("online"));
     peer.address = senderAddress;
     peer.port = static_cast<quint16>(obj.value("port").toInt(m_port));
@@ -270,6 +286,7 @@ void DiscoveryService::handleAnnouncePacket(const QByteArray &data, const QHostA
     const bool isNewPeer = (existingIt == m_peers.constEnd());
     const bool hasChanged = !isNewPeer
         && (existingIt->name != peer.name
+            || existingIt->userUuid != peer.userUuid
             || existingIt->status != peer.status
             || existingIt->address != peer.address
             || existingIt->port != peer.port

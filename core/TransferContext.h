@@ -76,7 +76,15 @@ public:
      * @return false immediatement si le fichier est invalide ou si
      * l'envoi n'a pas pu demarrer ; true si le transfert est lance.
      */
-    Q_INVOKABLE bool sendFile(const QString &filePath, const QString &address, int portHint = -1);
+    /// peerMachineId (optionnel) : UUID DiscoveryService du destinataire
+    /// choisi (voir availableRecipients()), transmis tel quel a
+    /// TransferManager::sendFile() pour eviter une re-resolution par
+    /// adresse IP a l'arrivee de transferStarted() -- resolution qui peut
+    /// echouer sur une machine multi-interfaces et faire atterrir l'envoi
+    /// et la reception d'un meme correspondant dans deux dossiers/tuiles
+    /// distincts cote UI (voir FileTransferView.qml::buildPeerGroups()).
+    Q_INVOKABLE bool sendFile(const QString &filePath, const QString &address, int portHint = -1,
+                              const QString &peerMachineId = QString());
 
     /**
      * @brief Relance un envoi precedemment echoue (transferKey issu de

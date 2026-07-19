@@ -141,13 +141,19 @@ QVariantList TransferContext::availableRecipients() const
         entry[QStringLiteral("address")] = m_peersModel->data(idx, network::PeersModel::AddressRole);
         entry[QStringLiteral("port")] = m_peersModel->data(idx, network::PeersModel::TransferPortRole);
         entry[QStringLiteral("status")] = m_peersModel->data(idx, network::PeersModel::StatusRole);
+        // id (UUID DiscoveryService) : indispensable pour que sendFile()
+        // puisse transmettre le peerMachineId exact du destinataire choisi,
+        // au lieu de le re-deviner plus tard par adresse IP (fragile sur
+        // machine multi-interfaces, voir sendFile()/resolvePeerMachineId()).
+        entry[QStringLiteral("id")] = m_peersModel->data(idx, network::PeersModel::IdRole);
         list.append(entry);
     }
 
     return list;
 }
 
-bool TransferContext::sendFile(const QString &filePath, const QString &address, int portHint)
+bool TransferContext::sendFile(const QString &filePath, const QString &address, int portHint,
+                                const QString &peerMachineId)
 {
     if (!m_transferManager) {
         emit transferRejected(tr("Le service de transfert n'est pas disponible."));
@@ -179,13 +185,23 @@ bool TransferContext::sendFile(const QString &filePath, const QString &address, 
                                        : network::TransferService::defaultPort();
 
     // senderUuid identifie l'utilisateur courant dans l'historique persiste
-    // (issue #55, migration #017) ; recipientUuid n'est pas resolvable a
-    // partir d'un poste reseau (aucun compte utilisateur associe a un pair
-    // decouvert), donc laisse vide plutot que de deviner un identifiant
-    // errone (voir peer_machine_id, migration #016, pour l'identification
-    // fiable du poste lui-meme).
+    // (issue #55, migration #017).
     const QString senderUuid = m_userManager ? m_userManager->currentUserUuid() : QString();
-    const QString recipientUuid;
+
+    // CORRECTIF (bug #2 : recipient_uuid toujours vide) : DiscoveryService
+    // diffuse desormais aussi l'UUID du compte utilisateur connecte sur
+    // chaque poste (cf. DiscoveryService::setLocalUserUuid(), alimente sur
+    // authenticationChanged dans Application.cpp), en plus du nom "lisible"
+    // qu'il diffusait deja. On peut donc resoudre recipientUuid a partir du
+    // peerMachineId choisi par l'utilisateur, exactement comme peer_name
+    // est deja resolu ailleurs (resolvePeerName()). Reste vide si le pair
+    // n'a jamais authentifie de compte (ou n'est plus dans peersModel() au
+    // moment de l'envoi) : dans ce cas l'historique reste sans compte
+    // associe, comme avant ce correctif, mais sans jamais deviner un
+    // identifiant errone.
+    const QString recipientUuid = m_peersModel
+        ? m_peersModel->userUuidForMachineId(peerMachineId)
+        : QString();
 
     // TransferService::transferStarted() (qui alimente activeTransfers)
     // n'est emis qu'une fois la connexion TCP etablie, de maniere
@@ -196,7 +212,8 @@ bool TransferContext::sendFile(const QString &filePath, const QString &address, 
     m_pendingSendFilePaths[fileName].append(localPath);
     m_pendingSendPorts[fileName].append(static_cast<int>(port));
 
-    const bool started = m_transferManager->sendFile(host, port, localPath, senderUuid, recipientUuid);
+    const bool started = m_transferManager->sendFile(host, port, localPath, senderUuid, recipientUuid,
+                                                       peerMachineId);
     if (!started) {
         QStringList &pending = m_pendingSendFilePaths[fileName];
         pending.removeOne(localPath);
@@ -340,6 +357,7 @@ void TransferContext::onTransferStarted(const QString &transferKey, const QStrin
     entry[QStringLiteral("errorString")] = QString();
     entry[QStringLiteral("peerAddress")] = peerAddress.isNull() ? QString() : peerAddress.toString();
     entry[QStringLiteral("peerName")] = resolvePeerName(peerAddress, peerMachineId);
+    entry[QStringLiteral("peerMachineId")] = peerMachineId;
     entry[QStringLiteral("timestamp")] = QDateTime::currentDateTime().toString(Qt::ISODate);
 
     // Pour un envoi, le chemin local est deja connu (voir sendFile()) ;
@@ -403,6 +421,7 @@ void TransferContext::onTransferProgress(const QString &transferKey, qint64 byte
         entry[QStringLiteral("filePath")] = QString();
         entry[QStringLiteral("peerAddress")] = QString();
         entry[QStringLiteral("peerName")] = QString();
+        entry[QStringLiteral("peerMachineId")] = QString();
         entry[QStringLiteral("timestamp")] = QDateTime::currentDateTime().toString(Qt::ISODate);
         m_activeTransfers.append(entry);
         emit activeTransfersChanged();

@@ -19,6 +19,7 @@ namespace network {
 struct DiscoveredPeer {
     QString id;             ///< Identifiant unique du poste (genere au demarrage de DiscoveryService)
     QString name;           ///< Nom lisible du poste (hostname par defaut)
+    QString userUuid;       ///< UUID du compte utilisateur actuellement connecte sur ce poste (vide si aucun, cf. setLocalUserUuid())
     QString status;         ///< Statut declare ("online", "away", "busy"...)
     QHostAddress address;   ///< Adresse IP source de la derniere annonce recue
     quint16 port = 0;       ///< Port UDP utilise par le poste distant
@@ -93,6 +94,15 @@ public:
     QString localName() const;
     void setLocalName(const QString &name);
 
+    /// UUID du compte utilisateur actuellement connecte localement (vide
+    /// tant qu'aucune authentification n'a reussi). Diffuse dans chaque
+    /// paquet d'annonce (bug #2 : recipient_uuid toujours vide) pour que
+    /// les autres postes puissent resoudre le compte utilisateur associe
+    /// a ce poste, chose qu'un simple machine_id ne permet pas (le
+    /// machine_id identifie le POSTE, pas le compte qui y est connecte).
+    QString localUserUuid() const;
+    void setLocalUserUuid(const QString &uuid);
+
     /// Statut annonce aux autres postes ("online" par defaut).
     QString localStatus() const;
     void setLocalStatus(const QString &status);
@@ -153,6 +163,7 @@ private:
 
     QString m_localId;
     QString m_localName;
+    QString m_localUserUuid;
     QString m_localStatus = QStringLiteral("online");
 
     quint16 m_port = 45454;

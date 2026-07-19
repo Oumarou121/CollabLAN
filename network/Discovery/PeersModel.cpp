@@ -38,6 +38,8 @@ QVariant PeersModel::data(const QModelIndex &index, int role) const
         return peer.id;
     case NameRole:
         return peer.name;
+    case UserUuidRole:
+        return peer.userUuid;
     case StatusRole:
         return peer.status;
     case AddressRole:
@@ -60,6 +62,7 @@ QHash<int, QByteArray> PeersModel::roleNames() const
     return {
         { IdRole, "peerId" },
         { NameRole, "name" },
+        { UserUuidRole, "userUuid" },
         { StatusRole, "status" },
         { AddressRole, "address" },
         { PortRole, "port" },
@@ -79,6 +82,17 @@ QString PeersModel::nameForAddress(const QString &address) const
     for (const DiscoveredPeer &peer : m_peers) {
         if (peer.address.toString() == address)
             return peer.name;
+    }
+    return QString();
+}
+
+QString PeersModel::userUuidForMachineId(const QString &machineId) const
+{
+    if (machineId.isEmpty())
+        return QString();
+    for (const DiscoveredPeer &peer : m_peers) {
+        if (peer.id == machineId)
+            return peer.userUuid;
     }
     return QString();
 }

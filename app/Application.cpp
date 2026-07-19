@@ -774,6 +774,12 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                     const QString username = m_userManager->currentUsername();
                     if (!username.isEmpty())
                         m_discoveryService->setLocalName(username);
+                    // Bug #2 (recipient_uuid toujours vide) : diffuse aussi
+                    // l'UUID du compte connecte, pour que sendFile() puisse
+                    // resoudre recipientUuid a partir du peerMachineId choisi
+                    // (cf. TransferContext::sendFile()). Remis a vide sur
+                    // deconnexion, comme currentUsername().
+                    m_discoveryService->setLocalUserUuid(m_userManager->currentUserUuid());
                 });
     }
 
@@ -848,31 +854,67 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
         // correspondant dans un seul sous-dossier de receiveDirectory()
         // (ex. "CollabLAN Transfers/laptop-marie/"), a la maniere d'un
         // explorateur de fichiers Windows organise par contact plutot
-        // qu'un unique repertoire plat. Priorite au nom lisible du pair
-        // (hostname annonce par DiscoveryService) s'il est actuellement
-        // decouvert sur le reseau ; TransferService retombe de lui-meme
-        // sur l'UUID machine brut puis sur l'adresse IP si ce nom n'est
-        // pas resolu (voir TransferService::setPeerFolderNameResolver()).
+        // qu'un unique repertoire plat.
+        //
+        // CORRECTIF (dossiers dupliques pour un meme correspondant) : le
+        // nom "lisible" annonce par DiscoveryService (peer.name) est en
+        // realite le nom d'utilisateur *actuellement* connecte sur le
+        // poste distant (cf. setLocalName() sur authenticationChanged,
+        // juste au-dessus). Comme ce nom peut changer d'un transfert a
+        // l'autre pour le meme peerMachineId (reconnexion sous un autre
+        // compte, pair momentanement absent de DiscoveryService::peers()
+        // au moment precis de la reception), l'utiliser directement pour
+        // nommer le dossier faisait migrer les fichiers d'un correspondant
+        // deja connu vers un nouveau sous-dossier a chaque changement,
+        // au lieu de les regrouper durablement dans le meme. On fige donc
+        // ici, dans la table Settings locale (cle "peer_folder_name:<uuid>"),
+        // le premier nom lisible resolu pour un peerMachineId donne, et on
+        // le reutilise ensuite systematiquement. Meme cle/convention que
+        // core::TransferManager::resolvePeerName() pour que le nom du
+        // sous-dossier physique et le peer_name affiche dans l'historique
+        // restent toujours identiques pour un meme correspondant.
         network::DiscoveryService *discoveryService = m_discoveryService;
+        database::DatabaseManager *dbManager = m_databaseManager.get();
         m_transferService->setPeerFolderNameResolver(
-            [discoveryService](const QHostAddress &peerAddress, const QString &peerMachineId) -> QString {
+            [discoveryService, dbManager](const QHostAddress &peerAddress, const QString &peerMachineId) -> QString {
+                const QString cacheKey = peerMachineId.isEmpty()
+                    ? QString()
+                    : QStringLiteral("peer_folder_name:%1").arg(peerMachineId);
+                if (!cacheKey.isEmpty() && dbManager) {
+                    database::SettingsRepository settingsRepository(dbManager->database());
+                    const auto cached = settingsRepository.findByKey(cacheKey);
+                    if (cached.has_value() && !cached->value().toString().isEmpty()) {
+                        return cached->value().toString();
+                    }
+                }
+
                 if (!discoveryService) {
                     return QString();
                 }
                 const QList<network::DiscoveredPeer> peers = discoveryService->peers();
+                QString liveName;
                 if (!peerMachineId.isEmpty()) {
                     for (const network::DiscoveredPeer &peer : peers) {
                         if (peer.id == peerMachineId) {
-                            return peer.name;
+                            liveName = peer.name;
+                            break;
                         }
                     }
                 }
-                for (const network::DiscoveredPeer &peer : peers) {
-                    if (peer.address.isEqual(peerAddress, QHostAddress::TolerantConversion)) {
-                        return peer.name;
+                if (liveName.isEmpty()) {
+                    for (const network::DiscoveredPeer &peer : peers) {
+                        if (peer.address.isEqual(peerAddress, QHostAddress::TolerantConversion)) {
+                            liveName = peer.name;
+                            break;
+                        }
                     }
                 }
-                return QString();
+
+                if (!cacheKey.isEmpty() && dbManager && !liveName.isEmpty()) {
+                    database::SettingsRepository settingsRepository(dbManager->database());
+                    settingsRepository.save(models::Settings(cacheKey, liveName));
+                }
+                return liveName;
             });
     }
 

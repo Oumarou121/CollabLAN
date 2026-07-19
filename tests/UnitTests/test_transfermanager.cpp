@@ -8,6 +8,8 @@
 #include "database/DatabaseManager.h"
 #include "database/Repositories/TransferRepository.h"
 #include "database/Repositories/UserRepository.h"
+#include "database/Repositories/SettingsRepository.h"
+#include "models/Settings.h"
 #include "network/Transfer/TransferService.h"
 #include "TransferManager.h"
 
@@ -211,6 +213,142 @@ private slots:
             }
         }
         QVERIFY(found);
+
+        transferService.stop();
+        dbManager.close();
+    }
+
+    void sendFile_usesKnownPeerMachineIdForOutgoingRecord()
+    {
+        // Reproduit le bug signale : sans DiscoveryService (ou si le pair
+        // n'y figure pas/plus, ex. machine multi-interfaces), TransferManager
+        // ne pouvait deviner peerMachineId pour un ENVOI qu'en comparant des
+        // adresses IP -- resolution fragile qui echoue justement dans ce cas.
+        // La reception, elle, connait toujours ce champ (en-tete reseau), si
+        // bien qu'un meme correspondant pouvait finir dans deux dossiers/
+        // tuiles distincts cote UI (regroupement par peerMachineId, voir
+        // FileTransferView.qml::buildPeerGroups()). Verifie que le
+        // peerMachineId connu par l'appelant (cf. TransferContext::sendFile(),
+        // alimente par availableRecipients()) est applique a l'enregistrement
+        // SORTANT meme sans DiscoveryService configure.
+        const QString sourcePath = m_sourceDir.filePath(QStringLiteral("known-peer.txt"));
+        {
+            QFile file(sourcePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(QByteArrayLiteral("y"));
+            file.close();
+        }
+
+        database::DatabaseManager dbManager(
+            QStringLiteral("test_transfermanager_knownpeer_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(dbManager.open(m_dbPath));
+
+        network::TransferService transferService;
+        transferService.setReceiveDirectory(m_destDir.path());
+        QVERIFY(transferService.start(23472));
+
+        core::TransferManager manager(&dbManager);
+        manager.setTransferService(&transferService);
+        // Volontairement pas de setDiscoveryService() : simule le cas ou le
+        // pair n'est pas (ou plus) resolvable par adresse IP au moment ou
+        // transferStarted() arrive.
+
+        const QString knownPeerId = QStringLiteral("11111111-2222-3333-4444-555555555555");
+
+        QSignalSpy completed(&transferService, &network::TransferService::transferCompleted);
+        QVERIFY(manager.sendFile(QHostAddress::LocalHost, 23472, sourcePath, m_senderUuid, m_recipientUuid,
+                                  knownPeerId));
+        QVERIFY(completed.wait(5000));
+        if (completed.count() < 2) {
+            QVERIFY(completed.wait(5000));
+        }
+
+        const auto history = manager.allTransfers();
+        bool foundOutgoing = false;
+        for (const auto &t : history) {
+            if (t.fileName() == QStringLiteral("known-peer.txt") && t.filePath() == sourcePath) {
+                QCOMPARE(t.peerMachineId(), knownPeerId);
+                foundOutgoing = true;
+            }
+        }
+        QVERIFY(foundOutgoing);
+
+        transferService.stop();
+        dbManager.close();
+    }
+    void resolvePeerName_usesPersistedCacheEvenWithoutDiscoveryService()
+    {
+        // Reproduit le bug signale : le dossier physique "CollabLAN
+        // Transfers/<nom>/" et la colonne peer_name en base etaient
+        // resolus a CHAQUE transfert via DiscoveryService::peers(), dont
+        // le champ "name" est en realite le nom d'utilisateur *actuellement*
+        // connecte sur le poste distant (cf. Application::setLocalName()
+        // sur authenticationChanged). Deux transferts successifs du meme
+        // correspondant (meme peerMachineId) pouvaient donc atterrir sous
+        // deux noms differents (reconnexion sous un autre compte, pair
+        // momentanement absent de la decouverte...). On verifie ici que,
+        // des lors qu'un nom a deja ete resolu une fois pour un
+        // peerMachineId donne (et fige dans la table Settings, cle
+        // "peer_folder_name:<uuid>"), il est reutilise tel quel -- meme
+        // sans aucun DiscoveryService configure, ce qui est justement le
+        // cas le plus defavorable pour l'ancien code (resolvePeerName()
+        // retournait alors systematiquement une chaine vide).
+        const QString peerMachineId = QStringLiteral("99999999-8888-7777-6666-555555555555");
+
+        database::DatabaseManager dbManager(
+            QStringLiteral("test_transfermanager_peername_%1").arg(QRandomGenerator::global()->generate()));
+        QVERIFY(dbManager.open(m_dbPath));
+
+        // Fige le nom comme le ferait un premier transfert reussi (via
+        // Application::setupTransferPeerFolders() ou TransferManager::
+        // resolvePeerName() cote reel) : on le pre-remplit directement ici
+        // pour isoler le comportement de lecture du cache, independamment
+        // de DiscoveryService.
+        {
+            database::SettingsRepository settingsRepository(dbManager.database());
+            QVERIFY(settingsRepository.save(models::Settings(
+                QStringLiteral("peer_folder_name:%1").arg(peerMachineId),
+                QStringLiteral("Marie (portable)"))));
+        }
+
+        const QString sourcePath = m_sourceDir.filePath(QStringLiteral("cached-peer.txt"));
+        {
+            QFile file(sourcePath);
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(QByteArrayLiteral("z"));
+            file.close();
+        }
+
+        network::TransferService transferService;
+        transferService.setReceiveDirectory(m_destDir.path());
+        // Porte le peerMachineId dans l'en-tete cote emission, exactement
+        // comme le ferait Application::initialize() en usage reel (voir
+        // TransferManager::onNetworkTransferStarted(), branche reception).
+        transferService.setLocalMachineId(peerMachineId);
+        QVERIFY(transferService.start(23473));
+
+        core::TransferManager manager(&dbManager);
+        manager.setTransferService(&transferService);
+        // Volontairement pas de setDiscoveryService() : le seul moyen pour
+        // resolvePeerName() de retourner un nom non vide est donc le cache
+        // Settings pre-rempli ci-dessus.
+
+        QSignalSpy completed(&transferService, &network::TransferService::transferCompleted);
+        QVERIFY(manager.sendFile(QHostAddress::LocalHost, 23473, sourcePath, m_senderUuid, m_recipientUuid));
+        QVERIFY(completed.wait(5000));
+        if (completed.count() < 2) {
+            QVERIFY(completed.wait(5000));
+        }
+
+        const auto history = manager.allTransfers();
+        bool foundIncoming = false;
+        for (const auto &t : history) {
+            if (t.fileName() == QStringLiteral("cached-peer.txt") && t.peerMachineId() == peerMachineId) {
+                QCOMPARE(t.peerName(), QStringLiteral("Marie (portable)"));
+                foundIncoming = true;
+            }
+        }
+        QVERIFY(foundIncoming);
 
         transferService.stop();
         dbManager.close();

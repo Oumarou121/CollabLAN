@@ -26,6 +26,7 @@ public:
     enum Roles {
         IdRole = Qt::UserRole + 1,
         NameRole,
+        UserUuidRole,
         StatusRole,
         AddressRole,
         PortRole,
@@ -50,6 +51,13 @@ public:
     /// pour afficher un nom plutot que l'adresse IP brute exposee par
     /// core::CallContext::remoteAddress.
     Q_INVOKABLE QString nameForAddress(const QString &address) const;
+
+    /// UUID du compte utilisateur connecte sur le poste identifie par
+    /// machineId, ou chaine vide si ce poste est inconnu ou n'a annonce
+    /// aucun compte connecte (cf. DiscoveryService::localUserUuid()).
+    /// Utilise par core::TransferContext::sendFile() pour resoudre
+    /// recipientUuid (bug #2 : recipient_uuid toujours vide).
+    Q_INVOKABLE QString userUuidForMachineId(const QString &machineId) const;
 
 signals:
     void countChanged();

@@ -4,14 +4,38 @@
 #include <QFileInfo>
 
 #include "database/DatabaseManager.h"
+#include "models/Settings.h"
 #include "network/Transfer/TransferService.h"
 #include "Discovery/DiscoveryService.h"
+
+namespace {
+
+// CORRECTIF (bug #3 : peer_address incoherent) : une connexion entrante sur
+// un socket double-pile (IPv4+IPv6) rapporte QHostAddress::peerAddress()
+// sous forme mappee IPv4-in-IPv6 (ex. "::ffff:192.168.42.1"), alors qu'un
+// envoi sortant vers une adresse saisie/choisie directement reste en forme
+// IPv4 pure ("192.168.42.1") : meme poste, deux representations textuelles
+// differentes stockees en base selon le sens du transfert (cf. TransferManager.cpp
+// deja documente pour resolvePeerName()/resolvePeerMachineId() ci-dessus, qui
+// comparent deja les deux formes via QHostAddress::TolerantConversion --
+// seul le texte finalement persiste ne l'etait pas). On normalise ici vers
+// la forme IPv4 pure des que possible, pour que l'affichage et tout
+// regroupement par peer_address restent coherents quel que soit le sens.
+QHostAddress normalizedPeerAddress(const QHostAddress &address)
+{
+    bool isIPv4 = false;
+    const quint32 ipv4 = address.toIPv4Address(&isIPv4);
+    return isIPv4 ? QHostAddress(ipv4) : address;
+}
+
+} // namespace
 
 namespace core {
 
 TransferManager::TransferManager(database::DatabaseManager *dbManager, QObject *parent)
     : QObject(parent)
     , m_repository(dbManager ? dbManager->database() : QSqlDatabase())
+    , m_settingsRepository(dbManager ? dbManager->database() : QSqlDatabase())
 {
 }
 
@@ -43,6 +67,21 @@ void TransferManager::setDiscoveryService(network::DiscoveryService *discoverySe
 
 QString TransferManager::resolvePeerName(const QHostAddress &peerAddress, const QString &peerMachineId) const
 {
+    // CORRECTIF : nom stable par peerMachineId (voir doc dans le .h). On
+    // ne consulte le cache Settings que si on a un peerMachineId : sans
+    // lui, on n'a aucune cle stable a utiliser et on retombe directement
+    // sur la resolution "live" par adresse IP ci-dessous (comportement
+    // inchange pour ce cas).
+    const QString cacheKey = peerMachineId.isEmpty()
+        ? QString()
+        : QStringLiteral("peer_folder_name:%1").arg(peerMachineId);
+    if (!cacheKey.isEmpty()) {
+        const auto cached = m_settingsRepository.findByKey(cacheKey);
+        if (cached.has_value() && !cached->value().toString().isEmpty()) {
+            return cached->value().toString();
+        }
+    }
+
     if (!m_discoveryService) {
         return QString();
     }
@@ -62,6 +101,9 @@ QString TransferManager::resolvePeerName(const QHostAddress &peerAddress, const 
     if (!peerMachineId.isEmpty()) {
         for (const network::DiscoveredPeer &peer : peers) {
             if (peer.id == peerMachineId) {
+                if (!peer.name.isEmpty()) {
+                    m_settingsRepository.save(models::Settings(cacheKey, peer.name));
+                }
                 return peer.name;
             }
         }
@@ -73,7 +115,8 @@ QString TransferManager::resolvePeerName(const QHostAddress &peerAddress, const 
     // senderMachineId. Comparaison tolerante pour gerer les adresses
     // IPv4-mappees en IPv6 (::ffff:x.x.x.x), rapportees par
     // QTcpSocket::peerAddress() sur une connexion entrante en double pile
-    // (QHostAddress::Any).
+    // (QHostAddress::Any). Non mis en cache : sans peerMachineId, on n'a
+    // pas de cle stable a associer a ce nom.
     for (const network::DiscoveredPeer &peer : peers) {
         if (peer.address.isEqual(peerAddress, QHostAddress::TolerantConversion)) {
             return peer.name;
@@ -97,7 +140,8 @@ QString TransferManager::resolvePeerMachineId(const QHostAddress &peerAddress) c
 }
 
 bool TransferManager::sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
-                                const QString &senderUuid, const QString &recipientUuid)
+                                const QString &senderUuid, const QString &recipientUuid,
+                                const QString &knownPeerMachineId)
 {
     if (!m_transferService) {
         qWarning() << "TransferManager: no TransferService configured";
@@ -111,15 +155,29 @@ bool TransferManager::sendFile(const QHostAddress &host, quint16 port, const QSt
     // rattacher a l'enregistrement une fois celui-ci cree.
     const QString fileName = QFileInfo(filePath).fileName();
     m_pendingSendFilePaths[fileName].append(filePath);
+    // Toujours ajoutee en parallele strict de m_pendingSendFilePaths (meme
+    // si vide) pour que les deux listes restent alignees index a index en
+    // cas d'envois concurrents d'un fichier de meme nom vers des pairs
+    // differents (voir onNetworkTransferStarted()).
+    m_pendingPeerMachineIds[fileName].append(knownPeerMachineId);
 
     const bool started = m_transferService->sendFile(host, port, filePath, senderUuid, recipientUuid);
     if (!started) {
-        // La connexion n'a jamais demarre : retirer le chemin mis en
-        // attente pour ne pas polluer un transfert futur du meme nom.
+        // La connexion n'a jamais demarre : retirer le chemin (et le
+        // peerMachineId associe) mis en attente pour ne pas polluer un
+        // transfert futur du meme nom.
         QStringList &pending = m_pendingSendFilePaths[fileName];
         pending.removeOne(filePath);
         if (pending.isEmpty()) {
             m_pendingSendFilePaths.remove(fileName);
+        }
+
+        QStringList &pendingIds = m_pendingPeerMachineIds[fileName];
+        if (!pendingIds.isEmpty()) {
+            pendingIds.removeLast();
+        }
+        if (pendingIds.isEmpty()) {
+            m_pendingPeerMachineIds.remove(fileName);
         }
     }
     return started;
@@ -155,13 +213,43 @@ void TransferManager::onNetworkTransferStarted(const QString &transferKey, const
         return;
     }
 
-    // Chaine vide acceptee comme "inconnu" - le transfert doit toujours
-    // etre enregistre pour l'historique, meme sans identite complete (ex.
-    // recipientUuid inconnu sur un reseau P2P : c'est le cas le plus
-    // courant pour un envoi vers un poste decouvert sur le LAN, qui n'a
-    // pas necessairement de compte utilisateur associe). Voir migration
-    // #017 : sender_uuid/recipient_uuid remplacent les anciens
-    // sender_id/recipient_id entiers, supprimes.
+    // CORRECTIF (peer_name incoherent malgre peer_machine_id stable,
+    // symptome observe : deux transferts vers le meme peerMachineId
+    // affichent "admin" puis "Demo" a 25s d'intervalle dans le meme
+    // Transfers_instance2.csv) : peerMachineId arrive VIDE sur l'envoi
+    // (cf. TransferService::startSendOnSocket(), qui documente deja ce
+    // choix), et resolvePeerName() etait jusqu'ici appele avec ce
+    // parametre brut. Faute de cle stable, resolvePeerName() retombait sur
+    // son repli par adresse IP -- fragile en temps normal (cf. son propre
+    // commentaire sur les machines multi-interfaces), et carrement
+    // incorrect ici puisque plusieurs instances tournent sur le MEME poste
+    // pour les tests : elles partagent alors la meme adresse IP cote
+    // transfert, et le repli choisissait arbitrairement l'un des pairs qui
+    // la partagent. peer_machine_id, lui, etait deja resolu correctement
+    // juste apres via m_pendingPeerMachineIds (alimente par le choix
+    // explicite du destinataire, cf. TransferContext::sendFile()) : les
+    // deux colonnes finissaient desynchronisees pour un seul et meme
+    // transfert. Fix : resoudre peerMachineId UNE SEULE FOIS ici, avec
+    // exactement la meme logique de repli qu'auparavant, et reutiliser
+    // cette valeur unique pour peer_name ET peer_machine_id.
+    QString resolvedPeerMachineId = peerMachineId;
+    if (resolvedPeerMachineId.isEmpty()) {
+        if (!incoming) {
+            QStringList &pendingIds = m_pendingPeerMachineIds[fileName];
+            if (!pendingIds.isEmpty()) {
+                resolvedPeerMachineId = pendingIds.takeFirst();
+                if (pendingIds.isEmpty()) {
+                    m_pendingPeerMachineIds.remove(fileName);
+                }
+            }
+            if (resolvedPeerMachineId.isEmpty()) {
+                resolvedPeerMachineId = resolvePeerMachineId(peerAddress);
+            }
+        } else if (!peerAddress.isNull()) {
+            resolvedPeerMachineId = resolvePeerMachineId(peerAddress);
+        }
+    }
+
     models::Transfer transfer;
     transfer.setSenderUuid(senderUuid);
     transfer.setRecipientUuid(recipientUuid);
@@ -171,21 +259,15 @@ void TransferManager::onNetworkTransferStarted(const QString &transferKey, const
     // l'historique par correspondant, independamment de tout compte
     // utilisateur local (voir la meme logique dans core::CallHistoryManager).
     if (!peerAddress.isNull()) {
-        transfer.setPeerAddress(peerAddress.toString());
-        transfer.setPeerName(resolvePeerName(peerAddress, peerMachineId));
+        transfer.setPeerAddress(normalizedPeerAddress(peerAddress).toString());
+        transfer.setPeerName(resolvePeerName(peerAddress, resolvedPeerMachineId));
     }
     // peer_machine_id (migration #016) : UUID stable du pair, renseigne
     // independamment de sender_uuid/recipient_uuid qui restent vides en
     // P2P LAN sans compte utilisateur (voir migration #017). Contrairement a
     // peerAddress(), c'est fiable meme sur une machine multi-interfaces.
-    // Cote envoi, peerMachineId arrive vide (TransferService::
-    // onClientSocketConnected() ne le transmet pas, voir son commentaire) :
-    // on le retrouve alors par adresse via DiscoveryService, comme
-    // resolvePeerName() le fait deja pour le nom.
-    if (!peerMachineId.isEmpty()) {
-        transfer.setPeerMachineId(peerMachineId);
-    } else if (!peerAddress.isNull()) {
-        transfer.setPeerMachineId(resolvePeerMachineId(peerAddress));
+    if (!resolvedPeerMachineId.isEmpty()) {
+        transfer.setPeerMachineId(resolvedPeerMachineId);
     }
     // Une reprise (resumeOffset > 0) redemarre un transfert deja en
     // cours : son statut reste "in_progress" comme un demarrage normal.

@@ -11,6 +11,7 @@
 
 #include "models/Transfer.h"
 #include "database/Repositories/TransferRepository.h"
+#include "database/Repositories/SettingsRepository.h"
 
 namespace database {
 class DatabaseManager;
@@ -56,8 +57,15 @@ public:
 
     /// Envoie un fichier a un pair et enregistre le transfert (statut
     /// initial "in_progress") en base. Voir network::TransferService::sendFile().
+    /// knownPeerMachineId (optionnel) : UUID DiscoveryService du
+    /// destinataire choisi par l'appelant (cf. TransferContext::sendFile()),
+    /// memorise ici (m_pendingPeerMachineIds) pour etre applique dans
+    /// onNetworkTransferStarted() sans repasser par une resolution IP
+    /// (network::TransferService ne transmet jamais peerMachineId cote
+    /// envoi, voir son commentaire dans onClientSocketConnected()).
     bool sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
-                  const QString &senderUuid, const QString &recipientUuid);
+                  const QString &senderUuid, const QString &recipientUuid,
+                  const QString &knownPeerMachineId = QString());
 
     /// Historique complet des transferts (tous utilisateurs), le plus recent en premier.
     std::vector<models::Transfer> allTransfers() const;
@@ -85,6 +93,20 @@ private slots:
     void onNetworkTransferFailed(const QString &transferKey, const QString &errorString);
 
 private:
+    /// CORRECTIF (stabilite du regroupement physique/historique) : le nom
+    /// retourne par DiscoveryService::peers() pour un peerMachineId donne
+    /// est mutable (nom d'utilisateur *actuellement* connecte sur le poste
+    /// distant, cf. Application::setupDiscoveryService() -> setLocalName()
+    /// sur authenticationChanged) : il peut donc changer d'un transfert a
+    /// l'autre pour le meme correspondant (reconnexion sous un autre
+    /// compte, pair momentanement absent de la decouverte...). On fige
+    /// donc, dans la table Settings locale (cle "peer_folder_name:<uuid>",
+    /// meme convention que network::TransferService::setPeerFolderNameResolver()
+    /// cote Application.cpp pour que le nom affiche dans l'historique
+    /// corresponde toujours au nom du sous-dossier physique), le premier
+    /// nom lisible resolu pour ce peerMachineId, et on le reutilise
+    /// ensuite systematiquement plutot que de repartir de la valeur
+    /// courante de DiscoveryService a chaque appel.
     QString resolvePeerName(const QHostAddress &peerAddress, const QString &peerMachineId) const;
     /// Retrouve l'UUID DiscoveryService::localId() d'un pair par son
     /// adresse (utilise quand peerMachineId n'est pas transmis directement,
@@ -92,6 +114,10 @@ private:
     QString resolvePeerMachineId(const QHostAddress &peerAddress) const;
 
     database::TransferRepository m_repository;
+    /// Utilisee uniquement pour la mise en cache stable de resolvePeerName()
+    /// (cle "peer_folder_name:<peerMachineId>", voir sa doc ci-dessus) -
+    /// partage la meme connexion QSqlDatabase que m_repository.
+    mutable database::SettingsRepository m_settingsRepository;
     network::TransferService *m_transferService = nullptr;
     network::DiscoveryService *m_discoveryService = nullptr;
 
@@ -106,6 +132,14 @@ private:
     /// indexe par nom de fichier, le temps de le recuperer dans
     /// onNetworkTransferStarted() (voir m_pendingSendFilePaths).
     QHash<QString, QStringList> m_pendingSendFilePaths;
+
+    /// Meme principe que m_pendingSendFilePaths, en parallele strict (meme
+    /// ordre d'ajout/retrait par nom de fichier) : memorise le
+    /// peerMachineId connu au moment de l'appel a sendFile() (peut etre
+    /// une chaine vide si l'appelant ne le connaissait pas), pour
+    /// pouvoir l'appliquer dans onNetworkTransferStarted() cote envoi
+    /// sans dependre d'une resolution IP fragile (voir sendFile()).
+    QHash<QString, QStringList> m_pendingPeerMachineIds;
 };
 
 } // namespace core
