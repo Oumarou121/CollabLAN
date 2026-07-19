@@ -97,6 +97,9 @@ public:
     /// remplaces par sender_uuid/recipient_uuid).
     QString currentUserUuid() const;
 
+    /// Nom affiche pour un UUID Users.uuid, ou chaine vide si inconnu.
+    QString userNameForUuid(const QString &uuid) const;
+
     // --- API C++ (administration) ---------------------------------------
 
     /**

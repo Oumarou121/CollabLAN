@@ -103,23 +103,29 @@ Item {
             const item = transfers[i]
             const rawAddress = item.peerAddress || ""
             const peerMachineId = item.peerMachineId || ""
+            const peerUserUuid = item.peerUserUuid || ""
+            const peerUserName = item.peerUserName || ""
 
-            // CORRECTIF : utiliser peerMachineId (UUID) comme clé primaire
-            // pour garantir un dossier unique par correspondant. L'UUID est
-            // unique même si plusieurs utilisateurs partagent la même adresse
-            // IP (cas NAT). En repli, utiliser l'adresse IP normalisée.
-            const key = peerMachineId.length > 0
+            // Cle conversation : sender/recipient identifient le correspondant
+            // utilisateur, quel que soit le sens du transfert. peerMachineId
+            // reste le repli stable pour les pairs LAN sans compte utilisateur.
+            const key = peerUserUuid.length > 0
+                        ? "user:" + peerUserUuid
+                        : (peerMachineId.length > 0
                         ? "uuid:" + peerMachineId
-                        : (rawAddress.length > 0 ? root.normalizePeerAddress(rawAddress) : "__unknown__")
+                        : (rawAddress.length > 0 ? root.normalizePeerAddress(rawAddress) : "__unknown__"))
 
             if (!groupsByKey[key]) {
                 groupsByKey[key] = {
                     peerKey: key,
-                    peerLabel: (item.peerName && item.peerName.length > 0) ? item.peerName
+                    peerLabel: peerUserName.length > 0 ? peerUserName
+                               : ((item.peerName && item.peerName.length > 0) ? item.peerName
                                : (rawAddress.length > 0 ? rawAddress
-                               : qsTr("Correspondant inconnu")),
+                               : qsTr("Correspondant inconnu"))),
                     peerAddress: rawAddress,
                     peerMachineId: peerMachineId,
+                    peerUserUuid: peerUserUuid,
+                    peerUserName: peerUserName,
                     items: [],
                     lastTimestampMs: 0
                 }
@@ -129,7 +135,9 @@ Item {
             const group = groupsByKey[key]
             // Mettre à jour peerLabel si on reçoit un nom plus tard
             // (seulement si le label actuel est l'adresse ou "Correspondant inconnu")
-            if (item.peerName && item.peerName.length > 0) {
+            if (peerUserName.length > 0) {
+                group.peerLabel = peerUserName
+            } else if (item.peerName && item.peerName.length > 0) {
                 if (group.peerLabel === rawAddress || group.peerLabel === qsTr("Correspondant inconnu")) {
                     group.peerLabel = item.peerName
                 }

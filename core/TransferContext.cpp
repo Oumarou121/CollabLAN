@@ -332,8 +332,6 @@ void TransferContext::onTransferStarted(const QString &transferKey, const QStrin
                                          const QString &recipientUuid, const QHostAddress &peerAddress,
                                          const QString &peerMachineId, bool isFolderTransfer)
 {
-    Q_UNUSED(senderUuid)
-    Q_UNUSED(recipientUuid)
 
     // CORRECTIF : les transferts de synchronisation de dossier ne doivent
     // pas apparaitre dans l'UI de transfert manuel (activeTransfers), au
@@ -358,6 +356,14 @@ void TransferContext::onTransferStarted(const QString &transferKey, const QStrin
     entry[QStringLiteral("peerAddress")] = peerAddress.isNull() ? QString() : peerAddress.toString();
     entry[QStringLiteral("peerName")] = resolvePeerName(peerAddress, peerMachineId);
     entry[QStringLiteral("peerMachineId")] = peerMachineId;
+    entry[QStringLiteral("senderUuid")] = senderUuid;
+    entry[QStringLiteral("recipientUuid")] = recipientUuid;
+    const QString currentUserUuid = m_userManager ? m_userManager->currentUserUuid() : QString();
+    const QString peerUserUuid = (!currentUserUuid.isEmpty() && senderUuid == currentUserUuid)
+        ? recipientUuid
+        : senderUuid;
+    entry[QStringLiteral("peerUserUuid")] = peerUserUuid;
+    entry[QStringLiteral("peerUserName")] = m_userManager ? m_userManager->userNameForUuid(peerUserUuid) : QString();
     entry[QStringLiteral("timestamp")] = QDateTime::currentDateTime().toString(Qt::ISODate);
 
     // Pour un envoi, le chemin local est deja connu (voir sendFile()) ;
@@ -422,6 +428,10 @@ void TransferContext::onTransferProgress(const QString &transferKey, qint64 byte
         entry[QStringLiteral("peerAddress")] = QString();
         entry[QStringLiteral("peerName")] = QString();
         entry[QStringLiteral("peerMachineId")] = QString();
+        entry[QStringLiteral("senderUuid")] = QString();
+        entry[QStringLiteral("recipientUuid")] = QString();
+        entry[QStringLiteral("peerUserUuid")] = QString();
+        entry[QStringLiteral("peerUserName")] = QString();
         entry[QStringLiteral("timestamp")] = QDateTime::currentDateTime().toString(Qt::ISODate);
         m_activeTransfers.append(entry);
         emit activeTransfersChanged();
@@ -547,6 +557,16 @@ QVariantMap TransferContext::entryFromHistory(const models::Transfer &transfer) 
     entry[QStringLiteral("filePath")] = transfer.filePath();
     entry[QStringLiteral("peerAddress")] = transfer.peerAddress();
     entry[QStringLiteral("peerName")] = transfer.peerName();
+    // Identifiant machine stable necessaire au regroupement des historiques dans QML.
+    entry[QStringLiteral("peerMachineId")] = transfer.peerMachineId();
+    entry[QStringLiteral("senderUuid")] = transfer.senderUuid();
+    entry[QStringLiteral("recipientUuid")] = transfer.recipientUuid();
+    const QString currentUserUuid = m_userManager ? m_userManager->currentUserUuid() : QString();
+    const QString peerUserUuid = (!currentUserUuid.isEmpty() && transfer.senderUuid() == currentUserUuid)
+        ? transfer.recipientUuid()
+        : transfer.senderUuid();
+    entry[QStringLiteral("peerUserUuid")] = peerUserUuid;
+    entry[QStringLiteral("peerUserName")] = m_userManager ? m_userManager->userNameForUuid(peerUserUuid) : QString();
     entry[QStringLiteral("timestamp")] = transfer.createdAt().toLocalTime().toString(Qt::ISODate);
     return entry;
 }

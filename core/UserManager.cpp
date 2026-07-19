@@ -203,6 +203,16 @@ QString UserManager::currentUserUuid() const
     return m_currentUserUuid;
 }
 
+QString UserManager::userNameForUuid(const QString &uuid) const
+{
+    if (uuid.isEmpty()) {
+        return QString();
+    }
+
+    const auto user = m_userRepository.findByUuid(uuid);
+    return user.has_value() ? user->name() : QString();
+}
+
 bool UserManager::isBusy() const
 {
     return m_busy;
