@@ -151,6 +151,16 @@ public:
     std::optional<models::SharedFolder> registerRemoteFolder(const QString &uuid, const QString &name,
                                                                qint64 ownerId, const QString &originMachineId);
 
+    /// Corrige l'origin_machine_id d'un dossier DEJA enregistre localement
+    /// (registerRemoteFolder() ne le fait qu'a la creation -- cf. son
+    /// commentaire "idempotent"). A appeler quand FolderSyncService::
+    /// handleFolderAccessGranted() recoit, pour un uuid deja connu ici,
+    /// un origin_machine_id different de celui stocke localement : sans
+    /// cette correction le dossier reste bloque isLocalOrigin()==true (ou
+    /// pointe vers un poste qui n'est plus le veritable proprietaire) et
+    /// aucun resync n'est plus jamais demande pour lui.
+    bool reconcileFolderOrigin(qint64 folderId, const QString &originMachineId);
+
     /// Met à jour le chemin local d'un dossier distant pour permettre la réception
     /// des fichiers. Nécessaire avant de pouvoir synchroniser le contenu d'un
     /// dossier partagé reçu d'un autre poste.

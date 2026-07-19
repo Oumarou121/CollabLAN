@@ -86,6 +86,28 @@ bool SharedFolderRepository::update(const models::SharedFolder &folder)
     return query.numRowsAffected() > 0;
 }
 
+bool SharedFolderRepository::updateOriginMachineId(qint64 folderId, const QString &originMachineId)
+{
+    QSqlQuery query(m_db);
+    if (!query.prepare(QStringLiteral(
+        "UPDATE SharedFolders SET origin_machine_id = :origin_machine_id WHERE id = :id"))) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    // QString() nulle -> NULL SQL, chaine vide -> '' : les deux se lisent
+    // comme isLocalOrigin()==true cote SharedFolder (isEmpty()), donc peu
+    // importe lequel est stocke ; on aligne sur insert() (NULL) par coherence.
+    query.bindValue(QStringLiteral(":origin_machine_id"),
+                     originMachineId.isEmpty() ? QVariant(QVariant::String) : originMachineId);
+    query.bindValue(QStringLiteral(":id"), folderId);
+
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    return query.numRowsAffected() > 0;
+}
+
 bool SharedFolderRepository::remove(qint64 folderId)
 {
     QSqlQuery query(m_db);

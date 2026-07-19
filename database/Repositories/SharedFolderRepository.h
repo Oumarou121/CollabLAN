@@ -30,6 +30,16 @@ public:
 
     bool update(const models::SharedFolder &folder);
 
+    /// Corrige l'origin_machine_id d'un dossier DEJA connu localement.
+    /// Necessaire quand un folder_access_granted reseau (FolderSyncService::
+    /// handleFolderAccessGranted()) revele que ce dossier appartient en
+    /// realite a un autre poste, alors que la ligne locale le marquait
+    /// origin_machine_id = '' (isLocalOrigin() == true) -- insert() ne fixe
+    /// cette colonne qu'a la creation et rien ne la corrigeait ensuite,
+    /// laissant le dossier bloque en "origine locale" indefiniment (aucun
+    /// resync jamais demande). Chaine vide = redevient origine locale.
+    bool updateOriginMachineId(qint64 folderId, const QString &originMachineId);
+
     /// Supprime un dossier partage. Les SharedFiles associes sont
     /// supprimes en cascade (ON DELETE CASCADE, migration #018).
     bool remove(qint64 folderId);

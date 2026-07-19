@@ -4,6 +4,7 @@
 
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -607,6 +608,19 @@ std::optional<models::SharedFolder> SharedFolderManager::registerRemoteFolder(co
 
     emit folderCreated(*inserted);
     return inserted;
+}
+
+bool SharedFolderManager::reconcileFolderOrigin(qint64 folderId, const QString &originMachineId)
+{
+    if (!m_dbManager) {
+        return false;
+    }
+    if (!m_folderRepository.updateOriginMachineId(folderId, originMachineId)) {
+        qWarning() << "[SharedFolderManager] reconcileFolderOrigin: echec pour le dossier"
+                   << folderId << "->" << originMachineId;
+        return false;
+    }
+    return true;
 }
 
 bool SharedFolderManager::updateFolderLocalPath(qint64 folderId, const QString &localPath)

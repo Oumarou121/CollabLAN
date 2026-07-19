@@ -1124,6 +1124,32 @@ void FolderSyncService::handleFolderAccessGranted(const QJsonObject &obj)
             qWarning() << "[FolderSync] folder_access_granted : echec de l'enregistrement du dossier" << folderUuid;
             return;
         }
+    } else if (folder->isLocalOrigin()
+               && !originMachineId.isEmpty()
+               && originMachineId != m_machineId) {
+        // CORRECTIF (dossier bloque "origine locale" a tort) : registerRemoteFolder()
+        // ne fixe origin_machine_id qu'a la PREMIERE creation de la ligne
+        // (cf. son commentaire "idempotent") -- si une ligne locale existait
+        // deja pour cet uuid avec origin_machine_id vide (donnee de test
+        // residuelle, ancien machine_id de ce meme poste avant regeneration,
+        // reassignation de propriete...), elle restait figee isLocalOrigin()
+        // == true pour toujours, meme quand le reseau annonce explicitement
+        // un AUTRE proprietaire pour ce meme uuid. Consequence observee en
+        // pratique : plus aucun folder_resync_request n'est jamais envoye
+        // pour ce dossier (garde ligne ~1154 ci-dessous et dans
+        // requestFolderResync()), donc son contenu reel ne se synchronise
+        // plus jamais sur ce poste -- silencieusement, sans le moindre
+        // avertissement jusqu'ici.
+        qWarning() << "[FolderSync] folder_access_granted : le dossier" << folder->name()
+                   << "(" << folderUuid << ") etait marque origine locale sur ce poste"
+                   << "mais le reseau l'annonce comme appartenant a" << originMachineId
+                   << "-- correction de origin_machine_id";
+        if (m_folderManager->reconcileFolderOrigin(folder->id(), originMachineId)) {
+            folder = m_folderManager->getFolderByUuid(folderUuid);
+        }
+    }
+    if (!folder.has_value()) {
+        return;
     }
 
     const auto permission = models::stringToSharedFolderPermission(obj[QStringLiteral("permission")].toString())
