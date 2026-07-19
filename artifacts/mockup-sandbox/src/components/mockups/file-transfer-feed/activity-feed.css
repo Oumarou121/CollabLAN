@@ -1,0 +1,35 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap');
+
+.activity-feed-root {
+  font-family: 'Nunito', system-ui, -apple-system, sans-serif;
+  /* Custom scrollbar for a nicer feel */
+}
+
+.activity-feed-root ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.activity-feed-root ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.activity-feed-root ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+.activity-feed-root ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+@keyframes progress-stripes {
+  0% { background-position: 1rem 0; }
+  100% { background-position: 0 0; }
+}
+
+.progress-bar-striped {
+  background-image: linear-gradient(45deg, rgba(255,255,255,.15) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.15) 50%, rgba(255,255,255,.15) 75%, transparent 75%, transparent);
+  background-size: 1rem 1rem;
+  animation: progress-stripes 1s linear infinite;
+}
