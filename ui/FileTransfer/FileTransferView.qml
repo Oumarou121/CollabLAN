@@ -44,6 +44,21 @@ import "../Components"
  *   - Transition douce sur la hauteur des lignes de transfert en cours.
  *   - Petites retouches de cohérence (focus des champs, hover des
  *     boutons, couleur de texte de la bannière d'erreur).
+ *
+ * Correctifs UI (cette passe) :
+ *   - Fil d'Ariane ("Transfert" / nom du dossier ouvert) : le RowLayout
+ *     interne n'est plus en `anchors.fill: parent` (ce qui l'étirait sur
+ *     toute la largeur de la pilule et créait un grand vide visuel entre
+ *     les libellés). Il est maintenant ancré à gauche + centré
+ *     verticalement, avec un `spacing` fixe entre "Transferts", "/" et le
+ *     nom du correspondant. La pilule garde `Layout.fillWidth: true`.
+ *   - `errorBanner` déplacé hors du `ColumnLayout` principal : c'était un
+ *     item avec des ancres alors qu'il était géré par un layout ("Detected
+ *     anchors on an item that is managed by a layout"), ce qui empêchait
+ *     aussi `z: 10` de le faire flotter correctement par-dessus le
+ *     contenu. Il est maintenant un frère direct du `ColumnLayout`, dans
+ *     le `Rectangle` racine, où ses ancres sont valides.
+ *
  * L'organisation (grille/liste des correspondants, ouverture d'un
  * correspondant, grille/liste des fichiers) et la logique métier ne sont
  * pas modifiées par cette passe.
@@ -338,7 +353,7 @@ Item {
         anchors.fill: parent
         color: Theme.surface
         border.width: 0
-        clip: true 
+        clip: true
 
         ColumnLayout {
             anchors.fill: parent
@@ -352,43 +367,6 @@ Item {
                     root.selectedFilePath = selectedFile.toString()
                     const parts = root.selectedFilePath.split("/")
                     root.selectedFileName = parts[parts.length - 1]
-                }
-            }
-
-            // ---- bannière d'erreur ----
-            Rectangle {
-                id: errorBanner
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                height: errorLabel.implicitHeight + Theme.spacingMedium
-                color: Theme.error
-                visible: opacity > 0
-                opacity: 0
-                z: 10
-
-                Label {
-                    id: errorLabel
-                    anchors.centerIn: parent
-                    width: parent.width - Theme.spacingLarge
-                    color: Theme.primaryText
-                    font.pixelSize: Theme.fontSizeSmall
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.WordWrap
-                }
-
-                Behavior on opacity { NumberAnimation { duration: 150 } }
-
-                Timer {
-                    id: errorTimer
-                    interval: 4000
-                    onTriggered: errorBanner.opacity = 0
-                }
-
-                function show(message) {
-                    errorLabel.text = message
-                    opacity = 1
-                    errorTimer.restart()
                 }
             }
 
@@ -450,10 +428,15 @@ Item {
                     border.color: Theme.border
 
                     RowLayout {
-                        anchors.fill: parent
+                        id: breadcrumbRow
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
                         anchors.leftMargin: 12
-                        anchors.rightMargin: 12
-                        spacing: 0
+                        // Pas de anchors.right : le row ne s'étire pas sur
+                        // toute la largeur de la pilule, il ne prend que la
+                        // place nécessaire à son contenu (évite le grand
+                        // vide entre "Transferts" et le nom du dossier).
+                        spacing: 6
 
                         Label {
                             text: qsTr("Transferts")
@@ -1903,6 +1886,47 @@ Item {
                 }
             }
         }
+        }
+
+        // ---- bannière d'erreur ----
+        // Frère direct du ColumnLayout (et non un enfant de celui-ci), pour
+        // pouvoir utiliser des ancres librement et flotter par-dessus tout
+        // le contenu via z: 10, sans provoquer le warning "Detected anchors
+        // on an item that is managed by a layout".
+        Rectangle {
+            id: errorBanner
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: errorLabel.implicitHeight + Theme.spacingMedium
+            color: Theme.error
+            visible: opacity > 0
+            opacity: 0
+            z: 10
+
+            Label {
+                id: errorLabel
+                anchors.centerIn: parent
+                width: parent.width - Theme.spacingLarge
+                color: Theme.primaryText
+                font.pixelSize: Theme.fontSizeSmall
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+            }
+
+            Behavior on opacity { NumberAnimation { duration: 150 } }
+
+            Timer {
+                id: errorTimer
+                interval: 4000
+                onTriggered: errorBanner.opacity = 0
+            }
+
+            function show(message) {
+                errorLabel.text = message
+                opacity = 1
+                errorTimer.restart()
+            }
         }
     }
 }
