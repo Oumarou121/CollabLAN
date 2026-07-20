@@ -76,6 +76,20 @@ Item {
         return root.searchText.trim().length > 0 || root.activeFilter !== "all"
     }
 
+    function resolveConflictFor(relativePath, conflictPath, resolution) {
+        if (!root.context || root.openedFolderId < 0) {
+            return false
+        }
+
+        const resolved = root.context.resolveConflict(
+            root.openedFolderId, relativePath, conflictPath, resolution)
+        if (resolved) {
+            root.refreshFiles()
+            root.refreshHistory()
+        }
+        return resolved
+    }
+
     function filterIconColor(key) {
         switch (key) {
         case "mine": return Theme.primary
@@ -1820,6 +1834,7 @@ Item {
                         id: folderTile
                         width: gridView.cellWidth
                         height: gridView.cellHeight
+                        clip: true
 
                         // readonly property color accentColor: Theme.colorForName(model.name)
                         readonly property color accentColor: "#FFC83D"   // jaune dossier façon Windows
@@ -1991,6 +2006,7 @@ Item {
 
                             Label {
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 text: model.name
                                 color: Theme.text
                                 font.pixelSize: Theme.fontSizeSmall
@@ -2116,6 +2132,7 @@ Item {
 
                                 Label {
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     text: model.name
                                     color: Theme.text
                                     font.pixelSize: Theme.fontSizeSmall
@@ -2126,6 +2143,7 @@ Item {
 
                                 Label {
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     text: model.isLocalOrigin ? qsTr("Dossier local") : qsTr("Dossier reçu")
                                     color: Theme.textTertiary
                                     font.pixelSize: Theme.fontSizeCaption
@@ -2261,7 +2279,8 @@ Item {
                     delegate: Rectangle {
                         id: fileRow
                         width: filesListView.width
-                        height: fileRow.hasConflict ? 92 : 40
+                        height: fileRow.hasConflict ? 128 : 40
+                        clip: true
                         color: fileRowArea.containsMouse ? Theme.surfaceHover
                                : (index % 2 === 1 ? Theme.surfaceAlt : "transparent")
                         radius: Theme.radiusSmall
@@ -2315,6 +2334,7 @@ Item {
 
                                 Label {
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     text: modelData.name
                                     color: fileRow.hasConflict ? Theme.warning : Theme.text
                                     font.pixelSize: Theme.fontSizeSmall
@@ -2374,6 +2394,7 @@ Item {
                             Label {
                                 visible: fileRow.hasConflict
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 Layout.leftMargin: 23
                                 text: qsTr("→ copie en conflit : %1").arg(fileRow.conflictPath)
                                 color: Theme.warning
@@ -2388,39 +2409,22 @@ Item {
                                 Layout.leftMargin: 23
                                 Layout.bottomMargin: 6
                                 spacing: Theme.spacingSmall
+                                z: 1
 
                                 AppButton {
                                     text: qsTr("Conserver local")
                                     variant: "secondary"
-                                    onClicked: {
-                                        if (root.context) {
-                                            root.context.resolveConflict(root.openedFolderId, modelData.relativePath, fileRow.conflictPath, "keep_local")
-                                            root.refreshFiles()
-                                            root.refreshHistory()
-                                        }
-                                    }
+                                    onClicked: root.resolveConflictFor(modelData.relativePath, fileRow.conflictPath, "keep_local")
                                 }
                                 AppButton {
                                     text: qsTr("Conserver distant")
                                     variant: "secondary"
-                                    onClicked: {
-                                        if (root.context) {
-                                            root.context.resolveConflict(root.openedFolderId, modelData.relativePath, fileRow.conflictPath, "keep_remote")
-                                            root.refreshFiles()
-                                            root.refreshHistory()
-                                        }
-                                    }
+                                    onClicked: root.resolveConflictFor(modelData.relativePath, fileRow.conflictPath, "keep_remote")
                                 }
                                 AppButton {
                                     text: qsTr("Garder les deux")
                                     variant: "secondary"
-                                    onClicked: {
-                                        if (root.context) {
-                                            root.context.resolveConflict(root.openedFolderId, modelData.relativePath, fileRow.conflictPath, "keep_both")
-                                            root.refreshFiles()
-                                            root.refreshHistory()
-                                        }
-                                    }
+                                    onClicked: root.resolveConflictFor(modelData.relativePath, fileRow.conflictPath, "keep_both")
                                 }
                             }
                         }
@@ -2428,6 +2432,8 @@ Item {
                         MouseArea {
                             id: fileRowArea
                             anchors.fill: parent
+                            z: 0
+                            enabled: !fileRow.hasConflict
                             hoverEnabled: true
                             cursorShape: fileRow.isFolder ? Qt.PointingHandCursor : Qt.ArrowCursor
                             onClicked: {
@@ -2457,7 +2463,7 @@ Item {
                     visible: root.viewMode === "grid"
                     readonly property int columns: Math.max(3, Math.min(8, Math.floor(width / 104)))
                     cellWidth: Math.floor(width / columns)
-                    cellHeight: 112
+                    cellHeight: 176
                     clip: true
                     model: root.browserItems
 
@@ -2469,6 +2475,7 @@ Item {
                         id: fileTile
                         width: filesGrid.cellWidth
                         height: filesGrid.cellHeight
+                        clip: true
 
                         readonly property bool isFolder: modelData.kind === "folder"
                         readonly property bool hasConflict: !isFolder
@@ -2479,6 +2486,7 @@ Item {
                         readonly property bool tileHovered: fileTileArea.containsMouse
 
                         ColumnLayout {
+                            z: 1
                             anchors.fill: parent
                             anchors.topMargin: 12
                             anchors.bottomMargin: 4
@@ -2543,6 +2551,7 @@ Item {
 
                             Label {
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 Layout.leftMargin: 4
                                 Layout.rightMargin: 4
                                 text: modelData.name
@@ -2552,8 +2561,7 @@ Item {
                                 font.family: Theme.fontFamily
                                 horizontalAlignment: Text.AlignHCenter
                                 elide: Text.ElideMiddle
-                                wrapMode: Text.WordWrap
-                                maximumLineCount: 2
+                                maximumLineCount: 1
 
                                 ToolTip.visible: truncated && fileTile.tileHovered
                                 ToolTip.text: modelData.name
@@ -2561,6 +2569,7 @@ Item {
                             }
                             Label {
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 Layout.leftMargin: 4
                                 Layout.rightMargin: 4
                                 text: fileTile.isFolder
@@ -2573,11 +2582,49 @@ Item {
                                 elide: Text.ElideRight
                                 maximumLineCount: 1
                             }
+
+                            ColumnLayout {
+                                visible: fileTile.hasConflict
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 4
+                                Layout.rightMargin: 4
+                                spacing: 2
+
+                                AppButton {
+                                    text: qsTr("Local")
+                                    variant: "secondary"
+                                    Layout.fillWidth: true
+                                    implicitHeight: 26
+                                    onClicked: root.resolveConflictFor(modelData.relativePath,
+                                                                        root.conflictedFiles[modelData.relativePath],
+                                                                        "keep_local")
+                                }
+                                AppButton {
+                                    text: qsTr("Distant")
+                                    variant: "secondary"
+                                    Layout.fillWidth: true
+                                    implicitHeight: 26
+                                    onClicked: root.resolveConflictFor(modelData.relativePath,
+                                                                        root.conflictedFiles[modelData.relativePath],
+                                                                        "keep_remote")
+                                }
+                                AppButton {
+                                    text: qsTr("Les deux")
+                                    variant: "secondary"
+                                    Layout.fillWidth: true
+                                    implicitHeight: 26
+                                    onClicked: root.resolveConflictFor(modelData.relativePath,
+                                                                        root.conflictedFiles[modelData.relativePath],
+                                                                        "keep_both")
+                                }
+                            }
                         }
 
                         MouseArea {
                             id: fileTileArea
                             anchors.fill: parent
+                            z: 0
+                            enabled: !fileTile.hasConflict
                             hoverEnabled: true
                             cursorShape: fileTile.isFolder ? Qt.PointingHandCursor : Qt.ArrowCursor
                             onClicked: {

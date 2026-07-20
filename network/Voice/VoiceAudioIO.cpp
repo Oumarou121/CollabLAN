@@ -177,9 +177,20 @@ bool VoiceAudioIO::start()
         qWarning() << "VoiceAudioIO: aucun peripherique audio d'entree/sortie disponible";
         return false;
     }
+
+    // Si le format telephonique (8kHz/mono/16bits) n'est pas supporte, essayer
+    // un format plus standard (44.1kHz ou 48kHz) pour eviter le crash Qt Multimedia.
     if (!inputDevice.isFormatSupported(format) || !outputDevice.isFormatSupported(format)) {
-        qWarning() << "VoiceAudioIO: format audio 8kHz/mono/16bits non supporte par le peripherique,"
-                    << "la capture/lecture pourrait etre degradee";
+        qWarning() << "VoiceAudioIO: format audio 8kHz/mono/16bits non supporte, tentative avec format standard";
+        format.setSampleRate(44100);
+        if (!inputDevice.isFormatSupported(format) || !outputDevice.isFormatSupported(format)) {
+            format.setSampleRate(48000);
+            if (!inputDevice.isFormatSupported(format) || !outputDevice.isFormatSupported(format)) {
+                qWarning() << "VoiceAudioIO: aucun format audio supporte, audio desactive";
+                return false;
+            }
+        }
+        qInfo() << "VoiceAudioIO: utilisation du format" << format.sampleRate() << "Hz au lieu de 8kHz";
     }
 
     m_audioSource = new QAudioSource(inputDevice, format, this);
