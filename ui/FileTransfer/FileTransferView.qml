@@ -852,6 +852,7 @@ Item {
                     Layout.fillHeight: true
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
+                    visible: root.viewMode === "grid"
                     readonly property int columns: Math.max(3, Math.min(6, Math.floor(width / 100)))
                     cellWidth: Math.floor(width / columns)
                     cellHeight: 118
@@ -969,6 +970,112 @@ Item {
                         font.family: Theme.fontFamily
                     }
                 }
+
+                // Vue "liste" des correspondants (bascule grille/liste de la
+                // barre d'adresse) : une ligne par correspondant, avec avatar,
+                // nombre de fichiers filtrés et date relative du dernier échange.
+                ListView {
+                    id: foldersListView
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    visible: root.viewMode === "list"
+                    spacing: 2
+                    clip: true
+                    model: root.filteredPeerGroups
+
+                    add: Transition {
+                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+                    }
+
+                    delegate: Rectangle {
+                        id: folderRow
+                        width: foldersListView.width
+                        height: 44
+                        radius: Theme.radiusSmall
+                        color: folderRowArea.containsMouse ? Theme.surfaceHover : "transparent"
+                        Behavior on color { ColorAnimation { duration: 100 } }
+
+                        readonly property color accentColor: Theme.colorForName(modelData.peerLabel)
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            spacing: 10
+
+                            Rectangle {
+                                width: 28
+                                height: 28
+                                radius: 14
+                                color: Qt.rgba(folderRow.accentColor.r,
+                                                folderRow.accentColor.g,
+                                                folderRow.accentColor.b, 0.14)
+
+                                FaIcon {
+                                    anchors.centerIn: parent
+                                    glyph: "\uf114"
+                                    font.pixelSize: 14
+                                    color: folderRow.accentColor
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: modelData.peerLabel
+                                color: Theme.text
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.family: Theme.fontFamily
+                                elide: Text.ElideRight
+                            }
+
+                            Label {
+                                Layout.preferredWidth: 90
+                                text: qsTr("%n fichier(s)", "", root.filteredCountFor(modelData))
+                                color: Theme.textTertiary
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.family: Theme.fontFamily
+                                horizontalAlignment: Text.AlignRight
+                            }
+
+                            Label {
+                                Layout.preferredWidth: 70
+                                visible: !root.compactList
+                                text: modelData.items.length > 0 ? root.formatRelative(modelData.items[0].timestamp) : ""
+                                color: Theme.textTertiary
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.family: Theme.fontFamily
+                                horizontalAlignment: Text.AlignRight
+                            }
+
+                            FaIcon {
+                                glyph: "\uf105"
+                                font.pixelSize: 13
+                                color: Theme.textTertiary
+                            }
+                        }
+
+                        MouseArea {
+                            id: folderRowArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.openedPeerKey = modelData.peerKey
+                        }
+                    }
+
+                    Label {
+                        visible: root.filteredPeerGroups.length === 0
+                        anchors.centerIn: parent
+                        text: root.searchText.length > 0
+                              ? qsTr("Aucun correspondant ne correspond à « %1 »").arg(root.searchText)
+                              : qsTr("Aucun correspondant pour ce filtre")
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                    }
+                }
             }
 
             // =====================================================
@@ -1038,7 +1145,7 @@ Item {
                     Layout.rightMargin: 16
                     Layout.bottomMargin: 8
                     spacing: 0
-                    visible: root.filteredCurrentItems.length > 0
+                    visible: root.viewMode === "list" && root.filteredCurrentItems.length > 0
 
                     Label {
                         Layout.fillWidth: true
@@ -1094,7 +1201,7 @@ Item {
                     Layout.rightMargin: 16
                     Layout.preferredHeight: 1
                     color: Theme.border
-                    visible: root.filteredCurrentItems.length > 0
+                    visible: root.viewMode === "list" && root.filteredCurrentItems.length > 0
                 }
 
                 // Liste des fichiers
@@ -1107,6 +1214,7 @@ Item {
                     Layout.topMargin: 8
                     spacing: 0
                     clip: true
+                    visible: root.viewMode === "list"
                     model: root.filteredCurrentItems
 
                     add: Transition {
@@ -1254,6 +1362,165 @@ Item {
                     }
 
                     // Message "aucun résultat"
+                    Label {
+                        visible: root.filteredCurrentItems.length === 0
+                        anchors.centerIn: parent
+                        text: qsTr("Aucun fichier ne correspond à ces critères")
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                    }
+                }
+
+                // Vue "grille d'icônes" des fichiers d'un correspondant
+                // (bascule grille/liste de la barre d'adresse).
+                GridView {
+                    id: filesGrid
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    Layout.topMargin: 8
+                    visible: root.viewMode === "grid"
+                    readonly property int columns: Math.max(3, Math.min(8, Math.floor(width / 104)))
+                    cellWidth: Math.floor(width / columns)
+                    cellHeight: 112
+                    clip: true
+                    model: root.filteredCurrentItems
+
+                    add: Transition {
+                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+                    }
+
+                    delegate: Item {
+                        id: fileTile
+                        width: filesGrid.cellWidth
+                        height: filesGrid.cellHeight
+
+                        readonly property var kind: root.fileKindFor(modelData.fileName)
+                        readonly property color kindColor: fileTile.kind.color
+                        readonly property bool inProgress: root.isInProgress(modelData.statusText)
+                        readonly property bool tileHovered: fileTileArea.containsMouse
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.topMargin: 12
+                            anchors.bottomMargin: 4
+                            spacing: 6
+
+                            Item {
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.preferredWidth: 44
+                                Layout.preferredHeight: 34
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: 8
+                                    color: Qt.rgba(fileTile.kindColor.r,
+                                                    fileTile.kindColor.g,
+                                                    fileTile.kindColor.b, 0.14)
+
+                                    FaIcon {
+                                        anchors.centerIn: parent
+                                        glyph: fileTile.kind.glyph
+                                        font.pixelSize: 20
+                                        color: fileTile.kind.color
+                                    }
+                                }
+
+                                // Petit indicateur de statut (coin sup. droit),
+                                // sur le meme principe que la pastille des
+                                // tuiles de correspondants.
+                                Rectangle {
+                                    width: 12
+                                    height: 12
+                                    radius: 6
+                                    color: modelData.statusText === qsTr("Terminé") ? Theme.success
+                                           : (modelData.statusText === qsTr("Échoué") ? Theme.error : Theme.primary)
+                                    border.width: 2
+                                    border.color: Theme.surface
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.rightMargin: -6
+                                    anchors.topMargin: -4
+                                    visible: !fileTile.tileHovered
+                                }
+
+                                // Actions rapides (retry / ouvrir), affichées
+                                // au survol à la place de la pastille de statut.
+                                IconButton {
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.rightMargin: -10
+                                    anchors.topMargin: -8
+                                    size: 22
+                                    radius: Theme.radiusSmall
+                                    visible: fileTile.tileHovered && modelData.statusText === qsTr("Échoué") && modelData.direction === qsTr("Envoi")
+                                    glyph: "\uf021"
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: qsTr("Réessayer")
+                                    onClicked: {
+                                        if (root.context && !root.context.retryTransfer(modelData.transferKey)) {
+                                            errorBanner.show(qsTr("Impossible de relancer le transfert."))
+                                        }
+                                    }
+                                }
+                                IconButton {
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.rightMargin: -10
+                                    anchors.topMargin: -8
+                                    size: 22
+                                    radius: Theme.radiusSmall
+                                    visible: fileTile.tileHovered && modelData.statusText === qsTr("Terminé")
+                                    glyph: "\uf07c"
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: qsTr("Ouvrir l'emplacement")
+                                    onClicked: {
+                                        if (root.context && !root.context.openFileLocation(modelData.filePath)) {
+                                            errorBanner.show(qsTr("Impossible d'ouvrir l'emplacement du fichier."))
+                                        }
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 4
+                                Layout.rightMargin: 4
+                                text: modelData.fileName
+                                color: Theme.text
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.weight: Font.Medium
+                                font.family: Theme.fontFamily
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideMiddle
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 2
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 4
+                                Layout.rightMargin: 4
+                                text: root.formatBytes(modelData.totalBytes)
+                                    + (fileTile.inProgress && modelData.percent !== undefined ? " · " + modelData.percent + "%" : "")
+                                color: Theme.textTertiary
+                                font.pixelSize: 10
+                                font.family: Theme.fontFamily
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
+                            }
+                        }
+
+                        MouseArea {
+                            id: fileTileArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            z: -1
+                        }
+                    }
+
                     Label {
                         visible: root.filteredCurrentItems.length === 0
                         anchors.centerIn: parent
