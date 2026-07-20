@@ -46,14 +46,76 @@ Item {
     // plutôt que d'empiler des dialogues.
     property var pendingShareConfirmations: []
 
-    // Filtre rapide du panneau lateral (meme principe que FileTransferView).
+    // Filtre rapide (rangee de chips, meme principe que FileTransferView -
+    // remplace l'ancien panneau lateral ExplorerSidebar).
     property string activeFilter: "all"   // "all" | "mine" | "received"
+    property string searchText: ""
+    property string viewMode: "grid"      // "grid" | "list"
 
     function folderMatchesFilter(isLocalOrigin) {
         switch (root.activeFilter) {
         case "mine": return isLocalOrigin
         case "received": return !isLocalOrigin
         default: return true
+        }
+    }
+
+    function folderMatchesSearch(name) {
+        const q = root.searchText.trim().toLowerCase()
+        if (q.length === 0) return true
+        return name.toLowerCase().indexOf(q) !== -1
+    }
+
+    function itemMatchesSearch(item) {
+        const q = root.searchText.trim().toLowerCase()
+        if (q.length === 0) return true
+        return item.name.toLowerCase().indexOf(q) !== -1
+    }
+
+    function hasActiveFilters() {
+        return root.searchText.trim().length > 0 || root.activeFilter !== "all"
+    }
+
+    function filterIconColor(key) {
+        switch (key) {
+        case "mine": return Theme.primary
+        case "received": return Theme.accent
+        default: return Theme.textTertiary
+        }
+    }
+    function filterIconGlyph(key) {
+        switch (key) {
+        case "mine": return "\uf015"     // home
+        case "received": return "\uf063" // arrow-down
+        default: return "\uf00a"         // th (tout)
+        }
+    }
+
+    // Icone + couleur de fichier selon l'extension (meme logique que
+    // FileTransferView.fileKindFor), utilisee dans la vue "fichiers" d'un
+    // dossier partage. Glyphes Font Awesome 4.7.0.
+    function fileKindFor(fileName) {
+        const parts = (fileName || "").split(".")
+        const ext = parts.length > 1 ? parts[parts.length - 1].toLowerCase() : ""
+        switch (ext) {
+        case "pdf":
+            return { glyph: "\uf1c1", color: Theme.primary }
+        case "doc": case "docx": case "odt": case "rtf": case "txt":
+            return { glyph: "\uf0f6", color: Theme.primary }
+        case "jpg": case "jpeg": case "png": case "gif": case "bmp": case "webp": case "svg":
+            return { glyph: "\uf1c5", color: "#0EA5B7" }
+        case "zip": case "rar": case "7z": case "tar": case "gz":
+            return { glyph: "\uf1c6", color: "#D97706" }
+        case "mp4": case "mov": case "avi": case "mkv": case "webm":
+            return { glyph: "\uf1c8", color: "#E85C8A" }
+        case "mp3": case "wav": case "flac": case "ogg": case "m4a":
+            return { glyph: "\uf1c7", color: "#7C5CFF" }
+        case "xls": case "xlsx": case "csv":
+            return { glyph: "\uf1c3", color: Theme.success }
+        case "ppt": case "pptx":
+            return { glyph: "\uf1c4", color: Theme.warning }
+        default:
+            return { glyph: "\uf016", color: Theme.textSecondary }
         }
     }
 
@@ -114,6 +176,7 @@ Item {
         const folders = {}
         const files = []
         const prefix = root.browsedRelativePath.length > 0 ? root.browsedRelativePath + "/" : ""
+        const q = root.searchText.trim().toLowerCase()
 
         for (let i = 0; i < root.currentFiles.length; ++i) {
             const file = root.currentFiles[i]
@@ -125,13 +188,17 @@ Item {
             if (separatorIndex >= 0) {
                 const name = remainingPath.slice(0, separatorIndex)
                 const path = prefix + name
-                if (!folders[path]) {
-                    folders[path] = { kind: "folder", name: name, path: path, count: 0 }
+                if (q.length === 0 || name.toLowerCase().indexOf(q) !== -1) {
+                    if (!folders[path]) {
+                        folders[path] = { kind: "folder", name: name, path: path, count: 0 }
+                    }
+                    folders[path].count++
                 }
-                folders[path].count++
             } else {
-                files.push({ kind: "file", name: remainingPath, relativePath: file.relativePath,
-                             size: file.size, version: file.version })
+                if (q.length === 0 || remainingPath.toLowerCase().indexOf(q) !== -1) {
+                    files.push({ kind: "file", name: remainingPath, relativePath: file.relativePath,
+                                 size: file.size, version: file.version })
+                }
             }
         }
 
@@ -201,7 +268,17 @@ Item {
     }
 
     Component.onCompleted: {
-        if (root.context) root.context.refresh()
+        if (root.context) {
+            root.context.refresh()
+            root.context.folderFilterProxy.filterMode = root.activeFilter
+            root.context.folderFilterProxy.searchText = root.searchText
+        }
+    }
+
+    onActiveFilterChanged: if (root.context) root.context.folderFilterProxy.filterMode = root.activeFilter
+    onSearchTextChanged: {
+        if (root.context) root.context.folderFilterProxy.searchText = root.searchText
+        root.rebuildFileBrowser()
     }
 
     Rectangle {
@@ -1211,522 +1288,1481 @@ Item {
     }
 
     // ---- layout principal ----
+    // Redesign aligne sur FileTransferView : barre d'adresse personnalisee
+    // (pilule fil d'Ariane, recherche, bascule grille/liste) + rangee de
+    // filtres rapides en chips a la place de l'ancien panneau lateral
+    // ExplorerSidebar (desormais supprime de cet ecran), tuiles "carte"
+    // avec avatar colore, badges de statut communs (StatusBadge) et barre
+    // d'etat inferieure fine, comme un explorateur natif.
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // Barre d'adresse (composant partage)
-        ExplorerAddressBar {
+        // =========================================================
+        // Barre d'adresse personnalisée (custom, meme principe que
+        // FileTransferView) : navigation + fil d'Ariane pilule +
+        // recherche + bascule grille/liste + actions propres a l'ecran.
+        // =========================================================
+        Rectangle {
             Layout.fillWidth: true
-            rootLabel: qsTr("Dossiers partagés")
-            currentLabel: root.openedFolderId >= 0 ? root.openedFolderName : ""
-            showSearch: false
-            onBackClicked: {
-                if (root.openedFolderId >= 0) {
-                    if (root.browsedRelativePath.length > 0) {
-                        root.goUpInBrowser()
-                    } else {
-                        root.openedFolderId = -1
-                    }
-                } else {
-                    root.backRequested()
-                }
-            }
-            onRefreshClicked: root.refreshFiles()
-            onRootClicked: root.openedFolderId = -1
+            Layout.preferredHeight: 48
+            color: Theme.addressBarBackground
 
-            AppButton {
-                visible: root.openedFolderId >= 0
-                text: root.showHistory ? qsTr("Fichiers") : qsTr("Historique")
-                variant: "ghost"
-                onClicked: root.showHistory = !root.showHistory
+            Rectangle {
+                anchors.bottom: parent.bottom
+                width: parent.width
+                height: 1
+                color: Theme.border
             }
 
-            AppButton {
-                visible: root.openedFolderId >= 0
-                enabled: root.openedFolderIsLocalOrigin
-                text: qsTr("Réindexer")
-                variant: "secondary"
-                onClicked: {
-                    if (root.context) {
-                        root.context.shareFolder(root.openedFolderId)
-                        root.refreshFiles()
-                        root.refreshHistory()
-                    }
-                }
-            }
-
-            // ---- Menu « ⋯ » regroupant les actions secondaires ----
-            // Exclusions et Gérer les accès sont fusionnés ici pour
-            // éviter le débordement horizontal de la barre d'actions
-            // quand la fenêtre n'est pas assez large.
-            AppButton {
-                id: moreActionsBtn
-                visible: root.openedFolderId >= 0
-                text: qsTr("⋯")
-                variant: "secondary"
-                onClicked: moreActionsMenu.open()
-
-                Menu {
-                    id: moreActionsMenu
-                    // Ancré sous le bouton pour rester dans l'écran
-                    y: parent.height + 2
-
-                    MenuItem {
-                        text: qsTr("Exclusions…")
-                        onTriggered: {
-                            editExcludePatternsDialog.targetFolderId = root.openedFolderId
-                            editExcludePatternsDialog.targetFolderName = root.openedFolderName
-                            editExcludePatternsDialog.open()
-                        }
-                    }
-                    MenuItem {
-                        text: qsTr("Gérer les accès…")
-                        onTriggered: {
-                            manageAccessDialog.targetFolderId = root.openedFolderId
-                            manageAccessDialog.targetFolderName = root.openedFolderName
-                            manageAccessDialog.open()
-                        }
-                    }
-                }
-            }
-
-            AppButton {
-                visible: root.openedFolderId < 0
-                text: qsTr("+ Nouveau dossier")
-                variant: "primary"
-                onClicked: createDialog.open()
-            }
-        }
-
-        // ---- Vue racine : sidebar de filtres + grille des dossiers partagés ----
-        RowLayout {
-            visible: root.openedFolderId < 0
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: 0
-
-            // Panneau lateral (filtres rapides, composant partage).
-            ExplorerSidebar {
-                Layout.preferredWidth: 168
-                Layout.fillHeight: true
-                activeFilter: root.activeFilter
-                quickFilters: [
-                    { key: "all", label: qsTr("Tout"), color: Theme.textTertiary, dim: true },
-                    { key: "mine", label: qsTr("Mes dossiers"), color: Theme.primary },
-                    { key: "received", label: qsTr("Reçus"), color: Theme.accent }
-                ]
-                onFilterSelected: function(key) { root.activeFilter = key }
-            }
-
-        // ---- Vue grille des dossiers partagés ----
-        ScrollView {
-            visible: root.openedFolderId < 0
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            clip: true
-
-            GridView {
-                id: gridView
+            RowLayout {
                 anchors.fill: parent
-                anchors.margins: Theme.spacingMedium
-                cellWidth: 148
-                cellHeight: 144
-                model: root.context ? root.context.folderModel : null
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 8
 
-                delegate: Item {
-                    width: gridView.cellWidth
-                    height: gridView.cellHeight
-                    // Filtre visuel (panneau lateral) : le modele racine
-                    // reste celui de SharedFolderModel (C++), donc on masque
-                    // les tuiles hors filtre plutot que de reconstruire un
-                    // modele filtre - laisse d'eventuels espaces vides dans
-                    // la grille, a revoir avec un QSortFilterProxyModel si
-                    // besoin d'un rendu sans trous.
-                    visible: root.folderMatchesFilter(model.isLocalOrigin)
-
-                    FolderTile {
-                        anchors.centerIn: parent
-                        label: model.name
-                        sublabel: model.fileCount === 1 ? qsTr("1 fichier") : qsTr("%1 fichiers").arg(model.fileCount)
-                        count: model.fileCount
-                        hasConflict: model.hasConflict
-                        onOpened: {
-                            if (!model.isLocalOrigin) {
-                                // Si le localPath est déjà défini, ouvrir directement le dossier
-                                if (model.localPath && model.localPath.length > 0) {
-                                    root.openFolder(model.folderId, model.name, false, model.uuid)
-                                } else {
-                                    setLocalPathDialog.targetFolderId = model.folderId
-                                    setLocalPathDialog.targetFolderName = model.name
-                                    setLocalPathDialog.targetFolderUuid = model.uuid
-                                    setLocalPathDialog.open()
-                                }
+                IconButton {
+                    glyph: "\uf060"
+                    variant: "ghost"
+                    size: 30
+                    onClicked: {
+                        if (root.openedFolderId >= 0) {
+                            if (root.browsedRelativePath.length > 0) {
+                                root.goUpInBrowser()
                             } else {
-                                root.openFolder(model.folderId, model.name, true, model.uuid)
+                                root.openedFolderId = -1
                             }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.RightButton
-                            onClicked: {
-                                removeConfirmDialog.targetFolderId = model.folderId
-                                removeConfirmDialog.targetFolderName = model.name
-                                removeConfirmDialog.open()
-                            }
+                        } else {
+                            root.backRequested()
                         }
                     }
                 }
 
-                Label {
-                    visible: gridView.count === 0
-                    anchors.centerIn: parent
-                    text: qsTr("Aucun dossier partagé pour le moment.\nCliquez sur « + Nouveau dossier » pour commencer.")
-                    color: Theme.textTertiary
-                    horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: Theme.fontSizeBody
+                IconButton {
+                    glyph: "\uf021"
+                    variant: "ghost"
+                    size: 30
+                    onClicked: {
+                        if (root.openedFolderId >= 0) {
+                            root.refreshFiles()
+                            root.refreshHistory()
+                        } else if (root.context) {
+                            root.context.refresh()
+                        }
+                    }
                 }
-            }
-        }
-        }
 
-        // ---- Vue liste des fichiers d'un dossier partagé ----
-        ScrollView {
-            visible: root.openedFolderId >= 0 && !root.showHistory
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            clip: true
-
-            GridView {
-                id: filesListView
-                anchors.fill: parent
-                anchors.margins: Theme.spacingMedium
-                cellWidth: 148
-                cellHeight: 144
-                model: root.browserItems
-
-                header: Rectangle {
-                    width: filesListView.width
-                    height: 0
-                    visible: false
-                    color: Theme.surfaceAlt
+                // Fil d'Ariane en pilule
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 32
+                    radius: Theme.radiusPill
+                    color: Theme.breadcrumbChipHover
                     border.width: 1
                     border.color: Theme.border
 
                     RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: Theme.spacingSmall
-                        anchors.rightMargin: Theme.spacingSmall
-                        Label { Layout.fillWidth: true; text: qsTr("Nom"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
-                        Label { Layout.preferredWidth: 90; text: qsTr("Taille"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
-                        Label { Layout.preferredWidth: 60; text: qsTr("Version"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
-                        Label { Layout.preferredWidth: 90; text: qsTr("Statut"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
+                        id: breadcrumbRow
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: 12
+                        // Pas de anchors.right : le row ne s'etire pas sur
+                        // toute la largeur de la pilule, il ne prend que la
+                        // place necessaire a son contenu.
+                        spacing: 6
+
+                        Label {
+                            text: qsTr("Dossiers partagés")
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: Theme.fontFamily
+                            color: Theme.textSecondary
+
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.margins: -4
+                                cursorShape: root.openedFolderId >= 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                enabled: root.openedFolderId >= 0
+                                onClicked: root.openedFolderId = -1
+                            }
+                        }
+
+                        Label {
+                            visible: root.openedFolderId >= 0
+                            text: "/"
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.family: Theme.fontFamily
+                            color: Theme.textTertiary
+                        }
+
+                        Label {
+                            visible: root.openedFolderId >= 0
+                            text: root.openedFolderName
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: Font.Medium
+                            font.family: Theme.fontFamily
+                            color: root.browsedRelativePath.length > 0 ? Theme.textSecondary : Theme.text
+                            elide: Text.ElideRight
+                            Layout.maximumWidth: 180
+
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.margins: -4
+                                cursorShape: root.browsedRelativePath.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                enabled: root.browsedRelativePath.length > 0
+                                onClicked: root.openBrowserFolder("")
+                            }
+                        }
+
+                        Label {
+                            visible: root.openedFolderId >= 0 && root.browsedRelativePath.length > 0
+                            text: "/"
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.family: Theme.fontFamily
+                            color: Theme.textTertiary
+                        }
+
+                        Label {
+                            visible: root.openedFolderId >= 0 && root.browsedRelativePath.length > 0
+                            text: root.browsedRelativePath.length > 0 ? root.browsedRelativePath.split("/").pop() : ""
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: Font.Medium
+                            font.family: Theme.fontFamily
+                            color: Theme.text
+                            elide: Text.ElideRight
+                            Layout.maximumWidth: 180
+
+                            ToolTip.visible: truncated && browsedLabelArea.containsMouse
+                            ToolTip.text: root.browsedRelativePath
+                            ToolTip.delay: 500
+
+                            MouseArea {
+                                id: browsedLabelArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                acceptedButtons: Qt.NoButton
+                            }
+                        }
                     }
                 }
 
-                delegate: Rectangle {
-                    id: fileRow
-                    width: filesListView.cellWidth
-                    height: filesListView.cellHeight
-                    color: fileMouseArea.containsMouse ? Theme.surfaceHover : "transparent"
+                // Champ de recherche
+                Rectangle {
+                    visible: !root.showHistory
+                    Layout.preferredWidth: 190
+                    Layout.preferredHeight: 32
+                    radius: Theme.radiusPill
+                    color: Theme.surfaceAlt
+                    border.width: 1
+                    border.color: addressSearchField.activeFocus ? Theme.primary : Theme.border
+                    Behavior on border.color { ColorAnimation { duration: 100 } }
 
-                    // true si ce fichier a un conflit en attente de résolution
-                    readonly property bool isFolder: modelData.kind === "folder"
-                    readonly property bool hasConflict: !isFolder
-                        && root.conflictedFiles.hasOwnProperty(modelData.relativePath)
-                    readonly property string conflictPath: hasConflict ? root.conflictedFiles[modelData.relativePath] : ""
-                    border.width: isFolder ? 0 : 1
-                    border.color: Theme.border
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        spacing: 6
 
-                    FolderTile {
-                        visible: fileRow.isFolder
-                        anchors.centerIn: parent
-                        label: modelData.name
-                        sublabel: fileRow.isFolder && modelData.count === 1 ? qsTr("1 fichier")
-                                                                             : qsTr("%1 fichiers").arg(fileRow.isFolder ? modelData.count : 0)
-                        count: fileRow.isFolder ? modelData.count : 0
-                        accentColor: Theme.colorForName(modelData.name)
-                        onOpened: root.openBrowserFolder(modelData.path)
+                        FaIcon {
+                            glyph: "\uf002"
+                            font.pixelSize: 13
+                            color: Theme.textTertiary
+                        }
+
+                        TextField {
+                            id: addressSearchField
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 28
+                            placeholderText: qsTr("Rechercher...")
+                            text: root.searchText
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: Theme.fontFamily
+                            color: Theme.textSecondary
+                            placeholderTextColor: Theme.textTertiary
+                            background: Rectangle { color: "transparent" }
+                            onTextChanged: root.searchText = text
+                        }
+
+                        FaIcon {
+                            visible: root.searchText.length > 0
+                            glyph: "\uf00d"
+                            font.pixelSize: 11
+                            color: Theme.textTertiary
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.margins: -6
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: addressSearchField.clear()
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    visible: !root.showHistory
+                    width: 1
+                    height: 18
+                    color: Theme.border
+                }
+
+                // Bascule grille/liste
+                RowLayout {
+                    visible: !root.showHistory
+                    spacing: 0
+
+                    Rectangle {
+                        Layout.preferredWidth: 30
+                        Layout.preferredHeight: 30
+                        radius: Theme.radiusSmall
+                        color: root.viewMode === "grid" ? Theme.primaryMuted
+                               : (gridToggleArea.containsMouse ? Theme.surfaceHover : "transparent")
+                        Behavior on color { ColorAnimation { duration: 100 } }
+
+                        FaIcon {
+                            anchors.centerIn: parent
+                            glyph: "\uf009"
+                            font.pixelSize: 15
+                            color: root.viewMode === "grid" ? Theme.primary : Theme.textTertiary
+                        }
+
+                        MouseArea {
+                            id: gridToggleArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.viewMode = "grid"
+                        }
                     }
 
-                    ColumnLayout {
-                        visible: !fileRow.isFolder
-                        anchors.fill: parent
-                        anchors.leftMargin: Theme.spacingSmall
-                        anchors.rightMargin: Theme.spacingSmall
-                        spacing: 1
+                    Rectangle {
+                        Layout.preferredWidth: 30
+                        Layout.preferredHeight: 30
+                        radius: Theme.radiusSmall
+                        color: root.viewMode === "list" ? Theme.primaryMuted
+                               : (listToggleArea.containsMouse ? Theme.surfaceHover : "transparent")
+                        Behavior on color { ColorAnimation { duration: 100 } }
 
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            spacing: Theme.spacingSmall
-
-                            Item {
-                                Layout.preferredWidth: 0
-                            }
-
-                            Label {
-                                visible: false
-                                Layout.preferredWidth: 0
-                                text: ""
-                                color: Theme.textSecondary
-                                font.pixelSize: Theme.fontSizeCaption
-                            }
-
-                            // Badge conflit — icône ⚠ ambrée sur la gauche du nom
-                            Rectangle {
-                                visible: fileRow.hasConflict
-                                width: 20
-                                height: 20
-                                radius: 10
-                                color: "#C07000"
-                                Label {
-                                    anchors.centerIn: parent
-                                    text: "⚠"
-                                    color: "#FFFFFF"
-                                    font.pixelSize: 11
-                                    font.bold: true
-                                }
-                                HoverHandler { id: badgeHover }
-                                ToolTip.visible: badgeHover.hovered
-                                ToolTip.text: qsTr("Conflit → %1").arg(fileRow.conflictPath)
-                            }
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: modelData.name
-                                color: fileRow.hasConflict ? "#C07000" : Theme.text
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.bold: fileRow.hasConflict || fileRow.isFolder
-                                elide: Text.ElideMiddle
-                            }
-                            Label {
-                                Layout.preferredWidth: 40
-                                text: fileRow.isFolder ? "" : root.formatBytes(modelData.size)
-                                color: Theme.textSecondary
-                                font.pixelSize: Theme.fontSizeSmall
-                            }
-                            Label {
-                                Layout.preferredWidth: 26
-                                text: fileRow.isFolder ? "" : "v" + modelData.version
-                                color: Theme.textSecondary
-                                font.pixelSize: Theme.fontSizeSmall
-                            }
-                            StatusBadge {
-                                visible: !fileRow.isFolder
-                                text: fileRow.hasConflict ? qsTr("Conflit") : qsTr("Synchronisé")
-                                tone: fileRow.hasConflict ? "warning" : "success"
-                            }
+                        FaIcon {
+                            anchors.centerIn: parent
+                            glyph: "\uf0ca"
+                            font.pixelSize: 15
+                            color: root.viewMode === "list" ? Theme.primary : Theme.textTertiary
                         }
 
-                        // Sous-ligne : chemin du fichier de conflit renommé
+                        MouseArea {
+                            id: listToggleArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.viewMode = "list"
+                        }
+                    }
+                }
+
+                Rectangle {
+                    visible: root.openedFolderId >= 0
+                    width: 1
+                    height: 18
+                    color: Theme.border
+                }
+
+                // ---- Actions propres au dossier ouvert ----
+                AppButton {
+                    visible: root.openedFolderId >= 0
+                    text: root.showHistory ? qsTr("Fichiers") : qsTr("Historique")
+                    variant: "ghost"
+                    onClicked: root.showHistory = !root.showHistory
+                }
+
+                AppButton {
+                    visible: root.openedFolderId >= 0
+                    enabled: root.openedFolderIsLocalOrigin
+                    text: qsTr("Réindexer")
+                    variant: "secondary"
+                    onClicked: {
+                        if (root.context) {
+                            root.context.shareFolder(root.openedFolderId)
+                            root.refreshFiles()
+                            root.refreshHistory()
+                        }
+                    }
+                }
+
+                // ---- Menu « ⋯ » regroupant les actions secondaires ----
+                AppButton {
+                    id: moreActionsBtn
+                    visible: root.openedFolderId >= 0
+                    text: qsTr("⋯")
+                    variant: "secondary"
+                    onClicked: moreActionsMenu.open()
+
+                    Menu {
+                        id: moreActionsMenu
+                        y: parent.height + 2
+
+                        MenuItem {
+                            text: qsTr("Exclusions…")
+                            onTriggered: {
+                                editExcludePatternsDialog.targetFolderId = root.openedFolderId
+                                editExcludePatternsDialog.targetFolderName = root.openedFolderName
+                                editExcludePatternsDialog.open()
+                            }
+                        }
+                        MenuItem {
+                            text: qsTr("Gérer les accès…")
+                            onTriggered: {
+                                manageAccessDialog.targetFolderId = root.openedFolderId
+                                manageAccessDialog.targetFolderName = root.openedFolderName
+                                manageAccessDialog.open()
+                            }
+                        }
+                    }
+                }
+
+                AppButton {
+                    visible: root.openedFolderId < 0
+                    text: qsTr("+ Nouveau dossier")
+                    variant: "primary"
+                    onClicked: createDialog.open()
+                }
+            }
+        }
+
+        // =========================================================
+        // Rangée de filtres rapides (Tout, Mes dossiers, Reçus) — remplace
+        // l'ancien panneau lateral ExplorerSidebar (supprime de cet ecran).
+        // Visible uniquement a la racine (liste des dossiers partages).
+        // =========================================================
+        RowLayout {
+            visible: root.openedFolderId < 0
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.spacingMedium
+            Layout.rightMargin: Theme.spacingMedium
+            Layout.topMargin: Theme.spacingSmall
+            spacing: 6
+
+            Repeater {
+                model: [
+                    { key: "all",      label: qsTr("Tout") },
+                    { key: "mine",     label: qsTr("Mes dossiers") },
+                    { key: "received", label: qsTr("Reçus") }
+                ]
+
+                delegate: Rectangle {
+                    height: 24
+                    width: filterChipRow.implicitWidth + 20
+                    radius: Theme.radiusPill
+                    color: root.activeFilter === modelData.key ? Theme.primaryMuted : Theme.surfaceAlt
+                    border.width: 1
+                    border.color: root.activeFilter === modelData.key ? Theme.primary : Theme.border
+                    Behavior on color { ColorAnimation { duration: 100 } }
+
+                    RowLayout {
+                        id: filterChipRow
+                        anchors.centerIn: parent
+                        spacing: 5
+
+                        FaIcon {
+                            glyph: root.filterIconGlyph(modelData.key)
+                            font.pixelSize: 9
+                            color: root.activeFilter === modelData.key ? Theme.primary : root.filterIconColor(modelData.key)
+                        }
                         Label {
-                            visible: fileRow.hasConflict
-                            Layout.fillWidth: true
-                            text: qsTr("→ copie en conflit : %1").arg(fileRow.conflictPath)
-                            color: "#C07000"
+                            text: modelData.label
+                            color: root.activeFilter === modelData.key ? Theme.primary : Theme.textSecondary
                             font.pixelSize: Theme.fontSizeCaption
-                            elide: Text.ElideMiddle
-                        }
-
-                        RowLayout {
-                            visible: fileRow.hasConflict
-                            Layout.fillWidth: true
-                            spacing: Theme.spacingSmall
-
-                            AppButton {
-                                text: qsTr("Conserver local")
-                                variant: "secondary"
-                                onClicked: {
-                                    if (root.context) {
-                                        root.context.resolveConflict(root.openedFolderId, modelData.relativePath, fileRow.conflictPath, "keep_local")
-                                        root.refreshFiles()
-                                        root.refreshHistory()
-                                    }
-                                }
-                            }
-                            AppButton {
-                                text: qsTr("Conserver distant")
-                                variant: "secondary"
-                                onClicked: {
-                                    if (root.context) {
-                                        root.context.resolveConflict(root.openedFolderId, modelData.relativePath, fileRow.conflictPath, "keep_remote")
-                                        root.refreshFiles()
-                                        root.refreshHistory()
-                                    }
-                                }
-                            }
-                            AppButton {
-                                text: qsTr("Garder les deux")
-                                variant: "secondary"
-                                onClicked: {
-                                    if (root.context) {
-                                        root.context.resolveConflict(root.openedFolderId, modelData.relativePath, fileRow.conflictPath, "keep_both")
-                                        root.refreshFiles()
-                                        root.refreshHistory()
-                                    }
-                                }
-                            }
+                            font.weight: root.activeFilter === modelData.key ? Font.Medium : Font.Normal
+                            font.family: Theme.fontFamily
                         }
                     }
 
                     MouseArea {
-                        id: fileMouseArea
-                        visible: !fileRow.isFolder
                         anchors.fill: parent
-                        hoverEnabled: true
-                        acceptedButtons: Qt.NoButton
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.activeFilter = modelData.key
                     }
                 }
+            }
 
-                Label {
-                    visible: filesListView.count === 0
-                    anchors.centerIn: parent
-                    text: qsTr("Ce dossier partagé ne contient aucun fichier indexé.")
-                    color: Theme.textTertiary
-                    font.pixelSize: Theme.fontSizeBody
+            Item { Layout.fillWidth: true }
+
+            Label {
+                visible: root.hasActiveFilters()
+                text: qsTr("Réinitialiser")
+                color: Theme.textTertiary
+                font.pixelSize: Theme.fontSizeCaption
+                font.family: Theme.fontFamily
+
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -4
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        root.activeFilter = "all"
+                        root.searchText = ""
+                    }
                 }
             }
         }
 
-        // ---- Journal de synchronisation (Release 3) ----
-        // Affiche les SyncOperations enregistrees par SyncEngine apres chaque
-        // (re)indexation : Create / Update / Delete / Rename, avec le chemin
-        // relatif, la version et l'horodatage. Bascule via le bouton "Historique".
-        ScrollView {
-            visible: root.openedFolderId >= 0 && root.showHistory
+        // =========================================================
+        // Zone de contenu principal
+        // =========================================================
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            clip: true
 
-            ListView {
-                id: historyListView
-                anchors.fill: parent
-                anchors.margins: Theme.spacingMedium
-                spacing: 2
-                model: root.currentSyncHistory
+            // État vide (aucun dossier partagé du tout)
+            ColumnLayout {
+                anchors.centerIn: parent
+                visible: root.openedFolderId < 0 && gridView.count === 0
+                spacing: Theme.spacingSmall
 
-                header: Rectangle {
-                    width: historyListView.width
-                    height: 32
-                    color: Theme.surfaceAlt
-                    border.width: 1
-                    border.color: Theme.border
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 64
+                    Layout.preferredHeight: 64
+                    Layout.bottomMargin: Theme.spacingSmall
+                    radius: 18
+                    color: Theme.primaryMuted
+                    FaIcon {
+                        anchors.centerIn: parent
+                        glyph: "\uf07b"
+                        font.pixelSize: 26
+                        color: Theme.primary
+                    }
+                }
+                Label {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: qsTr("Aucun dossier partagé")
+                    color: Theme.text
+                    font.pixelSize: Theme.fontSizeBody
+                    font.weight: Font.Medium
+                    font.family: Theme.fontFamily
+                }
+                Label {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: qsTr("Cliquez sur « + Nouveau dossier » pour commencer.")
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeSmall
+                    font.family: Theme.fontFamily
+                }
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.topMargin: Theme.spacingMedium
+                    Layout.preferredHeight: 32
+                    Layout.preferredWidth: emptyCtaRow.implicitWidth + 26
+                    radius: Theme.radiusSmall
+                    color: emptyCtaArea.pressed ? Theme.primaryHover : Theme.primary
 
                     RowLayout {
+                        id: emptyCtaRow
+                        anchors.centerIn: parent
+                        spacing: 6
+                        FaIcon { glyph: "\uf07b"; font.pixelSize: 12; color: Theme.primaryText }
+                        Label {
+                            text: qsTr("Nouveau dossier")
+                            color: Theme.primaryText
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.weight: Font.Medium
+                            font.family: Theme.fontFamily
+                        }
+                    }
+                    MouseArea {
+                        id: emptyCtaArea
                         anchors.fill: parent
-                        anchors.leftMargin: Theme.spacingSmall
-                        anchors.rightMargin: Theme.spacingSmall
-                        Label { Layout.preferredWidth: 70; text: qsTr("Opération"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
-                        Label { Layout.fillWidth: true; text: qsTr("Fichier"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
-                        Label { Layout.preferredWidth: 50; text: qsTr("Ver."); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
-                        Label { Layout.preferredWidth: 120; text: qsTr("Date"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary }
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: createDialog.open()
+                    }
+                }
+            }
+
+            // =====================================================
+            // VUE RACINE : grille/liste des dossiers partagés (tuiles
+            // "carte" avec avatar colore, meme principe que les tuiles
+            // correspondants de FileTransferView).
+            // =====================================================
+            ColumnLayout {
+                anchors.fill: parent
+                visible: root.openedFolderId < 0 && gridView.count > 0
+                spacing: 0
+
+                Item { Layout.preferredHeight: 16 }
+
+                Label {
+                    Layout.leftMargin: 16
+                    Layout.bottomMargin: 10
+                    text: qsTr("DOSSIERS PARTAGÉS")
+                    color: Theme.textTertiary
+                    font.pixelSize: Theme.fontSizeCaption
+                    font.weight: Font.Medium
+                    font.family: Theme.fontFamily
+                    font.letterSpacing: 0.4
+                }
+
+                GridView {
+                    id: gridView
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    visible: root.viewMode === "grid"
+                    readonly property int columns: Math.max(2, Math.floor(width / 160))
+                    cellWidth: Math.floor(width / columns)
+                    cellHeight: 148
+                    model: root.context ? root.context.folderFilterProxy : null
+                    clip: true
+
+                    add: Transition {
+                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+                    }
+
+                    delegate: Item {
+                        id: folderTile
+                        width: gridView.cellWidth
+                        height: gridView.cellHeight
+
+                        // readonly property color accentColor: Theme.colorForName(model.name)
+                        readonly property color accentColor: "#FFC83D"   // jaune dossier façon Windows
+                        readonly property bool hovered: tileArea.containsMouse
+
+                        // ---- Fond de la tuile (survol / selection), meme
+                        // principe que FolderTile.tileBg. ----
+                        Rectangle {
+                            id: tileBg
+                            anchors.fill: parent
+                            anchors.margins: 4
+                            radius: Theme.radiusMedium
+                            color: folderTile.hovered ? Theme.surfaceHover : "transparent"
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                        }
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingSmall
+                            spacing: 6
+
+                            // ---- Icone de dossier, style FolderTile ----
+                            Item {
+                                id: iconArea
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.preferredWidth: 76
+                                Layout.preferredHeight: 62
+                                Layout.topMargin: 8
+
+                                // Elevation discrete au survol.
+                                Rectangle {
+                                    anchors.fill: folderShape
+                                    anchors.topMargin: 3
+                                    radius: folderShape.radius
+                                    color: Theme.shadow
+                                    opacity: folderTile.hovered ? 0.55 : 0
+                                    Behavior on opacity { NumberAnimation { duration: 120 } }
+                                }
+
+                                // Corps du dossier (forme "plate" a onglet).
+                                Item {
+                                    id: folderShape
+                                    anchors.fill: parent
+                                    property real radius: 6
+                                    scale: folderTile.hovered ? 1.04 : 1.0
+                                    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+
+                                    // Onglet arriere-plan.
+                                    Rectangle {
+                                        x: 2
+                                        y: 4
+                                        width: parent.width * 0.42
+                                        height: 11
+                                        radius: 3
+                                        color: folderTile.accentColor
+                                        opacity: 0.75
+                                    }
+
+                                    // Corps principal du dossier.
+                                    Rectangle {
+                                        y: 11
+                                        width: parent.width
+                                        height: parent.height - 11
+                                        radius: folderShape.radius
+                                        color: folderTile.accentColor
+
+                                        // Degrade "vitre" subtil.
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            radius: parent.radius
+                                            gradient: Gradient {
+                                                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.16) }
+                                                GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.0) }
+                                            }
+                                        }
+
+                                        // Ligne de pli du rabat avant.
+                                        Rectangle {
+                                            anchors.top: parent.top
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            height: parent.height * 0.38
+                                            radius: folderShape.radius
+                                            color: Qt.rgba(1, 1, 1, 0.10)
+                                        }
+                                    }
+                                }
+
+                                // Avatar/accent : initiale du dossier, ancre
+                                // en bas a droite du dossier (comme un badge
+                                // "proprietaire" pose sur la pochette).
+                                // Rectangle {
+                                //     width: 24
+                                //     height: 24
+                                //     radius: 12
+                                //     color: Theme.surface
+                                //     border.width: 2
+                                //     border.color: Theme.surface
+                                //     anchors.right: folderShape.right
+                                //     anchors.bottom: folderShape.bottom
+                                //     anchors.rightMargin: -6
+                                //     anchors.bottomMargin: -6
+
+                                //     Rectangle {
+                                //         anchors.fill: parent
+                                //         anchors.margins: 2
+                                //         radius: width / 2
+                                //         color: Qt.rgba(folderTile.accentColor.r,
+                                //                         folderTile.accentColor.g,
+                                //                         folderTile.accentColor.b, 0.20)
+                                //         Text {
+                                //             anchors.centerIn: parent
+                                //             text: model.name.length > 0 ? model.name.charAt(0).toUpperCase() : "?"
+                                //             color: folderTile.accentColor
+                                //             font.pixelSize: 10
+                                //             font.bold: true
+                                //             font.family: Theme.fontFamily
+                                //         }
+                                //     }
+                                // }
+
+                                // Pastille conflit (coin superieur gauche).
+                                Rectangle {
+                                    visible: model.hasConflict
+                                    width: 20
+                                    height: 20
+                                    radius: 10
+                                    color: Theme.warning
+                                    border.width: 2
+                                    border.color: Theme.surface
+                                    anchors.left: folderShape.left
+                                    anchors.top: folderShape.top
+                                    anchors.leftMargin: -7
+                                    anchors.topMargin: -4
+
+                                    FaIcon {
+                                        anchors.centerIn: parent
+                                        glyph: "\uf071"
+                                        font.pixelSize: 9
+                                        color: "#FFFFFF"
+                                    }
+                                }
+
+                                // Pastille de comptage (coin superieur droit).
+                                Rectangle {
+                                    visible: model.fileCount > 0
+                                    width: Math.max(20, countLabel.implicitWidth + 10)
+                                    height: 20
+                                    radius: 10
+                                    color: Theme.primary
+                                    border.width: 2
+                                    border.color: Theme.surface
+                                    anchors.right: folderShape.right
+                                    anchors.top: folderShape.top
+                                    anchors.rightMargin: -8
+                                    anchors.topMargin: -4
+
+                                    Text {
+                                        id: countLabel
+                                        anchors.centerIn: parent
+                                        text: model.fileCount > 99 ? "99+" : model.fileCount
+                                        font.pixelSize: 10
+                                        font.bold: true
+                                        font.family: Theme.fontFamily
+                                        color: Theme.primaryText
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: model.name
+                                color: Theme.text
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.bold: true
+                                font.family: Theme.fontFamily
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
+
+                                ToolTip.visible: truncated && folderTile.hovered
+                                ToolTip.text: model.name
+                                ToolTip.delay: 500
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: model.fileCount === 1 ? qsTr("1 fichier indexé") : qsTr("%1 fichiers indexés").arg(model.fileCount)
+                                color: Theme.textSecondary
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.family: Theme.fontFamily
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.topMargin: 2
+                                spacing: 6
+
+                                Item { Layout.fillWidth: true }
+
+                                StatusBadge {
+                                    tone: model.hasConflict ? "warning" : (model.isLocalOrigin ? "info" : "success")
+                                    text: model.hasConflict ? qsTr("Conflit")
+                                          : (model.isLocalOrigin ? qsTr("Local") : qsTr("Reçu"))
+                                }
+
+                                Item { Layout.fillWidth: true }
+                            }
+                        }
+
+                        MouseArea {
+                            id: tileArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onClicked: function(mouse) {
+                                if (mouse.button === Qt.RightButton) {
+                                    removeConfirmDialog.targetFolderId = model.folderId
+                                    removeConfirmDialog.targetFolderName = model.name
+                                    removeConfirmDialog.open()
+                                    return
+                                }
+                                if (!model.isLocalOrigin) {
+                                    if (model.localPath && model.localPath.length > 0) {
+                                        root.openFolder(model.folderId, model.name, false, model.uuid)
+                                    } else {
+                                        setLocalPathDialog.targetFolderId = model.folderId
+                                        setLocalPathDialog.targetFolderName = model.name
+                                        setLocalPathDialog.targetFolderUuid = model.uuid
+                                        setLocalPathDialog.open()
+                                    }
+                                } else {
+                                    root.openFolder(model.folderId, model.name, true, model.uuid)
+                                }
+                            }
+                        }
                     }
                 }
 
-                delegate: Rectangle {
-                    width: historyListView.width
-                    height: modelData.type === "Rename" ? 52 : 36
-                    color: "transparent"
+                // Vue "liste" des dossiers partagés
+                ListView {
+                    id: foldersListView
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    visible: root.viewMode === "list"
+                    spacing: 2
+                    clip: true
+                    model: root.context ? root.context.folderFilterProxy : null
 
-                    // Bordure de séparation en bas
-                    Rectangle {
-                        anchors.bottom: parent.bottom
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        height: 1
-                        color: Theme.border
-                        opacity: 0.5
+                    add: Transition {
+                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
                     }
 
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: Theme.spacingSmall
-                        anchors.rightMargin: Theme.spacingSmall
+                    delegate: Rectangle {
+                        id: folderRow
+                        width: foldersListView.width
+                        height: 56
+                        radius: Theme.radiusSmall
+                        color: folderRowArea.containsMouse ? Theme.surfaceHover : "transparent"
+                        Behavior on color { ColorAnimation { duration: 100 } }
 
-                        // Pastille colorée selon le type d'opération
-                        Rectangle {
-                            Layout.preferredWidth: 70
-                            height: 22
-                            radius: Theme.radiusSmall
-                            color: {
-                                switch (modelData.type) {
-                                case "Create": return "#1A7F4B"
-                                case "Update": return "#1A5FA0"
-                                case "Delete": return "#9B2E2E"
-                                case "Rename": return "#6B4EA0"
-                                default:       return Theme.border
+                        readonly property color accentColor: "#FFC83D"
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            spacing: 10
+
+                            Rectangle {
+                                width: 32
+                                height: 32
+                                radius: 8
+                                color: Qt.rgba(folderRow.accentColor.r,
+                                                folderRow.accentColor.g,
+                                                folderRow.accentColor.b, 0.16)
+
+                                FaIcon {
+                                    anchors.centerIn: parent
+                                    glyph: "\uf114"
+                                    font.pixelSize: 15
+                                    color: folderRow.accentColor
                                 }
                             }
-                            opacity: 0.85
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 1
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: model.name
+                                    color: Theme.text
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.weight: Font.Medium
+                                    font.family: Theme.fontFamily
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: model.isLocalOrigin ? qsTr("Dossier local") : qsTr("Dossier reçu")
+                                    color: Theme.textTertiary
+                                    font.pixelSize: Theme.fontSizeCaption
+                                    font.family: Theme.fontFamily
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            StatusBadge {
+                                tone: model.hasConflict ? "warning" : (model.isLocalOrigin ? "info" : "success")
+                                text: model.hasConflict ? qsTr("Conflit")
+                                      : (model.isLocalOrigin ? qsTr("Local") : qsTr("Reçu"))
+                            }
+
                             Label {
-                                anchors.centerIn: parent
+                                Layout.preferredWidth: 90
+                                text: model.fileCount === 1 ? qsTr("1 fichier") : qsTr("%1 fichiers").arg(model.fileCount)
+                                color: Theme.textTertiary
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.family: Theme.fontFamily
+                                horizontalAlignment: Text.AlignRight
+                            }
+
+                            FaIcon {
+                                glyph: "\uf105"
+                                font.pixelSize: 13
+                                color: Theme.textTertiary
+                            }
+                        }
+
+                        MouseArea {
+                            id: folderRowArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onClicked: function(mouse) {
+                                if (mouse.button === Qt.RightButton) {
+                                    removeConfirmDialog.targetFolderId = model.folderId
+                                    removeConfirmDialog.targetFolderName = model.name
+                                    removeConfirmDialog.open()
+                                    return
+                                }
+                                if (!model.isLocalOrigin) {
+                                    if (model.localPath && model.localPath.length > 0) {
+                                        root.openFolder(model.folderId, model.name, false, model.uuid)
+                                    } else {
+                                        setLocalPathDialog.targetFolderId = model.folderId
+                                        setLocalPathDialog.targetFolderName = model.name
+                                        setLocalPathDialog.targetFolderUuid = model.uuid
+                                        setLocalPathDialog.open()
+                                    }
+                                } else {
+                                    root.openFolder(model.folderId, model.name, true, model.uuid)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // =====================================================
+            // VUE DOSSIER OUVERT : fichiers/sous-dossiers (grille ou
+            // liste), icones par type de fichier + badges de statut.
+            // =====================================================
+            ColumnLayout {
+                anchors.fill: parent
+                visible: root.openedFolderId >= 0 && !root.showHistory
+                spacing: 0
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: Theme.border
+                    Layout.topMargin: 8
+                }
+
+                Item { Layout.preferredHeight: 12 }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    Layout.bottomMargin: 10
+                    spacing: 8
+
+                    Rectangle {
+                        width: 26
+                        height: 26
+                        radius: 13
+                        color: Theme.colorForName(root.openedFolderName)
+                        Text {
+                            anchors.centerIn: parent
+                            text: root.openedFolderName.length > 0 ? root.openedFolderName.charAt(0).toUpperCase() : "?"
+                            color: "#FFFFFF"
+                            font.pixelSize: 11
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                        }
+                    }
+                    Label {
+                        text: root.openedFolderName
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.weight: Font.Medium
+                        font.family: Theme.fontFamily
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("%n élément(s)", "", filesListView.count)
+                        color: Theme.textTertiary
+                        font.pixelSize: Theme.fontSizeCaption
+                        font.family: Theme.fontFamily
+                    }
+                }
+
+                ListView {
+                    id: filesListView
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    Layout.topMargin: 8
+                    spacing: 0
+                    clip: true
+                    visible: root.viewMode === "list"
+                    model: root.browserItems
+
+                    add: Transition {
+                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+                    }
+
+                    delegate: Rectangle {
+                        id: fileRow
+                        width: filesListView.width
+                        height: fileRow.hasConflict ? 92 : 40
+                        color: fileRowArea.containsMouse ? Theme.surfaceHover
+                               : (index % 2 === 1 ? Theme.surfaceAlt : "transparent")
+                        radius: Theme.radiusSmall
+                        Behavior on color { ColorAnimation { duration: 100 } }
+
+                        readonly property bool isFolder: modelData.kind === "folder"
+                        readonly property bool hasConflict: !isFolder
+                            && root.conflictedFiles.hasOwnProperty(modelData.relativePath)
+                        readonly property string conflictPath: hasConflict ? root.conflictedFiles[modelData.relativePath] : ""
+                        readonly property var kind: isFolder ? null : root.fileKindFor(modelData.name)
+                        readonly property color folderAccent: Theme.colorForName(modelData.name)
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            spacing: 2
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 40
+                                spacing: 8
+
+                                FaIcon {
+                                    visible: fileRow.isFolder
+                                    glyph: "\uf114"
+                                    font.pixelSize: 15
+                                    color: fileRow.folderAccent
+                                }
+                                FaIcon {
+                                    visible: !fileRow.isFolder
+                                    glyph: fileRow.kind ? fileRow.kind.glyph : "\uf016"
+                                    font.pixelSize: 15
+                                    color: fileRow.kind ? fileRow.kind.color : Theme.textSecondary
+                                }
+
+                                Rectangle {
+                                    visible: fileRow.hasConflict
+                                    width: 18
+                                    height: 18
+                                    radius: 9
+                                    color: Theme.warning
+                                    Label {
+                                        anchors.centerIn: parent
+                                        text: "!"
+                                        color: "#FFFFFF"
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                    }
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: modelData.name
+                                    color: fileRow.hasConflict ? Theme.warning : Theme.text
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.weight: fileRow.isFolder ? Font.Medium : Font.Normal
+                                    font.family: Theme.fontFamily
+                                    elide: Text.ElideMiddle
+
+                                    ToolTip.visible: truncated && fileRowArea.containsMouse
+                                    ToolTip.text: modelData.name
+                                    ToolTip.delay: 500
+                                }
+
+                                Label {
+                                    visible: !fileRow.isFolder
+                                    Layout.preferredWidth: 70
+                                    text: root.formatBytes(modelData.size)
+                                    color: Theme.textSecondary
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.family: Theme.fontFamily
+                                    horizontalAlignment: Text.AlignRight
+                                }
+
+                                Label {
+                                    visible: fileRow.isFolder
+                                    Layout.preferredWidth: 70
+                                    text: modelData.count === 1 ? qsTr("1 fichier") : qsTr("%1 fichiers").arg(modelData.count)
+                                    color: Theme.textTertiary
+                                    font.pixelSize: Theme.fontSizeCaption
+                                    font.family: Theme.fontFamily
+                                    horizontalAlignment: Text.AlignRight
+                                }
+
+                                Label {
+                                    visible: !fileRow.isFolder
+                                    Layout.preferredWidth: 32
+                                    text: "v" + modelData.version
+                                    color: Theme.textTertiary
+                                    font.pixelSize: Theme.fontSizeCaption
+                                    font.family: Theme.fontFamily
+                                }
+
+                                StatusBadge {
+                                    visible: !fileRow.isFolder
+                                    tone: fileRow.hasConflict ? "warning" : "success"
+                                    text: fileRow.hasConflict ? qsTr("Conflit") : qsTr("Synchronisé")
+                                }
+
+                                FaIcon {
+                                    visible: fileRow.isFolder
+                                    glyph: "\uf105"
+                                    font.pixelSize: 13
+                                    color: Theme.textTertiary
+                                }
+                            }
+
+                            // Sous-ligne + actions de résolution de conflit
+                            Label {
+                                visible: fileRow.hasConflict
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 23
+                                text: qsTr("→ copie en conflit : %1").arg(fileRow.conflictPath)
+                                color: Theme.warning
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.family: Theme.fontFamily
+                                elide: Text.ElideMiddle
+                            }
+
+                            RowLayout {
+                                visible: fileRow.hasConflict
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 23
+                                Layout.bottomMargin: 6
+                                spacing: Theme.spacingSmall
+
+                                AppButton {
+                                    text: qsTr("Conserver local")
+                                    variant: "secondary"
+                                    onClicked: {
+                                        if (root.context) {
+                                            root.context.resolveConflict(root.openedFolderId, modelData.relativePath, fileRow.conflictPath, "keep_local")
+                                            root.refreshFiles()
+                                            root.refreshHistory()
+                                        }
+                                    }
+                                }
+                                AppButton {
+                                    text: qsTr("Conserver distant")
+                                    variant: "secondary"
+                                    onClicked: {
+                                        if (root.context) {
+                                            root.context.resolveConflict(root.openedFolderId, modelData.relativePath, fileRow.conflictPath, "keep_remote")
+                                            root.refreshFiles()
+                                            root.refreshHistory()
+                                        }
+                                    }
+                                }
+                                AppButton {
+                                    text: qsTr("Garder les deux")
+                                    variant: "secondary"
+                                    onClicked: {
+                                        if (root.context) {
+                                            root.context.resolveConflict(root.openedFolderId, modelData.relativePath, fileRow.conflictPath, "keep_both")
+                                            root.refreshFiles()
+                                            root.refreshHistory()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            id: fileRowArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: fileRow.isFolder ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: {
+                                if (fileRow.isFolder) root.openBrowserFolder(modelData.path)
+                            }
+                        }
+                    }
+
+                    Label {
+                        visible: filesListView.count === 0
+                        anchors.centerIn: parent
+                        text: qsTr("Ce dossier partagé ne contient aucun fichier indexé.")
+                        color: Theme.textTertiary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                    }
+                }
+
+                // Vue grille d'icônes des fichiers/sous-dossiers
+                GridView {
+                    id: filesGrid
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    Layout.topMargin: 8
+                    visible: root.viewMode === "grid"
+                    readonly property int columns: Math.max(3, Math.min(8, Math.floor(width / 104)))
+                    cellWidth: Math.floor(width / columns)
+                    cellHeight: 112
+                    clip: true
+                    model: root.browserItems
+
+                    add: Transition {
+                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+                    }
+
+                    delegate: Item {
+                        id: fileTile
+                        width: filesGrid.cellWidth
+                        height: filesGrid.cellHeight
+
+                        readonly property bool isFolder: modelData.kind === "folder"
+                        readonly property bool hasConflict: !isFolder
+                            && root.conflictedFiles.hasOwnProperty(modelData.relativePath)
+                        readonly property var kind: isFolder ? null : root.fileKindFor(modelData.name)
+                        readonly property color tileColor: isFolder ? Theme.colorForName(modelData.name)
+                                                                     : (fileTile.kind ? fileTile.kind.color : Theme.textSecondary)
+                        readonly property bool tileHovered: fileTileArea.containsMouse
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.topMargin: 12
+                            anchors.bottomMargin: 4
+                            spacing: 6
+
+                            Item {
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.preferredWidth: 44
+                                Layout.preferredHeight: 34
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: 8
+                                    color: Qt.rgba(fileTile.tileColor.r,
+                                                    fileTile.tileColor.g,
+                                                    fileTile.tileColor.b, 0.14)
+
+                                    FaIcon {
+                                        anchors.centerIn: parent
+                                        glyph: fileTile.isFolder ? "\uf114" : (fileTile.kind ? fileTile.kind.glyph : "\uf016")
+                                        font.pixelSize: 20
+                                        color: fileTile.tileColor
+                                    }
+                                }
+
+                                Rectangle {
+                                    visible: fileTile.hasConflict
+                                    width: 14
+                                    height: 14
+                                    radius: 7
+                                    color: Theme.warning
+                                    border.width: 2
+                                    border.color: Theme.surface
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.rightMargin: -6
+                                    anchors.topMargin: -4
+                                }
+
+                                Rectangle {
+                                    visible: fileTile.isFolder && modelData.count > 0
+                                    width: 16
+                                    height: 16
+                                    radius: 8
+                                    color: Theme.primary
+                                    border.width: 2
+                                    border.color: Theme.surface
+                                    anchors.left: parent.left
+                                    anchors.top: parent.top
+                                    anchors.leftMargin: -6
+                                    anchors.topMargin: -4
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: (modelData.count !== undefined && modelData.count > 9) ? "9+" : (modelData.count !== undefined ? modelData.count : "")
+                                        font.pixelSize: 8
+                                        font.bold: true
+                                        font.family: Theme.fontFamily
+                                        color: Theme.primaryText
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 4
+                                Layout.rightMargin: 4
+                                text: modelData.name
+                                color: Theme.text
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.weight: Font.Medium
+                                font.family: Theme.fontFamily
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideMiddle
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 2
+
+                                ToolTip.visible: truncated && fileTile.tileHovered
+                                ToolTip.text: modelData.name
+                                ToolTip.delay: 500
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 4
+                                Layout.rightMargin: 4
+                                text: fileTile.isFolder
+                                      ? (modelData.count === 1 ? qsTr("1 fichier") : qsTr("%1 fichiers").arg(modelData.count))
+                                      : root.formatBytes(modelData.size)
+                                color: Theme.textTertiary
+                                font.pixelSize: 10
+                                font.family: Theme.fontFamily
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
+                            }
+                        }
+
+                        MouseArea {
+                            id: fileTileArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: fileTile.isFolder ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: {
+                                if (fileTile.isFolder) root.openBrowserFolder(modelData.path)
+                            }
+                        }
+                    }
+
+                    Label {
+                        visible: filesGrid.count === 0
+                        anchors.centerIn: parent
+                        text: qsTr("Ce dossier partagé ne contient aucun fichier indexé.")
+                        color: Theme.textTertiary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                    }
+                }
+            }
+
+            // =====================================================
+            // VUE HISTORIQUE (journal de synchronisation)
+            // =====================================================
+            ColumnLayout {
+                anchors.fill: parent
+                visible: root.openedFolderId >= 0 && root.showHistory
+                spacing: 0
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: Theme.border
+                    Layout.topMargin: 8
+                }
+
+                Item { Layout.preferredHeight: 12 }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    Layout.bottomMargin: 10
+                    spacing: 8
+
+                    Rectangle {
+                        width: 26
+                        height: 26
+                        radius: 13
+                        color: Theme.colorForName(root.openedFolderName)
+                        Text {
+                            anchors.centerIn: parent
+                            text: root.openedFolderName.length > 0 ? root.openedFolderName.charAt(0).toUpperCase() : "?"
+                            color: "#FFFFFF"
+                            font.pixelSize: 11
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                        }
+                    }
+                    Label {
+                        text: qsTr("Historique — %1").arg(root.openedFolderName)
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.weight: Font.Medium
+                        font.family: Theme.fontFamily
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+
+                ListView {
+                    id: historyListView
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    Layout.bottomMargin: 8
+                    spacing: 2
+                    clip: true
+                    model: root.currentSyncHistory
+
+                    header: Rectangle {
+                        width: historyListView.width
+                        height: 32
+                        color: Theme.surfaceAlt
+                        radius: Theme.radiusSmall
+                        border.width: 1
+                        border.color: Theme.border
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: Theme.spacingSmall
+                            anchors.rightMargin: Theme.spacingSmall
+                            Label { Layout.preferredWidth: 70; text: qsTr("Opération"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary; font.family: Theme.fontFamily }
+                            Label { Layout.fillWidth: true; text: qsTr("Fichier"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary; font.family: Theme.fontFamily }
+                            Label { Layout.preferredWidth: 50; text: qsTr("Ver."); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary; font.family: Theme.fontFamily }
+                            Label { Layout.preferredWidth: 120; text: qsTr("Date"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary; font.family: Theme.fontFamily }
+                        }
+                    }
+
+                    delegate: Rectangle {
+                        width: historyListView.width
+                        height: modelData.type === "Rename" ? 52 : 36
+                        radius: Theme.radiusSmall
+                        color: index % 2 === 1 ? Theme.surfaceAlt : "transparent"
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: Theme.spacingSmall
+                            anchors.rightMargin: Theme.spacingSmall
+
+                            StatusBadge {
+                                Layout.preferredWidth: 70
+                                tone: {
+                                    switch (modelData.type) {
+                                    case "Create": return "success"
+                                    case "Update": return "info"
+                                    case "Delete": return "error"
+                                    case "Rename": return "warning"
+                                    default: return "neutral"
+                                    }
+                                }
                                 text: {
                                     switch (modelData.type) {
                                     case "Create": return qsTr("Créé")
                                     case "Update": return qsTr("Modifié")
                                     case "Delete": return qsTr("Supprimé")
                                     case "Rename": return qsTr("Renommé")
-                                    default:       return modelData.type
+                                    default: return modelData.type
                                     }
                                 }
-                                color: "#FFFFFF"
-                                font.pixelSize: Theme.fontSizeCaption
-                                font.bold: true
                             }
-                        }
 
-                        // Chemin relatif (ancien → nouveau pour Rename)
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 1
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 1
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: modelData.relativePath
+                                    color: modelData.type === "Delete" ? Theme.textTertiary : Theme.text
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.family: Theme.fontFamily
+                                    elide: Text.ElideMiddle
+                                    font.strikeout: modelData.type === "Delete"
+                                }
+                                Label {
+                                    visible: modelData.type === "Rename" && modelData.oldRelativePath.length > 0
+                                    Layout.fillWidth: true
+                                    text: qsTr("← %1").arg(modelData.oldRelativePath)
+                                    color: Theme.textTertiary
+                                    font.pixelSize: Theme.fontSizeCaption
+                                    font.family: Theme.fontFamily
+                                    elide: Text.ElideMiddle
+                                }
+                            }
 
                             Label {
-                                Layout.fillWidth: true
-                                text: modelData.relativePath
-                                color: modelData.type === "Delete" ? Theme.textTertiary : Theme.text
+                                Layout.preferredWidth: 50
+                                text: "v" + modelData.version
+                                color: Theme.textSecondary
                                 font.pixelSize: Theme.fontSizeSmall
-                                elide: Text.ElideMiddle
-                                font.strikeout: modelData.type === "Delete"
+                                font.family: Theme.fontFamily
                             }
+
                             Label {
-                                visible: modelData.type === "Rename" && modelData.oldRelativePath.length > 0
-                                Layout.fillWidth: true
-                                text: qsTr("← %1").arg(modelData.oldRelativePath)
+                                Layout.preferredWidth: 120
+                                text: {
+                                    const d = new Date(modelData.createdAt)
+                                    return isNaN(d.getTime()) ? modelData.createdAt
+                                        : d.toLocaleTimeString(Qt.locale(), "HH:mm:ss")
+                                }
                                 color: Theme.textTertiary
                                 font.pixelSize: Theme.fontSizeCaption
-                                elide: Text.ElideMiddle
+                                font.family: Theme.fontFamily
                             }
-                        }
-
-                        Label {
-                            Layout.preferredWidth: 50
-                            text: "v" + modelData.version
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
-                        }
-
-                        Label {
-                            Layout.preferredWidth: 120
-                            text: {
-                                const d = new Date(modelData.createdAt)
-                                return isNaN(d.getTime()) ? modelData.createdAt
-                                    : d.toLocaleTimeString(Qt.locale(), "HH:mm:ss")
-                            }
-                            color: Theme.textTertiary
-                            font.pixelSize: Theme.fontSizeCaption
                         }
                     }
-                }
 
-                Label {
-                    visible: historyListView.count === 0
-                    anchors.centerIn: parent
-                    text: qsTr("Aucune opération enregistrée pour ce dossier.\nReindexez le dossier pour commencer à alimenter le journal.")
-                    color: Theme.textTertiary
-                    horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: Theme.fontSizeBody
+                    Label {
+                        visible: historyListView.count === 0
+                        anchors.centerIn: parent
+                        text: qsTr("Aucune opération enregistrée pour ce dossier.\nReindexez le dossier pour commencer à alimenter le journal.")
+                        color: Theme.textTertiary
+                        horizontalAlignment: Text.AlignHCenter
+                        font.pixelSize: Theme.fontSizeBody
+                        font.family: Theme.fontFamily
+                    }
                 }
             }
         }
@@ -1736,7 +2772,7 @@ Item {
         // =========================================================
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 26
+            Layout.preferredHeight: 28
             color: Theme.statusBarBackground
             border.width: 1
             border.color: Theme.border
@@ -1744,32 +2780,49 @@ Item {
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.spacingMedium
-                anchors.rightMargin: Theme.spacingMedium
-                spacing: Theme.spacingMedium
+                anchors.leftMargin: 16
+                anchors.rightMargin: 16
+                spacing: 16
 
-                Label {
-                    text: qsTr("%1 dossier(s)").arg(gridView.count)
-                    font.pixelSize: Theme.fontSizeCaption
-                    color: Theme.textSecondary
+                RowLayout {
                     visible: root.openedFolderId < 0
+                    spacing: 4
+                    FaIcon { glyph: "\uf07b"; font.pixelSize: 12; color: Theme.textSecondary }
+                    Label {
+                        text: qsTr("%n dossier(s)", "", gridView.count)
+                        font.pixelSize: Theme.fontSizeCaption
+                        font.family: Theme.fontFamily
+                        color: Theme.textSecondary
+                    }
                 }
-                Label {
-                    text: qsTr("%1 élément(s)").arg(filesListView.count)
-                    font.pixelSize: Theme.fontSizeCaption
-                    color: Theme.textSecondary
+                RowLayout {
                     visible: root.openedFolderId >= 0 && !root.showHistory
+                    spacing: 4
+                    FaIcon { glyph: "\uf0f6"; font.pixelSize: 12; color: Theme.textSecondary }
+                    Label {
+                        text: qsTr("%n élément(s)", "", filesListView.count)
+                        font.pixelSize: Theme.fontSizeCaption
+                        font.family: Theme.fontFamily
+                        color: Theme.textSecondary
+                    }
                 }
-                Label {
-                    text: qsTr("%1 entrée(s) d'historique").arg(historyListView.count)
-                    font.pixelSize: Theme.fontSizeCaption
-                    color: Theme.textSecondary
+                RowLayout {
                     visible: root.openedFolderId >= 0 && root.showHistory
+                    spacing: 4
+                    FaIcon { glyph: "\uf1da"; font.pixelSize: 12; color: Theme.textSecondary }
+                    Label {
+                        text: qsTr("%n entrée(s) d'historique", "", historyListView.count)
+                        font.pixelSize: Theme.fontSizeCaption
+                        font.family: Theme.fontFamily
+                        color: Theme.textSecondary
+                    }
                 }
                 Item { Layout.fillWidth: true }
                 Label {
-                    text: root.activeFilter !== "all" ? qsTr("🔍 Filtres actifs") : ""
+                    visible: root.openedFolderId < 0 && root.hasActiveFilters()
+                    text: qsTr("Filtres actifs")
                     font.pixelSize: Theme.fontSizeCaption
+                    font.family: Theme.fontFamily
                     color: Theme.primary
                 }
             }

@@ -11,6 +11,7 @@
 #include "core/Sync/SyncEngine.h"
 #include "core/Sync/FolderSyncService.h"
 #include "models/SharedFolderModel.h"
+#include "models/SharedFolderFilterProxy.h"
 
 namespace core {
 
@@ -31,6 +32,7 @@ class SharedFolderContext : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(models::SharedFolderModel* folderModel READ folderModel CONSTANT)
+    Q_PROPERTY(models::SharedFolderFilterProxy* folderFilterProxy READ folderFilterProxy CONSTANT)
     Q_PROPERTY(QString lastErrorString READ lastErrorString NOTIFY errorOccurred)
 
 public:
@@ -45,6 +47,16 @@ public:
     void setFolderSyncService(core::sync::FolderSyncService *svc);
 
     models::SharedFolderModel* folderModel() const { return m_folderModel; }
+
+    /// Vue filtrée (mode + recherche) de folderModel, utilisée par
+    /// SharedFolderView.qml pour GridView/ListView : contrairement a un
+    /// filtrage par `visible` dans le delegate, les lignes exclues sont
+    /// réellement retirées du modèle exposé, donc une GridView se
+    /// recompacte correctement (pas de cellule vide laissée par un
+    /// dossier masqué). Propriétés filterMode/searchText à synchroniser
+    /// depuis QML avec root.activeFilter/root.searchText.
+    models::SharedFolderFilterProxy* folderFilterProxy() const { return m_folderFilterProxy; }
+
     QString lastErrorString() const { return m_lastErrorString; }
 
     /// Recharge la liste des dossiers partages (et le nombre de fichiers
@@ -265,16 +277,18 @@ signals:
      *        (incoming=false) : signale la fin d'une rafale, càd le moment
      *        où l'UI doit masquer la barre de progression correspondante
      *        (la notification finale "N fichiers reçus/envoyés" est
-     *        affichée séparément par NotificationManager/ToastHost).
+     *        affichée séparément par ToastHost).
      */
-    void folderTransferBatchFinished(const QString &folderUuid, bool incoming);
+    void folderTransferComplete(const QString &folderUuid, const QString &folderName,
+                                bool incoming, int fileCount);
 
 private:
+    models::SharedFolderModel *m_folderModel = nullptr;
+    models::SharedFolderFilterProxy *m_folderFilterProxy = nullptr;
     SharedFolderManager *m_manager = nullptr;
     core::sync::SyncEngine *m_syncEngine = nullptr;
     UserManager *m_userManager = nullptr;
     core::sync::FolderSyncService *m_folderSyncService = nullptr;
-    models::SharedFolderModel *m_folderModel = nullptr;
     QString m_lastErrorString;
 };
 

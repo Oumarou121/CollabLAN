@@ -195,7 +195,7 @@ Item {
             root.upsertBatch(folderUuid, folderName, incoming, filesCompleted, filesTotal,
                               bytesTransferred, bytesTotal)
         }
-        function onFolderTransferBatchFinished(folderUuid, incoming) {
+        function onFolderTransferComplete(folderUuid, folderName, incoming, fileCount) {
             root.finishBatch(folderUuid, incoming)
         }
     }

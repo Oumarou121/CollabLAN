@@ -13,7 +13,9 @@ namespace core {
 SharedFolderContext::SharedFolderContext(QObject *parent)
     : QObject(parent)
     , m_folderModel(new models::SharedFolderModel(this))
+    , m_folderFilterProxy(new models::SharedFolderFilterProxy(this))
 {
+    m_folderFilterProxy->setSourceModel(m_folderModel);
 }
 
 SharedFolderContext::~SharedFolderContext()
@@ -129,12 +131,12 @@ void SharedFolderContext::setFolderSyncService(core::sync::FolderSyncService *sv
         // rafale" avec le sens (incoming), pour que l'UI sache quelle barre
         // masquer sans avoir à comparer des noms de dossier.
         connect(m_folderSyncService, &core::sync::FolderSyncService::folderFilesReceived,
-                this, [this](const QString &folderUuid, const QString & /*folderName*/, int /*fileCount*/) {
-                    emit folderTransferBatchFinished(folderUuid, true);
+                this, [this](const QString &folderUuid, const QString &folderName, int fileCount) {
+                    emit folderTransferComplete(folderUuid, folderName, true, fileCount);
                 });
         connect(m_folderSyncService, &core::sync::FolderSyncService::folderFilesSent,
-                this, [this](const QString &folderUuid, const QString & /*folderName*/, int /*fileCount*/) {
-                    emit folderTransferBatchFinished(folderUuid, false);
+                this, [this](const QString &folderUuid, const QString &folderName, int fileCount) {
+                    emit folderTransferComplete(folderUuid, folderName, false, fileCount);
                 });
     }
 }
