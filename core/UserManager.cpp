@@ -52,6 +52,8 @@ bool UserManager::login(const QString &username, const QString &password)
         return false;
     }
 
+    m_userRepository.updateStatus(user->id(), models::UserStatus::Online);
+
     m_currentUsername = user->name();
     m_currentUserIsAdmin = user->isAdmin();
     m_currentUserId = user->id();

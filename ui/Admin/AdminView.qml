@@ -90,7 +90,7 @@ Item {
 
     // Vérification des permissions admin (issue #67)
     Component.onCompleted: {
-        auditLogModel.loadLogs()
+        auditLogModel.refresh()
         if (!userManager.currentUserIsAdmin) {
             accessDeniedDialog.open()
         }
@@ -103,7 +103,7 @@ Item {
         // ---- Header personnalisé pour Administration -----------------------
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 72
+            Layout.preferredHeight: 64
             color: Theme.surface
 
             // Séparateur bas
@@ -116,8 +116,8 @@ Item {
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.spacingLarge
-                anchors.rightMargin: Theme.spacingLarge
+                anchors.leftMargin: Theme.spacingMedium
+                anchors.rightMargin: Theme.spacingMedium
                 spacing: Theme.spacingMedium
 
                 // Navigation compacte : retour, onglets, actions
@@ -217,12 +217,12 @@ Item {
 
                 // Ligne inférieure : onglets
                 Rectangle {
-                    Layout.fillWidth: false
-                    Layout.preferredWidth: tabRow.implicitWidth + 2 * Theme.spacingXs
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     Layout.preferredHeight: 48
                     Layout.minimumHeight: 48
                     Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
-                    radius: Theme.radiusLarge
+                    radius: Theme.radiusMedium
                     color: Theme.surfaceAlt
                     clip: true
 
@@ -253,34 +253,34 @@ Item {
                     Layout.alignment: Qt.AlignVCenter
                     spacing: Theme.spacingSmall
 
-                    IconButton {
+                    AppButton {
                         variant: "secondary"
-                        glyph: "\u21E9"
-                        size: 36
+                        iconGlyph: "\u21E9"
+                        text: root.headerCompact ? "" : qsTr("Exporter")
                         visible: root.currentTab === 0
                         onClicked: exportDialog.open()
                     }
 
-                    IconButton {
+                    AppButton {
                         variant: "primary"
-                        glyph: "+"
-                        size: 36
+                        iconGlyph: "+"
+                        text: root.headerCompact ? "" : qsTr("Ajouter")
                         visible: root.currentTab === 1
                         onClicked: addMachineDialog.open()
                     }
 
-                    IconButton {
+                    AppButton {
                         variant: "primary"
-                        glyph: "+"
-                        size: 36
+                        iconGlyph: "+"
+                        text: root.headerCompact ? "" : qsTr("Ajouter")
                         visible: root.currentTab === 2
                         onClicked: addUserDialog.open()
                     }
 
-                    IconButton {
+                    AppButton {
                         variant: "secondary"
-                        glyph: "\u21BB"
-                        size: 36
+                        iconGlyph: "\u21BB"
+                        text: root.headerCompact ? "" : qsTr("Actualiser")
                         visible: root.currentTab === 3
                         onClicked: root.refreshElectionHistory()
                     }
@@ -446,12 +446,14 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     contentWidth: availableWidth
+                    clip: true
 
                     ListView {
                         id: auditListView
-                        width: parent.width
+                        anchors.fill: parent
                         model: auditLogModel
                         spacing: Theme.spacingMedium
+                        clip: true
                         delegate: Rectangle {
                             width: auditListView.width
                             height: auditEntryColumn.implicitHeight + Theme.spacingLarge * 2
@@ -597,7 +599,7 @@ Item {
 
                         readonly property int columns: width > 900 ? 3 : (width > 560 ? 2 : 1)
                         cellWidth: width / columns
-                        cellHeight: 180
+                        cellHeight: 200
 
                         delegate: Item {
                             width: machinesGrid.cellWidth
@@ -686,7 +688,7 @@ Item {
 
                                     Item { Layout.fillHeight: true }
 
-                                    ColumnLayout {
+                                    RowLayout {
                                         Layout.fillWidth: true
                                         spacing: Theme.spacingSmall
 
@@ -939,7 +941,7 @@ Item {
                 ColumnLayout {
                     visible: root.electionHistoryEntries.length === 0
                     spacing: Theme.spacingMedium
-                    anchors.centerIn: parent
+                    Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
 
                     Rectangle {
                         Layout.alignment: Qt.AlignHCenter

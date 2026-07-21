@@ -131,7 +131,7 @@ Item {
                     text: "\uf0e0"
                     font.family: root.iconFontFamily
                     font.pixelSize: 48
-                    color: Theme.textTertiary
+                    color: Theme.primary
                 }
 
                 Label {

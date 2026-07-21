@@ -424,8 +424,8 @@ Item {
         id: createDialog
         title: qsTr("Nouveau dossier partagé")
         headerIcon: "\uf07b"
-        dialogWidth: 420
-        dialogHeight: 680
+        dialogWidth: 500
+        dialogHeight: 620
         standardButtons: Dialog.NoButton
         busyText: qsTr("Indexation et partage en cours…")
 
@@ -470,6 +470,35 @@ Item {
             width: parent.width
             spacing: Theme.spacingMedium
 
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 58
+                radius: Theme.radiusMedium
+                color: Theme.primaryMuted
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: Theme.spacingMedium
+                    anchors.rightMargin: Theme.spacingMedium
+                    spacing: Theme.spacingSmall
+
+                    FaIcon {
+                        glyph: "\uf07b"
+                        font.pixelSize: 18
+                        color: Theme.primary
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Configurez un dossier à partager avec les utilisateurs sélectionnés.")
+                        color: Theme.text
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fontSizeSmall
+                        wrapMode: Text.WordWrap
+                    }
+                }
+            }
+
             Label {
                 text: qsTr("Nom du dossier partagé")
                 color: Theme.textSecondary
@@ -482,7 +511,7 @@ Item {
                 font.pixelSize: Theme.fontSizeBody
                 color: Theme.text
                 background: Rectangle {
-                    radius: Theme.radiusSmall
+                    radius: Theme.radiusMedium
                     color: Theme.surfaceAlt
                     border.width: 1
                     border.color: nameField.activeFocus ? Theme.primary : Theme.border
@@ -521,7 +550,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 160
-                radius: Theme.radiusSmall
+                radius: Theme.radiusMedium
                 color: Theme.surfaceAlt
                 border.width: 1
                 border.color: Theme.border
@@ -587,7 +616,7 @@ Item {
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.text
                 background: Rectangle {
-                    radius: Theme.radiusSmall
+                    radius: Theme.radiusMedium
                     color: Theme.surfaceAlt
                     border.width: 1
                     border.color: excludePatternsField.activeFocus ? Theme.primary : Theme.border

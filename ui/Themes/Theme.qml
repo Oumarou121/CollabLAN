@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import Qt.labs.settings
 
 /*
  * Theme - singleton expose globalement (import "Themes").
@@ -12,11 +13,17 @@ import QtQuick
 QtObject {
     id: theme
 
+    property var persistedSettings: Settings {
+        category: "Appearance"
+        property bool savedDarkMode: false
+    }
+
     // Etat courant du theme. false = Light (Themes/Light.qml), true = Dark (Themes/Dark.qml)
-    property bool darkMode: false
+    property bool darkMode: persistedSettings.savedDarkMode
 
     function toggle() {
         darkMode = !darkMode
+        persistedSettings.savedDarkMode = darkMode
     }
 
     // ---- Couleurs de base ------------------------------------------------

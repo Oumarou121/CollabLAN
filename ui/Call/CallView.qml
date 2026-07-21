@@ -205,17 +205,14 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // ---- Barre superieure (composant partage, cf. Components/AppHeader.qml) --
         AppHeader {
             title: qsTr("Appels")
-            leadingIcon: "\uf095"
-            leadingIconFontFamily: root.iconFontFamily
             onBackRequested: root.backRequested()
 
             Rectangle {
                 Layout.preferredWidth: peersCountLabel.implicitWidth + Theme.spacingMedium * 2
                 Layout.preferredHeight: 28
-                radius: height / 2
+                radius: Theme.radiusPill
                 color: Theme.surfaceAlt
                 border.color: Theme.border
                 border.width: 1
@@ -303,12 +300,6 @@ Item {
 
                                 Item { Layout.fillWidth: true }
 
-                                Label {
-                                    text: root.peers ? qsTr("%n poste(s)", "", root.peers.count) : ""
-                                    color: Theme.textSecondary
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.family: Theme.fontFamily
-                                }
                             }
 
                             Item {

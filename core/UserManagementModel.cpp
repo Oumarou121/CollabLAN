@@ -152,7 +152,20 @@ QStringList UserManagementModel::names() const
 
 void UserManagementModel::setUserManager(QObject *manager)
 {
+    if (m_userManager == manager)
+        return;
+
+    if (auto *oldManager = qobject_cast<UserManager *>(m_userManager)) {
+        disconnect(oldManager, &UserManager::authenticationChanged,
+                   this, &UserManagementModel::refresh);
+    }
+
     m_userManager = manager;
+
+    if (auto *newManager = qobject_cast<UserManager *>(m_userManager)) {
+        connect(newManager, &UserManager::authenticationChanged,
+                this, &UserManagementModel::refresh, Qt::UniqueConnection);
+    }
 }
 
 } // namespace core
