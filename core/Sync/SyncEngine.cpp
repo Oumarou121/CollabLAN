@@ -119,6 +119,27 @@ void SyncEngine::onFolderCreated(const models::SharedFolder &folder)
         return;
     }
 
+    // CORRECTIF (bug "l'emetteur doit reindexer manuellement à chaque
+    // modification, contrairement au destinataire") : ce cas (creation
+    // LOCALE d'un dossier partage par son proprietaire, localPath deja
+    // renseigne des l'appel) est le SEUL endroit ou canWatchFolder() peut
+    // renvoyer true ici -- pour un dossier distant, localPath est vide et
+    // canWatchFolder() a deja renvoye false ci-dessus (la surveillance
+    // reelle demarrera plus tard, dans onFolderLocalPathProvisioned(), une
+    // fois le contenu recu). watchFolder() DOIT donc etre appele ici avant
+    // reindexFolder() : reindexFolder() n'appelle en interne que
+    // m_watcher.refreshWatchedFiles(), qui est un no-op silencieux tant que
+    // watchFolder() n'a pas d'abord enregistre la racine + les
+    // sous-dossiers dans QFileSystemWatcher (cf. FolderWatcher::
+    // refreshWatchedFiles(), qui retourne immediatement si m_folders ne
+    // contient pas encore ce folderId). Sans cet appel, le dossier
+    // nouvellement partage n'etait JAMAIS surveille : ses modifications
+    // ulterieures passaient inapercues, obligeant un reindex manuel a
+    // chaque fois -- alors que onFolderLocalPathProvisioned() (chemin
+    // destinataire) appelle deja watchFolder() puis reindexFolder(), d'ou
+    // l'asymetrie observee.
+    watchFolder(folder.id());
+
     // Indexer le contenu initial du dossier pour que les fichiers soient
     // disponibles pour le resync (folder_resync_request)
     reindexFolder(folder.id());
