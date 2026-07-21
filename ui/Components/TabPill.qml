@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import Themes
 
 /*
@@ -13,25 +14,50 @@ Rectangle {
     id: root
 
     property string label: ""
+    property string glyph: ""
     property bool active: false
 
     signal clicked()
 
-    implicitWidth: labelText.implicitWidth + Theme.spacingMedium * 2
-    implicitHeight: 30
-    radius: Theme.radiusPill
-    color: active ? Theme.primary : (mouseArea.containsMouse ? Theme.surfaceHover : "transparent")
+    implicitWidth: tabContent.implicitWidth + Theme.spacingLarge * 2
+    implicitHeight: 44
+    radius: Theme.radiusMedium
+    color: active ? Theme.surface : (mouseArea.containsMouse ? Theme.surfaceHover : "transparent")
 
     Behavior on color { ColorAnimation { duration: 100 } }
 
-    Label {
-        id: labelText
+    RowLayout {
+        id: tabContent
         anchors.centerIn: parent
-        text: root.label
-        font.pixelSize: Theme.fontSizeSmall
-        font.bold: root.active
-        font.family: Theme.fontFamily
-        color: root.active ? Theme.primaryText : Theme.text
+        spacing: Theme.spacingSmall
+
+        Label {
+            visible: root.glyph.length > 0
+            text: root.glyph
+            font.family: "FontAwesome"
+            font.pixelSize: Theme.fontSizeSmall
+            color: root.active ? Theme.primary : Theme.textSecondary
+        }
+
+        Label {
+            id: labelText
+            text: root.label
+            font.pixelSize: Theme.fontSizeSmall
+            font.bold: root.active
+            font.family: Theme.fontFamily
+            color: root.active ? Theme.text : Theme.textSecondary
+        }
+    }
+
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: Theme.spacingSmall
+        height: 3
+        radius: 2
+        color: Theme.primary
+        visible: root.active
     }
 
     MouseArea {

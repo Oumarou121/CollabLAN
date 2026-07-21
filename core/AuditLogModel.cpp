@@ -70,7 +70,16 @@ void AuditLogModel::setAuditManager(QObject *manager)
     if (m_auditManager == manager)
         return;
 
+    if (m_auditManager)
+        disconnect(m_auditManager, &core::AuditManager::eventRecorded,
+                   this, &AuditLogModel::refresh);
+
     m_auditManager = qobject_cast<core::AuditManager*>(manager);
+
+    if (m_auditManager)
+        connect(m_auditManager, &core::AuditManager::eventRecorded,
+                this, &AuditLogModel::refresh, Qt::UniqueConnection);
+
     emit auditManagerChanged();
     refresh();
 }

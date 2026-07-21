@@ -90,6 +90,7 @@ Item {
 
     // Vérification des permissions admin (issue #67)
     Component.onCompleted: {
+        auditLogModel.loadLogs()
         if (!userManager.currentUserIsAdmin) {
             accessDeniedDialog.open()
         }
@@ -102,7 +103,7 @@ Item {
         // ---- Header personnalisé pour Administration -----------------------
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 120
+            Layout.preferredHeight: 72
             color: Theme.surface
 
             // Séparateur bas
@@ -113,16 +114,16 @@ Item {
                 color: Theme.border
             }
 
-            ColumnLayout {
+            RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: Theme.spacingLarge
                 anchors.rightMargin: Theme.spacingLarge
                 spacing: Theme.spacingMedium
 
-                // Ligne supérieure : titre + bouton retour
+                // Navigation compacte : retour, onglets, actions
                 RowLayout {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 64
+                    Layout.fillWidth: false
+                    Layout.preferredHeight: 48
                     spacing: Theme.spacingMedium
 
                     IconButton {
@@ -132,18 +133,53 @@ Item {
                         onClicked: root.backRequested()
                     }
 
-                    Text {
-                        text: qsTr("Administration")
-                        font.pixelSize: Theme.fontSizeHeading
-                        font.bold: true
-                        font.family: Theme.fontFamily
-                        color: Theme.text
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
+                    ColumnLayout {
+                        visible: false
+                        Layout.fillWidth: false
+                        spacing: Theme.spacingXs
+
+                        Text {
+                            text: qsTr("Administration")
+                            font.pixelSize: Theme.fontSizeHeading
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                            color: Theme.text
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+
+                        Text {
+                            text: qsTr("Supervisez les activités et la sécurité du réseau")
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: Theme.fontFamily
+                            color: Theme.textSecondary
+                            elide: Text.ElideRight
+                            visible: !root.headerCompact
+                            Layout.fillWidth: true
+                        }
                     }
 
                     RowLayout {
+                        visible: false
                         spacing: Theme.spacingSmall
+
+                        Rectangle {
+                            visible: false
+                            implicitWidth: adminBadge.implicitWidth + Theme.spacingMedium * 2
+                            implicitHeight: 30
+                            radius: Theme.radiusPill
+                            color: Theme.primaryMuted
+
+                            Label {
+                                id: adminBadge
+                                anchors.centerIn: parent
+                                text: qsTr("ADMINISTRATEUR")
+                                color: Theme.primary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.bold: true
+                            }
+                        }
 
                         IconButton {
                             variant: "secondary"
@@ -181,16 +217,19 @@ Item {
 
                 // Ligne inférieure : onglets
                 Rectangle {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    radius: Theme.radiusPill
+                    Layout.fillWidth: false
+                    Layout.preferredWidth: tabRow.implicitWidth + 2 * Theme.spacingXs
+                    Layout.preferredHeight: 48
+                    Layout.minimumHeight: 48
+                    Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
+                    radius: Theme.radiusLarge
                     color: Theme.surfaceAlt
                     clip: true
 
                     Flickable {
                         anchors.fill: parent
                         anchors.margins: Theme.spacingXs
-                        contentWidth: tabRow.implicitWidth
+                        contentWidth: Math.max(width, tabRow.implicitWidth)
                         contentHeight: height
                         clip: true
                         interactive: tabRow.implicitWidth > width
@@ -198,14 +237,52 @@ Item {
 
                         Row {
                             id: tabRow
-                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.centerIn: parent
                             spacing: 2
 
-                            TabPill { label: qsTr("Journal d'audit"); active: root.currentTab === 0; onClicked: root.currentTab = 0 }
-                            TabPill { label: qsTr("Machines autorisées"); active: root.currentTab === 1; onClicked: root.currentTab = 1 }
-                            TabPill { label: qsTr("Utilisateurs"); active: root.currentTab === 2; onClicked: root.currentTab = 2 }
-                            TabPill { label: qsTr("Bascule serveur"); active: root.currentTab === 3; onClicked: root.currentTab = 3 }
+                            TabPill { glyph: "\uf1ea"; label: qsTr("Journal d'audit"); active: root.currentTab === 0; onClicked: root.currentTab = 0 }
+                            TabPill { glyph: "\uf233"; label: qsTr("Machines autorisées"); active: root.currentTab === 1; onClicked: root.currentTab = 1 }
+                            TabPill { glyph: "\uf0c0"; label: qsTr("Utilisateurs"); active: root.currentTab === 2; onClicked: root.currentTab = 2 }
+                            TabPill { glyph: "\uf021"; label: qsTr("Bascule serveur"); active: root.currentTab === 3; onClicked: root.currentTab = 3 }
                         }
+                    }
+                }
+
+                // Actions toujours alignées à l'extrémité droite.
+                RowLayout {
+                    Layout.alignment: Qt.AlignVCenter
+                    spacing: Theme.spacingSmall
+
+                    IconButton {
+                        variant: "secondary"
+                        glyph: "\u21E9"
+                        size: 36
+                        visible: root.currentTab === 0
+                        onClicked: exportDialog.open()
+                    }
+
+                    IconButton {
+                        variant: "primary"
+                        glyph: "+"
+                        size: 36
+                        visible: root.currentTab === 1
+                        onClicked: addMachineDialog.open()
+                    }
+
+                    IconButton {
+                        variant: "primary"
+                        glyph: "+"
+                        size: 36
+                        visible: root.currentTab === 2
+                        onClicked: addUserDialog.open()
+                    }
+
+                    IconButton {
+                        variant: "secondary"
+                        glyph: "\u21BB"
+                        size: 36
+                        visible: root.currentTab === 3
+                        onClicked: root.refreshElectionHistory()
                     }
                 }
             }
@@ -602,7 +679,7 @@ Item {
 
                                     Item { Layout.fillHeight: true }
 
-                                    RowLayout {
+                                    ColumnLayout {
                                         Layout.fillWidth: true
                                         spacing: Theme.spacingSmall
 
