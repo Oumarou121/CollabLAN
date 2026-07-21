@@ -703,6 +703,13 @@ Item {
 
                 ComboBox {
                     id: recipientCombo
+                    palette.window: Theme.surface
+                    palette.base: Theme.surfaceAlt
+                    palette.button: Theme.surfaceAlt
+                    palette.text: Theme.text
+                    palette.buttonText: Theme.text
+                    palette.highlight: Theme.primary
+                    palette.highlightedText: Theme.primaryText
                     Layout.preferredWidth: 190
                     Layout.preferredHeight: 34
                     textRole: "label"

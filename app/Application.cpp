@@ -622,6 +622,27 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // consulte/exporte depuis AdminView.qml (issue #65).
     m_auditManager = new core::AuditManager(m_databaseManager.get(), this);
 
+    // Le journal ne se remplit pas automatiquement : les services ne font
+    // que definir les methodes d'audit. Enregistrer explicitement les
+    // authentifications permet au journal d'avoir une trace fiable des
+    // sessions, y compris quand aucun trafic reseau n'a encore eu lieu.
+    connect(m_userManager, &core::UserManager::loginSucceeded,
+            m_auditManager, [this](const QString &username) {
+                const auto userId = m_userManager->currentUserId();
+                m_auditManager->recordEvent(
+                    core::AuditEventType::Connection,
+                    QStringLiteral("Utilisateur authentifie : %1").arg(username),
+                    userId.has_value() ? std::optional<qint64>(*userId) : std::nullopt,
+                    username);
+            });
+
+    connect(m_userManager, &core::UserManager::loginFailed,
+            m_auditManager, [this](const QString &reason) {
+                m_auditManager->recordEvent(
+                    core::AuditEventType::AccessDenied,
+                    QStringLiteral("Echec d'authentification : %1").arg(reason));
+            });
+
     // Initialiser le PermissionManager pour la gestion des rôles (issue #67)
     // et des machines autorisées (issue #68).
     m_permissionManager = new core::PermissionManager(m_databaseManager.get(), this);

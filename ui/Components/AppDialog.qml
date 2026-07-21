@@ -35,7 +35,7 @@ Dialog {
 
     // Largeur "souhaitee", plafonnee a la largeur de la fenetre moins
     // marge (utile en fenetre partagee / petit ecran).
-    property real dialogWidth: 420
+    property real dialogWidth: 460
     // Hauteur "souhaitee" optionnelle. -1 (defaut) = hauteur automatique
     // selon le contenu (implicitHeight). Si fournie, elle est plafonnee
     // a la hauteur de la fenetre moins marge : sans ca, un dialog a
@@ -57,7 +57,19 @@ Dialog {
     focus: true
     anchors.centerIn: parent
     standardButtons: Dialog.NoButton
-    padding: Theme.spacingLarge
+    padding: Theme.spacingMedium
+
+    // Certains contrôles Qt Quick utilisent encore la palette native si elle
+    // n'est pas définie explicitement. Cela produisait des surfaces noires
+    // dans les modales en thème clair (ComboBox, ScrollView, champs, etc.).
+    palette.window: Theme.surface
+    palette.base: Theme.surfaceAlt
+    palette.alternateBase: Theme.surface
+    palette.button: Theme.surfaceAlt
+    palette.text: Theme.text
+    palette.buttonText: Theme.text
+    palette.highlight: Theme.primary
+    palette.highlightedText: Theme.primaryText
 
     width: Math.min(dialogWidth, (parent ? parent.width : dialogWidth + Theme.spacingXl * 2) - Theme.spacingXl * 2)
     height: dialogHeight > 0
@@ -127,8 +139,15 @@ Dialog {
     // de la carte.
     header: Item {
         width: parent ? parent.width : 0
-        implicitHeight: 52
+        implicitHeight: 60
         height: implicitHeight
+        clip: true
+
+        Rectangle {
+            anchors.fill: parent
+            color: Theme.surfaceAlt
+            radius: Theme.radiusLarge
+        }
 
         // Meme police Font Awesome 4.7 embarquee que les autres
         // composants (DashboardCard, IconButton...), pour un rendu
@@ -140,9 +159,9 @@ Dialog {
 
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: Theme.spacingLarge
+            anchors.leftMargin: Theme.spacingMedium
             anchors.rightMargin: Theme.spacingSmall
-            spacing: Theme.spacingSmall
+            spacing: Theme.spacingMedium
 
             Text {
                 visible: root.headerIcon.length > 0

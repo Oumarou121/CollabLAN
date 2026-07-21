@@ -1185,6 +1185,13 @@ Item {
 
                 ComboBox {
                     id: addUserComboBox
+                    palette.window: Theme.surface
+                    palette.base: Theme.surfaceAlt
+                    palette.button: Theme.surfaceAlt
+                    palette.text: Theme.text
+                    palette.buttonText: Theme.text
+                    palette.highlight: Theme.primary
+                    palette.highlightedText: Theme.primaryText
                     Layout.fillWidth: true
                     model: ListModel { id: candidateModel }
                     textRole: "username"
@@ -1337,7 +1344,7 @@ Item {
         // =========================================================
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 48
+            Layout.preferredHeight: 56
             color: Theme.addressBarBackground
 
             Rectangle {
@@ -1641,8 +1648,36 @@ Item {
                     Menu {
                         id: moreActionsMenu
                         y: parent.height + 2
+                        width: 230
+                        palette.window: Theme.surface
+                        palette.base: Theme.surface
+                        palette.text: Theme.text
+                        palette.highlight: Theme.primaryMuted
+                        palette.highlightedText: Theme.text
+                        padding: Theme.spacingXs
+
+                        background: Rectangle {
+                            radius: Theme.radiusMedium
+                            color: Theme.surface
+                            border.width: 1
+                            border.color: Theme.border
+                        }
 
                         MenuItem {
+                            width: parent.width - 2 * Theme.spacingXs
+                            height: 40
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeSmall
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: Theme.spacingSmall
+                            }
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: parent.highlighted ? Theme.primaryMuted : "transparent"
+                            }
                             text: qsTr("Exclusions…")
                             onTriggered: {
                                 editExcludePatternsDialog.targetFolderId = root.openedFolderId
@@ -1651,6 +1686,20 @@ Item {
                             }
                         }
                         MenuItem {
+                            width: parent.width - 2 * Theme.spacingXs
+                            height: 40
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeSmall
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: Theme.spacingSmall
+                            }
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: parent.highlighted ? Theme.primaryMuted : "transparent"
+                            }
                             text: qsTr("Gérer les accès…")
                             onTriggered: {
                                 manageAccessDialog.targetFolderId = root.openedFolderId
@@ -1877,7 +1926,10 @@ Item {
                             anchors.margins: 4
                             radius: Theme.radiusMedium
                             color: folderTile.hovered ? Theme.surfaceHover : "transparent"
+                            border.width: folderTile.hovered ? 1 : 0
+                            border.color: Theme.selectionBorder
                             Behavior on color { ColorAnimation { duration: 120 } }
+                            Behavior on border.color { ColorAnimation { duration: 120 } }
                         }
 
                         ColumnLayout {
@@ -2243,16 +2295,10 @@ Item {
                 visible: root.openedFolderId >= 0 && !root.showHistory
                 spacing: 0
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 1
-                    color: Theme.border
-                    Layout.topMargin: 8
-                }
-
-                Item { Layout.preferredHeight: 12 }
-
                 RowLayout {
+                    visible: false
+                    Layout.preferredHeight: 0
+                    Layout.minimumHeight: 0
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
@@ -2736,15 +2782,19 @@ Item {
                 spacing: 0
 
                 Rectangle {
+                    visible: false
                     Layout.fillWidth: true
                     Layout.preferredHeight: 1
                     color: Theme.border
                     Layout.topMargin: 8
                 }
 
-                Item { Layout.preferredHeight: 12 }
+                Item { visible: false; Layout.preferredHeight: 0 }
 
                 RowLayout {
+                    visible: false
+                    Layout.preferredHeight: 0
+                    Layout.minimumHeight: 0
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
@@ -2779,6 +2829,7 @@ Item {
                     id: historyListView
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    Layout.topMargin: Theme.spacingMedium
                     Layout.leftMargin: 16
                     Layout.rightMargin: 16
                     Layout.bottomMargin: 8

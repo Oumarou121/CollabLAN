@@ -332,6 +332,13 @@ Item {
                             }
                             ComboBox {
                                 id: eventTypeFilter
+                                palette.window: Theme.surface
+                                palette.base: Theme.surfaceAlt
+                                palette.button: Theme.surfaceAlt
+                                palette.text: Theme.text
+                                palette.buttonText: Theme.text
+                                palette.highlight: Theme.primary
+                                palette.highlightedText: Theme.primaryText
                                 Layout.alignment: Qt.AlignVCenter
                                 Layout.preferredWidth: 180
                                 Layout.preferredHeight: 40
@@ -1205,6 +1212,13 @@ Item {
 
             ComboBox {
                 id: newUserRole
+                palette.window: Theme.surface
+                palette.base: Theme.surfaceAlt
+                palette.button: Theme.surfaceAlt
+                palette.text: Theme.text
+                palette.buttonText: Theme.text
+                palette.highlight: Theme.primary
+                palette.highlightedText: Theme.primaryText
                 Layout.fillWidth: true
                 Layout.preferredHeight: 40
                 model: [qsTr("Utilisateur"), qsTr("Administrateur")]
