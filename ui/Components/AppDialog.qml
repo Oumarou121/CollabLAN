@@ -48,6 +48,10 @@ Dialog {
     // doivent etre fermes que via une action explicite (ex. confirmation
     // bloquante).
     property bool showCloseButton: true
+    // Etat d'une operation longue : verrouille le contenu et affiche un
+    // retour visuel uniforme dans toutes les modales.
+    property bool busy: false
+    property string busyText: qsTr("Traitement en cours…")
 
     modal: true
     focus: true
@@ -78,6 +82,40 @@ Dialog {
         color: Theme.surface
         border.width: 1
         border.color: Theme.border
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        z: 100
+        visible: root.busy
+        color: Qt.rgba(Theme.surface.r, Theme.surface.g, Theme.surface.b, 0.92)
+        radius: Theme.radiusLarge
+
+        MouseArea {
+            anchors.fill: parent
+            preventStealing: true
+            onClicked: { /* bloque les clics pendant l'operation */ }
+        }
+
+        Column {
+            anchors.centerIn: parent
+            spacing: Theme.spacingMedium
+
+            BusyIndicator {
+                anchors.horizontalCenter: parent.horizontalCenter
+                running: root.busy
+                width: 42
+                height: 42
+            }
+
+            Label {
+                text: root.busyText
+                anchors.horizontalCenter: parent.horizontalCenter
+                color: Theme.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeBody
+            }
+        }
     }
 
     // ---- Header stylise (remplace la barre de titre Qt par defaut) ----

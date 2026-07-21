@@ -427,6 +427,9 @@ Item {
         dialogWidth: 420
         dialogHeight: 680
         standardButtons: Dialog.NoButton
+        busyText: qsTr("Indexation et partage en cours…")
+
+        onClosed: busy = false
 
         property string localPath: ""
 
@@ -616,6 +619,7 @@ Item {
                     enabled: nameField.text.trim().length > 0 && createDialog.localPath.length > 0
                     onClicked: {
                         if (!root.context) return
+                        createDialog.busy = true
                         var selectedUserIds = []
                         for (var i = 0; i < availableUsersModel.count; i++) {
                             if (availableUsersModel.get(i).selected) {
@@ -626,6 +630,8 @@ Item {
                                                        selectedUserIds, allowWriteCheckBox.checked,
                                                        excludePatternsField.text.trim())) {
                             createDialog.close()
+                        } else {
+                            createDialog.busy = false
                         }
                     }
                 }
@@ -874,13 +880,17 @@ Item {
         standardButtons: Dialog.NoButton
         closePolicy: Popup.NoAutoClose
         showCloseButton: false
+        busyText: qsTr("Préparation de la synchronisation…")
+
+        onClosed: {
+            busy = false
+            root.showNextShareConfirmation()
+        }
 
         property int targetFolderId: -1
         property string targetFolderName: ""
         property string ownerName: ""
         property string suggestedPath: ""
-
-        onClosed: root.showNextShareConfirmation()
 
         ColumnLayout {
             anchors.fill: parent
@@ -945,6 +955,7 @@ Item {
                     variant: "primary"
                     Layout.fillWidth: true
                     onClicked: {
+                        shareConfirmDialog.busy = true
                         if (root.context && shareConfirmDialog.targetFolderId >= 0) {
                             root.context.acceptFolderShare(shareConfirmDialog.targetFolderId)
                         }
