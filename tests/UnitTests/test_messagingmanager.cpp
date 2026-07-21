@@ -39,7 +39,8 @@ private:
             "type TEXT NOT NULL, "
             "name TEXT, "
             "participant1_id INTEGER, "
-            "participant2_id INTEGER)"
+            "participant2_id INTEGER, "
+            "uuid TEXT)"
         )));
         QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS Messages")));
         // Schema aligne sur celui produit par les migrations reelles
@@ -252,8 +253,8 @@ private slots:
         QSignalSpy messageReceivedSpy(m_messagingManager.get(), &MessagingManager::messageReceived);
 
         const QString payload = QStringLiteral(
-            "{\"type\":\"message\",\"conversationId\":%1,\"senderId\":%2,\"content\":\"Salut Alice\"}")
-            .arg(conv->id()).arg(user2Id);
+            "{\"type\":\"message\",\"conversationUuid\":\"%1\",\"senderUuid\":\"%2\",\"messageUuid\":\"%3\",\"content\":\"Salut Alice\"}")
+            .arg(conv->uuid()).arg(users[1].uuid()).arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
 
         const auto msg = m_messagingManager->receiveMessage(payload);
         QVERIFY(msg.has_value());
@@ -282,8 +283,9 @@ private slots:
 
         QJsonObject payloadObj;
         payloadObj.insert(QStringLiteral("type"), QStringLiteral("message"));
-        payloadObj.insert(QStringLiteral("conversationId"), conv->id());
-        payloadObj.insert(QStringLiteral("senderId"), user2Id);
+        payloadObj.insert(QStringLiteral("conversationUuid"), conv->uuid());
+        payloadObj.insert(QStringLiteral("senderUuid"), users[1].uuid());
+        payloadObj.insert(QStringLiteral("messageUuid"), QUuid::createUuid().toString(QUuid::WithoutBraces));
         payloadObj.insert(QStringLiteral("content"), QStringLiteral("C'est l'ami d'Alice"));
         const QString payload = QString::fromUtf8(QJsonDocument(payloadObj).toJson(QJsonDocument::Compact));
 
@@ -305,15 +307,23 @@ private slots:
 
         QSqlQuery query(m_dbManager->database());
         query.prepare(QStringLiteral(
-            "INSERT INTO Conversations (type, name) VALUES ('group', 'Groupe Test')"));
+            "INSERT INTO Conversations (type, name, uuid) VALUES ('group', 'Groupe Test', :uuid)"));
+        query.bindValue(QStringLiteral(":uuid"), QUuid::createUuid().toString(QUuid::WithoutBraces));
         QVERIFY(query.exec());
         const qint64 groupConversationId = query.lastInsertId().toLongLong();
+        QSqlQuery uuidQuery(m_dbManager->database());
+        uuidQuery.prepare(QStringLiteral("SELECT uuid FROM Conversations WHERE id = :id"));
+        uuidQuery.bindValue(QStringLiteral(":id"), groupConversationId);
+        QVERIFY(uuidQuery.exec());
+        QVERIFY(uuidQuery.next());
+        const QString groupConversationUuid = uuidQuery.value(0).toString();
 
         QSignalSpy messageReceivedSpy(m_messagingManager.get(), &MessagingManager::messageReceived);
 
         const QString payload = QStringLiteral(
-            "{\"type\":\"message\",\"conversationId\":%1,\"senderId\":%2,\"content\":\"Salut le groupe\"}")
-            .arg(groupConversationId).arg(user2Id);
+            "{\"type\":\"message\",\"conversationUuid\":\"%1\",\"senderUuid\":\"%2\",\"messageUuid\":\"%3\",\"content\":\"Salut le groupe\"}")
+            .arg(groupConversationUuid).arg(users[1].uuid())
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
 
         const auto msg = m_messagingManager->receiveMessage(payload);
         QVERIFY(msg.has_value());

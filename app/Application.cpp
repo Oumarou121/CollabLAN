@@ -10,6 +10,7 @@
 #include <QVariantMap>
 #include <QVariantList>
 #include <algorithm>
+#include <utility>
 
 #include "DatabaseManager.h"
 #include "database/Repositories/SettingsRepository.h"
@@ -750,18 +751,42 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     }
     m_peersModel = new network::PeersModel(m_discoveryService, this);
 
-    // Un poste qui apparait/disparait du reseau local declenche une
-    // notification "connexion"/"deconnexion" (issue #58). peerDiscovered
-    // n'est emis qu'une fois par poste (premiere detection) et peerLost
-    // apres expiration du timeout d'annonce (cf. DiscoveryService.h) :
-    // pas de spam a chaque annonce UDP periodique (peerUpdated n'est pas
-    // utilise ici).
+    // La decouverte identifie d'abord une machine, pas necessairement un
+    // utilisateur authentifie. Une notification utilisateur ne doit donc
+    // partir que lorsque l'annonce contient userUuid. Le passage hostname ->
+    // nom utilisateur arrive ensuite via peerUpdated.
     connect(m_discoveryService, &network::DiscoveryService::peerDiscovered,
             m_notificationManager, [this](const network::DiscoveredPeer &peer) {
+                if (peer.userUuid.isEmpty())
+                    return;
+                const QString key = peer.id + QStringLiteral("|") + peer.userUuid;
+                if (m_notifiedPeerUsers.contains(key))
+                    return;
+                m_notifiedPeerUsers.insert(key);
+                m_notificationManager->onPeerConnected(peer.name);
+            }, Qt::QueuedConnection);
+    connect(m_discoveryService, &network::DiscoveryService::peerUpdated,
+            m_notificationManager, [this](const network::DiscoveredPeer &peer) {
+                if (peer.userUuid.isEmpty())
+                    return;
+                const QString key = peer.id + QStringLiteral("|") + peer.userUuid;
+                if (m_notifiedPeerUsers.contains(key))
+                    return;
+                m_notifiedPeerUsers.insert(key);
                 m_notificationManager->onPeerConnected(peer.name);
             }, Qt::QueuedConnection);
     connect(m_discoveryService, &network::DiscoveryService::peerLost,
             m_notificationManager, [this](const network::DiscoveredPeer &peer) {
+                const QString prefix = peer.id + QStringLiteral("|");
+                QStringList matchingKeys;
+                for (const QString &key : std::as_const(m_notifiedPeerUsers)) {
+                    if (key.startsWith(prefix))
+                        matchingKeys.append(key);
+                }
+                if (matchingKeys.isEmpty())
+                    return;
+                for (const QString &key : matchingKeys)
+                    m_notifiedPeerUsers.remove(key);
                 m_notificationManager->onPeerDisconnected(peer.name);
             }, Qt::QueuedConnection);
 

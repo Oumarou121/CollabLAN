@@ -9,8 +9,7 @@
 namespace network {
 
 /**
- * @brief Modele Qt (QAbstractListModel) exposant a QML la liste des postes
- * detectes par DiscoveryService, mise a jour en temps reel.
+ * @brief Modele Qt exposant les postes dont un utilisateur est authentifie.
  *
  * Ecoute peerDiscovered / peerUpdated / peerLost et repercute chaque
  * evenement sur le modele (insertion, mise a jour de ligne, suppression),
@@ -69,6 +68,7 @@ private slots:
 
 private:
     int indexOfPeer(const QString &id) const;
+    static bool isAuthenticatedPeer(const DiscoveredPeer &peer);
 
     DiscoveryService *m_discoveryService = nullptr;
     QList<DiscoveredPeer> m_peers;

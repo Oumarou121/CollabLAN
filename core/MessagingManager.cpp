@@ -229,8 +229,6 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
     // entrantes) ci-dessous.
     QJsonObject payload;
     payload.insert(QStringLiteral("type"), QStringLiteral("message"));
-    payload.insert(QStringLiteral("conversationId"), conversationId);
-    payload.insert(QStringLiteral("senderId"), senderId);
     payload.insert(QStringLiteral("content"), content);
     payload.insert(QStringLiteral("messageUuid"), messageUuid);
     payload.insert(QStringLiteral("conversationUuid"), conversationUuid);
@@ -311,23 +309,15 @@ std::optional<models::Message> MessagingManager::receiveMessage(const QString &j
         // Autre type de message reseau (futur usage) : on ignore silencieusement ici.
         return std::nullopt;
     }
-    if (!obj.contains(QStringLiteral("conversationId")) || !obj.contains(QStringLiteral("senderId"))
+    if (!obj.contains(QStringLiteral("conversationUuid"))
+        || !obj.contains(QStringLiteral("senderUuid"))
+        || !obj.contains(QStringLiteral("messageUuid"))
         || !obj.contains(QStringLiteral("content"))) {
         m_lastError = MessagingManagerError::InvalidContent;
         m_lastErrorString = QStringLiteral("Missing fields in message payload");
         return std::nullopt;
     }
 
-    // conversationId/senderId bruts du payload sont les id LOCAUX de la
-    // machine emettrice : ils ne veulent rien dire ici (chaque poste a sa
-    // propre base SQLite avec son propre AUTOINCREMENT, cf. migration 011).
-    // On les garde comme repli (compatibilite / anciens postes), mais on
-    // privilegie systematiquement la resolution par uuid ci-dessous, seule
-    // reference stable inter-postes : les utiliser directement provoquait
-    // un "FOREIGN KEY constraint failed" a l'insertion des que nos id
-    // locaux divergeaient de ceux de l'emetteur.
-    qint64 conversationId = static_cast<qint64>(obj.value(QStringLiteral("conversationId")).toDouble());
-    qint64 senderId = static_cast<qint64>(obj.value(QStringLiteral("senderId")).toDouble());
     const QString content = obj.value(QStringLiteral("content")).toString();
     const QString messageUuid = obj.value(QStringLiteral("messageUuid")).toString();
     const QString conversationUuid = obj.value(QStringLiteral("conversationUuid")).toString();
@@ -336,6 +326,12 @@ std::optional<models::Message> MessagingManager::receiveMessage(const QString &j
     const QString senderUuid = obj.value(QStringLiteral("senderUuid")).toString();
     const QString participant1Uuid = obj.value(QStringLiteral("participant1Uuid")).toString();
     const QString participant2Uuid = obj.value(QStringLiteral("participant2Uuid")).toString();
+
+    // Les identifiants entiers sont locaux a la base de l'emetteur. Ils ne
+    // traversent jamais le reseau : ils seront resolus ci-dessous dans la
+    // base locale du destinataire a partir des UUID stables.
+    qint64 conversationId = -1;
+    qint64 senderId = -1;
 
     if (!m_dbManager) {
         m_lastError = MessagingManagerError::DatabaseError;
@@ -417,6 +413,13 @@ std::optional<models::Message> MessagingManager::receiveMessage(const QString &j
         }
     }
 
+    if (conversationId <= 0) {
+        m_lastError = MessagingManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral("Conversation inconnue (uuid=%1)").arg(conversationUuid);
+        qWarning() << m_lastErrorString;
+        return std::nullopt;
+    }
+
     // Resoudre l'expediteur local via son uuid stable.
     if (!senderUuid.isEmpty()) {
         const auto sender = users.findByUuid(senderUuid);
@@ -436,6 +439,12 @@ std::optional<models::Message> MessagingManager::receiveMessage(const QString &j
             emit unresolvedSenderMessage(senderUuid, jsonPayload);
             return std::nullopt;
         }
+    }
+
+    if (senderId <= 0) {
+        m_lastError = MessagingManagerError::DatabaseError;
+        m_lastErrorString = QStringLiteral("Expediteur sans identifiant local (uuid=%1)").arg(senderUuid);
+        return std::nullopt;
     }
 
     // Persiste le message recu du reseau (pas de renvoi reseau, contrairement

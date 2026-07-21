@@ -41,6 +41,7 @@ private slots:
 
         serviceA.setLocalName("MachineA");
         serviceB.setLocalName("MachineB");
+        serviceB.setLocalUserUuid("user-b-uuid");
 
         PeersModel model(&serviceA);
         QCOMPARE(model.rowCount(), 0);
@@ -52,8 +53,8 @@ private slots:
         QVERIFY(serviceA.start());
         QVERIFY(serviceB.start());
 
-        // Le modele doit se peupler tout seul, sans appel manuel, des que
-        // DiscoveryService detecte le poste distant.
+        // Le modele expose le poste des que DiscoveryService detecte un
+        // utilisateur authentifie sur ce poste.
         QVERIFY(rowsInserted.wait(5000));
         QCOMPARE(model.rowCount(), 1);
         QCOMPARE(model.count(), 1);

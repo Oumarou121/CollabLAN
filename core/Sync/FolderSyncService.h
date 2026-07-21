@@ -348,7 +348,7 @@ private:
 
     /// Diffuse un message JSON à tous les clients connectés (côté SERVER)
     /// ou l'envoie au serveur actif (côté CLIENT).
-    void broadcastMessage(const QString &json);
+    bool broadcastMessage(const QString &json);
 
     /// Envoie un message JSON uniquement vers le serveur actif (MessagingService).
     void sendMessageToServer(const QString &json);
@@ -574,8 +574,10 @@ private:
     network::DiscoveryService *m_discoveryService = nullptr;
     QString m_machineId;
 
-    /// Curseur de diffusion : dernier op_id déjà broadcasté.
-    qint64 m_lastBroadcastOpId = 0;
+    /// Curseur de diffusion indépendant par dossier. Un curseur global
+    /// ferait perdre les opérations d'un dossier dont l'op_id est inférieur
+    /// à celui d'une modification récente d'un autre dossier.
+    QHash<qint64, qint64> m_lastBroadcastOpIdByFolder;
 
     /// Dedup/backoff des folder_resync_request (debrief perf, point #3).
     /// Clé : "<folder_uuid>::<requester_machine_id>" → epoch ms (currentMSecsSinceEpoch)

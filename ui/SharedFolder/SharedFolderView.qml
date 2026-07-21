@@ -227,6 +227,13 @@ Item {
         root.rebuildFileBrowser()
     }
 
+    function browserPathAt(index) {
+        if (root.browsedRelativePath.length === 0) {
+            return ""
+        }
+        return root.browsedRelativePath.split("/").slice(0, index + 1).join("/")
+    }
+
     function goUpInBrowser() {
         const separatorIndex = root.browsedRelativePath.lastIndexOf("/")
         root.browsedRelativePath = separatorIndex >= 0
@@ -1427,33 +1434,44 @@ Item {
                             }
                         }
 
-                        Label {
-                            visible: root.openedFolderId >= 0 && root.browsedRelativePath.length > 0
-                            text: "/"
-                            font.pixelSize: Theme.fontSizeCaption
-                            font.family: Theme.fontFamily
-                            color: Theme.textTertiary
-                        }
+                        Repeater {
+                            model: root.openedFolderId >= 0 && root.browsedRelativePath.length > 0
+                                   ? root.browsedRelativePath.split("/") : []
 
-                        Label {
-                            visible: root.openedFolderId >= 0 && root.browsedRelativePath.length > 0
-                            text: root.browsedRelativePath.length > 0 ? root.browsedRelativePath.split("/").pop() : ""
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.weight: Font.Medium
-                            font.family: Theme.fontFamily
-                            color: Theme.text
-                            elide: Text.ElideRight
-                            Layout.maximumWidth: 180
+                            delegate: RowLayout {
+                                spacing: 6
+                                Layout.minimumWidth: 0
 
-                            ToolTip.visible: truncated && browsedLabelArea.containsMouse
-                            ToolTip.text: root.browsedRelativePath
-                            ToolTip.delay: 500
+                                Label {
+                                    text: "/"
+                                    font.pixelSize: Theme.fontSizeCaption
+                                    font.family: Theme.fontFamily
+                                    color: Theme.textTertiary
+                                }
 
-                            MouseArea {
-                                id: browsedLabelArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                acceptedButtons: Qt.NoButton
+                                Label {
+                                    text: modelData
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.weight: Font.Medium
+                                    font.family: Theme.fontFamily
+                                    color: index === root.browsedRelativePath.split("/").length - 1
+                                           ? Theme.text : Theme.textSecondary
+                                    elide: Text.ElideRight
+                                    Layout.maximumWidth: 180
+                                    Layout.minimumWidth: 0
+
+                                    ToolTip.visible: truncated && breadcrumbSegmentArea.containsMouse
+                                    ToolTip.text: root.browserPathAt(index)
+                                    ToolTip.delay: 500
+
+                                    MouseArea {
+                                        id: breadcrumbSegmentArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.openBrowserFolder(root.browserPathAt(index))
+                                    }
+                                }
                             }
                         }
                     }
@@ -2279,7 +2297,7 @@ Item {
                     delegate: Rectangle {
                         id: fileRow
                         width: filesListView.width
-                        height: fileRow.hasConflict ? 128 : 40
+                        height: fileRow.hasConflict ? 128 : (fileRow.isFolder ? 56 : 40)
                         clip: true
                         color: fileRowArea.containsMouse ? Theme.surfaceHover
                                : (index % 2 === 1 ? Theme.surfaceAlt : "transparent")
@@ -2291,7 +2309,7 @@ Item {
                             && root.conflictedFiles.hasOwnProperty(modelData.relativePath)
                         readonly property string conflictPath: hasConflict ? root.conflictedFiles[modelData.relativePath] : ""
                         readonly property var kind: isFolder ? null : root.fileKindFor(modelData.name)
-                        readonly property color folderAccent: Theme.colorForName(modelData.name)
+                        readonly property color folderAccent: "#FFC83D"
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -2301,14 +2319,24 @@ Item {
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 40
+                                Layout.preferredHeight: fileRow.isFolder ? 56 : 40
                                 spacing: 8
 
-                                FaIcon {
+                                Rectangle {
                                     visible: fileRow.isFolder
-                                    glyph: "\uf114"
-                                    font.pixelSize: 15
-                                    color: fileRow.folderAccent
+                                    Layout.preferredWidth: 32
+                                    Layout.preferredHeight: 32
+                                    radius: 8
+                                    color: Qt.rgba(fileRow.folderAccent.r,
+                                                   fileRow.folderAccent.g,
+                                                   fileRow.folderAccent.b, 0.16)
+
+                                    FaIcon {
+                                        anchors.centerIn: parent
+                                        glyph: "\uf114"
+                                        font.pixelSize: 15
+                                        color: fileRow.folderAccent
+                                    }
                                 }
                                 FaIcon {
                                     visible: !fileRow.isFolder
@@ -2481,7 +2509,7 @@ Item {
                         readonly property bool hasConflict: !isFolder
                             && root.conflictedFiles.hasOwnProperty(modelData.relativePath)
                         readonly property var kind: isFolder ? null : root.fileKindFor(modelData.name)
-                        readonly property color tileColor: isFolder ? Theme.colorForName(modelData.name)
+                        readonly property color tileColor: isFolder ? "#FFC83D"
                                                                      : (fileTile.kind ? fileTile.kind.color : Theme.textSecondary)
                         readonly property bool tileHovered: fileTileArea.containsMouse
 
@@ -2493,11 +2521,55 @@ Item {
                             spacing: 6
 
                             Item {
+                                id: subfolderIconArea
                                 Layout.alignment: Qt.AlignHCenter
-                                Layout.preferredWidth: 44
-                                Layout.preferredHeight: 34
+                                Layout.preferredWidth: fileTile.isFolder ? 76 : 44
+                                Layout.preferredHeight: fileTile.isFolder ? 62 : 34
+
+                                Item {
+                                    visible: fileTile.isFolder
+                                    anchors.fill: parent
+                                    property real radius: 6
+
+                                    Rectangle {
+                                        x: 2
+                                        y: 4
+                                        width: parent.width * 0.42
+                                        height: 11
+                                        radius: 3
+                                        color: fileTile.tileColor
+                                        opacity: 0.75
+                                    }
+
+                                    Rectangle {
+                                        y: 11
+                                        width: parent.width
+                                        height: parent.height - 11
+                                        radius: parent.radius
+                                        color: fileTile.tileColor
+
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            radius: parent.radius
+                                            gradient: Gradient {
+                                                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.16) }
+                                                GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.0) }
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            anchors.top: parent.top
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            height: parent.height * 0.38
+                                            radius: parent.radius
+                                            color: Qt.rgba(1, 1, 1, 0.10)
+                                        }
+                                    }
+                                }
 
                                 Rectangle {
+                                    visible: !fileTile.isFolder
                                     anchors.fill: parent
                                     radius: 8
                                     color: Qt.rgba(fileTile.tileColor.r,
@@ -2506,7 +2578,7 @@ Item {
 
                                     FaIcon {
                                         anchors.centerIn: parent
-                                        glyph: fileTile.isFolder ? "\uf114" : (fileTile.kind ? fileTile.kind.glyph : "\uf016")
+                                        glyph: fileTile.kind ? fileTile.kind.glyph : "\uf016"
                                         font.pixelSize: 20
                                         color: fileTile.tileColor
                                     }

@@ -5,6 +5,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVariant>
+#include <QSet>
 #include <memory>
 
 namespace database {
@@ -263,6 +264,7 @@ private:
     core::GroupManager *m_groupManager = nullptr;             // parente = this (QObject)
     core::NotificationManager *m_notificationManager = nullptr; // parente = this (QObject)
     network::DiscoveryService *m_discoveryService = nullptr;  // parente = this (QObject)
+    QSet<QString> m_notifiedPeerUsers;
     network::PeersModel *m_peersModel = nullptr;               // parente = this (QObject)
     network::SecurityService *m_securityService = nullptr;    // parente = this (QObject)
     network::MessagingService *m_messagingService = nullptr;  // parente = this (QObject)

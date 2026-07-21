@@ -410,6 +410,7 @@ std::optional<QVector<models::SharedFileChange>> SharedFolderManager::shareFolde
     // nouveau chemin relatif -- ce cas est alors un renommage/deplacement,
     // pas une suppression suivie d'une creation independante.
     QHash<QString, QString> createdPathsByHash; // hash -> relativePath, pour les Create de cette passe
+    QSet<QString> consumedRenamePaths;
     for (const models::SharedFileChange &change : changes) {
         if (change.type() == models::SyncChangeType::Create) {
             createdPathsByHash.insert(change.file().hash(), change.file().relativePath());
@@ -435,20 +436,37 @@ std::optional<QVector<models::SharedFileChange>> SharedFolderManager::shareFolde
         }
 
         const auto renamedToIt = createdPathsByHash.constFind(known.hash());
-        if (!known.hash().isEmpty() && renamedToIt != createdPathsByHash.constEnd()) {
+        if (!known.hash().isEmpty() && renamedToIt != createdPathsByHash.constEnd()
+            && !consumedRenamePaths.contains(*renamedToIt)) {
             // Renommage/deplacement detecte : on retire le Create genere
             // plus haut pour ce nouveau chemin et on le remplace par un
             // seul changement Rename (ancien -> nouveau chemin relatif).
             const QString newRelativePath = *renamedToIt;
+            bool convertedToRename = false;
             for (int i = 0; i < changes.size(); ++i) {
                 if (changes.at(i).type() == models::SyncChangeType::Create
                     && changes.at(i).file().relativePath() == newRelativePath) {
-                    changes[i] = models::SharedFileChange(
-                        models::SyncChangeType::Rename, changes.at(i).file(), known.relativePath());
+                    // Le scan a deja insere une ligne pour le nouveau nom.
+                    // Supprimer cette ligne avant de déplacer la ligne
+                    // existante évite de laisser deux chemins pour le même
+                    // fichier dans SharedFiles.
+                    const qint64 newFileId = changes.at(i).file().id();
+                    if (m_fileRepository.remove(newFileId)
+                        && m_fileRepository.renameFile(folderId, known.relativePath(), newRelativePath)) {
+                        const auto renamedFile =
+                            m_fileRepository.findByRelativePath(folderId, newRelativePath);
+                        if (renamedFile.has_value()) {
+                            changes[i] = models::SharedFileChange(
+                                models::SyncChangeType::Rename, *renamedFile, known.relativePath());
+                            convertedToRename = true;
+                            consumedRenamePaths.insert(newRelativePath);
+                        }
+                    }
                     break;
                 }
             }
-            continue;
+            if (convertedToRename)
+                continue;
         }
 
         if (m_fileRepository.markDeleted(folderId, known.relativePath())) {

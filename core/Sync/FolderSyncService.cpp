@@ -84,7 +84,6 @@ FolderSyncService::FolderSyncService(database::DatabaseManager *dbManager,
     , m_userRepository(dbManager ? dbManager->database() : QSqlDatabase())
     , m_folderManager(folderManager)
 {
-    m_lastBroadcastOpId = m_repository.latestId();
 }
 
 FolderSyncService::~FolderSyncService() = default;
@@ -189,13 +188,16 @@ void FolderSyncService::cleanupRevokedFolder(const models::SharedFolder &folder)
 // Envoi de messages
 // ---------------------------------------------------------------------------
 
-void FolderSyncService::broadcastMessage(const QString &json)
+bool FolderSyncService::broadcastMessage(const QString &json)
 {
     if (m_messagingServer && m_messagingServer->isRunning()) {
         m_messagingServer->broadcastMessage(json);
+        return true;
     } else if (m_messagingService && m_messagingService->isConnected()) {
         m_messagingService->sendMessage(json);
+        return true;
     }
+    return false;
 }
 
 void FolderSyncService::sendMessageToServer(const QString &json)
@@ -248,17 +250,26 @@ QJsonObject FolderSyncService::buildFolderOpJson(const models::FileSyncOperation
 
 void FolderSyncService::onLocalFolderReindexed(qint64 folderId, int changeCount)
 {
-    if (!m_folderManager || changeCount <= 0) return;
+    if (!m_folderManager) return;
 
     const auto folderOpt = m_folderManager->getFolder(folderId);
     if (!folderOpt.has_value()) return;
     const models::SharedFolder &folder = *folderOpt;
+    const qint64 lastBroadcastOpId = m_lastBroadcastOpIdByFolder.value(folderId, 0);
 
-    const auto ops = m_repository.getByFolderId(folderId, changeCount);
+    // Ne pas limiter la lecture a changeCount : ce signal peut arriver
+    // apres une indexation dont la diffusion reseau a ete interrompue. En
+    // relisant une fenetre recente du journal, le curseur par dossier permet
+    // de reprendre automatiquement les operations encore non diffusees.
+    const auto ops = m_repository.getByFolderId(folderId, 500);
     QVector<models::FileSyncOperation> newOps;
     for (const auto &op : ops) {
-        if (op.id() <= m_lastBroadcastOpId) break;
+        if (op.id() <= lastBroadcastOpId) break;
         newOps.prepend(op);
+    }
+
+    if (newOps.isEmpty()) {
+        return;
     }
 
     // Regroupement des renommages (debrief #6) : chaque fichier deplace
@@ -293,10 +304,15 @@ void FolderSyncService::onLocalFolderReindexed(qint64 folderId, int changeCount)
     }
 
     for (const auto &op : ungrouped) {
-        if (op.id() > m_lastBroadcastOpId) m_lastBroadcastOpId = op.id();
         const QString json = QString::fromUtf8(
             QJsonDocument(buildFolderOpJson(op, folder)).toJson(QJsonDocument::Compact));
-        broadcastMessage(json);
+        if (!broadcastMessage(json)) {
+            qDebug() << "[FolderSync] Diffusion retardée : aucun canal disponible pour"
+                     << op.relativePath();
+            break;
+        }
+        m_lastBroadcastOpIdByFolder[folderId] = qMax(
+            m_lastBroadcastOpIdByFolder.value(folderId, 0), op.id());
         qDebug() << "[FolderSync] Diffusé" << models::syncChangeTypeToString(op.type())
                  << op.relativePath() << "depuis" << folder.name();
     }
@@ -307,15 +323,19 @@ void FolderSyncService::onLocalFolderReindexed(qint64 folderId, int changeCount)
         for (const auto &op : group) {
             maxOpId = qMax(maxOpId, op.id());
         }
-        if (maxOpId > m_lastBroadcastOpId) m_lastBroadcastOpId = maxOpId;
-
         if (group.size() < 2) {
             // Un seul fichier "traverse" ce couple de dossiers : deplacement
             // isole, pas un vrai deplacement de sous-dossier -- diffuser
             // normalement plutot que d'introduire un DirectoryRename inutile.
             const QString json = QString::fromUtf8(
                 QJsonDocument(buildFolderOpJson(group.first(), folder)).toJson(QJsonDocument::Compact));
-            broadcastMessage(json);
+            if (!broadcastMessage(json)) {
+                qDebug() << "[FolderSync] Diffusion retardée : aucun canal disponible pour"
+                         << group.first().relativePath();
+                break;
+            }
+            m_lastBroadcastOpIdByFolder[folderId] = qMax(
+                m_lastBroadcastOpIdByFolder.value(folderId, 0), maxOpId);
             continue;
         }
 
@@ -340,7 +360,13 @@ void FolderSyncService::onLocalFolderReindexed(qint64 folderId, int changeCount)
             : network::TransferService::defaultPort();
         obj[QStringLiteral("transfer_port")] = static_cast<int>(transferPort);
 
-        broadcastMessage(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+        if (!broadcastMessage(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)))) {
+            qDebug() << "[FolderSync] Diffusion retardée : aucun canal disponible pour le renommage"
+                     << oldDir << "->" << newDir;
+            break;
+        }
+        m_lastBroadcastOpIdByFolder[folderId] = qMax(
+            m_lastBroadcastOpIdByFolder.value(folderId, 0), maxOpId);
         qDebug() << "[FolderSync] Diffusé DirectoryRename" << oldDir << "->" << newDir
                  << "(" << group.size() << "fichiers regroupés en 1 message) depuis" << folder.name();
     }
@@ -423,8 +449,12 @@ void FolderSyncService::announceAccessRevoked(qint64 folderId, qint64 userId)
 
 void FolderSyncService::onConnectedToServer()
 {
-    const qint64 lastOpId = m_repository.latestId();
-    const qint64 lastAccessId = m_accessRepository.latestId();
+    // Les identifiants SQLite des operations et des acces sont locaux a
+    // chaque machine. Ils ne peuvent donc pas servir de curseurs partages
+    // entre un client et un serveur : un id local plus eleve ferait ignorer
+    // a tort des operations reelles du proprietaire distant.
+    const qint64 lastOpId = 0;
+    const qint64 lastAccessId = 0;
     QJsonObject hello;
     hello[QStringLiteral("type")]          = QString::fromLatin1(kTypeFolderHello);
     hello[QStringLiteral("machine_id")]    = m_machineId;
@@ -1054,10 +1084,27 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
             return;
         }
         const QString transferFileName = folderTransferFileName(folderUuid, relativePath);
+
+        // Enregistrer la corrélation avant sendFile() : si la connexion est
+        // déjà prête, transferStarted peut arriver immédiatement.
+        const QString pendingKey = requesterMachineId + QStringLiteral("::")
+            + QFileInfo(absPath).fileName();
+        m_pendingOutgoingByKey.insert(pendingKey, folderUuid);
+        m_sentProgress[folderUuid].filesExpected++;
+
         const bool ok = m_transferService->sendFile(
             targetAddress, requesterPort, absPath, m_machineId, requesterMachineId,
             transferFileName, true);
         if (!ok) {
+            m_pendingOutgoingByKey.remove(pendingKey);
+            auto progressIt = m_sentProgress.find(folderUuid);
+            if (progressIt != m_sentProgress.end()) {
+                progressIt.value().filesExpected = qMax(0, progressIt.value().filesExpected - 1);
+                if (progressIt.value().filesExpected == 0
+                    && progressIt.value().filesCompleted == 0) {
+                    m_sentProgress.erase(progressIt);
+                }
+            }
             qWarning() << "[FolderSync] sendFile échoué pour" << absPath;
         } else {
             qDebug() << "[FolderSync] Envoi de" << relativePath << "vers" << targetAddress;
@@ -1069,10 +1116,6 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
             // "N fichiers envoyés" (scheduleFolderSentNotification) au lieu
             // d'une notification par fichier (cf. NotificationManager::
             // onTransferCompleted, appelé sinon pour chaque fichier envoyé).
-            const QString pendingKey = requesterMachineId + QStringLiteral("::")
-                + QFileInfo(absPath).fileName();
-            m_pendingOutgoingByKey.insert(pendingKey, folderUuid);
-
             // Symétrique de requestRemoteFile() côté récepteur : chaque
             // folder_file_request accepté ici est connu de façon synchrone,
             // AVANT que le transfert (potentiellement long) ne démarre --
@@ -1082,8 +1125,7 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
             // détecter la fin exacte d'une rafale d'envois (cf.
             // BatchProgress::filesExpected) sans attendre le debounce de
             // 800ms de scheduleFolderSentNotification().
-            m_sentProgress[folderUuid].filesExpected++;
-            qDebug() << "[DEBUG sent-notif] filesExpected++ pour" << folderUuid
+            qDebug() << "[DEBUG sent-notif] filesExpected réservé pour" << folderUuid
                       << "-> filesExpected=" << m_sentProgress[folderUuid].filesExpected
                       << "(requête acceptée pour" << relativePath << ")";
         }
@@ -1180,13 +1222,10 @@ void FolderSyncService::handleFolderAccessGranted(const QJsonObject &obj)
     if (m_localUserId > 0
         && static_cast<qint64>(grantedUser->id()) == m_localUserId
         && !folder->isLocalOrigin()) {
-        // since_op_id (debrief perf, point #3) : demander depuis notre
-        // dernier op connu pour CE dossier plutot que 0 -- un 0 code en dur
-        // fait rejouer l'HISTORIQUE COMPLET a chaque resync, meme quand on
-        // n'a manque qu'une poignee d'operations recentes (reconnexion
-        // rapide, deuxieme grant sur le meme dossier...).
-        const auto localOps = m_repository.getByFolderId(folder->id(), 1); // le plus recent d'abord
-        const qint64 sinceOpId = localOps.isEmpty() ? 0 : localOps.first().id();
+        // Les op_id sont locaux a chaque machine : repartir de 0 est
+        // necessaire pour ne pas comparer un curseur local avec l'historique
+        // du proprietaire distant.
+        const qint64 sinceOpId = 0;
 
         QJsonObject req;
         req[QStringLiteral("type")]                = QString::fromLatin1(kTypeResyncRequest);
@@ -1225,11 +1264,9 @@ void FolderSyncService::requestFolderResync(const QString &folderUuid)
         return;
     }
 
-    // since_op_id (debrief perf, point #3) : cf. commentaire equivalent dans
-    // handleFolderAccessGranted() -- eviter de rejouer tout l'historique a
-    // chaque resync quand on connait deja une partie des operations.
-    const auto localOps = m_repository.getByFolderId(folder->id(), 1); // le plus recent d'abord
-    const qint64 sinceOpId = localOps.isEmpty() ? 0 : localOps.first().id();
+    // Les op_id sont locaux a chaque machine : repartir de 0 est
+    // necessaire pour ne pas ignorer des operations distantes valides.
+    const qint64 sinceOpId = 0;
 
     // Envoyer un resync request au propriétaire du dossier
     //
@@ -1662,6 +1699,28 @@ void FolderSyncService::scheduleFolderNotification(const QString &folderUuid)
         timer = new QTimer(this);
         timer->setSingleShot(true);
         connect(timer, &QTimer::timeout, this, [this, folderUuid]() {
+            bool hasOutstanding = false;
+            for (auto it = m_pendingByKey.cbegin(); it != m_pendingByKey.cend(); ++it) {
+                if (it.value().folderUuid == folderUuid) {
+                    hasOutstanding = true;
+                    break;
+                }
+            }
+            if (!hasOutstanding) {
+                for (auto it = m_activeByTransferKey.cbegin(); it != m_activeByTransferKey.cend(); ++it) {
+                    if (it.value().folderUuid == folderUuid) {
+                        hasOutstanding = true;
+                        break;
+                    }
+                }
+            }
+            if (hasOutstanding) {
+                // De nouvelles demandes peuvent encore arriver pendant le
+                // rattrapage : attendre qu'il n'y ait plus rien en attente.
+                if (QTimer *retry = m_notifyTimers.value(folderUuid, nullptr))
+                    retry->start(5000);
+                return;
+            }
             flushFolderNotification(folderUuid);
         });
         m_notifyTimers.insert(folderUuid, timer);
@@ -1721,6 +1780,30 @@ void FolderSyncService::scheduleFolderSentNotification(const QString &folderUuid
         timer = new QTimer(this);
         timer->setSingleShot(true);
         connect(timer, &QTimer::timeout, this, [this, folderUuid]() {
+            bool hasOutstanding = false;
+            for (auto it = m_pendingOutgoingByKey.cbegin();
+                 it != m_pendingOutgoingByKey.cend(); ++it) {
+                if (it.value() == folderUuid) {
+                    hasOutstanding = true;
+                    break;
+                }
+            }
+            if (!hasOutstanding) {
+                for (auto it = m_activeOutgoingByTransferKey.cbegin();
+                     it != m_activeOutgoingByTransferKey.cend(); ++it) {
+                    if (it.value() == folderUuid) {
+                        hasOutstanding = true;
+                        break;
+                    }
+                }
+            }
+            if (hasOutstanding) {
+                // Des demandes supplémentaires peuvent encore être ajoutées
+                // pendant le rattrapage : ne pas couper la rafale.
+                if (QTimer *retry = m_sentNotifyTimers.value(folderUuid, nullptr))
+                    retry->start(5000);
+                return;
+            }
             qDebug() << "[DEBUG sent-notif] TIMER timeout (800ms) -> flush" << folderUuid;
             flushFolderSentNotification(folderUuid);
         });

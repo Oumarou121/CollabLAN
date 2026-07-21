@@ -306,6 +306,10 @@ private slots:
         QCOMPARE(changes->at(0).oldRelativePath(), QStringLiteral("ancien.txt"));
         QCOMPARE(changes->at(0).file().relativePath(), QStringLiteral("nouveau.txt"));
 
+        const auto indexedFiles = mgr.getFiles(folder->id());
+        QCOMPARE(indexedFiles.size(), 1);
+        QCOMPARE(indexedFiles.at(0).relativePath(), QStringLiteral("nouveau.txt"));
+
         db->close();
         delete db;
     }

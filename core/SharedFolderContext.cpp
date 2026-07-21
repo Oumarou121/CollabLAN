@@ -667,10 +667,17 @@ bool SharedFolderContext::resolveConflict(qint64 folderId, const QString &relati
     }
 
     // Réindexer le dossier pour prendre en compte les changements sur le disque
+    bool indexed = false;
     if (m_syncEngine) {
-        m_syncEngine->reindexFolder(folderId);
-    } else {
-        m_manager->shareFolder(folderId);
+        indexed = m_syncEngine->reindexFolder(folderId) > 0;
+    }
+    if (!indexed) {
+        const auto changes = m_manager->shareFolder(folderId);
+        if (!changes.has_value()) {
+            m_lastErrorString = m_manager->lastErrorString();
+            emit errorOccurred(m_lastErrorString);
+            return false;
+        }
     }
 
     refresh();

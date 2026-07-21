@@ -9,7 +9,10 @@ PeersModel::PeersModel(DiscoveryService *discoveryService, QObject *parent)
     // Pre-remplit avec les postes deja connus (utile si le modele est cree
     // apres que DiscoveryService ait deja recu des annonces).
     if (m_discoveryService)
-        m_peers = m_discoveryService->peers();
+        for (const DiscoveredPeer &peer : m_discoveryService->peers()) {
+            if (isAuthenticatedPeer(peer))
+                m_peers.append(peer);
+        }
 
     connect(m_discoveryService, &DiscoveryService::peerDiscovered,
             this, &PeersModel::onPeerDiscovered);
@@ -77,6 +80,11 @@ int PeersModel::count() const
     return m_peers.size();
 }
 
+bool PeersModel::isAuthenticatedPeer(const DiscoveredPeer &peer)
+{
+    return !peer.userUuid.trimmed().isEmpty();
+}
+
 QString PeersModel::nameForAddress(const QString &address) const
 {
     for (const DiscoveredPeer &peer : m_peers) {
@@ -108,6 +116,12 @@ int PeersModel::indexOfPeer(const QString &id) const
 
 void PeersModel::onPeerDiscovered(const network::DiscoveredPeer &peer)
 {
+    // DiscoveryService conserve aussi les machines non authentifiees pour
+    // les besoins reseau, mais elles ne doivent pas apparaitre comme des
+    // utilisateurs dans les vues de l'application.
+    if (!isAuthenticatedPeer(peer))
+        return;
+
     const int existing = indexOfPeer(peer.id);
     if (existing >= 0) {
         // Deja present (ex. signal recu deux fois) : traite comme une mise a jour.
@@ -128,7 +142,16 @@ void PeersModel::onPeerUpdated(const network::DiscoveredPeer &peer)
     const int row = indexOfPeer(peer.id);
     if (row < 0) {
         // Pas encore connu localement : traite comme une decouverte.
-        onPeerDiscovered(peer);
+        if (isAuthenticatedPeer(peer))
+            onPeerDiscovered(peer);
+        return;
+    }
+
+    if (!isAuthenticatedPeer(peer)) {
+        beginRemoveRows(QModelIndex(), row, row);
+        m_peers.removeAt(row);
+        endRemoveRows();
+        emit countChanged();
         return;
     }
 
