@@ -622,6 +622,26 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // consulte/exporte depuis AdminView.qml (issue #65).
     m_auditManager = new core::AuditManager(m_databaseManager.get(), this);
 
+    connect(m_messagingManager, &core::MessagingManager::messageSent,
+            m_auditManager, [this](const models::Message &message) {
+                const auto userId = m_userManager->currentUserId();
+                m_auditManager->logMessage(message.senderId(), message.conversationId(), true);
+                Q_UNUSED(userId)
+            });
+    connect(m_messagingManager, &core::MessagingManager::messageReceived,
+            m_auditManager, [this](const models::Message &message) {
+                m_auditManager->logMessage(message.senderId(), message.conversationId(), false);
+            });
+
+    connect(m_transferManager, &core::TransferManager::transferRecorded,
+            m_auditManager, [this](int, const models::Transfer &transfer) {
+                const auto userId = m_userManager->currentUserId();
+                m_auditManager->logTransfer(
+                    userId.has_value() ? *userId : 0,
+                    transfer.fileName(), transfer.fileSize(),
+                    models::transferStatusToString(transfer.status()));
+            });
+
     // Le journal ne se remplit pas automatiquement : les services ne font
     // que definir les methodes d'audit. Enregistrer explicitement les
     // authentifications permet au journal d'avoir une trace fiable des
@@ -844,6 +864,17 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     m_callHistoryManager->setVoiceService(m_voiceService);
     m_callHistoryManager->setUserManager(m_userManager);
     m_callHistoryManager->setDiscoveryService(m_discoveryService);
+
+    connect(m_callHistoryManager, &core::CallHistoryManager::callRecorded,
+            m_auditManager, [this](int, const models::CallHistoryEntry &entry) {
+                const std::optional<qint64> userId = entry.localUserId() > 0
+                    ? std::optional<qint64>(entry.localUserId()) : std::nullopt;
+                const QString direction = models::callDirectionToString(entry.direction());
+                m_auditManager->logCall(
+                    userId, QHostAddress(entry.peerAddress()),
+                    QStringLiteral("%1 (%2)").arg(models::callStatusToString(entry.status()), direction),
+                    entry.peerName());
+            });
 
     // TransferManager a ete instancie plus haut (avant DiscoveryService) :
     // on ne peut lui fournir la resolution de peer_name (migration #015)
