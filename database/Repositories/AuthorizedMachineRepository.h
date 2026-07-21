@@ -43,6 +43,8 @@ public:
      * @brief Recherche une machine par son adresse IP.
      */
     std::optional<models::AuthorizedMachine> findByIpAddress(const QString &ipAddress) const;
+    std::optional<models::AuthorizedMachine> findByUuid(const QString &uuid) const;
+    bool upsertRemote(const models::AuthorizedMachine &machine);
 
     /**
      * @brief Récupère toutes les machines.

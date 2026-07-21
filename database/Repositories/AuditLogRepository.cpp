@@ -33,9 +33,10 @@ std::optional<models::AuditLog> AuditLogRepository::insert(const models::AuditLo
     QSqlQuery query(db);
 
     query.prepare(QStringLiteral(
-        "INSERT INTO AuditLogs (event_type, description, user_id, actor_label, created_at) "
-        "VALUES (:eventType, :description, :userId, :actorLabel, :createdAt)"
+        "INSERT INTO AuditLogs (event_uuid, event_type, description, user_id, actor_label, created_at) "
+        "VALUES (:eventUuid, :eventType, :description, :userId, :actorLabel, :createdAt)"
     ));
+    query.bindValue(QStringLiteral(":eventUuid"), entry.eventUuid());
     query.bindValue(QStringLiteral(":eventType"), entry.eventType());
     query.bindValue(QStringLiteral(":description"), entry.description());
     if (entry.userId().has_value()) {
@@ -63,6 +64,7 @@ models::AuditLog AuditLogRepository::fromRecord(const QSqlQuery &query)
 {
     models::AuditLog entry;
     entry.setId(query.value(QStringLiteral("id")).toLongLong());
+    entry.setEventUuid(query.value(QStringLiteral("event_uuid")).toString());
     entry.setEventType(query.value(QStringLiteral("event_type")).toString());
     entry.setDescription(query.value(QStringLiteral("description")).toString());
 
@@ -112,7 +114,7 @@ QVector<models::AuditLog> AuditLogRepository::find(const AuditLogFilter &filter)
         conditions << QStringLiteral("created_at <= :toDate");
     }
 
-    QString sql = QStringLiteral("SELECT id, event_type, description, user_id, actor_label, created_at FROM AuditLogs");
+    QString sql = QStringLiteral("SELECT id, event_uuid, event_type, description, user_id, actor_label, created_at FROM AuditLogs");
     if (!conditions.isEmpty()) {
         sql += QStringLiteral(" WHERE ") + conditions.join(QStringLiteral(" AND "));
     }
@@ -161,13 +163,25 @@ std::optional<models::AuditLog> AuditLogRepository::getById(qint64 id)
     QSqlDatabase db = m_dbManager->database();
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "SELECT id, event_type, description, user_id, actor_label, created_at "
+        "SELECT id, event_uuid, event_type, description, user_id, actor_label, created_at "
         "FROM AuditLogs WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), id);
 
     if (!query.exec() || !query.next()) {
         return std::nullopt;
     }
+    return fromRecord(query);
+}
+
+std::optional<models::AuditLog> AuditLogRepository::getByEventUuid(const QString &eventUuid)
+{
+    if (!m_dbManager || eventUuid.isEmpty()) return std::nullopt;
+    QSqlQuery query(m_dbManager->database());
+    query.prepare(QStringLiteral(
+        "SELECT id, event_uuid, event_type, description, user_id, actor_label, created_at "
+        "FROM AuditLogs WHERE event_uuid = :eventUuid"));
+    query.bindValue(QStringLiteral(":eventUuid"), eventUuid);
+    if (!query.exec() || !query.next()) return std::nullopt;
     return fromRecord(query);
 }
 

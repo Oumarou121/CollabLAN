@@ -37,39 +37,7 @@ ApplicationWindow {
     // Référence à la propriété globale messagingContext pour l'utiliser dans les Components
     property var globalMessagingContext: messagingContext
 
-    // Tentative d'auto-login silencieuse a partir du jeton persiste
-    // localement (core::SettingsModel.rememberedSessionToken, jamais en
-    // base - voir migration #026). userManager.loginWithRememberedToken()
-    // est un appel C++ synchrone : au moment ou la fenetre devient visible,
-    // on sait deja si on doit afficher Home ou Login, donc pas de flash de
-    // l'ecran Login. Un jeton absent/expire/invalide echoue silencieusement
-    // (pas de loginFailed) et laisse simplement l'ecran Login initial en place.
     Component.onCompleted: {
-        const hasRememberedSession = (typeof settingsModel !== "undefined" && settingsModel)
-                && settingsModel.rememberedUsername.length > 0
-                && settingsModel.rememberedSessionToken.length > 0
-
-        console.log("[Main.qml] rememberedUsername=" + (settingsModel ? settingsModel.rememberedUsername : "<settingsModel indisponible>")
-                     + " tokenPresent=" + (settingsModel ? (settingsModel.rememberedSessionToken.length > 0) : false)
-                     + " hasRememberedSession=" + hasRememberedSession)
-
-        if (hasRememberedSession) {
-            const restored = userManager.loginWithRememberedToken(
-                        settingsModel.rememberedUsername,
-                        settingsModel.rememberedSessionToken)
-            console.log("[Main.qml] loginWithRememberedToken -> " + restored)
-            if (restored) {
-                stackView.push(homeViewComponent, { username: settingsModel.rememberedUsername })
-            } else {
-                // Jeton perime/invalide : on efface la trace locale pour ne
-                // pas retenter a chaque demarrage (le hash en base a deja
-                // ete nettoye cote C++ si expire).
-                settingsModel.rememberedUsername = ""
-                settingsModel.rememberedSessionToken = ""
-                settingsModel.save()
-            }
-        }
-
         window.visible = true
     }
 
@@ -77,7 +45,7 @@ ApplicationWindow {
         id: stackView
         anchors.fill: parent
 
-        initialItem: loginViewComponent
+        initialItem: startupLoadingViewComponent
 
         // Transitions simples (fondu) entre les ecrans
         pushEnter: Transition {
@@ -140,6 +108,52 @@ ApplicationWindow {
     }
 
     Component {
+        id: startupLoadingViewComponent
+
+        StartupLoadingView {
+            property bool sessionRestored: false
+            property bool startupChecked: false
+
+            // Timer pour garantir un minimum de 3 secondes d'affichage de l'ecran de chargement, meme si l'auto-login est instantane (issue #6).
+            Timer {
+                id: minimumStartupTimer
+                interval: 3000
+                repeat: false
+                onTriggered: {
+                    if (startupChecked) {
+                        if (sessionRestored) {
+                            stackView.replace(homeViewComponent, { username: settingsModel.rememberedUsername })
+                        } else {
+                            stackView.replace(loginViewComponent)
+                        }
+                    }
+                }
+            }
+
+            Component.onCompleted: {
+                // L'écran de chargement est le seul point d'entrée visible.
+                // L'auto-login est synchrone : on choisit la destination avant
+                // de rendre LoginView ou HomeView visible.
+                const hasRememberedSession = (typeof settingsModel !== "undefined" && settingsModel)
+                        && settingsModel.rememberedUsername.length > 0
+                        && settingsModel.rememberedSessionToken.length > 0
+                if (hasRememberedSession) {
+                    sessionRestored = userManager.loginWithRememberedToken(
+                                settingsModel.rememberedUsername,
+                                settingsModel.rememberedSessionToken)
+                    if (!sessionRestored) {
+                        settingsModel.rememberedUsername = ""
+                        settingsModel.rememberedSessionToken = ""
+                        settingsModel.save()
+                    }
+                }
+                startupChecked = true
+                minimumStartupTimer.start()
+            }
+        }
+    }
+
+    Component {
         id: loginViewComponent
 
         LoginView {
@@ -156,7 +170,11 @@ ApplicationWindow {
         HomeView {
             objectName: "homeView"
             onLogoutRequested: {
-                stackView.pop(null) // revient a l'ecran Login (racine de la pile)
+                // Après une restauration automatique, Home est la racine de
+                // la pile : pop(null) ne peut plus revenir au login.
+                // Déconnecter explicitement la session puis remplacer la vue.
+                userManager.logout()
+                stackView.replace(loginViewComponent)
             }
             onUsersRequested: {
                 stackView.push(usersViewComponent)

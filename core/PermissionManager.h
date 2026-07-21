@@ -6,6 +6,7 @@
 #include <optional>
 #include <memory>
 #include <vector>
+#include "models/AuthorizedMachine.h"
 
 namespace database {
 class DatabaseManager;
@@ -76,12 +77,16 @@ public:
 
     /// Autorise une machine par son adresse IP (issue #68).
     bool authorizeMachine(const QString &ipAddress, int authorizedBy, const QString &reason = QString());
+    bool applyRemoteMachine(const models::AuthorizedMachine &machine);
 
     /// Retourne toutes les machines (pour AuthorizedMachineModel)
     std::vector<models::AuthorizedMachine> getAllMachines() const;
 
     /// Retourne le DatabaseManager (pour AuthorizedMachineModel)
     database::DatabaseManager* databaseManager() const;
+
+signals:
+    void machineChanged(const models::AuthorizedMachine &machine);
 
 private:
     database::DatabaseManager *m_dbManager = nullptr;

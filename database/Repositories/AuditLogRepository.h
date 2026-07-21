@@ -51,6 +51,7 @@ public:
 
     /// Recupere une entree par son identifiant.
     std::optional<models::AuditLog> getById(qint64 id);
+    std::optional<models::AuditLog> getByEventUuid(const QString &eventUuid);
 
     /// Nombre total d'entrees correspondant au filtre (ignore limit/offset),
     /// utile pour la pagination cote UI.

@@ -279,6 +279,7 @@ private:
     QHash<QTcpSocket*, QString> m_socketDestKey;            ///< socket d'envoi -> destKey (pour retrouver sa file/son compteur a la fin d'un fichier).
     QString m_receiveDirOverride;
     QString m_localMachineId;        ///< UUID DiscoveryService::localId() local, transmis dans l'en-tete (voir encodeHeader()).
+    QObject *m_permissionManager = nullptr;
     bool m_compressionEnabled = false; ///< Voir setCompressionEnabled().
     quint32 m_blockSize = kDefaultBlockSize; ///< Voir setBlockSize().
     std::function<QString(const QHostAddress &, const QString &)> m_peerFolderNameResolver;
@@ -293,6 +294,9 @@ public:
     /// resoudre peer_name par UUID plutot que par adresse IP (voir
     /// transferStarted()). A appeler avant tout sendFile().
     void setLocalMachineId(const QString &machineId);
+
+    /// Applique le contrôle d'accès également au canal TCP des fichiers.
+    void setPermissionManager(QObject *manager);
 
     /**
      * @brief Active ou desactive la compression zlib (via qCompress/qUncompress)

@@ -286,6 +286,16 @@ bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QSt
                                 const QString &senderUuid, const QString &recipientUuid,
                                 const QString &transferFileName, bool isFolderTransfer)
 {
+    if (m_permissionManager) {
+        bool authorized = true;
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorized",
+                                  Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                  Q_ARG(QString, host.toString()));
+        if (!authorized) {
+            qWarning() << "TransferService: outgoing transfer refused for unauthorized machine" << host;
+            return false;
+        }
+    }
     // Verification rapide et synchrone : un fichier absent/illisible des
     // l'appel doit echouer immediatement (contrat historique de sendFile(),
     // toujours respecte par les appelants existants -- ex. TransferService::
@@ -328,6 +338,18 @@ void TransferService::dispatchSendQueue(const QString &destKey)
 
     const PendingSendJob job = queueIt->dequeue();
     const DestInfo dest = m_destInfo.value(destKey);
+
+    if (m_permissionManager) {
+        bool authorized = true;
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorized",
+                                  Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                  Q_ARG(QString, dest.host.toString()));
+        if (!authorized) {
+            qWarning() << "TransferService: queued transfer cancelled for unauthorized machine" << dest.host;
+            dispatchSendQueue(destKey);
+            return;
+        }
+    }
 
     auto *socket = new QTcpSocket(this);
     m_socketDestKey.insert(socket, destKey);
@@ -650,6 +672,20 @@ void TransferService::onNewConnection()
             continue;
         }
 
+        if (m_permissionManager) {
+            bool authorized = true;
+            QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorized",
+                                      Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                      Q_ARG(QString, socket->peerAddress().toString()));
+            if (!authorized) {
+                qWarning() << "TransferService: incoming transfer refused for unauthorized machine"
+                           << socket->peerAddress();
+                socket->disconnectFromHost();
+                socket->deleteLater();
+                continue;
+            }
+        }
+
         ReceiveState state;
         state.transferKey = makeTransferKey(socket);
         m_receiveStates.insert(socket, state);
@@ -659,11 +695,30 @@ void TransferService::onNewConnection()
     }
 }
 
+void TransferService::setPermissionManager(QObject *manager)
+{
+    m_permissionManager = manager;
+}
+
 void TransferService::onServerSocketReadyRead()
 {
     auto *socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket || !m_receiveStates.contains(socket)) {
         return;
+    }
+
+    // Une révocation doit aussi interrompre une connexion déjà ouverte.
+    if (m_permissionManager) {
+        bool authorized = true;
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorized",
+                                  Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                  Q_ARG(QString, socket->peerAddress().toString()));
+        if (!authorized) {
+            qWarning() << "TransferService: active transfer interrupted for unauthorized machine"
+                       << socket->peerAddress();
+            socket->disconnectFromHost();
+            return;
+        }
     }
 
     ReceiveState &state = m_receiveStates[socket];

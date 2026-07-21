@@ -85,6 +85,9 @@ public:
                       std::optional<qint64> userId = std::nullopt,
                       const QString &actorLabel = QString());
 
+    /// Insere un evenement provenant d'une autre base sans le rediffuser.
+    bool recordRemoteEvent(const models::AuditLog &entry);
+
     /// Consultation filtree du journal (delegue a AuditLogRepository,
     /// voir issue #63 pour les criteres disponibles).
     QVector<models::AuditLog> queryEvents(const database::AuditLogFilter &filter);
@@ -93,6 +96,7 @@ signals:
     /// Emis apres chaque enregistrement reussi, utile pour un affichage
     /// temps reel du journal d'audit dans l'UI.
     void eventRecorded(const models::AuditLog &entry);
+    void remoteEventRecorded(const models::AuditLog &entry);
 
 private:
     database::DatabaseManager *m_dbManager = nullptr;

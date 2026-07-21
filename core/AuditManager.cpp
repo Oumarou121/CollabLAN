@@ -4,6 +4,7 @@
 #include "AuditLogRepository.h"
 
 #include <QDebug>
+#include <QUuid>
 
 namespace core {
 
@@ -37,6 +38,7 @@ void AuditManager::recordEvent(AuditEventType type, const QString &description,
     }
 
     models::AuditLog entry(auditEventTypeToString(type), description, userId, actorLabel);
+    entry.setEventUuid(QUuid::createUuid().toString(QUuid::WithoutBraces));
     const std::optional<models::AuditLog> inserted = m_repository->insert(entry);
     if (!inserted.has_value()) {
         qWarning() << "AuditManager: echec de l'enregistrement de l'evenement -" << description;
@@ -44,6 +46,16 @@ void AuditManager::recordEvent(AuditEventType type, const QString &description,
     }
 
     emit eventRecorded(*inserted);
+}
+
+bool AuditManager::recordRemoteEvent(const models::AuditLog &entry)
+{
+    if (!m_dbManager || entry.eventUuid().isEmpty()) return false;
+    if (m_repository->getByEventUuid(entry.eventUuid()).has_value()) return false;
+    const auto inserted = m_repository->insert(entry);
+    if (!inserted.has_value()) return false;
+    emit remoteEventRecorded(*inserted);
+    return true;
 }
 
 void AuditManager::logConnection(std::optional<qint64> userId, const QHostAddress &peerAddress,

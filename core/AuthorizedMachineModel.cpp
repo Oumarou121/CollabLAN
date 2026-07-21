@@ -142,6 +142,11 @@ bool AuthorizedMachineModel::removeMachine(int id)
 void AuthorizedMachineModel::setPermissionManager(core::PermissionManager *manager)
 {
     m_permissionManager = manager;
+    if (m_permissionManager) {
+        connect(m_permissionManager, &PermissionManager::machineChanged,
+                this, [this](const models::AuthorizedMachine &) { refresh(); });
+        refresh();
+    }
 }
 
 } // namespace core

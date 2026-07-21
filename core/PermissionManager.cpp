@@ -69,14 +69,23 @@ bool PermissionManager::revokeMachine(const QString &ipAddress, int revokedBy, c
 {
     if (!m_repository)
         return false;
-    return m_repository->revokeByIpAddress(ipAddress, revokedBy, reason);
+    const bool ok = m_repository->revokeByIpAddress(ipAddress, revokedBy, reason);
+    if (ok) { auto machine = m_repository->findByIpAddress(ipAddress); if (machine) emit machineChanged(*machine); }
+    return ok;
 }
 
 bool PermissionManager::authorizeMachine(const QString &ipAddress, int authorizedBy, const QString &reason)
 {
     if (!m_repository)
         return false;
-    return m_repository->authorizeByIpAddress(ipAddress, authorizedBy, reason);
+    const bool ok = m_repository->authorizeByIpAddress(ipAddress, authorizedBy, reason);
+    if (ok) { auto machine = m_repository->findByIpAddress(ipAddress); if (machine) emit machineChanged(*machine); }
+    return ok;
+}
+
+bool PermissionManager::applyRemoteMachine(const models::AuthorizedMachine &machine)
+{
+    return m_repository && m_repository->upsertRemote(machine);
 }
 
 std::vector<models::AuthorizedMachine> PermissionManager::getAllMachines() const

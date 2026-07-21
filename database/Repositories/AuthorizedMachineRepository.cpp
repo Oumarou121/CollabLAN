@@ -4,6 +4,7 @@
 #include <QSqlQuery>
 #include <QVariant>
 #include <QDateTime>
+#include <QUuid>
 
 namespace database {
 
@@ -25,6 +26,7 @@ models::AuthorizedMachine AuthorizedMachineRepository::machineFromQuery(const QS
 {
     models::AuthorizedMachine machine;
     machine.setId(query.value(QStringLiteral("id")).toInt());
+    machine.setUuid(query.value(QStringLiteral("machine_uuid")).toString());
     machine.setIpAddress(query.value(QStringLiteral("ip_address")).toString());
     machine.setHostname(query.value(QStringLiteral("hostname")).toString());
     machine.setAuthorized(query.value(QStringLiteral("authorized")).toInt() != 0);
@@ -43,8 +45,9 @@ int AuthorizedMachineRepository::create(const models::AuthorizedMachine &machine
 {
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
-        "INSERT INTO AuthorizedMachines (ip_address, hostname, authorized, added_by, added_at, reason) "
-        "VALUES (:ip_address, :hostname, :authorized, :added_by, :added_at, :reason)"));
+        "INSERT INTO AuthorizedMachines (machine_uuid, ip_address, hostname, authorized, added_by, added_at, reason) "
+        "VALUES (:machine_uuid, :ip_address, :hostname, :authorized, :added_by, :added_at, :reason)"));
+    query.bindValue(QStringLiteral(":machine_uuid"), machine.uuid().isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces) : machine.uuid());
     query.bindValue(QStringLiteral(":ip_address"), notNull(machine.ipAddress()));
     query.bindValue(QStringLiteral(":hostname"), notNull(machine.hostname()));
     query.bindValue(QStringLiteral(":authorized"), machine.isAuthorized() ? 1 : 0);
@@ -69,9 +72,10 @@ bool AuthorizedMachineRepository::update(const models::AuthorizedMachine &machin
 {
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
-        "UPDATE AuthorizedMachines SET ip_address = :ip_address, hostname = :hostname, "
+        "UPDATE AuthorizedMachines SET machine_uuid = :machine_uuid, ip_address = :ip_address, hostname = :hostname, "
         "authorized = :authorized, added_by = :added_by, added_at = :added_at, reason = :reason "
         "WHERE id = :id"));
+    query.bindValue(QStringLiteral(":machine_uuid"), machine.uuid());
     query.bindValue(QStringLiteral(":ip_address"), notNull(machine.ipAddress()));
     query.bindValue(QStringLiteral(":hostname"), notNull(machine.hostname()));
     query.bindValue(QStringLiteral(":authorized"), machine.isAuthorized() ? 1 : 0);
@@ -120,6 +124,35 @@ std::optional<models::AuthorizedMachine> AuthorizedMachineRepository::findByIpAd
         return std::nullopt;
     }
     return machineFromQuery(query);
+}
+
+std::optional<models::AuthorizedMachine> AuthorizedMachineRepository::findByUuid(const QString &uuid) const
+{
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral("SELECT * FROM AuthorizedMachines WHERE machine_uuid = :uuid"));
+    query.bindValue(QStringLiteral(":uuid"), uuid);
+    if (!query.exec()) { m_lastError = query.lastError().text(); return std::nullopt; }
+    if (!query.next()) return std::nullopt;
+    return machineFromQuery(query);
+}
+
+bool AuthorizedMachineRepository::upsertRemote(const models::AuthorizedMachine &machine)
+{
+    if (machine.uuid().isEmpty()) return false;
+    auto existing = findByUuid(machine.uuid());
+    if (existing.has_value()) {
+        models::AuthorizedMachine updated = machine;
+        updated.setId(existing->id());
+        return update(updated);
+    }
+    // UUID is the cross-database identity; IP remains a local uniqueness key.
+    auto byIp = findByIpAddress(machine.ipAddress());
+    if (byIp.has_value()) {
+        models::AuthorizedMachine updated = machine;
+        updated.setId(byIp->id());
+        return update(updated);
+    }
+    return create(machine) >= 0;
 }
 
 std::vector<models::AuthorizedMachine> AuthorizedMachineRepository::findAll() const

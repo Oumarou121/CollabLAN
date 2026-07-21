@@ -4,6 +4,7 @@
 #include <QString>
 #include <QDateTime>
 #include <optional>
+#include <QUuid>
 
 namespace models {
 
@@ -24,6 +25,9 @@ public:
 
     int id() const { return m_id; }
     void setId(int id) { m_id = id; }
+
+    QString uuid() const { return m_uuid; }
+    void setUuid(const QString &uuid) { m_uuid = uuid; }
 
     QString ipAddress() const { return m_ipAddress; }
     void setIpAddress(const QString &ipAddress) { m_ipAddress = ipAddress; }
@@ -47,6 +51,7 @@ public:
 
 private:
     int m_id = -1;
+    QString m_uuid;
     QString m_ipAddress;
     QString m_hostname;
     bool m_authorized = true;

@@ -622,6 +622,23 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // consulte/exporte depuis AdminView.qml (issue #65).
     m_auditManager = new core::AuditManager(m_databaseManager.get(), this);
 
+    connect(m_auditManager, &core::AuditManager::eventRecorded,
+            this, [this](const models::AuditLog &entry) {
+                if (!m_messagingService || !m_messagingService->isConnected()) return;
+                QJsonObject payload;
+                payload[QStringLiteral("type")] = QStringLiteral("audit_event");
+                payload[QStringLiteral("event_uuid")] = entry.eventUuid();
+                payload[QStringLiteral("machine_uuid")] = m_discoveryService->localId();
+                payload[QStringLiteral("event_type")] = entry.eventType();
+                payload[QStringLiteral("description")] = entry.description();
+                payload[QStringLiteral("actor_label")] = entry.actorLabel();
+                payload[QStringLiteral("created_at")] = entry.timestamp().toUTC().toString(Qt::ISODateWithMs);
+                if (const auto uid = m_userManager->currentUserId(); uid.has_value())
+                    payload[QStringLiteral("user_uuid")] = userUuidForId(*uid);
+                m_messagingService->sendMessage(
+                    QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+            });
+
     connect(m_messagingManager, &core::MessagingManager::messageSent,
             m_auditManager, [this](const models::Message &message) {
                 const auto userId = m_userManager->currentUserId();
@@ -667,6 +684,22 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // et des machines autorisées (issue #68).
     m_permissionManager = new core::PermissionManager(m_databaseManager.get(), this);
 
+    // Les règles de machines sont des données distribuées : l'identifiant
+    // SQL reste local, tandis que machine_uuid est propagé entre bases.
+    connect(m_permissionManager, &core::PermissionManager::machineChanged,
+            this, [this](const models::AuthorizedMachine &machine) {
+        if (!m_messagingService || !m_messagingService->isConnected()) return;
+        QJsonObject payload;
+        payload[QStringLiteral("type")] = QStringLiteral("authorized_machine_event");
+        payload[QStringLiteral("machine_uuid")] = machine.uuid();
+        payload[QStringLiteral("ip_address")] = machine.ipAddress();
+        payload[QStringLiteral("hostname")] = machine.hostname();
+        payload[QStringLiteral("authorized")] = machine.isAuthorized();
+        payload[QStringLiteral("reason")] = machine.reason();
+        payload[QStringLiteral("added_at")] = machine.addedAt().toUTC().toString(Qt::ISODateWithMs);
+        m_messagingService->sendMessage(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+    });
+
     // Connecter les services au MessagingManager
     m_messagingManager->setMessagingService(m_messagingService);
     m_messagingManager->setMessagingServer(m_messagingServer);
@@ -682,6 +715,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // Connecter PermissionManager aux services réseau pour vérifier les machines autorisées
     m_messagingService->setPermissionManager(m_permissionManager);
     m_messagingServer->setPermissionManager(m_permissionManager);
+    m_transferService->setPermissionManager(m_permissionManager);
 
     // Connecter MessagingServer à MessagingManager pour traiter les messages reçus.
     // Ce poste agit ici en tant que SERVER (connexions entrantes) : relay=true,
@@ -1442,6 +1476,35 @@ void Application::sendIdentifyIfReady()
 
 void Application::handleIncomingPayload(const QString &message, bool relay)
 {
+    const QJsonDocument document = QJsonDocument::fromJson(message.toUtf8());
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("authorized_machine_event")) {
+        const QJsonObject object = document.object();
+        models::AuthorizedMachine machine;
+        machine.setUuid(object.value(QStringLiteral("machine_uuid")).toString());
+        machine.setIpAddress(object.value(QStringLiteral("ip_address")).toString());
+        machine.setHostname(object.value(QStringLiteral("hostname")).toString());
+        machine.setAuthorized(object.value(QStringLiteral("authorized")).toBool());
+        machine.setReason(object.value(QStringLiteral("reason")).toString());
+        machine.setAddedAt(QDateTime::fromString(object.value(QStringLiteral("added_at")).toString(), Qt::ISODateWithMs));
+        if (m_permissionManager) m_permissionManager->applyRemoteMachine(machine);
+        if (relay && m_messagingServer) m_messagingServer->broadcastMessage(message);
+        return;
+    }
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("audit_event")) {
+        const QJsonObject object = document.object();
+        models::AuditLog entry;
+        entry.setEventUuid(object.value(QStringLiteral("event_uuid")).toString());
+        entry.setEventType(object.value(QStringLiteral("event_type")).toString());
+        entry.setDescription(object.value(QStringLiteral("description")).toString());
+        entry.setActorLabel(object.value(QStringLiteral("actor_label")).toString());
+        entry.setTimestamp(QDateTime::fromString(object.value(QStringLiteral("created_at")).toString(), Qt::ISODateWithMs));
+        if (m_auditManager) m_auditManager->recordRemoteEvent(entry);
+        if (relay && m_messagingServer) m_messagingServer->broadcastMessage(message);
+        return;
+    }
+
     // MessagingManager ne traite que les messages de type "message".
     // SyncService traite de son cote les messages de type "sync_request",
     // "sync_ack", "sync_batch" (connecte separement sur les memes signaux).

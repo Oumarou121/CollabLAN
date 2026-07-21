@@ -26,6 +26,9 @@ public:
     qint64 id() const { return m_id; }
     void setId(qint64 id) { m_id = id; }
 
+    QString eventUuid() const { return m_eventUuid; }
+    void setEventUuid(const QString &uuid) { m_eventUuid = uuid; }
+
     /// Type d'evenement normalise, ex: "connection", "message",
     /// "transfer", "call", "access_denied". Voir core::AuditManager pour
     /// les constantes utilisees par l'application.
@@ -52,6 +55,7 @@ public:
 
 private:
     qint64 m_id = 0;
+    QString m_eventUuid;
     QString m_eventType;
     QString m_description;
     std::optional<qint64> m_userId;
