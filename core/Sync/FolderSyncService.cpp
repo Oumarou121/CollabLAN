@@ -1087,8 +1087,23 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
 
         // Enregistrer la corrélation avant sendFile() : si la connexion est
         // déjà prête, transferStarted peut arriver immédiatement.
-        const QString pendingKey = requesterMachineId + QStringLiteral("::")
-            + QFileInfo(absPath).fileName();
+        //
+        // IMPORTANT (fix collision inter-sous-dossiers) : on utilise ici
+        // transferFileName (nom haché, unique par (folderUuid, relativePath))
+        // et NON QFileInfo(absPath).fileName() (nom brut). Un dossier partagé
+        // avec des sous-dossiers contient très souvent des fichiers de même
+        // nom à des chemins différents (ex. "CV.pdf" dans "1/", "2/", "3/",
+        // "Compressed/"...). Avec le nom brut, chaque nouvelle demande pour un
+        // "CV.pdf" quelconque écrasait la clé de la précédente dans
+        // m_pendingOutgoingByKey (même requesterMachineId + même basename) :
+        // seul le premier transfert démarré la "consommait", les suivants ne
+        // retrouvaient plus leur entrée dans onTransferStarted() (voir
+        // pendingKey ci-dessous, désormais aligné sur le même nom haché),
+        // isFolderTransfer() renvoyait alors false pour eux, et chacun
+        // déclenchait sa propre notification individuelle "Transfert terminé"
+        // au lieu d'être regroupé -- exactement le spam observé sur les
+        // dossiers contenant des sous-dossiers.
+        const QString pendingKey = requesterMachineId + QStringLiteral("::") + transferFileName;
         m_pendingOutgoingByKey.insert(pendingKey, folderUuid);
         m_sentProgress[folderUuid].filesExpected++;
 
@@ -1568,20 +1583,20 @@ void FolderSyncService::onTransferCompleted(const QString &transferKey,
         emitBatchProgress(folderUuid, false);
         scheduleFolderSentNotification(folderUuid);
 
-        // Fin exacte de rafale sortante, même logique que côté réception
-        // (cf. onTransferCompleted() plus bas / BatchProgress::filesExpected) :
-        // pas besoin d'attendre le silence de 800ms si toutes les requêtes
-        // déjà acceptées pour ce dossier ont été servies.
-        const auto progIt = m_sentProgress.constFind(folderUuid);
-        qDebug() << "[DEBUG sent-notif] onTransferCompleted (envoi) pour" << folderUuid
-                  << "filesCompleted=" << (progIt != m_sentProgress.constEnd() ? progIt.value().filesCompleted : -1)
-                  << "filesExpected=" << (progIt != m_sentProgress.constEnd() ? progIt.value().filesExpected : -1);
-        if (progIt != m_sentProgress.constEnd()
-            && progIt.value().filesExpected > 0
-            && progIt.value().filesCompleted >= progIt.value().filesExpected) {
-            qDebug() << "[DEBUG sent-notif] -> rafale complète, flush immédiat";
-            flushFolderSentNotification(folderUuid);
-        }
+        // NOTE (fix "spam de notifications" sur dossiers avec sous-dossiers) :
+        // on ne flush plus dès que filesCompleted == filesExpected. Ce compteur
+        // ne reflète que les fichiers déjà DEMANDÉS jusqu'ici -- pour un dossier
+        // contenant des sous-dossiers, le rattrapage (folder_resync_request /
+        // folder_catchup_batch) se fait souvent en plusieurs vagues successives
+        // (une par sous-dossier découvert). Un flush immédiat sur la 1ère vague
+        // videait m_sentProgress avant l'arrivée de la 2ᵉ, ce qui scindait UNE
+        // seule rafale de partage en autant de notifications que de vagues
+        // (perçu comme "une notification par fichier"). On laisse désormais
+        // exclusivement scheduleFolderSentNotification() (debounce + vérif
+        // hasOutstanding sur m_pendingOutgoingByKey/m_activeOutgoingByTransferKey)
+        // décider du moment du flush : il ne se déclenche que quand plus aucune
+        // requête n'est en attente pour ce dossier, quel que soit le nombre de
+        // vagues nécessaires pour tout récupérer.
         return;
     }
 
@@ -1596,19 +1611,22 @@ void FolderSyncService::onTransferCompleted(const QString &transferKey,
 
     integrateReceivedFile(pending, filePath);
 
-    // Fin exacte de rafale : si tous les fichiers annoncés jusqu'ici ont été
-    // demandés ET reçus, pas besoin d'attendre le silence de 800ms
-    // (scheduleFolderNotification(), appelé par integrateReceivedFile()
-    // ci-dessus, vient de (re)démarrer ce timer) -- on notifie tout de
-    // suite. filesExpected > 0 exclut le cas où aucune demande n'a encore
-    // été enregistrée pour ce dossier (progression déjà nettoyée par un
-    // flush précédent, ou fichier hors rafale de catchup).
-    const auto progIt = m_receiveProgress.constFind(pending.folderUuid);
-    if (progIt != m_receiveProgress.constEnd()
-        && progIt.value().filesExpected > 0
-        && progIt.value().filesCompleted >= progIt.value().filesExpected) {
-        flushFolderNotification(pending.folderUuid);
-    }
+    // NOTE (fix "spam de notifications" sur dossiers avec sous-dossiers) :
+    // on ne flush plus dès que filesCompleted == filesExpected ici. Ce
+    // compteur ne reflète que les fichiers déjà DEMANDÉS jusqu'ici -- pour un
+    // dossier avec des sous-dossiers, la découverte/rattrapage se fait
+    // souvent en plusieurs vagues successives (folder_resync_request /
+    // folder_catchup_batch répétés, un par sous-dossier découvert, cf. logs
+    // "folder_op ... reçu pour un dossier encore inconnu localement --
+    // demande de rattrapage ciblé"). Flusher dès la 1ère vague vidait
+    // m_receiveProgress (voir flushFolderNotification()) avant que la 2ᵉ
+    // vague n'arrive, scindant UN SEUL partage de dossier en autant de
+    // notifications que de vagues (perçu comme "une notification par
+    // fichier"). scheduleFolderNotification() (appelé par
+    // integrateReceivedFile() ci-dessus) gère seul le flush désormais : son
+    // debounce ré-vérifie m_pendingByKey/m_activeByTransferKey et ne notifie
+    // qu'une fois qu'il n'y a plus AUCUNE requête en attente pour ce dossier,
+    // peu importe le nombre de vagues nécessaires pour tout récupérer.
 }
 
 void FolderSyncService::onTransferProgress(const QString &transferKey,
@@ -1768,13 +1786,6 @@ void FolderSyncService::scheduleFolderSentNotification(const QString &folderUuid
 {
     m_pendingSentCounts[folderUuid] = m_pendingSentCounts.value(folderUuid, 0) + 1;
 
-    // TEMP DEBUG -- à retirer une fois le diagnostic terminé.
-    const auto dbgProg = m_sentProgress.constFind(folderUuid);
-    qDebug() << "[DEBUG sent-notif] scheduleFolderSentNotification" << folderUuid
-              << "pendingCount=" << m_pendingSentCounts.value(folderUuid)
-              << "filesExpected=" << (dbgProg != m_sentProgress.constEnd() ? dbgProg.value().filesExpected : -1)
-              << "filesCompleted=" << (dbgProg != m_sentProgress.constEnd() ? dbgProg.value().filesCompleted : -1);
-
     QTimer *timer = m_sentNotifyTimers.value(folderUuid, nullptr);
     if (!timer) {
         timer = new QTimer(this);
@@ -1804,7 +1815,6 @@ void FolderSyncService::scheduleFolderSentNotification(const QString &folderUuid
                     retry->start(5000);
                 return;
             }
-            qDebug() << "[DEBUG sent-notif] TIMER timeout (800ms) -> flush" << folderUuid;
             flushFolderSentNotification(folderUuid);
         });
         m_sentNotifyTimers.insert(folderUuid, timer);
@@ -1832,9 +1842,6 @@ void FolderSyncService::flushFolderSentNotification(const QString &folderUuid)
     }
 
     const int count = m_pendingSentCounts.take(folderUuid);
-    // TEMP DEBUG -- à retirer une fois le diagnostic terminé.
-    qDebug() << "[DEBUG sent-notif] flushFolderSentNotification" << folderUuid
-              << "-> count=" << count << (count <= 0 ? "(NO-OP, rien à notifier)" : "(EMET la notification)");
     if (count <= 0) return;
 
     QString folderName = folderUuid;

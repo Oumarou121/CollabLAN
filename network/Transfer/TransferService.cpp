@@ -386,7 +386,22 @@ bool TransferService::startSendOnSocket(QTcpSocket *socket, const PendingSendJob
     // DiscoveryService (TransferContext/TransferManager n'ont pas besoin
     // d'un aller-retour reseau pour la resoudre dans ce sens). Seul le
     // sens reception en a besoin (voir onServerSocketReadyRead()).
-    emit transferStarted(state.transferKey, info.fileName(), state.fileSize, false, 0,
+    //
+    // IMPORTANT : on emet announcedFileName (et non info.fileName()) ici.
+    // Pour un transfert folder-sync, announcedFileName est le nom haché
+    // unique (job.transferFileName, cf. FolderSyncService::
+    // folderTransferFileName()) -- c'est CE nom que FolderSyncService utilise
+    // desormais pour batir sa cle de correlation m_pendingOutgoingByKey (voir
+    // handleFolderFileRequest()). Avec info.fileName() (nom de fichier local
+    // brut), deux fichiers de meme nom dans des sous-dossiers differents
+    // (ex. "CV.pdf" present dans plusieurs dossiers partages) collisionnaient
+    // sur la meme cle : seul le premier transfert demarre la "consommait",
+    // les suivants ne retrouvaient plus leur entree et se retrouvaient traites
+    // comme des transferts manuels, avec leur propre notification individuelle
+    // au lieu d'etre regroupes -- exactement le spam observe sur les dossiers
+    // contenant des sous-dossiers. Pour un envoi manuel (transferFileName
+    // vide), announcedFileName == info.fileName() : comportement inchange.
+    emit transferStarted(state.transferKey, announcedFileName, state.fileSize, false, 0,
                           state.senderUuid, state.recipientUuid, socket->peerAddress(), QString(),
                           job.isFolderTransfer);
 
