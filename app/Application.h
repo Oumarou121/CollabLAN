@@ -112,6 +112,7 @@ public:
     // a brancher sur UsersView.qml via setContextProperty("peersModel", ...)
     // (issue #17).
     network::PeersModel *peersModel() const;
+    network::DiscoveryService *discoveryService() const;
 
     // Expose au bootstrap QML le MessagingManager pour la messagerie.
     core::MessagingManager *messagingManager() const;

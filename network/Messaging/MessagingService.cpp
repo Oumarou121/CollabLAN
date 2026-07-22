@@ -85,19 +85,6 @@ bool MessagingService::connectToHost(const QHostAddress &address, quint16 port)
     }
 
     // Vérifier si la machine est autorisée (issue #70)
-    if (m_permissionManager) {
-        bool authorized = true;
-        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorized",
-                                   Qt::DirectConnection,
-                                   Q_RETURN_ARG(bool, authorized),
-                                   Q_ARG(QString, address.toString()));
-        if (!authorized) {
-            qWarning() << "Connection refused: machine" << address.toString() << "is not authorized";
-            emit error(QStringLiteral("Connection refused: machine not authorized"));
-            return false;
-        }
-    }
-
     if (!m_securityService || !m_securityService->isReady()) {
         qWarning() << "Cannot connect: SecurityService not ready";
         emit error(QStringLiteral("SecurityService not ready for TLS connection"));
@@ -163,6 +150,21 @@ void MessagingService::setPermissionManager(QObject *manager)
 void MessagingService::onConnected()
 {
     m_connected = true;
+    const QString fingerprint = SecurityService::certificateFingerprint(
+        m_socket->sslConfiguration().peerCertificate());
+    if (m_permissionManager) {
+        bool trusted = false;
+        QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
+                                  Qt::DirectConnection, Q_RETURN_ARG(bool, trusted),
+                                  Q_ARG(QString, fingerprint),
+                                  Q_ARG(QString, m_socket->peerAddress().toString()));
+        if (!trusted) {
+            m_connected = false;
+            m_socket->close();
+            emit error(QStringLiteral("Certificat du serveur distant non autorisé"));
+            return;
+        }
+    }
     qDebug() << "Secure WebSocket connected to" << m_socket->peerAddress() << ":" << m_socket->peerPort();
     emit connected();
 }

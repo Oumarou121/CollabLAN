@@ -7,6 +7,7 @@
 #include <QHostAddress>
 #include <QSslConfiguration>
 #include <QSslKey>
+#include <QSslCertificate>
 #include <QFile>
 #include <QDebug>
 #include <QMetaObject>
@@ -55,7 +56,7 @@ bool MessagingServer::start(quint16 port)
                 // reconciliation SERVER<->TEMP_SERVER reelle via WebSocket.
                 sslConfig.setLocalCertificate(certs.first());
                 sslConfig.setPrivateKey(privateKey);
-                sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone); // Pour le développement local
+                sslConfig.setPeerVerifyMode(QSslSocket::QueryPeer); // Pour le développement local
                 m_server->setSslConfiguration(sslConfig);
                 sslConfigured = true;
             } else {
@@ -95,6 +96,8 @@ void MessagingServer::stop()
         }
         m_clients.clear();
         m_clientUuids.clear();
+        m_clientFingerprints.clear();
+        m_clientAuthorized.clear();
 
         m_server->close();
         delete m_server;
@@ -156,22 +159,24 @@ void MessagingServer::onNewConnection()
 
     const QHostAddress clientAddress = client->peerAddress();
     qDebug() << "New client connected:" << clientAddress;
+    const QString fingerprint = SecurityService::certificateFingerprint(
+        client->sslConfiguration().peerCertificate());
+    m_clientFingerprints.insert(client, fingerprint);
 
     // Vérifier si la machine est autorisée (issue #70)
+    bool authorized = false;
     if (m_permissionManager) {
-        bool authorized = true;
-        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorized",
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
                                    Qt::DirectConnection,
                                    Q_RETURN_ARG(bool, authorized),
-                                   Q_ARG(QString, clientAddress.toString()));
-        if (!authorized) {
-            qWarning() << "Connection refused: machine" << clientAddress.toString() << "is not authorized";
-            client->close();
-            client->deleteLater();
-            emit connectionRefused(clientAddress, QStringLiteral("Machine not authorized"));
-            return;
+                                   Q_ARG(QString, fingerprint));
+        if (authorized) {
+            QMetaObject::invokeMethod(m_permissionManager, "recordMachineSeen",
+                                      Qt::DirectConnection, Q_ARG(QString, fingerprint),
+                                      Q_ARG(QString, clientAddress.toString()));
         }
     }
+    m_clientAuthorized.insert(client, authorized);
 
     connect(client, &QWebSocket::textMessageReceived, this, &MessagingServer::onTextMessageReceived);
     connect(client, &QWebSocket::disconnected, this, &MessagingServer::onSocketDisconnected);
@@ -198,13 +203,35 @@ void MessagingServer::onTextMessageReceived(const QString &message)
     if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
         const QJsonObject obj = doc.object();
         if (obj.value(QStringLiteral("type")).toString() == QStringLiteral("identify")) {
+            const QString claimedFingerprint = obj.value(QStringLiteral("certificate_fingerprint")).toString().toLower();
+            if (claimedFingerprint.isEmpty() || claimedFingerprint != m_clientFingerprints.value(client)) {
+                client->close();
+                return;
+            }
             const QString userUuid = obj.value(QStringLiteral("userUuid")).toString();
             if (!userUuid.isEmpty()) {
                 m_clientUuids.insert(client, userUuid);
                 qDebug() << "Client" << client->peerAddress() << "identifie comme utilisateur" << userUuid;
             }
+            bool authorized = false;
+            if (m_permissionManager) {
+                QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+                                          Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                          Q_ARG(QString, m_clientFingerprints.value(client)));
+            }
+            m_clientAuthorized.insert(client, authorized);
             return;
         }
+    }
+
+    const QString messageType = (parseError.error == QJsonParseError::NoError && doc.isObject())
+        ? doc.object().value(QStringLiteral("type")).toString()
+        : QString();
+
+    if (!m_clientAuthorized.value(client, false)
+        && messageType != QStringLiteral("authorized_machine_event")) {
+        qWarning() << "Message ignored from pending machine" << client->peerAddress();
+        return;
     }
 
     qDebug() << "Message received from" << client->peerAddress() << ":" << message;
@@ -223,6 +250,8 @@ void MessagingServer::onSocketDisconnected()
 
     m_clients.removeAll(client);
     m_clientUuids.remove(client);
+    m_clientFingerprints.remove(client);
+    m_clientAuthorized.remove(client);
     client->deleteLater();
 }
 

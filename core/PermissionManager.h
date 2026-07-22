@@ -71,13 +71,29 @@ public:
     /// echoue silencieusement ("No such method...") et le controle d'acces
     /// se retrouve fail-open (authorized reste a sa valeur par defaut true).
     Q_INVOKABLE bool isMachineAuthorized(const QString &ipAddress) const;
+    Q_INVOKABLE bool isMachineAuthorizedByCertificate(const QString &fingerprint) const;
+    Q_INVOKABLE void recordMachineSeen(const QString &fingerprint, const QString &ipAddress);
+    Q_INVOKABLE bool trustRemoteServerCertificate(const QString &fingerprint,
+                                                  const QString &ipAddress);
+    std::optional<models::AuthorizedMachine> findMachineByCertificateFingerprint(const QString &fingerprint) const;
+
+    bool removeMachine(int id);
+    bool applyRemoteMachineRemoval(const QString &machineUuid, const QString &fingerprint);
 
     /// Révoque une machine par son adresse IP (issue #68).
     bool revokeMachine(const QString &ipAddress, int revokedBy, const QString &reason = QString());
 
     /// Autorise une machine par son adresse IP (issue #68).
     bool authorizeMachine(const QString &ipAddress, int authorizedBy, const QString &reason = QString());
+    bool authorizeMachineByCertificate(const QString &fingerprint, const QString &machineUuid,
+                                       const QString &hostname, const QString &ipAddress,
+                                       int authorizedBy, const QString &reason = QString());
     bool applyRemoteMachine(const models::AuthorizedMachine &machine);
+
+    bool revokeMachineByCertificate(const QString &fingerprint, int revokedBy,
+                                const QString &reason = QString());
+    bool authorizeExistingMachineByCertificate(const QString &fingerprint, int authorizedBy,
+                                const QString &reason = QString());
 
     /// Retourne toutes les machines (pour AuthorizedMachineModel)
     std::vector<models::AuthorizedMachine> getAllMachines() const;
@@ -87,6 +103,9 @@ public:
 
 signals:
     void machineChanged(const models::AuthorizedMachine &machine);
+    void machineRemoved(const QString &machineUuid, const QString &certificateFingerprint);
+    void machineSynchronized();
+
 
 private:
     database::DatabaseManager *m_dbManager = nullptr;

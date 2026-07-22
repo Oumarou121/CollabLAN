@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QList>
 #include <QMetaType>
+#include <QVariantList>
 
 class QUdpSocket;
 class QTimer;
@@ -20,6 +21,7 @@ struct DiscoveredPeer {
     QString id;             ///< Identifiant unique du poste (genere au demarrage de DiscoveryService)
     QString name;           ///< Nom lisible du poste (hostname par defaut)
     QString userUuid;       ///< UUID du compte utilisateur actuellement connecte sur ce poste (vide si aucun, cf. setLocalUserUuid())
+    QString certificateFingerprint; ///< Empreinte du certificat TLS du poste.
     QString status;         ///< Statut declare ("online", "away", "busy"...)
     QHostAddress address;   ///< Adresse IP source de la derniere annonce recue
     quint16 port = 0;       ///< Port UDP utilise par le poste distant
@@ -102,6 +104,7 @@ public:
     /// machine_id identifie le POSTE, pas le compte qui y est connecte).
     QString localUserUuid() const;
     void setLocalUserUuid(const QString &uuid);
+    void setLocalCertificateFingerprint(const QString &fingerprint);
 
     /// Statut annonce aux autres postes ("online" par defaut).
     QString localStatus() const;
@@ -121,6 +124,7 @@ public:
 
     /// Liste courante des postes detectes (hors soi-meme).
     QList<DiscoveredPeer> peers() const;
+    Q_INVOKABLE QVariantList machineCandidates() const;
 
     /// Définit le PermissionManager pour vérifier les machines autorisées (issue #68).
     void setPermissionManager(QObject *manager);
@@ -164,6 +168,7 @@ private:
     QString m_localId;
     QString m_localName;
     QString m_localUserUuid;
+    QString m_localCertificateFingerprint;
     QString m_localStatus = QStringLiteral("online");
 
     quint16 m_port = 45454;

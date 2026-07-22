@@ -4,6 +4,7 @@
 #include <QString>
 #include <QByteArray>
 #include <QDateTime>
+#include <QSslCertificate>
 
 // Forward declarations OpenSSL (evite d'exposer <openssl/...> dans ce header).
 typedef struct evp_pkey_st EVP_PKEY;
@@ -69,6 +70,7 @@ public:
 
     /// Certificat au format PEM (vide si aucune identite chargee).
     QByteArray certificatePem() const;
+    static QString certificateFingerprint(const QSslCertificate &certificate);
 
     /// Force la regeneration d'une nouvelle paire cle/certificat,
     /// meme si une identite valide existe deja sur le disque.

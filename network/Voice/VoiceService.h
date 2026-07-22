@@ -56,6 +56,7 @@ public:
     /// Demarre l'ecoute des appels entrants (a appeler une fois au demarrage
     /// de l'application, comme MessagingServer::start()).
     bool startListening(quint16 signalingPort = 12347);
+    void setPermissionManager(QObject *manager);
     void stopListening();
 
     /// Initie un appel sortant vers le poste distant.

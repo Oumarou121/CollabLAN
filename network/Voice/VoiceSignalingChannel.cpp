@@ -3,6 +3,7 @@
 
 #include <QWebSocket>
 #include <QWebSocketServer>
+#include <QSslCertificate>
 #include <QSslConfiguration>
 #include <QSslKey>
 #include <QSslCertificate>
@@ -12,6 +13,11 @@
 #include <QDebug>
 
 namespace network {
+
+void VoiceSignalingChannel::setPermissionManager(QObject *manager)
+{
+    m_permissionManager = manager;
+}
 
 namespace {
 
@@ -91,7 +97,7 @@ void VoiceSignalingChannel::configureClientSsl()
     // Postes P2P a certificats auto-signes : chiffrement actif, verification
     // d'autorite desactivee (voir MessagingService::configureSsl pour le
     // meme choix applique a la messagerie texte).
-    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    sslConfig.setPeerVerifyMode(QSslSocket::QueryPeer);
     sslConfig.setProtocol(QSsl::TlsV1_2OrLater);
 
     m_outgoingSocket->setSslConfiguration(sslConfig);
@@ -190,6 +196,12 @@ bool VoiceSignalingChannel::sendJson(const QString &type, const QString &sdp, co
     if (!candidate.isEmpty()) obj[QStringLiteral("candidate")] = candidate;
     if (!mid.isEmpty())       obj[QStringLiteral("mid")] = mid;
     obj[QStringLiteral("callId")] = callId;
+    if (m_securityService && m_securityService->isReady()) {
+        const QString localFingerprint = m_securityService->identity().fingerprintSha256.toLower();
+        if (!localFingerprint.isEmpty()) {
+            obj[QStringLiteral("certificate_fingerprint")] = localFingerprint;
+        }
+    }
 
     const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 
@@ -235,6 +247,24 @@ void VoiceSignalingChannel::onServerNewConnection()
 
     qDebug() << "VoiceSignalingChannel: nouvelle connexion entrante de" << socket->peerAddress();
 
+    const QString fingerprint = SecurityService::certificateFingerprint(
+        socket->sslConfiguration().peerCertificate());
+    qDebug() << "VoiceSignalingChannel: empreinte certificat entrant"
+             << (fingerprint.isEmpty() ? QStringLiteral("<vide>") : fingerprint);
+    bool tlsAuthorized = !m_permissionManager;
+    if (m_permissionManager && !fingerprint.isEmpty()) {
+        bool authorized = tlsAuthorized;
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+                                  Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                  Q_ARG(QString, fingerprint));
+        if (!authorized) {
+            socket->close();
+            socket->deleteLater();
+            emit error(QStringLiteral("Appel refusé : certificat distant non autorisé"));
+            return;
+        }
+    }
+
     if (m_incomingSocket) {
         // Un seul appel entrant gere a la fois : on refuse les suivants.
         qWarning() << "VoiceSignalingChannel: appel entrant refuse (session deja active)";
@@ -244,6 +274,8 @@ void VoiceSignalingChannel::onServerNewConnection()
     }
 
     m_incomingSocket = socket;
+    m_incomingSocket->setProperty("voiceAuthorized", tlsAuthorized);
+    m_incomingSocket->setProperty("voicePeerConnectedEmitted", tlsAuthorized);
     connect(m_incomingSocket, &QWebSocket::textMessageReceived, this, &VoiceSignalingChannel::onTextMessageReceived);
     connect(m_incomingSocket, &QWebSocket::disconnected, this, [this]() {
         qDebug() << "VoiceSignalingChannel: socket entrant deconnecte, erreur:" << m_incomingSocket->errorString();
@@ -264,14 +296,45 @@ void VoiceSignalingChannel::onServerNewConnection()
         m_incomingSocket->ignoreSslErrors();
     });
 
-    // Emettre peerConnected dans le thread principal pour eviter les problemes de thread
-    QMetaObject::invokeMethod(this, [this, socket]() {
-        emit peerConnected(socket->peerAddress());
-    }, Qt::QueuedConnection);
+    if (tlsAuthorized) {
+        // Emettre peerConnected dans le thread principal pour eviter les problemes de thread
+        QMetaObject::invokeMethod(this, [this, socket]() {
+            emit peerConnected(socket->peerAddress());
+        }, Qt::QueuedConnection);
+    } else {
+        qDebug() << "VoiceSignalingChannel: attente de l'empreinte annoncee par le message de signalisation";
+    }
 }
 
 void VoiceSignalingChannel::onClientConnected()
 {
+    const QString verifiedFingerprint = SecurityService::certificateFingerprint(
+        m_outgoingSocket->sslConfiguration().peerCertificate());
+    if (m_permissionManager) {
+        bool trusted = false;
+        QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
+                                  Qt::DirectConnection, Q_RETURN_ARG(bool, trusted),
+                                  Q_ARG(QString, verifiedFingerprint),
+                                  Q_ARG(QString, m_outgoingSocket->peerAddress().toString()));
+        if (!trusted) {
+            m_outgoingSocket->close();
+            emit error(QStringLiteral("Appel refusé : certificat distant non autorisé"));
+            return;
+        }
+    }
+    const QString verifiedFingerprint2 = SecurityService::certificateFingerprint(
+        m_outgoingSocket->sslConfiguration().peerCertificate());
+    if (m_permissionManager) {
+        bool authorized = false;
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+                                  Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                  Q_ARG(QString, verifiedFingerprint2));
+        if (!authorized) {
+            m_outgoingSocket->close();
+            emit error(QStringLiteral("Appel refusé : certificat distant non autorisé"));
+            return;
+        }
+    }
     qDebug() << "VoiceSignalingChannel: client connecte a" << m_outgoingSocket->peerAddress();
     m_outgoingConnected = true;
     // Emettre peerConnected dans le thread principal pour eviter les problemes de thread
@@ -295,6 +358,39 @@ void VoiceSignalingChannel::onTextMessageReceived(const QString &message)
     if (parsed.type == SignalingMessageType::Unknown) {
         qWarning() << "VoiceSignalingChannel: message de signalisation invalide ignore";
         return;
+    }
+
+    if (socket == m_incomingSocket && !socket->property("voiceAuthorized").toBool()) {
+        const QString announcedFingerprint = parsed.certificateFingerprint.toLower().trimmed();
+        qDebug() << "VoiceSignalingChannel: empreinte annoncee par signalisation"
+                 << (announcedFingerprint.isEmpty() ? QStringLiteral("<vide>") : announcedFingerprint);
+
+        bool authorized = false;
+        if (m_permissionManager && !announcedFingerprint.isEmpty()) {
+            QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+                                      Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                      Q_ARG(QString, announcedFingerprint));
+            if (authorized) {
+                QMetaObject::invokeMethod(m_permissionManager, "recordMachineSeen",
+                                          Qt::DirectConnection,
+                                          Q_ARG(QString, announcedFingerprint),
+                                          Q_ARG(QString, peerAddress.toString()));
+            }
+        }
+
+        if (!authorized) {
+            qWarning() << "VoiceSignalingChannel: appel refuse, empreinte annoncee non autorisee"
+                       << announcedFingerprint << "peer" << peerAddress;
+            socket->close();
+            emit error(QStringLiteral("Appel refuse : certificat distant non autorise"));
+            return;
+        }
+
+        socket->setProperty("voiceAuthorized", true);
+        if (!socket->property("voicePeerConnectedEmitted").toBool()) {
+            socket->setProperty("voicePeerConnectedEmitted", true);
+            emit peerConnected(peerAddress);
+        }
     }
 
     emit messageReceived(parsed, peerAddress);
@@ -337,6 +433,7 @@ SignalingMessage VoiceSignalingChannel::parseMessage(const QString &json)
     msg.candidate = obj.value(QStringLiteral("candidate")).toString();
     msg.mid = obj.value(QStringLiteral("mid")).toString();
     msg.callId = obj.value(QStringLiteral("callId")).toString();
+    msg.certificateFingerprint = obj.value(QStringLiteral("certificate_fingerprint")).toString().toLower();
 
     return msg;
 }

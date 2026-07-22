@@ -30,6 +30,7 @@ struct SignalingMessage {
     QString candidate;      ///< Rempli pour IceCandidate (ligne "a=candidate:...").
     QString mid;            ///< Media stream identification, pour IceCandidate.
     QString callId;         ///< Identifiant de session d'appel.
+    QString certificateFingerprint; ///< Empreinte SHA-256 annoncee par le pair.
 };
 
 /**
@@ -67,6 +68,7 @@ public:
     /// Initie une connexion de signalisation sortante vers un poste distant
     /// (a appeler avant d'envoyer une offre).
     bool connectToPeer(const QHostAddress &address, quint16 port);
+    void setPermissionManager(QObject *manager);
     void disconnectFromPeer();
     bool isConnected() const;
 
@@ -102,6 +104,7 @@ private:
     static SignalingMessage parseMessage(const QString &json);
 
     SecurityService *m_securityService = nullptr;
+    QObject *m_permissionManager = nullptr;
 
     // Role client (appel sortant).
     QWebSocket *m_outgoingSocket = nullptr;

@@ -32,6 +32,12 @@ QVariant AuthorizedMachineModel::data(const QModelIndex &index, int role) const
         return machine.id();
     case IpAddressRole:
         return machine.ipAddress();
+    case UuidRole:
+        return machine.uuid();
+    case CertificateFingerprintRole:
+        return machine.certificateFingerprint();
+    case LastIpAddressRole:
+        return machine.lastIpAddress();
     case HostnameRole:
         return machine.hostname();
     case AuthorizedRole:
@@ -52,6 +58,9 @@ QHash<int, QByteArray> AuthorizedMachineModel::roleNames() const
     QHash<int, QByteArray> roles;
     roles[IdRole] = "id";
     roles[IpAddressRole] = "ipAddress";
+    roles[UuidRole] = "machineUuid";
+    roles[CertificateFingerprintRole] = "certificateFingerprint";
+    roles[LastIpAddressRole] = "lastIpAddress";
     roles[HostnameRole] = "hostname";
     roles[AuthorizedRole] = "authorized";
     roles[AddedByRole] = "addedBy";
@@ -93,11 +102,11 @@ bool AuthorizedMachineModel::addMachine(const QString &ipAddress, const QString 
 bool AuthorizedMachineModel::revokeMachine(int id, const QString &reason)
 {
     if (m_permissionManager) {
-        // Trouver l'adresse IP correspondant à l'ID
+        // Trouver l'empreinte certificat correspondant à l'ID
         for (int i = 0; i < m_machines.size(); ++i) {
             if (m_machines[i].id() == id) {
                 const int currentUserId = 1;
-                if (m_permissionManager->revokeMachine(m_machines[i].ipAddress(), currentUserId, reason)) {
+                if (m_permissionManager->revokeMachineByCertificate(m_machines[i].certificateFingerprint(), currentUserId, reason)) {
                     refresh(); // Recharger depuis la base
                     return true;
                 }
@@ -111,11 +120,11 @@ bool AuthorizedMachineModel::revokeMachine(int id, const QString &reason)
 bool AuthorizedMachineModel::authorizeMachine(int id, const QString &reason)
 {
     if (m_permissionManager) {
-        // Trouver l'adresse IP correspondant à l'ID
+        // Trouver l'empreinte certificat correspondant à l'ID
         for (int i = 0; i < m_machines.size(); ++i) {
             if (m_machines[i].id() == id) {
                 const int currentUserId = 1;
-                if (m_permissionManager->authorizeMachine(m_machines[i].ipAddress(), currentUserId, reason)) {
+                if (m_permissionManager->authorizeExistingMachineByCertificate(m_machines[i].certificateFingerprint(), currentUserId, reason)) {
                     refresh(); // Recharger depuis la base
                     return true;
                 }
@@ -128,15 +137,11 @@ bool AuthorizedMachineModel::authorizeMachine(int id, const QString &reason)
 
 bool AuthorizedMachineModel::removeMachine(int id)
 {
-    for (int i = 0; i < m_machines.size(); ++i) {
-        if (m_machines[i].id() == id) {
-            beginRemoveRows(QModelIndex(), i, i);
-            m_machines.removeAt(i);
-            endRemoveRows();
-            return true;
-        }
-    }
-    return false;
+    if (!m_permissionManager || !m_permissionManager->removeMachine(id))
+        return false;
+
+    refresh();
+    return true;
 }
 
 void AuthorizedMachineModel::setPermissionManager(core::PermissionManager *manager)
@@ -145,8 +150,21 @@ void AuthorizedMachineModel::setPermissionManager(core::PermissionManager *manag
     if (m_permissionManager) {
         connect(m_permissionManager, &PermissionManager::machineChanged,
                 this, [this](const models::AuthorizedMachine &) { refresh(); });
+        connect(m_permissionManager, &PermissionManager::machineSynchronized,
+        this, &AuthorizedMachineModel::refresh);
         refresh();
     }
+}
+
+bool AuthorizedMachineModel::addMachineByCertificate(const QString &fingerprint, const QString &machineUuid,
+                                                      const QString &ipAddress, const QString &hostname,
+                                                      const QString &reason)
+{
+    if (!m_permissionManager) return false;
+    const bool ok = m_permissionManager->authorizeMachineByCertificate(
+        fingerprint, machineUuid, hostname, ipAddress, 1, reason);
+    if (ok) refresh();
+    return ok;
 }
 
 } // namespace core

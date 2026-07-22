@@ -99,6 +99,8 @@ private:
     /// Application::sendIdentifyIfReady). Alimente sendToUuids() pour
     /// ne relayer un message qu'aux destinataires reels (issue #2).
     QHash<QWebSocket*, QString> m_clientUuids;
+    QHash<QWebSocket*, QString> m_clientFingerprints;
+    QHash<QWebSocket*, bool> m_clientAuthorized;
 };
 
 } // namespace network

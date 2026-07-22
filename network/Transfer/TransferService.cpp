@@ -2,6 +2,11 @@
 
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QSslSocket>
+#include <QSslConfiguration>
+#include <QSslCertificate>
+#include <QSslKey>
+#include "Security/SecurityService.h"
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
@@ -16,6 +21,44 @@ namespace network {
 const QByteArray TransferService::kMagic = QByteArrayLiteral("CLFT");
 
 namespace {
+
+const QByteArray kIdentityFramePrefix = QByteArrayLiteral("CLFT-ID1:");
+
+class TransferTcpServer : public QTcpServer
+{
+public:
+    explicit TransferTcpServer(QObject *parent = nullptr)
+        : QTcpServer(parent)
+    {
+    }
+
+protected:
+    void incomingConnection(qintptr socketDescriptor) override
+    {
+        auto *socket = new QSslSocket(this);
+        if (!socket->setSocketDescriptor(socketDescriptor)) {
+            socket->deleteLater();
+            return;
+        }
+        addPendingConnection(socket);
+    }
+};
+
+bool configureTls(QSslSocket *socket, SecurityService *security, bool server)
+{
+    if (!security || !security->isReady()) return false;
+    const auto certificates = QSslCertificate::fromData(security->certificatePem());
+    QFile keyFile(security->privateKeyPath());
+    if (certificates.isEmpty() || !keyFile.open(QIODevice::ReadOnly)) return false;
+    QSslConfiguration configuration = socket->sslConfiguration();
+    configuration.setLocalCertificate(certificates.first());
+    configuration.setPrivateKey(QSslKey(keyFile.readAll(), QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey));
+    configuration.setPeerVerifyMode(QSslSocket::QueryPeer);
+    socket->setSslConfiguration(configuration);
+    QObject::connect(socket, &QSslSocket::sslErrors, socket,
+                     [socket](const QList<QSslError> &) { socket->ignoreSslErrors(); });
+    return true;
+}
 
 // Serialise (fileName, fileSize, senderUuid, recipientUuid, senderMachineId,
 // compressionFlags) dans un QByteArray auto-suffisant.
@@ -147,7 +190,7 @@ bool TransferService::start(quint16 port)
         return false;
     }
 
-    m_server = new QTcpServer(this);
+    m_server = new TransferTcpServer(this);
     connect(m_server, &QTcpServer::newConnection, this, &TransferService::onNewConnection);
 
     if (!m_server->listen(QHostAddress::Any, port)) {
@@ -286,16 +329,6 @@ bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QSt
                                 const QString &senderUuid, const QString &recipientUuid,
                                 const QString &transferFileName, bool isFolderTransfer)
 {
-    if (m_permissionManager) {
-        bool authorized = true;
-        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorized",
-                                  Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
-                                  Q_ARG(QString, host.toString()));
-        if (!authorized) {
-            qWarning() << "TransferService: outgoing transfer refused for unauthorized machine" << host;
-            return false;
-        }
-    }
     // Verification rapide et synchrone : un fichier absent/illisible des
     // l'appel doit echouer immediatement (contrat historique de sendFile(),
     // toujours respecte par les appelants existants -- ex. TransferService::
@@ -339,19 +372,7 @@ void TransferService::dispatchSendQueue(const QString &destKey)
     const PendingSendJob job = queueIt->dequeue();
     const DestInfo dest = m_destInfo.value(destKey);
 
-    if (m_permissionManager) {
-        bool authorized = true;
-        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorized",
-                                  Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
-                                  Q_ARG(QString, dest.host.toString()));
-        if (!authorized) {
-            qWarning() << "TransferService: queued transfer cancelled for unauthorized machine" << dest.host;
-            dispatchSendQueue(destKey);
-            return;
-        }
-    }
-
-    auto *socket = new QTcpSocket(this);
+    auto *socket = new QSslSocket(this);
     m_socketDestKey.insert(socket, destKey);
     m_activeSendConnections[destKey] = m_activeSendConnections.value(destKey, 0) + 1;
 
@@ -359,12 +380,16 @@ void TransferService::dispatchSendQueue(const QString &destKey)
     state.pendingJob = job; // consomme par onClientSocketConnected() une fois la connexion etablie
     m_sendStates.insert(socket, state);
 
-    connect(socket, &QTcpSocket::connected, this, &TransferService::onClientSocketConnected);
+    connect(socket, &QSslSocket::encrypted, this, &TransferService::onClientSocketConnected);
     connect(socket, &QTcpSocket::readyRead, this, &TransferService::onClientSocketReadyRead);
     connect(socket, &QTcpSocket::bytesWritten, this, &TransferService::onClientSocketBytesWritten);
     connect(socket, &QTcpSocket::errorOccurred, this, &TransferService::onClientSocketErrorOccurred);
 
-    socket->connectToHost(dest.host, dest.port);
+    if (!configureTls(socket, m_securityService, false)) {
+        finishSend(socket, false, QStringLiteral("Identité TLS indisponible"));
+        return;
+    }
+    socket->connectToHostEncrypted(dest.host.toString(), dest.port);
 }
 
 bool TransferService::startSendOnSocket(QTcpSocket *socket, const PendingSendJob &job)
@@ -442,6 +467,41 @@ void TransferService::onClientSocketConnected()
     auto *socket = qobject_cast<QTcpSocket*>(sender());
     if (!socket || !m_sendStates.contains(socket)) {
         return;
+    }
+
+    if (m_permissionManager) {
+        auto *sslSocket = qobject_cast<QSslSocket *>(socket);
+        const QString fingerprint = sslSocket
+            ? SecurityService::certificateFingerprint(sslSocket->peerCertificate()) : QString();
+        bool trusted = false;
+        QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
+                                  Qt::DirectConnection, Q_RETURN_ARG(bool, trusted),
+                                  Q_ARG(QString, fingerprint),
+                                  Q_ARG(QString, socket->peerAddress().toString()));
+        if (!trusted) {
+            finishSend(socket, false, QStringLiteral("Certificat distant non autorisé"));
+            return;
+        }
+        bool authorized = false;
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+                                  Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                  Q_ARG(QString, fingerprint));
+        if (!authorized) {
+            finishSend(socket, false, QStringLiteral("Certificat distant non autorisé"));
+            return;
+        }
+        QMetaObject::invokeMethod(m_permissionManager, "recordMachineSeen",
+                                  Qt::DirectConnection, Q_ARG(QString, fingerprint),
+                                  Q_ARG(QString, socket->peerAddress().toString()));
+    }
+
+    if (m_securityService && m_securityService->isReady()) {
+        const QString localFingerprint = m_securityService->identity().fingerprintSha256.toLower().trimmed();
+        if (localFingerprint.isEmpty()) {
+            finishSend(socket, false, QStringLiteral("Identité locale indisponible"));
+            return;
+        }
+        socket->write(frameOf(kIdentityFramePrefix + localFingerprint.toUtf8()));
     }
 
     const PendingSendJob job = m_sendStates[socket].pendingJob;
@@ -667,23 +727,16 @@ void TransferService::finishSend(QTcpSocket *socket, bool success, const QString
 void TransferService::onNewConnection()
 {
     while (m_server->hasPendingConnections()) {
-        QTcpSocket *socket = m_server->nextPendingConnection();
+        auto *socket = qobject_cast<QSslSocket *>(m_server->nextPendingConnection());
         if (!socket) {
             continue;
         }
 
-        if (m_permissionManager) {
-            bool authorized = true;
-            QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorized",
-                                      Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
-                                      Q_ARG(QString, socket->peerAddress().toString()));
-            if (!authorized) {
-                qWarning() << "TransferService: incoming transfer refused for unauthorized machine"
-                           << socket->peerAddress();
-                socket->disconnectFromHost();
-                socket->deleteLater();
-                continue;
-            }
+        socket->setParent(this);
+        if (!configureTls(socket, m_securityService, true)) {
+            socket->disconnectFromHost();
+            socket->deleteLater();
+            continue;
         }
 
         ReceiveState state;
@@ -692,7 +745,13 @@ void TransferService::onNewConnection()
 
         connect(socket, &QTcpSocket::readyRead, this, &TransferService::onServerSocketReadyRead);
         connect(socket, &QTcpSocket::disconnected, this, &TransferService::onServerSocketDisconnected);
+        socket->startServerEncryption();
     }
+}
+
+void TransferService::setSecurityService(SecurityService *service)
+{
+    m_securityService = service;
 }
 
 void TransferService::setPermissionManager(QObject *manager)
@@ -707,21 +766,33 @@ void TransferService::onServerSocketReadyRead()
         return;
     }
 
-    // Une révocation doit aussi interrompre une connexion déjà ouverte.
-    if (m_permissionManager) {
-        bool authorized = true;
-        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorized",
-                                  Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
-                                  Q_ARG(QString, socket->peerAddress().toString()));
-        if (!authorized) {
-            qWarning() << "TransferService: active transfer interrupted for unauthorized machine"
-                       << socket->peerAddress();
-            socket->disconnectFromHost();
-            return;
-        }
+    const auto *sslSocket = qobject_cast<QSslSocket *>(socket);
+    if (sslSocket && !sslSocket->isEncrypted()) {
+        return;
     }
 
     ReceiveState &state = m_receiveStates[socket];
+
+    // Une révocation doit aussi interrompre une connexion déjà ouverte.
+    if (m_permissionManager) {
+        const QString fingerprint = sslSocket
+            ? SecurityService::certificateFingerprint(sslSocket->peerCertificate()) : QString();
+        if (!fingerprint.isEmpty()) {
+            bool authorized = false;
+            QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+                                      Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                      Q_ARG(QString, fingerprint));
+            if (!authorized) {
+                qWarning() << "TransferService: active transfer interrupted for unauthorized machine"
+                           << socket->peerAddress() << fingerprint;
+                socket->disconnectFromHost();
+                return;
+            }
+            state.identityVerified = true;
+            state.peerCertificateFingerprint = fingerprint;
+        }
+    }
+
     state.connectionIdle = false; // des octets arrivent : soit la suite d'un fichier en cours, soit l'en-tete du suivant sur une connexion reutilisee.
     state.buffer.append(socket->readAll());
 
@@ -746,6 +817,43 @@ void TransferService::onServerSocketReadyRead()
         const QByteArray payload = state.buffer.left(static_cast<int>(state.pendingBlockSize));
         state.buffer.remove(0, static_cast<int>(state.pendingBlockSize));
         state.pendingBlockSize = -1;
+
+        if (payload.startsWith(kIdentityFramePrefix)) {
+            const QString announcedFingerprint = QString::fromUtf8(
+                payload.mid(kIdentityFramePrefix.size())).toLower().trimmed();
+            bool authorized = !m_permissionManager;
+            if (m_permissionManager && !announcedFingerprint.isEmpty()) {
+                QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+                                          Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                          Q_ARG(QString, announcedFingerprint));
+            }
+            if (!authorized) {
+                qWarning() << "TransferService: transfer refused for unauthorized certificate"
+                           << announcedFingerprint << socket->peerAddress();
+                finishReceive(socket, false, QStringLiteral("Certificat distant non autorisé"));
+                return;
+            }
+            state.identityVerified = true;
+            state.peerCertificateFingerprint = announcedFingerprint;
+            if (m_permissionManager) {
+                QMetaObject::invokeMethod(m_permissionManager, "recordMachineSeen",
+                                          Qt::DirectConnection,
+                                          Q_ARG(QString, announcedFingerprint),
+                                          Q_ARG(QString, socket->peerAddress().toString()));
+            }
+            continue;
+        }
+
+        if (!state.identityVerified) {
+            if (!m_permissionManager) {
+                state.identityVerified = true;
+            } else {
+                qWarning() << "TransferService: transfer refused, missing identity frame from"
+                           << socket->peerAddress();
+                finishReceive(socket, false, QStringLiteral("Identité de transfert absente"));
+                return;
+            }
+        }
 
         if (!state.headerParsed) {
             QString fileName;

@@ -38,13 +38,16 @@ public:
      * @brief Supprime une machine par son id.
      */
     bool remove(int id);
+    bool removeByUuidOrCertificate(const QString &uuid, const QString &fingerprint);
 
     /**
      * @brief Recherche une machine par son adresse IP.
      */
     std::optional<models::AuthorizedMachine> findByIpAddress(const QString &ipAddress) const;
     std::optional<models::AuthorizedMachine> findByUuid(const QString &uuid) const;
+    std::optional<models::AuthorizedMachine> findByCertificateFingerprint(const QString &fingerprint) const;
     bool upsertRemote(const models::AuthorizedMachine &machine);
+    bool updateLastSeen(const QString &fingerprint, const QString &ipAddress);
 
     /**
      * @brief Récupère toutes les machines.
@@ -76,6 +79,9 @@ public:
      * @brief Autorise une machine par son adresse IP.
      */
     bool authorizeByIpAddress(const QString &ipAddress, int authorizedBy, const QString &reason = QString());
+    bool authorizeByCertificate(const QString &fingerprint, int authorizedBy, const QString &reason = QString());
+    bool setAuthorizationByCertificate(const QString &fingerprint, bool authorized,
+                                   int changedBy, const QString &reason = QString());
 
     QString lastError() const;
 

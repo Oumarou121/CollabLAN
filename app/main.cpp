@@ -182,6 +182,7 @@ int main(int argc, char *argv[])
     // Brancher UsersView.qml sur la liste des postes decouverts en temps
     // reel par DiscoveryService (issue #17).
     engine.rootContext()->setContextProperty("peersModel", static_cast<QObject*>(application.peersModel()));
+    engine.rootContext()->setContextProperty("discoveryService", static_cast<QObject*>(application.discoveryService()));
     // Brancher ToastHost.qml (Main.qml) sur les evenements notifiables
     // (message, transfert, connexion/deconnexion - issue #58).
     engine.rootContext()->setContextProperty("notificationManager", static_cast<QObject*>(application.notificationManager()));

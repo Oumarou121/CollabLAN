@@ -239,33 +239,11 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
     payload.insert(QStringLiteral("participant2Uuid"), participant2Uuid);
     const QString jsonMessage = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
 
-    // Envoyer le message via le reseau si le service est configure
-    if (m_messagingService && m_messagingService->isConnected()) {
-        if (!m_messagingService->sendMessage(jsonMessage)) {
-            qWarning() << "Failed to send message via network";
-            // On ne retourne pas d'erreur ici car le message est deja en base
-            emit messageSendFailed(conversationId,
-                QStringLiteral("Message enregistre localement mais l'envoi reseau a echoue"));
-        }
-    } else {
-        // CORRECTIF : jusqu'ici totalement silencieux (pas meme un qWarning)
-        // -- le message etait persiste en base locale mais ne partait jamais
-        // sur le reseau si aucune connexion n'etait etablie (ex. serveur
-        // injoignable), sans que rien ne le signale nulle part, ni logs ni UI.
-        qWarning() << "sendMessage: MessagingService non connecte, message conserve localement uniquement"
-                   << conversationId;
-        emit messageSendFailed(conversationId,
-            QStringLiteral("Pas de connexion reseau : message enregistre localement uniquement"));
-    }
+    bool deliveredToNetwork = false;
 
-    // Diffuse egalement aux clients connectes a notre serveur, mais
-    // UNIQUEMENT ceux qui sont participants de la conversation (issue #2 :
-    // broadcastMessage() envoyait ce message a TOUS les clients connectes,
-    // y compris des tiers totalement etrangers a la conversation, qui le
-    // persistaient silencieusement dans leur propre base). Pour une
-    // conversation de groupe, participant1Uuid/participant2Uuid sont vides
-    // (les Conversations de type 'group' n'utilisent pas ces colonnes) :
-    // on resout alors les membres via resolveGroupMemberUuids().
+    // Diffuse aux clients connectes a notre serveur, mais UNIQUEMENT ceux qui
+    // sont participants de la conversation (issue #2 : broadcastMessage()
+    // envoyait ce message a TOUS les clients connectes).
     if (m_messagingServer) {
         QStringList targetUuids;
         if (!participant1Uuid.isEmpty()) targetUuids << participant1Uuid;
@@ -277,7 +255,7 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
 
         targetUuids.removeDuplicates();
         if (!targetUuids.isEmpty()) {
-            m_messagingServer->sendToUuids(jsonMessage, targetUuids);
+            deliveredToNetwork = m_messagingServer->sendToUuids(jsonMessage, targetUuids) > 0;
         } else {
             // Repli de securite : si on n'a pas pu resoudre le moindre
             // destinataire (donnee manquante, groupe introuvable...), on
@@ -285,8 +263,29 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
             // silencieusement.
             qWarning() << "sendMessage: aucun destinataire resolu pour la conversation" << conversationId
                        << "- repli sur broadcastMessage()";
-            m_messagingServer->broadcastMessage(jsonMessage);
+            deliveredToNetwork = m_messagingServer->broadcastMessage(jsonMessage) > 0;
         }
+    }
+
+    // Envoyer aussi via la connexion sortante si ce poste est client.
+    if (m_messagingService && m_messagingService->isConnected()) {
+        if (!m_messagingService->sendMessage(jsonMessage)) {
+            qWarning() << "Failed to send message via network";
+            // On ne retourne pas d'erreur ici car le message est deja en base
+            emit messageSendFailed(conversationId,
+                QStringLiteral("Message enregistre localement mais l'envoi reseau a echoue"));
+        } else {
+            deliveredToNetwork = true;
+        }
+    } else if (!deliveredToNetwork) {
+        // CORRECTIF : jusqu'ici totalement silencieux (pas meme un qWarning)
+        // -- le message etait persiste en base locale mais ne partait jamais
+        // sur le reseau si aucune connexion n'etait etablie (ex. serveur
+        // injoignable), sans que rien ne le signale nulle part, ni logs ni UI.
+        qWarning() << "sendMessage: MessagingService non connecte, message conserve localement uniquement"
+                   << conversationId;
+        emit messageSendFailed(conversationId,
+            QStringLiteral("Pas de connexion reseau : message enregistre localement uniquement"));
     }
 
     emit messageSent(message);

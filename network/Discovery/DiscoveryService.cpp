@@ -126,6 +126,11 @@ void DiscoveryService::setLocalUserUuid(const QString &uuid)
     m_localUserUuid = uuid;
 }
 
+void DiscoveryService::setLocalCertificateFingerprint(const QString &fingerprint)
+{
+    m_localCertificateFingerprint = fingerprint.toLower();
+}
+
 QString DiscoveryService::localStatus() const
 {
     return m_localStatus;
@@ -179,6 +184,20 @@ QList<DiscoveredPeer> DiscoveryService::peers() const
     return m_peers.values();
 }
 
+QVariantList DiscoveryService::machineCandidates() const
+{
+    QVariantList result;
+    for (const auto &peer : m_peers) {
+        QVariantMap candidate;
+        candidate.insert(QStringLiteral("id"), peer.id);
+        candidate.insert(QStringLiteral("name"), peer.name);
+        candidate.insert(QStringLiteral("ip"), peer.address.toString());
+        candidate.insert(QStringLiteral("fingerprint"), peer.certificateFingerprint);
+        result.append(candidate);
+    }
+    return result;
+}
+
 void DiscoveryService::setPermissionManager(QObject *manager)
 {
     m_permissionManager = manager;
@@ -216,6 +235,7 @@ void DiscoveryService::sendAnnounce()
     // nom d'utilisateur. Absent (chaine vide) tant qu'aucune authentification
     // n'a reussi sur ce poste, cf. setLocalUserUuid().
     packet["userUuid"] = m_localUserUuid;
+    packet["certificateFingerprint"] = m_localCertificateFingerprint;
     packet["status"] = m_localStatus;
     packet["port"] = m_port;
     packet["transferPort"] = static_cast<int>(m_transferPort);
@@ -275,6 +295,7 @@ void DiscoveryService::handleAnnouncePacket(const QByteArray &data, const QHostA
     peer.id = peerId;
     peer.name = obj.value("name").toString();
     peer.userUuid = obj.value("userUuid").toString();
+    peer.certificateFingerprint = obj.value("certificateFingerprint").toString().toLower();
     peer.status = obj.value("status").toString(QStringLiteral("online"));
     peer.address = senderAddress;
     peer.port = static_cast<quint16>(obj.value("port").toInt(m_port));
@@ -287,6 +308,7 @@ void DiscoveryService::handleAnnouncePacket(const QByteArray &data, const QHostA
     const bool hasChanged = !isNewPeer
         && (existingIt->name != peer.name
             || existingIt->userUuid != peer.userUuid
+            || existingIt->certificateFingerprint != peer.certificateFingerprint
             || existingIt->status != peer.status
             || existingIt->address != peer.address
             || existingIt->port != peer.port

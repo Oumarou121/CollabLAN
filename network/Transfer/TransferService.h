@@ -11,9 +11,12 @@
 
 class QTcpServer;
 class QTcpSocket;
+class QSslSocket;
 class QFile;
 
 namespace network {
+
+class SecurityService;
 
 /**
  * @brief Transfert de fichiers via TCP, par blocs, avec accuses de reception
@@ -176,6 +179,8 @@ private:
     struct ReceiveState {
         QString transferKey;
         QByteArray buffer;          ///< Octets recus non encore consommes.
+        bool identityVerified = false; ///< true une fois l'identite machine du canal validee.
+        QString peerCertificateFingerprint;
         bool headerParsed = false;
         bool headerAcked = false;   ///< true une fois la reponse resumeOffset envoyee.
         QString fileName;
@@ -279,6 +284,7 @@ private:
     QHash<QTcpSocket*, QString> m_socketDestKey;            ///< socket d'envoi -> destKey (pour retrouver sa file/son compteur a la fin d'un fichier).
     QString m_receiveDirOverride;
     QString m_localMachineId;        ///< UUID DiscoveryService::localId() local, transmis dans l'en-tete (voir encodeHeader()).
+    SecurityService *m_securityService = nullptr;
     QObject *m_permissionManager = nullptr;
     bool m_compressionEnabled = false; ///< Voir setCompressionEnabled().
     quint32 m_blockSize = kDefaultBlockSize; ///< Voir setBlockSize().
@@ -297,6 +303,7 @@ public:
 
     /// Applique le contrôle d'accès également au canal TCP des fichiers.
     void setPermissionManager(QObject *manager);
+    void setSecurityService(SecurityService *service);
 
     /**
      * @brief Active ou desactive la compression zlib (via qCompress/qUncompress)

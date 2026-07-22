@@ -29,8 +29,14 @@ public:
     QString uuid() const { return m_uuid; }
     void setUuid(const QString &uuid) { m_uuid = uuid; }
 
+    QString certificateFingerprint() const { return m_certificateFingerprint; }
+    void setCertificateFingerprint(const QString &fingerprint) { m_certificateFingerprint = fingerprint; }
+
     QString ipAddress() const { return m_ipAddress; }
     void setIpAddress(const QString &ipAddress) { m_ipAddress = ipAddress; }
+
+    QString lastIpAddress() const { return m_lastIpAddress.isEmpty() ? m_ipAddress : m_lastIpAddress; }
+    void setLastIpAddress(const QString &ipAddress) { m_lastIpAddress = ipAddress; }
 
     QString hostname() const { return m_hostname; }
     void setHostname(const QString &hostname) { m_hostname = hostname; }
@@ -52,7 +58,9 @@ public:
 private:
     int m_id = -1;
     QString m_uuid;
+    QString m_certificateFingerprint;
     QString m_ipAddress;
+    QString m_lastIpAddress;
     QString m_hostname;
     bool m_authorized = true;
     std::optional<int> m_addedBy;

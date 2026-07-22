@@ -65,6 +65,11 @@ VoiceService::~VoiceService()
     stopListening();
 }
 
+void VoiceService::setPermissionManager(QObject *manager)
+{
+    m_signaling->setPermissionManager(manager);
+}
+
 bool VoiceService::startListening(quint16 signalingPort)
 {
     return m_signaling->listen(signalingPort);

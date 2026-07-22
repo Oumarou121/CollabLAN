@@ -581,7 +581,7 @@ Item {
                         Label {
                             Layout.alignment: Qt.AlignHCenter
                             Layout.fillWidth: true
-                            text: qsTr("Utilisez le bouton « Ajouter machine » pour autoriser un poste par son adresse IP.")
+                            text: qsTr("Utilisez le bouton « Ajouter machine » pour autoriser un certificat connu.")
                             color: Theme.textSecondary
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: Theme.fontFamily
@@ -642,7 +642,7 @@ Item {
                                             spacing: 2
 
                                             Label {
-                                                text: model.ipAddress
+                                                text: model.hostname || model.machineUuid || qsTr("Machine inconnue")
                                                 font.pixelSize: Theme.fontSizeBody
                                                 font.bold: true
                                                 font.family: Theme.fontFamily
@@ -652,7 +652,7 @@ Item {
                                             }
 
                                             Label {
-                                                text: model.hostname || "N/A"
+                                                text: model.lastIpAddress || model.ipAddress || "N/A"
                                                 font.pixelSize: Theme.fontSizeSmall
                                                 font.family: Theme.fontFamily
                                                 color: Theme.textSecondary
@@ -684,6 +684,16 @@ Item {
                                         font.pixelSize: Theme.fontSizeCaption
                                         font.family: Theme.fontFamily
                                         color: Theme.textTertiary
+                                    }
+
+                                    Label {
+                                        text: model.certificateFingerprint
+                                              ? qsTr("Certificat : %1…").arg(model.certificateFingerprint.substring(0, 12))
+                                              : qsTr("Certificat non enregistré")
+                                        font.pixelSize: Theme.fontSizeCaption
+                                        color: Theme.textTertiary
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
                                     }
 
                                     Item { Layout.fillHeight: true }
@@ -1077,16 +1087,97 @@ Item {
         id: addMachineDialog
         title: qsTr("Ajouter une machine autorisée")
         headerIcon: "\uf109"
-        dialogWidth: 340
+        dialogWidth: 500
+        dialogHeight: 600
 
-        ColumnLayout {
+        ScrollView {
             anchors.fill: parent
-            spacing: Theme.spacingSmall
+            clip: true
+            contentWidth: availableWidth
+
+            ColumnLayout {
+                width: parent.width
+                spacing: Theme.spacingSmall
 
             Label {
-                text: qsTr("Adresse IP")
+                text: qsTr("Postes détectés")
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.textSecondary
+            }
+
+            ComboBox {
+                id: detectedMachineSelector
+                Layout.fillWidth: true
+                model: (typeof discoveryService !== "undefined" && discoveryService)
+                       ? discoveryService.machineCandidates() : []
+                textRole: "name"
+                displayText: currentIndex >= 0 && currentIndex < count
+                             ? (model[currentIndex].name + " — " + model[currentIndex].ip) : qsTr("Sélectionner un poste détecté")
+                onActivated: {
+                    const candidate = model[index]
+                    if (!candidate) return
+                    newMachineFingerprint.text = candidate.fingerprint || ""
+                    newMachineUuid.text = candidate.id || ""
+                    newMachineIp.text = candidate.ip || ""
+                    newMachineHostname.text = candidate.name || ""
+                }
+            }
+
+            Label {
+                text: qsTr("Empreinte SHA-256 du certificat")
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.textSecondary
+            }
+
+            TextField {
+                id: newMachineFingerprint
+                Layout.fillWidth: true
+                Layout.preferredHeight: 40
+                placeholderText: qsTr("empreinte SHA-256 complète")
+                color: Theme.text
+                leftPadding: Theme.spacingMedium
+                background: Rectangle {
+                    radius: Theme.radiusMedium
+                    color: Theme.background
+                    border.width: 1
+                    border.color: Theme.border
+                }
+            }
+
+            Label {
+                text: qsTr("Nom d'hôte (optionnel)")
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.textSecondary
+                Layout.topMargin: Theme.spacingSmall
+            }
+
+            Label {
+                text: qsTr("UUID de la machine")
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.textSecondary
+                Layout.topMargin: Theme.spacingSmall
+            }
+
+            TextField {
+                id: newMachineUuid
+                Layout.fillWidth: true
+                Layout.preferredHeight: 40
+                placeholderText: qsTr("UUID annoncé par le poste")
+                color: Theme.text
+                leftPadding: Theme.spacingMedium
+                background: Rectangle {
+                    radius: Theme.radiusMedium
+                    color: Theme.background
+                    border.width: 1
+                    border.color: Theme.border
+                }
+            }
+
+            Label {
+                text: qsTr("Dernière adresse IP (optionnel)")
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.textSecondary
+                Layout.topMargin: Theme.spacingSmall
             }
 
             TextField {
@@ -1143,12 +1234,16 @@ Item {
                     variant: "primary"
                     text: qsTr("Ajouter")
                     onClicked: {
-                        authorizedMachineModel.addMachine(newMachineIp.text, newMachineHostname.text, "Ajouté par admin")
+                        authorizedMachineModel.addMachineByCertificate(
+                            newMachineFingerprint.text, newMachineUuid.text,
+                            newMachineIp.text, newMachineHostname.text,
+                            "Ajouté par admin")
                         addMachineDialog.close()
                     }
                 }
             }
         }
+    }
     }
 
     AppDialog {

@@ -1,4 +1,5 @@
 #include "SecurityService.h"
+#include <QCryptographicHash>
 
 #include <QStandardPaths>
 #include <QDir>
@@ -76,6 +77,12 @@ SecurityService::SecurityService(const QString &storageDirOverride)
 SecurityService::~SecurityService()
 {
     reset();
+}
+
+QString SecurityService::certificateFingerprint(const QSslCertificate &certificate)
+{
+    if (certificate.isNull()) return QString();
+    return QString::fromLatin1(certificate.digest(QCryptographicHash::Sha256).toHex());
 }
 
 void SecurityService::reset()

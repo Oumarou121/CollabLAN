@@ -20,6 +20,9 @@ public:
     enum Roles {
         IdRole = Qt::UserRole + 1,
         IpAddressRole,
+        UuidRole,
+        CertificateFingerprintRole,
+        LastIpAddressRole,
         HostnameRole,
         AuthorizedRole,
         AddedByRole,
@@ -36,6 +39,9 @@ public:
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE bool addMachine(const QString &ipAddress, const QString &hostname, const QString &reason);
+    Q_INVOKABLE bool addMachineByCertificate(const QString &fingerprint, const QString &machineUuid,
+                                             const QString &ipAddress, const QString &hostname,
+                                             const QString &reason);
     Q_INVOKABLE bool revokeMachine(int id, const QString &reason);
     Q_INVOKABLE bool authorizeMachine(int id, const QString &reason);
     Q_INVOKABLE bool removeMachine(int id);
