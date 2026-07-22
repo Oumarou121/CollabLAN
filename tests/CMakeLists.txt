@@ -29,6 +29,15 @@ add_executable(test_serverelectionrepository UnitTests/test_serverelectionreposi
 target_link_libraries(test_serverelectionrepository PRIVATE Qt6::Test database models)
 add_test(NAME test_serverelectionrepository COMMAND test_serverelectionrepository)
 
+# Plan #71 : etat pending/authorized/revoked des machines autorisees.
+add_executable(test_authorizedmachinerepository UnitTests/test_authorizedmachinerepository.cpp)
+target_link_libraries(test_authorizedmachinerepository PRIVATE Qt6::Test database models)
+add_test(NAME test_authorizedmachinerepository COMMAND test_authorizedmachinerepository)
+
+add_executable(test_permissionmanager UnitTests/test_permissionmanager.cpp)
+target_link_libraries(test_permissionmanager PRIVATE Qt6::Test core database models)
+add_test(NAME test_permissionmanager COMMAND test_permissionmanager)
+
 add_executable(test_messagingservice UnitTests/test_messagingservice.cpp)
 target_link_libraries(test_messagingservice PRIVATE Qt6::Test Qt6::WebSockets network)
 add_test(NAME test_messagingservice COMMAND test_messagingservice)

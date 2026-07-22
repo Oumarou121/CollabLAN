@@ -32,6 +32,10 @@ models::AuthorizedMachine AuthorizedMachineRepository::machineFromQuery(const QS
     machine.setLastIpAddress(query.value(QStringLiteral("last_ip_address")).toString());
     machine.setHostname(query.value(QStringLiteral("hostname")).toString());
     machine.setAuthorized(query.value(QStringLiteral("authorized")).toInt() != 0);
+    const QString status = query.value(QStringLiteral("status")).toString();
+    machine.setStatus(status.isEmpty()
+        ? (machine.isAuthorized() ? models::MachineStatus::Authorized : models::MachineStatus::Revoked)
+        : status);
     
     const int addedBy = query.value(QStringLiteral("added_by")).toInt();
     if (!query.isNull(QStringLiteral("added_by"))) {
@@ -47,14 +51,15 @@ int AuthorizedMachineRepository::create(const models::AuthorizedMachine &machine
 {
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
-        "INSERT INTO AuthorizedMachines (machine_uuid, certificate_fingerprint, ip_address, last_ip_address, hostname, authorized, added_by, added_at, reason) "
-        "VALUES (:machine_uuid, :certificate_fingerprint, :ip_address, :last_ip_address, :hostname, :authorized, :added_by, :added_at, :reason)"));
+        "INSERT INTO AuthorizedMachines (machine_uuid, certificate_fingerprint, ip_address, last_ip_address, hostname, authorized, status, added_by, added_at, reason) "
+        "VALUES (:machine_uuid, :certificate_fingerprint, :ip_address, :last_ip_address, :hostname, :authorized, :status, :added_by, :added_at, :reason)"));
     query.bindValue(QStringLiteral(":machine_uuid"), machine.uuid().isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces) : machine.uuid());
     query.bindValue(QStringLiteral(":ip_address"), notNull(machine.ipAddress()));
     query.bindValue(QStringLiteral(":certificate_fingerprint"), notNull(machine.certificateFingerprint()));
     query.bindValue(QStringLiteral(":last_ip_address"), notNull(machine.lastIpAddress()));
     query.bindValue(QStringLiteral(":hostname"), notNull(machine.hostname()));
     query.bindValue(QStringLiteral(":authorized"), machine.isAuthorized() ? 1 : 0);
+    query.bindValue(QStringLiteral(":status"), machine.status());
     
     if (machine.addedBy().has_value()) {
         query.bindValue(QStringLiteral(":added_by"), machine.addedBy().value());
@@ -77,7 +82,7 @@ bool AuthorizedMachineRepository::update(const models::AuthorizedMachine &machin
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
         "UPDATE AuthorizedMachines SET machine_uuid = :machine_uuid, certificate_fingerprint = :certificate_fingerprint, ip_address = :ip_address, last_ip_address = :last_ip_address, hostname = :hostname, "
-        "authorized = :authorized, added_by = :added_by, added_at = :added_at, reason = :reason "
+        "authorized = :authorized, status = :status, added_by = :added_by, added_at = :added_at, reason = :reason "
         "WHERE id = :id"));
     query.bindValue(QStringLiteral(":machine_uuid"), machine.uuid());
     query.bindValue(QStringLiteral(":certificate_fingerprint"), machine.certificateFingerprint());
@@ -85,6 +90,7 @@ bool AuthorizedMachineRepository::update(const models::AuthorizedMachine &machin
     query.bindValue(QStringLiteral(":last_ip_address"), notNull(machine.lastIpAddress()));
     query.bindValue(QStringLiteral(":hostname"), notNull(machine.hostname()));
     query.bindValue(QStringLiteral(":authorized"), machine.isAuthorized() ? 1 : 0);
+    query.bindValue(QStringLiteral(":status"), machine.status());
     
     if (machine.addedBy().has_value()) {
         query.bindValue(QStringLiteral(":added_by"), machine.addedBy().value());
@@ -220,10 +226,52 @@ bool AuthorizedMachineRepository::setAuthorizationByCertificate(const QString &f
         return false;
     }
 
-    machine->setAuthorized(authorized);
+    machine->setStatus(authorized ? models::MachineStatus::Authorized : models::MachineStatus::Revoked);
     machine->setAddedBy(changedBy);
     machine->setReason(reason);
     return update(*machine);
+}
+
+bool AuthorizedMachineRepository::hasAnyAuthorizedMachine() const
+{
+    QSqlQuery query(m_db);
+    if (!query.exec(QStringLiteral(
+            "SELECT 1 FROM AuthorizedMachines WHERE status = 'authorized' LIMIT 1"))) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    return query.next();
+}
+
+bool AuthorizedMachineRepository::registerPendingByCertificate(const QString &fingerprint,
+                                                                const QString &ipAddress,
+                                                                const QString &hostname,
+                                                                const QString &reason)
+{
+    const QString normalizedFingerprint = fingerprint.trimmed().toLower();
+    if (normalizedFingerprint.isEmpty()) {
+        m_lastError = QStringLiteral("Empreinte de certificat absente");
+        return false;
+    }
+
+    auto existing = findByCertificateFingerprint(normalizedFingerprint);
+    if (existing.has_value()) {
+        // Une machine deja connue (authorized/revoked/pending) n'est jamais
+        // re-degradee en pending automatiquement : seule sa derniere IP vue
+        // est rafraichie.
+        return updateLastSeen(normalizedFingerprint, ipAddress);
+    }
+
+    models::AuthorizedMachine machine;
+    machine.setCertificateFingerprint(normalizedFingerprint);
+    machine.setIpAddress(ipAddress);
+    machine.setLastIpAddress(ipAddress);
+    machine.setHostname(hostname);
+    machine.setStatus(models::MachineStatus::Pending);
+    machine.setReason(reason.isEmpty()
+        ? QStringLiteral("Machine détectée — autorisation requise")
+        : reason);
+    return create(machine) >= 0;
 }
 
 std::vector<models::AuthorizedMachine> AuthorizedMachineRepository::findAll() const
@@ -246,7 +294,7 @@ std::vector<models::AuthorizedMachine> AuthorizedMachineRepository::findAuthoriz
     std::vector<models::AuthorizedMachine> machines;
 
     QSqlQuery query(m_db);
-    if (!query.exec(QStringLiteral("SELECT * FROM AuthorizedMachines WHERE authorized = 1 ORDER BY added_at DESC"))) {
+    if (!query.exec(QStringLiteral("SELECT * FROM AuthorizedMachines WHERE status = 'authorized' ORDER BY added_at DESC"))) {
         m_lastError = query.lastError().text();
         return machines;
     }
@@ -261,7 +309,7 @@ std::vector<models::AuthorizedMachine> AuthorizedMachineRepository::findRevoked(
     std::vector<models::AuthorizedMachine> machines;
 
     QSqlQuery query(m_db);
-    if (!query.exec(QStringLiteral("SELECT * FROM AuthorizedMachines WHERE authorized = 0 ORDER BY added_at DESC"))) {
+    if (!query.exec(QStringLiteral("SELECT * FROM AuthorizedMachines WHERE status = 'revoked' ORDER BY added_at DESC"))) {
         m_lastError = query.lastError().text();
         return machines;
     }
@@ -288,14 +336,14 @@ bool AuthorizedMachineRepository::revokeByIpAddress(const QString &ipAddress, in
         // Créer une nouvelle entrée révoquée
         models::AuthorizedMachine newMachine;
         newMachine.setIpAddress(ipAddress);
-        newMachine.setAuthorized(false);
+        newMachine.setStatus(models::MachineStatus::Revoked);
         newMachine.setAddedBy(revokedBy);
         newMachine.setReason(reason);
         return create(newMachine) >= 0;
     }
     
     // Mettre à jour l'entrée existante
-    machine->setAuthorized(false);
+    machine->setStatus(models::MachineStatus::Revoked);
     machine->setAddedBy(revokedBy);
     machine->setReason(reason);
     return update(*machine);
@@ -308,14 +356,14 @@ bool AuthorizedMachineRepository::authorizeByIpAddress(const QString &ipAddress,
         // Créer une nouvelle entrée autorisée
         models::AuthorizedMachine newMachine;
         newMachine.setIpAddress(ipAddress);
-        newMachine.setAuthorized(true);
+        newMachine.setStatus(models::MachineStatus::Authorized);
         newMachine.setAddedBy(authorizedBy);
         newMachine.setReason(reason);
         return create(newMachine) >= 0;
     }
     
     // Mettre à jour l'entrée existante
-    machine->setAuthorized(true);
+    machine->setStatus(models::MachineStatus::Authorized);
     machine->setAddedBy(authorizedBy);
     machine->setReason(reason);
     return update(*machine);

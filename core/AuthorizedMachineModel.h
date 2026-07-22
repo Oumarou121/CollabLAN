@@ -25,6 +25,7 @@ public:
         LastIpAddressRole,
         HostnameRole,
         AuthorizedRole,
+        StatusRole,
         AddedByRole,
         AddedAtRole,
         ReasonRole
@@ -47,10 +48,18 @@ public:
     Q_INVOKABLE bool removeMachine(int id);
 
     void setPermissionManager(core::PermissionManager *manager);
+    void setUserManager(QObject *manager);
 
 private:
+    /// Id de l'utilisateur admin actuellement connecte, ou -1 si inconnu
+    /// (UserManager absent ou personne connectee). Utilise comme added_by
+    /// pour que l'audit reflete qui a reellement autorise/revoque la machine,
+    /// plutot qu'un id fige.
+    int currentUserId() const;
+
     QVector<models::AuthorizedMachine> m_machines;
     core::PermissionManager *m_permissionManager = nullptr;
+    QObject *m_userManager = nullptr;
 };
 
 } // namespace core

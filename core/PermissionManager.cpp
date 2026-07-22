@@ -70,7 +70,9 @@ bool PermissionManager::isMachineAuthorizedByCertificate(const QString &fingerpr
 {
     if (!m_repository || fingerprint.trimmed().isEmpty()) return false;
     const auto machine = m_repository->findByCertificateFingerprint(fingerprint);
-    return machine.has_value() && machine->isAuthorized();
+    // Seul le statut 'authorized' donne acces ; 'pending' et 'revoked'
+    // restent refuses meme si l'ancien champ authorized trainait a true.
+    return machine.has_value() && machine->status() == models::MachineStatus::Authorized;
 }
 
 void PermissionManager::recordMachineSeen(const QString &fingerprint, const QString &ipAddress)
@@ -85,19 +87,60 @@ bool PermissionManager::trustRemoteServerCertificate(const QString &fingerprint,
     if (!m_repository || fingerprint.trimmed().isEmpty()) return false;
     const auto existing = m_repository->findByCertificateFingerprint(fingerprint);
     if (existing.has_value()) {
-        if (!existing->isAuthorized()) return false;
+        if (existing->status() != models::MachineStatus::Authorized) return false;
         m_repository->updateLastSeen(fingerprint, ipAddress);
         return true;
     }
 
-    models::AuthorizedMachine machine;
+    // Machine/serveur inconnu : on l'enregistre pour affichage dans l'admin,
+    // mais on ne l'autorise jamais automatiquement (plan #71).
+    registerPendingMachineByCertificate(fingerprint, ipAddress, QStringLiteral("Serveur distant"));
+    return false;
+}
+
+bool PermissionManager::registerPendingMachineByCertificate(const QString &fingerprint,
+                                                             const QString &ipAddress,
+                                                             const QString &hostname)
+{
+    if (!m_repository || fingerprint.trimmed().isEmpty()) return false;
+
+    const bool alreadyKnown = m_repository->findByCertificateFingerprint(fingerprint).has_value();
+    const bool ok = m_repository->registerPendingByCertificate(
+        fingerprint, ipAddress, hostname,
+        QStringLiteral("Machine détectée — autorisation requise"));
+    if (ok && !alreadyKnown) {
+        const auto saved = m_repository->findByCertificateFingerprint(fingerprint);
+        if (saved) emit machineChanged(*saved);
+    }
+    return ok;
+}
+
+bool PermissionManager::bootstrapLocalAdminMachineIfNeeded(const QString &fingerprint,
+                                                            const QString &machineUuid,
+                                                            const QString &hostname,
+                                                            const QString &ipAddress,
+                                                            int adminUserId)
+{
+    if (!m_repository || fingerprint.trimmed().isEmpty()) return false;
+
+    // Une machine autorisee existe deja : pas de bootstrap, la nouvelle
+    // machine (meme locale, meme admin) doit passer par la validation
+    // normale depuis une machine deja autorisee.
+    if (m_repository->hasAnyAuthorizedMachine()) return false;
+
+    const auto existing = m_repository->findByCertificateFingerprint(fingerprint);
+    models::AuthorizedMachine machine = existing.value_or(models::AuthorizedMachine());
+    machine.setUuid(machineUuid.isEmpty() ? machine.uuid() : machineUuid);
     machine.setCertificateFingerprint(fingerprint.toLower());
+    machine.setHostname(hostname);
     machine.setIpAddress(ipAddress);
     machine.setLastIpAddress(ipAddress);
-    machine.setHostname(QStringLiteral("Serveur distant"));
-    machine.setAuthorized(true);
-    machine.setReason(QStringLiteral("Confiance établie via connexion TLS"));
-    const bool ok = m_repository->create(machine) >= 0;
+    machine.setStatus(models::MachineStatus::Authorized);
+    machine.setAddedBy(adminUserId);
+    machine.setReason(QStringLiteral("Machine locale initiale autorisée"));
+
+    const bool ok = existing.has_value() ? m_repository->update(machine)
+                                          : (m_repository->create(machine) >= 0);
     if (ok) {
         const auto saved = m_repository->findByCertificateFingerprint(fingerprint);
         if (saved) emit machineChanged(*saved);
@@ -231,7 +274,7 @@ bool PermissionManager::authorizeMachineByCertificate(const QString &fingerprint
     machine.setHostname(hostname);
     machine.setIpAddress(ipAddress);
     machine.setLastIpAddress(ipAddress);
-    machine.setAuthorized(true);
+    machine.setStatus(models::MachineStatus::Authorized);
     machine.setAddedBy(authorizedBy);
     machine.setReason(reason);
     const auto existing = m_repository->findByCertificateFingerprint(fingerprint);

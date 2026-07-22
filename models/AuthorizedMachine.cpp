@@ -18,6 +18,7 @@ AuthorizedMachine::AuthorizedMachine(int id,
     , m_ipAddress(ipAddress)
     , m_hostname(hostname)
     , m_authorized(authorized)
+    , m_status(authorized ? MachineStatus::Authorized : MachineStatus::Revoked)
     , m_addedBy(addedBy)
     , m_addedAt(addedAt)
     , m_reason(reason)

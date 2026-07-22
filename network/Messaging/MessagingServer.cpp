@@ -174,6 +174,14 @@ void MessagingServer::onNewConnection()
             QMetaObject::invokeMethod(m_permissionManager, "recordMachineSeen",
                                       Qt::DirectConnection, Q_ARG(QString, fingerprint),
                                       Q_ARG(QString, clientAddress.toString()));
+        } else if (!fingerprint.trimmed().isEmpty()) {
+            // Machine inconnue/pending/revoked : on l'enregistre quand meme
+            // pour qu'elle apparaisse dans l'admin ("Machine detectee -
+            // autorisation requise"), sans jamais l'autoriser ici.
+            QMetaObject::invokeMethod(m_permissionManager, "registerPendingMachineByCertificate",
+                                      Qt::DirectConnection, Q_ARG(QString, fingerprint),
+                                      Q_ARG(QString, clientAddress.toString()),
+                                      Q_ARG(QString, QString()));
         }
     }
     m_clientAuthorized.insert(client, authorized);

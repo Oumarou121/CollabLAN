@@ -666,17 +666,30 @@ Item {
                                             implicitWidth: machineStatusLabel.implicitWidth + Theme.spacingMedium
                                             implicitHeight: 24
                                             radius: Theme.radiusPill
-                                            color: model.authorized ? Theme.successMuted : Theme.errorMuted
+                                            color: model.status === "pending" ? Theme.warningMuted
+                                                   : (model.status === "authorized" ? Theme.successMuted : Theme.errorMuted)
 
                                             Label {
                                                 id: machineStatusLabel
                                                 anchors.centerIn: parent
-                                                text: model.authorized ? qsTr("Autorisée") : qsTr("Révoquée")
+                                                text: model.status === "pending" ? qsTr("En attente")
+                                                      : (model.status === "authorized" ? qsTr("Autorisée") : qsTr("Révoquée"))
                                                 font.pixelSize: Theme.fontSizeCaption
                                                 font.bold: true
-                                                color: model.authorized ? Theme.success : Theme.error
+                                                color: model.status === "pending" ? Theme.warning
+                                                       : (model.status === "authorized" ? Theme.success : Theme.error)
                                             }
                                         }
+                                    }
+
+                                    Label {
+                                        visible: model.status === "pending"
+                                        text: qsTr("Machine détectée — autorisation requise")
+                                        font.pixelSize: Theme.fontSizeCaption
+                                        font.italic: true
+                                        color: Theme.warning
+                                        wrapMode: Text.WordWrap
+                                        Layout.fillWidth: true
                                     }
 
                                     Label {
@@ -705,9 +718,10 @@ Item {
                                         AppButton {
                                             variant: "secondary"
                                             fullWidth: true
-                                            text: model.authorized ? qsTr("Révoquer") : qsTr("Autoriser")
+                                            text: model.status === "pending" ? qsTr("Autoriser")
+                                                  : (model.status === "authorized" ? qsTr("Révoquer") : qsTr("Réautoriser"))
                                             onClicked: {
-                                                if (model.authorized) {
+                                                if (model.status === "authorized") {
                                                     authorizedMachineModel.revokeMachine(model.id, "Révoqué par admin")
                                                 } else {
                                                     authorizedMachineModel.authorizeMachine(model.id, "Autorisé par admin")
@@ -716,10 +730,26 @@ Item {
                                         }
 
                                         AppButton {
+                                            variant: "secondary"
+                                            text: qsTr("Copier")
+                                            onClicked: {
+                                                fingerprintCopyField.text = model.certificateFingerprint
+                                                fingerprintCopyField.selectAll()
+                                                fingerprintCopyField.copy()
+                                            }
+                                        }
+
+                                        AppButton {
                                             variant: "danger"
                                             text: qsTr("Supprimer")
                                             onClicked: authorizedMachineModel.removeMachine(model.id)
                                         }
+                                    }
+
+                                    TextEdit {
+                                        id: fingerprintCopyField
+                                        visible: false
+                                        text: ""
                                     }
                                 }
                             }

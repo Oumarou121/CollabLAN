@@ -830,6 +830,13 @@ void TransferService::onServerSocketReadyRead()
             if (!authorized) {
                 qWarning() << "TransferService: transfer refused for unauthorized certificate"
                            << announcedFingerprint << socket->peerAddress();
+                if (m_permissionManager && !announcedFingerprint.isEmpty()) {
+                    QMetaObject::invokeMethod(m_permissionManager, "registerPendingMachineByCertificate",
+                                              Qt::DirectConnection,
+                                              Q_ARG(QString, announcedFingerprint),
+                                              Q_ARG(QString, socket->peerAddress().toString()),
+                                              Q_ARG(QString, QString()));
+                }
                 finishReceive(socket, false, QStringLiteral("Certificat distant non autorisé"));
                 return;
             }

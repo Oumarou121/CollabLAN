@@ -79,9 +79,21 @@ public:
      * @brief Autorise une machine par son adresse IP.
      */
     bool authorizeByIpAddress(const QString &ipAddress, int authorizedBy, const QString &reason = QString());
-    bool authorizeByCertificate(const QString &fingerprint, int authorizedBy, const QString &reason = QString());
     bool setAuthorizationByCertificate(const QString &fingerprint, bool authorized,
                                    int changedBy, const QString &reason = QString());
+
+    /**
+     * @brief true si au moins une machine a le statut 'authorized' (bootstrap admin).
+     */
+    bool hasAnyAuthorizedMachine() const;
+
+    /**
+     * @brief Enregistre (ou met a jour) une machine inconnue en statut 'pending'.
+     * N'autorise jamais automatiquement : la machine reste refusee tant
+     * qu'un admin ne l'a pas explicitement autorisee.
+     */
+    bool registerPendingByCertificate(const QString &fingerprint, const QString &ipAddress,
+                                      const QString &hostname, const QString &reason);
 
     QString lastError() const;
 

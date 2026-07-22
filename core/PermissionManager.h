@@ -75,6 +75,22 @@ public:
     Q_INVOKABLE void recordMachineSeen(const QString &fingerprint, const QString &ipAddress);
     Q_INVOKABLE bool trustRemoteServerCertificate(const QString &fingerprint,
                                                   const QString &ipAddress);
+
+    /// Enregistre une machine inconnue en statut 'pending' (jamais autorisee
+    /// automatiquement). Sans effet si l'empreinte est deja connue.
+    Q_INVOKABLE bool registerPendingMachineByCertificate(const QString &fingerprint,
+                                                         const QString &ipAddress,
+                                                         const QString &hostname = QString());
+
+    /// A appeler apres un login admin reussi. Si la base ne contient encore
+    /// aucune machine 'authorized', autorise automatiquement la machine
+    /// locale (bootstrap). Sans effet si une machine autorisee existe deja.
+    Q_INVOKABLE bool bootstrapLocalAdminMachineIfNeeded(const QString &fingerprint,
+                                                        const QString &machineUuid,
+                                                        const QString &hostname,
+                                                        const QString &ipAddress,
+                                                        int adminUserId);
+
     std::optional<models::AuthorizedMachine> findMachineByCertificateFingerprint(const QString &fingerprint) const;
 
     bool removeMachine(int id);

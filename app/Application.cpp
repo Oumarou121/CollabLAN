@@ -44,6 +44,7 @@
 #include "models/Message.h"
 #include "models/Group.h"
 #include "models/SyncLogEntry.h"
+#include <QSysInfo>
 
 Application::Application(QObject *parent)
     : QObject(parent)
@@ -699,6 +700,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
         payload[QStringLiteral("last_ip_address")] = machine.lastIpAddress();
         payload[QStringLiteral("hostname")] = machine.hostname();
         payload[QStringLiteral("authorized")] = machine.isAuthorized();
+        payload[QStringLiteral("status")] = machine.status();
         payload[QStringLiteral("reason")] = machine.reason();
         payload[QStringLiteral("added_at")] = machine.addedAt().toUTC().toString(Qt::ISODateWithMs);
                 const QString serialized = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
@@ -755,6 +757,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             payload[QStringLiteral("last_ip_address")] = machine.lastIpAddress();
             payload[QStringLiteral("hostname")] = machine.hostname();
             payload[QStringLiteral("authorized")] = machine.isAuthorized();
+            payload[QStringLiteral("status")] = machine.status();
             payload[QStringLiteral("reason")] = machine.reason();
             payload[QStringLiteral("added_at")] = machine.addedAt().toUTC().toString(Qt::ISODateWithMs);
             m_messagingServer->broadcastMessage(
@@ -773,6 +776,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             payload[QStringLiteral("last_ip_address")] = machine.lastIpAddress();
             payload[QStringLiteral("hostname")] = machine.hostname();
             payload[QStringLiteral("authorized")] = machine.isAuthorized();
+            payload[QStringLiteral("status")] = machine.status();
             payload[QStringLiteral("reason")] = machine.reason();
             payload[QStringLiteral("added_at")] = machine.addedAt().toUTC().toString(Qt::ISODateWithMs);
             m_messagingService->sendMessage(
@@ -952,6 +956,26 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
 
     if (!m_discoveryService->start()) {
         qWarning() << "Impossible de demarrer DiscoveryService (port deja utilise ?)";
+    }
+
+    // Bootstrap admin (plan #71) : au premier login admin reussi sur une
+    // base ne contenant encore aucune machine 'authorized', la machine
+    // locale s'auto-autorise. Sans ce mecanisme, une base neuve serait
+    // bloquee : aucune machine ne serait autorisee a administrer les autres.
+    // Sans effet si une machine autorisee existe deja (pas d'auto-autorisation
+    // silencieuse d'une machine supplementaire).
+    if (m_userManager && m_permissionManager) {
+        connect(m_userManager, &core::UserManager::loginSucceeded, this, [this]() {
+            if (!m_userManager->isCurrentUserAdmin()) return;
+            const QString fingerprint = m_securityService
+                ? m_securityService->identity().fingerprintSha256 : QString();
+            if (fingerprint.trimmed().isEmpty()) return;
+            const QString machineUuid = m_discoveryService ? m_discoveryService->localId() : QString();
+            const auto adminUserId = m_userManager->currentUserId();
+            m_permissionManager->bootstrapLocalAdminMachineIfNeeded(
+                fingerprint, machineUuid, QSysInfo::machineHostName(),
+                QStringLiteral("127.0.0.1"), adminUserId.value_or(-1));
+        });
     }
 
     // Initialiser le CallHistoryManager : persiste chaque appel (emis ou
@@ -1588,6 +1612,10 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         machine.setLastIpAddress(object.value(QStringLiteral("last_ip_address")).toString());
         machine.setHostname(object.value(QStringLiteral("hostname")).toString());
         machine.setAuthorized(object.value(QStringLiteral("authorized")).toBool());
+        const QString remoteStatus = object.value(QStringLiteral("status")).toString();
+        machine.setStatus(remoteStatus.isEmpty()
+            ? (machine.isAuthorized() ? models::MachineStatus::Authorized : models::MachineStatus::Revoked)
+            : remoteStatus);
         machine.setReason(object.value(QStringLiteral("reason")).toString());
         machine.setAddedAt(QDateTime::fromString(object.value(QStringLiteral("added_at")).toString(), Qt::ISODateWithMs));
         const bool applied = m_permissionManager && m_permissionManager->applyRemoteMachine(machine);

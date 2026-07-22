@@ -257,6 +257,11 @@ int main(int argc, char *argv[])
 
     core::AuthorizedMachineModel *authorizedMachineModel = new core::AuthorizedMachineModel(&engine);
     authorizedMachineModel->setPermissionManager(application.permissionManager());
+    // CORRECTIF : added_by restait fige a l'id 1, quel que soit l'admin
+    // reellement connecte qui autorise/revoque/supprime une machine depuis
+    // l'onglet "Machines autorisees". On branche desormais le UserManager
+    // pour que l'audit reflete le veritable auteur de l'action.
+    authorizedMachineModel->setUserManager(application.userManager());
     authorizedMachineModel->refresh();
     engine.rootContext()->setContextProperty("authorizedMachineModel", authorizedMachineModel);
 

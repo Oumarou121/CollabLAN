@@ -1,5 +1,6 @@
 #include "AuthorizedMachineModel.h"
 #include "PermissionManager.h"
+#include "UserManager.h"
 #include "database/Repositories/AuthorizedMachineRepository.h"
 #include "DatabaseManager.h"
 
@@ -42,6 +43,8 @@ QVariant AuthorizedMachineModel::data(const QModelIndex &index, int role) const
         return machine.hostname();
     case AuthorizedRole:
         return machine.isAuthorized();
+    case StatusRole:
+        return machine.status();
     case AddedByRole:
         return machine.addedBy().value_or(-1);
     case AddedAtRole:
@@ -63,6 +66,7 @@ QHash<int, QByteArray> AuthorizedMachineModel::roleNames() const
     roles[LastIpAddressRole] = "lastIpAddress";
     roles[HostnameRole] = "hostname";
     roles[AuthorizedRole] = "authorized";
+    roles[StatusRole] = "status";
     roles[AddedByRole] = "addedBy";
     roles[AddedAtRole] = "addedAt";
     roles[ReasonRole] = "reason";
@@ -87,11 +91,9 @@ void AuthorizedMachineModel::refresh()
 
 bool AuthorizedMachineModel::addMachine(const QString &ipAddress, const QString &hostname, const QString &reason)
 {
+    Q_UNUSED(hostname)
     if (m_permissionManager) {
-        // Obtenir l'ID de l'utilisateur courant depuis le DatabaseManager
-        // Pour l'instant, on utilise 1 comme valeur par défaut (admin)
-        const int currentUserId = 1;
-        if (m_permissionManager->authorizeMachine(ipAddress, currentUserId, reason)) {
+        if (m_permissionManager->authorizeMachine(ipAddress, currentUserId(), reason)) {
             refresh(); // Recharger depuis la base
             return true;
         }
@@ -105,8 +107,7 @@ bool AuthorizedMachineModel::revokeMachine(int id, const QString &reason)
         // Trouver l'empreinte certificat correspondant à l'ID
         for (int i = 0; i < m_machines.size(); ++i) {
             if (m_machines[i].id() == id) {
-                const int currentUserId = 1;
-                if (m_permissionManager->revokeMachineByCertificate(m_machines[i].certificateFingerprint(), currentUserId, reason)) {
+                if (m_permissionManager->revokeMachineByCertificate(m_machines[i].certificateFingerprint(), currentUserId(), reason)) {
                     refresh(); // Recharger depuis la base
                     return true;
                 }
@@ -123,8 +124,7 @@ bool AuthorizedMachineModel::authorizeMachine(int id, const QString &reason)
         // Trouver l'empreinte certificat correspondant à l'ID
         for (int i = 0; i < m_machines.size(); ++i) {
             if (m_machines[i].id() == id) {
-                const int currentUserId = 1;
-                if (m_permissionManager->authorizeExistingMachineByCertificate(m_machines[i].certificateFingerprint(), currentUserId, reason)) {
+                if (m_permissionManager->authorizeExistingMachineByCertificate(m_machines[i].certificateFingerprint(), currentUserId(), reason)) {
                     refresh(); // Recharger depuis la base
                     return true;
                 }
@@ -156,13 +156,26 @@ void AuthorizedMachineModel::setPermissionManager(core::PermissionManager *manag
     }
 }
 
+void AuthorizedMachineModel::setUserManager(QObject *manager)
+{
+    m_userManager = manager;
+}
+
+int AuthorizedMachineModel::currentUserId() const
+{
+    if (auto *manager = qobject_cast<UserManager *>(m_userManager)) {
+        return manager->currentUserId().value_or(-1);
+    }
+    return -1;
+}
+
 bool AuthorizedMachineModel::addMachineByCertificate(const QString &fingerprint, const QString &machineUuid,
                                                       const QString &ipAddress, const QString &hostname,
                                                       const QString &reason)
 {
     if (!m_permissionManager) return false;
     const bool ok = m_permissionManager->authorizeMachineByCertificate(
-        fingerprint, machineUuid, hostname, ipAddress, 1, reason);
+        fingerprint, machineUuid, hostname, ipAddress, currentUserId(), reason);
     if (ok) refresh();
     return ok;
 }

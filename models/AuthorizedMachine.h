@@ -9,7 +9,16 @@
 namespace models {
 
 /**
- * @brief Représente une machine autorisée ou révoquée dans le réseau CollabLAN (issue #68).
+ * @brief Etats possibles d'une machine dans la liste blanche (plan #71).
+ */
+namespace MachineStatus {
+inline const QString Pending = QStringLiteral("pending");
+inline const QString Authorized = QStringLiteral("authorized");
+inline const QString Revoked = QStringLiteral("revoked");
+}
+
+/**
+ * @brief Représente une machine autorisée, en attente ou révoquée dans le réseau CollabLAN (issue #68).
  */
 class AuthorizedMachine
 {
@@ -44,6 +53,17 @@ public:
     bool isAuthorized() const { return m_authorized; }
     void setAuthorized(bool authorized) { m_authorized = authorized; }
 
+    /// Etat metier (pending/authorized/revoked). Source de verite depuis la
+    /// migration 031 ; `authorized` reste synchronise pour compatibilite.
+    QString status() const { return m_status; }
+    void setStatus(const QString &status) {
+        m_status = status.isEmpty() ? MachineStatus::Authorized : status;
+        m_authorized = (m_status == MachineStatus::Authorized);
+    }
+
+    bool isPending() const { return m_status == MachineStatus::Pending; }
+    bool isRevoked() const { return m_status == MachineStatus::Revoked; }
+
     std::optional<int> addedBy() const { return m_addedBy; }
     void setAddedBy(std::optional<int> addedBy) { m_addedBy = addedBy; }
 
@@ -63,6 +83,7 @@ private:
     QString m_lastIpAddress;
     QString m_hostname;
     bool m_authorized = true;
+    QString m_status = MachineStatus::Authorized;
     std::optional<int> m_addedBy;
     QDateTime m_addedAt;
     QString m_reason;

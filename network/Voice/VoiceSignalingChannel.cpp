@@ -258,6 +258,12 @@ void VoiceSignalingChannel::onServerNewConnection()
                                   Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                   Q_ARG(QString, fingerprint));
         if (!authorized) {
+            if (!fingerprint.isEmpty()) {
+                QMetaObject::invokeMethod(m_permissionManager, "registerPendingMachineByCertificate",
+                                          Qt::DirectConnection, Q_ARG(QString, fingerprint),
+                                          Q_ARG(QString, socket->peerAddress().toString()),
+                                          Q_ARG(QString, QString()));
+            }
             socket->close();
             socket->deleteLater();
             emit error(QStringLiteral("Appel refusé : certificat distant non autorisé"));
@@ -381,6 +387,12 @@ void VoiceSignalingChannel::onTextMessageReceived(const QString &message)
         if (!authorized) {
             qWarning() << "VoiceSignalingChannel: appel refuse, empreinte annoncee non autorisee"
                        << announcedFingerprint << "peer" << peerAddress;
+            if (m_permissionManager && !announcedFingerprint.isEmpty()) {
+                QMetaObject::invokeMethod(m_permissionManager, "registerPendingMachineByCertificate",
+                                          Qt::DirectConnection, Q_ARG(QString, announcedFingerprint),
+                                          Q_ARG(QString, peerAddress.toString()),
+                                          Q_ARG(QString, QString()));
+            }
             socket->close();
             emit error(QStringLiteral("Appel refuse : certificat distant non autorise"));
             return;
