@@ -85,12 +85,19 @@ public:
     QDateTime createdAt() const { return m_createdAt; }
     void setCreatedAt(const QDateTime &dt) { m_createdAt = dt; }
 
+    /// Identifiant global (migration 032), utilise pour diffuser cette
+    /// entree entre postes (server_election_event) et l'appliquer de facon
+    /// idempotente cote reception (cf. ServerElectionRepository::applyRemoteLogEntry).
+    QString logUuid() const { return m_logUuid; }
+    void setLogUuid(const QString &uuid) { m_logUuid = uuid; }
+
 private:
     int m_id = -1;
     QString m_event;
     int m_epoch = 0;
     QString m_machineUuid;
     QDateTime m_createdAt;
+    QString m_logUuid;
 };
 
 // Constantes des événements d'historique (ServerElectionLog.event)

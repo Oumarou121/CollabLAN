@@ -4,6 +4,7 @@
 #include <QSqlQuery>
 #include <QVariant>
 #include <QDateTime>
+#include <QUuid>
 
 namespace database {
 
@@ -132,14 +133,66 @@ bool ServerElectionRepository::updatePriorityWeight(int weight)
     return true;
 }
 
-bool ServerElectionRepository::appendLogEntry(const QString &event, int epoch, const QString &machineUuid)
+bool ServerElectionRepository::appendLogEntry(const QString &event, int epoch, const QString &machineUuid,
+                                              QString *outLogUuid)
 {
+    const QString logUuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
-        "INSERT INTO ServerElectionLog (event, epoch, machine_uuid) VALUES (:event, :epoch, :uuid)"));
+        "INSERT INTO ServerElectionLog (event, epoch, machine_uuid, log_uuid) VALUES (:event, :epoch, :uuid, :logUuid)"));
     query.bindValue(QStringLiteral(":event"), event);
     query.bindValue(QStringLiteral(":epoch"), epoch);
     query.bindValue(QStringLiteral(":uuid"), machineUuid);
+    query.bindValue(QStringLiteral(":logUuid"), logUuid);
+
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    if (outLogUuid) {
+        *outLogUuid = logUuid;
+    }
+    return true;
+}
+
+bool ServerElectionRepository::applyRemoteLogEntry(const models::ServerElectionLogEntry &entry)
+{
+    if (entry.logUuid().isEmpty()) {
+        m_lastError = QStringLiteral("applyRemoteLogEntry: log_uuid manquant");
+        return false;
+    }
+
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "INSERT OR IGNORE INTO ServerElectionLog (event, epoch, machine_uuid, log_uuid, created_at) "
+        "VALUES (:event, :epoch, :uuid, :logUuid, :createdAt)"));
+    query.bindValue(QStringLiteral(":event"), entry.event());
+    query.bindValue(QStringLiteral(":epoch"), entry.epoch());
+    query.bindValue(QStringLiteral(":uuid"), entry.machineUuid());
+    query.bindValue(QStringLiteral(":logUuid"), entry.logUuid());
+    query.bindValue(QStringLiteral(":createdAt"),
+                     entry.createdAt().isValid()
+                         ? entry.createdAt().toUTC().toString(Qt::ISODate)
+                         : QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    // Meme si INSERT OR IGNORE n'a rien insere (entree deja connue), l'etat
+    // est bien celui attendu par l'appelant : ce n'est pas une erreur.
+    return true;
+}
+
+bool ServerElectionRepository::bumpEpochIfNewer(int remoteEpoch)
+{
+    ensureSingletonRow();
+
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "UPDATE ServerElection SET epoch = :epoch WHERE id = 1 AND epoch < :epoch"));
+    query.bindValue(QStringLiteral(":epoch"), remoteEpoch);
 
     if (!query.exec()) {
         m_lastError = query.lastError().text();
@@ -156,6 +209,7 @@ models::ServerElectionLogEntry ServerElectionRepository::logEntryFromQuery(const
     entry.setEpoch(query.value(QStringLiteral("epoch")).toInt());
     entry.setMachineUuid(query.value(QStringLiteral("machine_uuid")).toString());
     entry.setCreatedAt(QDateTime::fromString(query.value(QStringLiteral("created_at")).toString(), Qt::ISODate));
+    entry.setLogUuid(query.value(QStringLiteral("log_uuid")).toString());
     return entry;
 }
 

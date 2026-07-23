@@ -291,10 +291,12 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_userManager, &core::UserManager::userCreated,
             this, [this](const models::User &user) {
                 appendUserSyncLog(user, models::SyncOperation::Insert);
+                broadcastUserEvent(user, models::SyncOperation::Insert);
             });
     connect(m_userManager, &core::UserManager::userUpdated,
             this, [this](const models::User &user) {
                 appendUserSyncLog(user, models::SyncOperation::Update);
+                broadcastUserEvent(user, models::SyncOperation::Update);
             });
     connect(m_userManager, &core::UserManager::userDeleted,
             this, [this](const QString &uuid, int id) {
@@ -317,6 +319,13 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                         qWarning() << "Impossible de démarrer MessagingServer pour le rôle"
                                    << models::serverRoleToString(newRole);
                     }
+                    // Cas du tout premier poste seul sur le réseau : il démarre
+                    // Client par défaut (aucun --role forcé) puis n'est promu
+                    // Server/TempServer qu'après le délai d'élection, donc le
+                    // seed initial (initialize(), gardé par le même rôle) a été
+                    // sauté. On le retente ici ; seedDefaultAdminIfNeeded() est
+                    // un no-op si la base a entre-temps été remplie par sync.
+                    seedDefaultAdminIfNeeded();
                 } else {
                     if (m_messagingServer->isRunning()) {
                         m_messagingServer->stop();
@@ -418,9 +427,14 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
 
     connect(m_electionService, &network::ElectionService::heartbeatLost,
             this, [this]() {
-                m_serverElectionRepository->appendLogEntry(models::ServerElectionEvent::HeartbeatLost,
-                                                           m_electionService->epoch(),
-                                                           m_electionService->activeServerUuid());
+                QString logUuid;
+                const int epoch = m_electionService->epoch();
+                const QString machineUuid = m_electionService->activeServerUuid();
+                if (m_serverElectionRepository->appendLogEntry(models::ServerElectionEvent::HeartbeatLost,
+                                                                epoch, machineUuid, &logUuid)) {
+                    broadcastServerElectionEvent(logUuid, models::ServerElectionEvent::HeartbeatLost,
+                                                 epoch, machineUuid, QDateTime::currentDateTimeUtc());
+                }
             });
 
     connect(m_electionService, &network::ElectionService::serverPromoted,
@@ -429,10 +443,13 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 m_serverElectionRepository->updateActiveServer(m_electionService->activeServerAddress().toString(),
                                                                machineUuid,
                                                                QDateTime::currentDateTimeUtc());
-                m_serverElectionRepository->appendLogEntry(temporary ? models::ServerElectionEvent::TempPromoted
-                                                                      : models::ServerElectionEvent::ServerRestored,
-                                                           epoch,
-                                                           machineUuid);
+                QString logUuid;
+                const QString eventType = temporary ? models::ServerElectionEvent::TempPromoted
+                                                     : models::ServerElectionEvent::ServerRestored;
+                if (m_serverElectionRepository->appendLogEntry(eventType, epoch, machineUuid, &logUuid)) {
+                    broadcastServerElectionEvent(logUuid, eventType, epoch, machineUuid,
+                                                 QDateTime::currentDateTimeUtc());
+                }
             });
 
     connect(m_electionService, &network::ElectionService::reconciliationRequired,
@@ -492,9 +509,16 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                         m_messagingManager->receiveMessage(payload);
                     }
                 }
-                m_serverElectionRepository->appendLogEntry(models::ServerElectionEvent::ServerReconciled,
-                                                           m_electionService->epoch(),
-                                                           m_electionService->activeServerUuid());
+                {
+                    QString logUuid;
+                    const int epoch = m_electionService->epoch();
+                    const QString machineUuid = m_electionService->activeServerUuid();
+                    if (m_serverElectionRepository->appendLogEntry(models::ServerElectionEvent::ServerReconciled,
+                                                                    epoch, machineUuid, &logUuid)) {
+                        broadcastServerElectionEvent(logUuid, models::ServerElectionEvent::ServerReconciled,
+                                                     epoch, machineUuid, QDateTime::currentDateTimeUtc());
+                    }
+                }
                 // Notifier que la liste des utilisateurs a change (apres synchro)
                 // Utiliser Qt::QueuedConnection pour éviter les crashs de thread
                 if (m_userManager) {
@@ -828,31 +852,23 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             }, Qt::QueuedConnection);
 
     // Seed du compte admin par defaut (dev/demo), tant qu'aucun ecran
-    // d'inscription n'existe. Le hash est toujours produit par
-    // core::PasswordHasher (salt aleatoire) : jamais de valeur figee
-    // dans les migrations SQL.
-    if (m_userManager->allUsers().empty()) {
-        const auto admin = m_userManager->createUser(QStringLiteral("admin"), QStringLiteral("admin123"), /*isAdmin=*/true);
-        if (!admin.has_value()) {
-            qWarning() << "Impossible de creer le compte admin par defaut (code erreur :"
-                       << static_cast<int>(m_userManager->lastError()) << ")";
-        } else {
-            // CORRECTIF (root cause) : a ce stade, le role Server/TempServer
-            // de ce poste n'est pas forcement encore stabilise (ElectionService
-            // vient d'etre construit juste au-dessus mais son role effectif
-            // depend du heartbeat/de l'election), donc le signal userCreated
-            // -> appendUserSyncLog passait par shouldWriteSyncLog() et etait
-            // silencieusement ignore : admin n'etait alors JAMAIS journalise
-            // dans SyncLog. Consequence en cascade chez tout poste qui
-            // rejoint plus tard : son owner/sender uuid est introuvable
-            // localement, donc ses groupes restent differes indefiniment et
-            // ses messages sont jetes silencieusement (cf. diagnostic log
-            // "SyncLogRepository::applyGroupEntry: owner inconnu"). On force
-            // donc ici la journalisation de ce compte seed, quel que soit le
-            // role courant : c'est le tout premier utilisateur de la base et
-            // il DOIT etre connu de tout futur pair.
-            appendUserSyncLog(*admin, models::SyncOperation::Insert, /*bypassRoleCheck=*/true);
-        }
+    // d'inscription n'existe.
+    //
+    // CORRECTIF (bug "admin*conflict*<uuid>") : ce seed etait auparavant
+    // inconditionnel, execute sur CHAQUE poste (Server ET Client) des lors
+    // que sa base locale etait vide. Consequence : un Client fraichement
+    // installe se creait son propre "admin" (uuid local) AVANT meme de se
+    // synchroniser, puis recevait via sync_batch le "admin" reel du serveur
+    // -- collision de nom detectee par SyncLogRepository::applyUserEntry,
+    // qui renommait alors l'entrant en "admin*conflict*<uuid8>". Ce n'etait
+    // pas un vrai conflit concurrent, juste un artefact du bootstrap.
+    //
+    // On ne seed donc plus que si ce poste est (ou devient, cf. roleChanged
+    // plus bas) Server/TempServer : un Client recupere toujours ses comptes
+    // via synchronisation et ne doit jamais en fabriquer un localement.
+    if (effectiveElectionState.currentRole() == models::ServerRole::Server
+        || effectiveElectionState.currentRole() == models::ServerRole::TempServer) {
+        seedDefaultAdminIfNeeded();
     }
 
     // Demarre la decouverte reseau (issue #9) et branche le modele QML
@@ -1469,6 +1485,31 @@ core::sync::FolderSyncService *Application::folderSyncService() const
     return m_folderSyncService;
 }
 
+void Application::seedDefaultAdminIfNeeded()
+{
+    if (!m_userManager->allUsers().empty()) {
+        return; // deja des comptes (soit le seed a deja eu lieu, soit une
+                // synchronisation a deja rempli la base) : rien a faire.
+    }
+
+    const auto admin = m_userManager->createUser(QStringLiteral("admin"), QStringLiteral("admin123"), /*isAdmin=*/true);
+    if (!admin.has_value()) {
+        qWarning() << "Impossible de creer le compte admin par defaut (code erreur :"
+                   << static_cast<int>(m_userManager->lastError()) << ")";
+        return;
+    }
+
+    // A ce stade, le role Server/TempServer de ce poste est deja stabilise
+    // (seedDefaultAdminIfNeeded n'est appele que sous cette condition, cf.
+    // initialize() et le handler roleChanged), donc le signal userCreated
+    // -> appendUserSyncLog passerait normalement par shouldWriteSyncLog()
+    // sans probleme. On force neanmoins bypassRoleCheck=true pour couvrir
+    // le cas ou ce seed a lieu juste avant que ElectionService n'ait fini
+    // de propager son propre etat interne : c'est le tout premier
+    // utilisateur de la base et il DOIT etre connu de tout futur pair.
+    appendUserSyncLog(*admin, models::SyncOperation::Insert, /*bypassRoleCheck=*/true);
+}
+
 bool Application::shouldWriteSyncLog() const
 {
     if (!m_electionService || !m_syncLogRepository) {
@@ -1635,6 +1676,79 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         entry.setActorLabel(object.value(QStringLiteral("actor_label")).toString());
         entry.setTimestamp(QDateTime::fromString(object.value(QStringLiteral("created_at")).toString(), Qt::ISODateWithMs));
         if (m_auditManager) m_auditManager->recordRemoteEvent(entry);
+        if (relay && m_messagingServer) m_messagingServer->broadcastMessage(message);
+        return;
+    }
+
+    // Diffusion temps reel de la creation/mise a jour d'un utilisateur (type
+    // "user_event", cf. Application::broadcastUserEvent) : sans ce relais,
+    // un nouvel utilisateur cree sur un poste n'apparaissait chez les pairs
+    // deja connectes qu'a la prochaine reconciliation SyncLog, c'est-a-dire
+    // en pratique jamais avant un redemarrage de l'app (meme mecanisme que
+    // le correctif deja en place pour "group_created"/"authorized_machine_event").
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("user_event")) {
+        const QJsonObject object = document.object();
+        models::SyncLogEntry entry;
+        entry.setTableName(QStringLiteral("Users"));
+        entry.setRecordUuid(object.value(QStringLiteral("recordUuid")).toString());
+        entry.setOperation(object.value(QStringLiteral("operation")).toString());
+        entry.setOriginMachineId(object.value(QStringLiteral("originMachineId")).toString());
+        // payload : reutilise exactement les memes champs (name/ipAddress/
+        // status/role/passwordHash/passwordSalt/updatedAt) que
+        // Application::appendUserSyncLog, afin que
+        // SyncLogRepository::applyUserEntry (deja idempotent et dote de la
+        // logique anti-collision de nom) puisse s'appliquer telle quelle.
+        QJsonObject payload = object;
+        payload.remove(QStringLiteral("type"));
+        payload.remove(QStringLiteral("recordUuid"));
+        payload.remove(QStringLiteral("operation"));
+        payload.remove(QStringLiteral("originMachineId"));
+        entry.setPayloadJson(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+
+        const bool applied = m_syncLogRepository && m_syncLogRepository->applyUserEntry(entry);
+        if (applied && m_userManager) {
+            // Qt::QueuedConnection : meme precaution que pour
+            // reconciliationCompleted plus haut, applyUserEntry() peut etre
+            // appele depuis le thread reseau.
+            QMetaObject::invokeMethod(m_userManager, [this]() {
+                m_userManager->emitUsersChanged();
+            }, Qt::QueuedConnection);
+        } else if (!applied) {
+            qWarning() << "handleIncomingPayload: echec application user_event"
+                       << (m_syncLogRepository ? m_syncLogRepository->lastError() : QStringLiteral("(pas de SyncLogRepository)"));
+        }
+        if (relay && m_messagingServer) m_messagingServer->broadcastMessage(message);
+        return;
+    }
+
+    // Diffusion temps reel des entrees ServerElectionLog (type
+    // "server_election_event", cf. Application::broadcastServerElectionEvent) :
+    // corrige la divergence silencieuse entre instances de ServerElection/
+    // ServerElectionLog (celles-ci n'etaient jusque-la jamais repliquees,
+    // contrairement a Users/Groups/AuthorizedMachines/AuditLogs).
+    // applyRemoteLogEntry est idempotent sur log_uuid (rejeu/relais en
+    // etoile sans risque de doublon). bumpEpochIfNewer n'ecrase jamais
+    // current_role : le role de CE poste reste determine localement par son
+    // propre ElectionService, jamais copie depuis un pair.
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("server_election_event")) {
+        const QJsonObject object = document.object();
+        models::ServerElectionLogEntry entry;
+        entry.setLogUuid(object.value(QStringLiteral("log_uuid")).toString());
+        entry.setEvent(object.value(QStringLiteral("event")).toString());
+        entry.setEpoch(object.value(QStringLiteral("epoch")).toInt());
+        entry.setMachineUuid(object.value(QStringLiteral("machine_uuid")).toString());
+        entry.setCreatedAt(QDateTime::fromString(object.value(QStringLiteral("created_at")).toString(), Qt::ISODate));
+
+        const bool applied = m_serverElectionRepository && m_serverElectionRepository->applyRemoteLogEntry(entry);
+        if (applied && m_serverElectionRepository) {
+            m_serverElectionRepository->bumpEpochIfNewer(entry.epoch());
+        } else if (!applied) {
+            qWarning() << "handleIncomingPayload: echec application server_election_event"
+                       << (m_serverElectionRepository ? m_serverElectionRepository->lastError()
+                                                        : QStringLiteral("(pas de ServerElectionRepository)"));
+        }
         if (relay && m_messagingServer) m_messagingServer->broadcastMessage(message);
         return;
     }
@@ -1831,6 +1945,92 @@ void Application::appendUserSyncLog(const models::User &user, const QString &ope
                        operation,
                        QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)),
                        bypassRoleCheck);
+}
+
+void Application::broadcastUserEvent(const models::User &user, const QString &operation)
+{
+    if (user.uuid().isEmpty()) {
+        qWarning() << "broadcastUserEvent : utilisateur sans uuid, diffusion ignoree" << user.name();
+        return;
+    }
+    if (!m_messagingService && !m_messagingServer) {
+        return;
+    }
+
+    // Memes champs que appendUserSyncLog (cf. juste au-dessus), afin que
+    // handleIncomingPayload() puisse construire un models::SyncLogEntry et
+    // le passer tel quel a SyncLogRepository::applyUserEntry cote reception.
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("user_event"));
+    payload.insert(QStringLiteral("recordUuid"), user.uuid());
+    payload.insert(QStringLiteral("operation"), operation);
+    payload.insert(QStringLiteral("originMachineId"),
+                   m_electionService ? m_electionService->localMachineUuid() : QString());
+    payload.insert(QStringLiteral("name"), user.name());
+    payload.insert(QStringLiteral("ipAddress"), user.ipAddress());
+    payload.insert(QStringLiteral("status"), models::userStatusToString(user.status()));
+    payload.insert(QStringLiteral("role"), models::userRoleToString(user.role()));
+    payload.insert(QStringLiteral("passwordHash"), user.passwordHash());
+    payload.insert(QStringLiteral("passwordSalt"), user.passwordSalt());
+    payload.insert(QStringLiteral("updatedAt"),
+                   user.updatedAt().isValid()
+                       ? user.updatedAt().toUTC().toString(Qt::ISODate)
+                       : QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+
+    const QString jsonMessage = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+
+    // Envoi sur les deux canaux (cf. GroupManager::createGroup) : ce poste
+    // peut etre le SERVER actif (m_messagingServer diffuse alors directement
+    // a tous les clients connectes) OU un simple CLIENT (seul
+    // m_messagingService, la connexion sortante vers le SERVER, permet
+    // alors de faire parvenir l'evenement a qui que ce soit).
+    if (m_messagingService && m_messagingService->isConnected()) {
+        m_messagingService->sendMessage(jsonMessage);
+    }
+    if (m_messagingServer) {
+        m_messagingServer->broadcastMessage(jsonMessage);
+    }
+}
+
+void Application::broadcastServerElectionEvent(const QString &logUuid, const QString &event, int epoch,
+                                                const QString &machineUuid, const QDateTime &createdAt)
+{
+    if (logUuid.isEmpty()) {
+        qWarning() << "broadcastServerElectionEvent : log_uuid manquant, diffusion ignoree" << event;
+        return;
+    }
+    if (!m_messagingService && !m_messagingServer) {
+        return;
+    }
+
+    // Memes champs que models::ServerElectionLogEntry, afin que
+    // handleIncomingPayload() puisse reconstruire l'entree telle quelle et
+    // la passer a ServerElectionRepository::applyRemoteLogEntry (idempotent
+    // sur log_uuid, cf. migration 032) cote reception.
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("server_election_event"));
+    payload.insert(QStringLiteral("log_uuid"), logUuid);
+    payload.insert(QStringLiteral("event"), event);
+    payload.insert(QStringLiteral("epoch"), epoch);
+    payload.insert(QStringLiteral("machine_uuid"), machineUuid);
+    payload.insert(QStringLiteral("created_at"),
+                   createdAt.isValid()
+                       ? createdAt.toUTC().toString(Qt::ISODate)
+                       : QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+
+    const QString jsonMessage = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+
+    // Envoi sur les deux canaux (cf. broadcastUserEvent) : ce poste peut
+    // etre le SERVER actif (m_messagingServer diffuse alors directement a
+    // tous les clients connectes) OU un simple CLIENT/TEMP_SERVER (seul
+    // m_messagingService, la connexion sortante vers le SERVER, permet
+    // alors de faire parvenir l'evenement a qui que ce soit).
+    if (m_messagingService && m_messagingService->isConnected()) {
+        m_messagingService->sendMessage(jsonMessage);
+    }
+    if (m_messagingServer) {
+        m_messagingServer->broadcastMessage(jsonMessage);
+    }
 }
 
 network::DiscoveryService *Application::discoveryService() const

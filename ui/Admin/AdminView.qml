@@ -599,7 +599,7 @@ Item {
 
                         readonly property int columns: width > 900 ? 3 : (width > 560 ? 2 : 1)
                         cellWidth: width / columns
-                        cellHeight: 200
+                        cellHeight: 270
 
                         delegate: Item {
                             width: machinesGrid.cellWidth
@@ -711,7 +711,7 @@ Item {
 
                                     Item { Layout.fillHeight: true }
 
-                                    RowLayout {
+                                    ColumnLayout {
                                         Layout.fillWidth: true
                                         spacing: Theme.spacingSmall
 
@@ -729,20 +729,27 @@ Item {
                                             }
                                         }
 
-                                        AppButton {
-                                            variant: "secondary"
-                                            text: qsTr("Copier")
-                                            onClicked: {
-                                                fingerprintCopyField.text = model.certificateFingerprint
-                                                fingerprintCopyField.selectAll()
-                                                fingerprintCopyField.copy()
-                                            }
-                                        }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: Theme.spacingSmall
 
-                                        AppButton {
-                                            variant: "danger"
-                                            text: qsTr("Supprimer")
-                                            onClicked: authorizedMachineModel.removeMachine(model.id)
+                                            AppButton {
+                                                variant: "secondary"
+                                                Layout.fillWidth: true
+                                                text: qsTr("Copier")
+                                                onClicked: {
+                                                    fingerprintCopyField.text = model.certificateFingerprint
+                                                    fingerprintCopyField.selectAll()
+                                                    fingerprintCopyField.copy()
+                                                }
+                                            }
+
+                                            AppButton {
+                                                variant: "danger"
+                                                Layout.fillWidth: true
+                                                text: qsTr("Supprimer")
+                                                onClicked: authorizedMachineModel.removeMachine(model.id)
+                                            }
                                         }
                                     }
 
@@ -948,35 +955,42 @@ Item {
             Layout.fillHeight: true
             visible: root.currentTab === 3
 
-            ColumnLayout {
-                width: Math.min(parent.width - 2 * Theme.spacingLarge, 1200)
-                height: parent.height - Theme.spacingLarge
-                x: (parent.width - width) / 2
-                y: Theme.spacingMedium
-                spacing: Theme.spacingMedium
+ColumnLayout {
+    width: Math.min(parent.width - 2 * Theme.spacingLarge, 1200)
+    height: parent.height - Theme.spacingLarge
+    x: (parent.width - width) / 2
+    y: Theme.spacingMedium
+    spacing: Theme.spacingMedium
 
-                Label {
-                    text: qsTr("Historique des bascules")
-                    font.pixelSize: Theme.fontSizeHeading
-                    font.bold: true
-                    font.family: Theme.fontFamily
-                    color: Theme.text
-                }
+    // Bloc titre + sous-titre : espacement resserré, indépendant
+    // du spacing du ColumnLayout externe.
+    ColumnLayout {
+        Layout.fillWidth: true
+        spacing: Theme.spacingXs
 
-                Label {
-                    text: qsTr("Chaque ligne correspond à un événement du protocole d'élection (perte de heartbeat, promotion en serveur de secours, réconciliation, reprise du serveur officiel).")
-                    color: Theme.textSecondary
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.family: Theme.fontFamily
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                }
+        Label {
+            text: qsTr("Historique des bascules")
+            font.pixelSize: Theme.fontSizeHeading
+            font.bold: true
+            font.family: Theme.fontFamily
+            color: Theme.text
+        }
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 1
-                    color: Theme.border
-                }
+        Label {
+            text: qsTr("Chaque ligne correspond à un événement du protocole d'élection (perte de heartbeat, promotion en serveur de secours, réconciliation, reprise du serveur officiel).")
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            font.family: Theme.fontFamily
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
+    }
+
+    Rectangle {
+        Layout.fillWidth: true
+        Layout.preferredHeight: 1
+        color: Theme.border
+    }
 
                 ColumnLayout {
                     visible: root.electionHistoryEntries.length === 0
@@ -1280,11 +1294,17 @@ Item {
         id: addUserDialog
         title: qsTr("Ajouter un utilisateur")
         headerIcon: "\uf234"
-        dialogWidth: 340
+        dialogWidth: 380
+        dialogHeight: 440
 
-        ColumnLayout {
+        ScrollView {
             anchors.fill: parent
-            spacing: Theme.spacingSmall
+            clip: true
+            contentWidth: availableWidth
+
+            ColumnLayout {
+                width: parent.width
+                spacing: Theme.spacingSmall
 
             Label {
                 text: qsTr("Nom d'utilisateur")
@@ -1380,6 +1400,7 @@ Item {
                     }
                 }
             }
+        }
         }
     }
 

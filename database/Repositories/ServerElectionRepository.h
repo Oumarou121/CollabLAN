@@ -52,8 +52,34 @@ public:
 
     /**
      * @brief Ajoute une entrée à l'historique des bascules (ServerElectionLog).
+     *
+     * Genere un log_uuid pour cette entree (migration 032) et le renvoie via
+     * outLogUuid si non nul, afin que l'appelant (Application::) puisse
+     * diffuser exactement la meme entree aux autres postes
+     * (server_election_event) -- sans quoi chaque machine ne voit que sa
+     * propre vue locale de l'historique des bascules.
      */
-    bool appendLogEntry(const QString &event, int epoch, const QString &machineUuid);
+    bool appendLogEntry(const QString &event, int epoch, const QString &machineUuid,
+                        QString *outLogUuid = nullptr);
+
+    /**
+     * @brief Applique une entree d'historique recue d'un autre poste
+     *        (Application::handleIncomingPayload, type "server_election_event").
+     *
+     * Idempotent : une entree deja connue (meme log_uuid) est ignoree
+     * silencieusement (comptee comme un succes), pour supporter les rejeux
+     * (reconnexion, relais en etoile).
+     */
+    bool applyRemoteLogEntry(const models::ServerElectionLogEntry &entry);
+
+    /**
+     * @brief Aligne l'epoch local sur celui d'un pair si celui-ci est plus
+     *        recent (jamais de retour en arriere), sans toucher a
+     *        current_role : le role de CE poste reste determine
+     *        localement par son propre ElectionService (heartbeats /
+     *        election), jamais copie depuis un pair.
+     */
+    bool bumpEpochIfNewer(int remoteEpoch);
 
     /**
      * @brief Historique des bascules, du plus récent au plus ancien (pour AdminView.qml).

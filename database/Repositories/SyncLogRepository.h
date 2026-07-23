@@ -93,13 +93,20 @@ public:
     qint64 ensureConversationByUuid(const QString &conversationUuid, const QString &type, const QString &name,
                                      qint64 participant1Id = -1, qint64 participant2Id = -1);
 
+    /**
+     * @brief Applique une entree SyncLog de type utilisateur (idempotente,
+     *        avec logique anti-collision de nom). Utilisee en interne par
+     *        applyBatch(), et directement par Application pour appliquer
+     *        une entree utilisateur unique recue hors reconciliation batch.
+     */
+    bool applyUserEntry(const models::SyncLogEntry &entry);
+
 private:
     models::SyncLogEntry entryFromQuery(const QSqlQuery &query) const;
     bool applyDomainEntry(const models::SyncLogEntry &entry);
     bool applyMessageEntry(const models::SyncLogEntry &entry);
     bool applyGroupEntry(const models::SyncLogEntry &entry);
     bool applyGroupMemberEntry(const models::SyncLogEntry &entry);
-    bool applyUserEntry(const models::SyncLogEntry &entry);
 
     QSqlDatabase m_db;
     mutable QString m_lastError;

@@ -6,6 +6,7 @@
 #include <QStringList>
 #include <QVariant>
 #include <QSet>
+#include <QDateTime>
 #include <memory>
 
 namespace database {
@@ -190,6 +191,38 @@ public:
     database::DatabaseManager *databaseManager() const;
 
 private:
+    /// Cree le compte "admin" par defaut (dev/demo) si la base est vide et
+    /// que ce poste est (ou devient) Server/TempServer. Ne doit JAMAIS etre
+    /// appele pour un poste Client : celui-ci recupere systematiquement les
+    /// comptes existants via synchronisation, et un seed local ferait
+    /// collision avec le compte "admin" reel du serveur (rejeu renomme en
+    /// "admin*conflict*<uuid>", cf. SyncLogRepository::applyUserEntry).
+    /// Idempotent (relit allUsers() a chaque appel).
+    void seedDefaultAdminIfNeeded();
+
+    /// Diffuse en temps reel (type "user_event") la creation/mise a jour
+    /// d'un utilisateur a tous les postes actuellement connectes, plutot
+    /// que d'attendre la prochaine reconciliation SyncLog (qui ne se
+    /// declenche qu'a la (re)connexion -- cf. appendUserSyncLog, qui ne
+    /// fait que journaliser pour un rejeu differe). Meme principe que
+    /// GroupManager::createGroup pour "group_created" : envoi sur les deux
+    /// canaux (m_messagingService sortant + m_messagingServer entrant), le
+    /// createur pouvant etre SERVER ou simple CLIENT.
+    void broadcastUserEvent(const models::User &user, const QString &operation);
+
+    /// Diffuse en temps reel (type "server_election_event") une entree
+    /// d'historique ServerElectionLog (log_uuid, event, epoch, machineUuid)
+    /// a tous les postes actuellement connectes, afin que ServerElection/
+    /// ServerElectionLog ne divergent plus silencieusement entre instances
+    /// (cf. HYBRID_SERVER_FAILOVER.md). Meme principe que broadcastUserEvent :
+    /// envoi sur les deux canaux (m_messagingService sortant + m_messagingServer
+    /// entrant), et reception geree dans handleIncomingPayload() via
+    /// ServerElectionRepository::applyRemoteLogEntry (idempotent sur log_uuid)
+    /// + ServerElectionRepository::bumpEpochIfNewer (jamais de retour en
+    /// arriere sur l'epoch local, current_role jamais copie depuis un pair).
+    void broadcastServerElectionEvent(const QString &logUuid, const QString &event, int epoch,
+                                      const QString &machineUuid, const QDateTime &createdAt);
+
     bool shouldWriteSyncLog() const;
     void appendSyncLogEntry(const QString &tableName, const QString &recordUuid,
                             const QString &operation, const QString &payloadJson,
