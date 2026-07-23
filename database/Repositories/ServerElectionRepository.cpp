@@ -231,6 +231,25 @@ std::vector<models::ServerElectionLogEntry> ServerElectionRepository::logHistory
     return entries;
 }
 
+std::vector<models::ServerElectionLogEntry> ServerElectionRepository::entriesSinceEpoch(int fromEpoch) const
+{
+    std::vector<models::ServerElectionLogEntry> entries;
+
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "SELECT * FROM ServerElectionLog WHERE epoch >= :fromEpoch ORDER BY id ASC"));
+    query.bindValue(QStringLiteral(":fromEpoch"), fromEpoch);
+
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return entries;
+    }
+    while (query.next()) {
+        entries.push_back(logEntryFromQuery(query));
+    }
+    return entries;
+}
+
 QString ServerElectionRepository::lastError() const
 {
     return m_lastError;

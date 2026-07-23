@@ -205,6 +205,10 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     m_syncService = new network::SyncService(m_syncLogRepository.get(), this);
     m_syncService->setMessagingServer(m_messagingServer);
     m_syncService->setMessagingService(m_messagingService);
+    // Permet au sync_batch de rattraper aussi ServerElectionLog (entrees
+    // jamais recues via broadcastServerElectionEvent faute de pair connecte
+    // au bon moment, cf. HYBRID_SERVER_FAILOVER.md section 7.2).
+    m_syncService->setServerElectionRepository(m_serverElectionRepository.get());
 
     connect(m_messagingManager, &core::MessagingManager::messageSent,
             this, &Application::appendMessageSyncLog);
@@ -443,6 +447,29 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 m_serverElectionRepository->updateActiveServer(m_electionService->activeServerAddress().toString(),
                                                                machineUuid,
                                                                QDateTime::currentDateTimeUtc());
+
+                // CORRECTIF (divergence ServerElectionLog, cf. analyse CSV
+                // instance1/instance2) : ElectionService::serverPromoted est
+                // emis a la fois par le poste qui SE promeut localement
+                // (enterServerRole) et par tout poste Client qui recoit le
+                // paquet reseau server_promoted d'un pair. Journaliser+diffuser
+                // dans les deux cas fait que chaque instance cree sa PROPRE
+                // entree locale (log_uuid distinct) pour le meme evenement
+                // logique, avant meme que la replication reseau n'ait eu
+                // l'occasion de faire son travail -- applyRemoteLogEntry ne
+                // peut alors plus dedupliquer puisque les uuid divergent des
+                // la generation (cas SERVER_RESTORED observe sur les deux
+                // instances avec epoch/machineUuid identiques mais log_uuid
+                // ade3e1b6... vs e9f246d4...).
+                // Seul le poste qui EST machineUuid (l'auteur reel de la
+                // promotion) doit ecrire+diffuser l'entree ; les autres
+                // postes la recoivent exclusivement via applyRemoteLogEntry
+                // (handleIncomingPayload), qui reste la seule source de
+                // verite chez eux pour cet evenement.
+                if (machineUuid != m_electionService->localMachineUuid()) {
+                    return;
+                }
+
                 QString logUuid;
                 const QString eventType = temporary ? models::ServerElectionEvent::TempPromoted
                                                      : models::ServerElectionEvent::ServerRestored;

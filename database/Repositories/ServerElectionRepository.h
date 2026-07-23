@@ -86,6 +86,21 @@ public:
      */
     std::vector<models::ServerElectionLogEntry> logHistory(int limit = 100) const;
 
+    /**
+     * @brief Entrées ServerElectionLog dont l'epoch est >= fromEpoch, triées
+     *        du plus ancien au plus récent (ordre chronologique, contrairement
+     *        à logHistory()).
+     *
+     * Utilisé par SyncService lors de la réconciliation post-panne pour
+     * rattraper les entrées qui n'ont jamais pu être diffusées en temps réel
+     * (ex : HEARTBEAT_LOST/TEMP_PROMOTED émis alors que le pair n'était pas
+     * encore reconnecté, cf. HYBRID_SERVER_FAILOVER.md section 7.2) — le même
+     * principe que SyncLogRepository::entriesSinceEpoch pour les autres
+     * tables, ServerElectionLog n'étant jusqu'ici couvert par aucun mécanisme
+     * de rattrapage.
+     */
+    std::vector<models::ServerElectionLogEntry> entriesSinceEpoch(int fromEpoch) const;
+
     QString lastError() const;
 
 private:

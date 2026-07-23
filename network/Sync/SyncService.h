@@ -7,6 +7,7 @@
 
 namespace database {
 class SyncLogRepository;
+class ServerElectionRepository;
 }
 
 namespace network {
@@ -52,6 +53,14 @@ public:
     /// Branche le MessagingService local (cote SERVER officiel, pour demander/recevoir la reconciliation).
     void setMessagingService(MessagingService *service);
 
+    /// Branche le ServerElectionRepository local (optionnel) afin que le
+    /// sync_batch echange aussi les entrees ServerElectionLog manquees
+    /// (HEARTBEAT_LOST/TEMP_PROMOTED/SERVER_RESTORED/SERVER_RECONCILED dont
+    /// le broadcast temps reel n'a pas pu atteindre le pair, cf. Application::
+    /// broadcastServerElectionEvent). Sans repository branche, le sync_batch
+    /// se comporte comme avant (SyncLogRepository seul).
+    void setServerElectionRepository(database::ServerElectionRepository *repository);
+
     /**
      * @brief A appeler par le SERVER officiel une fois connecte au TEMP_SERVER
      *        (MessagingService::connectToHost() deja effectue par l'appelant).
@@ -80,6 +89,7 @@ private slots:
 
 private:
     database::SyncLogRepository *m_repository = nullptr;
+    database::ServerElectionRepository *m_electionRepository = nullptr;
     MessagingServer *m_messagingServer = nullptr;
     MessagingService *m_messagingService = nullptr;
 };
