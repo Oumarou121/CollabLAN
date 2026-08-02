@@ -285,6 +285,27 @@ public slots:
     void onConnectedToServer();
 
     /**
+     * @brief Retente la diffusion de toute opération locale déjà journalisée
+     *        mais jamais réellement livrée à un pair (cf. correctif
+     *        broadcastMessage() : un SERVER dont isRunning() est vrai mais
+     *        qui n'a AUCUN client connecté au moment de l'appel ne fait
+     *        plus avancer le curseur m_lastBroadcastOpIdByFolder -- mais
+     *        sans nouvel appui, ces opérations restaient bloquées jusqu'à
+     *        la PROCHAINE modification locale, potentiellement jamais si
+     *        le dossier n'est plus retouché).
+     *
+     * À connecter sur MessagingServer::clientConnected (un pair vient de se
+     * connecter à nous, SERVER) et sur MessagingService::connected (nous
+     * venons de nous reconnecter à un SERVER, CLIENT) : dans les deux cas,
+     * un canal de diffusion vient de (re)devenir disponible, donc c'est le
+     * bon moment pour retenter les opérations en attente de TOUS les
+     * dossiers d'origine locale, sans attendre un hypothétique futur
+     * changement de fichier. Réutilise onLocalFolderReindexed() (idempotent :
+     * ne fait rien si aucune opération n'est en retard pour un dossier).
+     */
+    void retryPendingBroadcasts();
+
+    /**
      * @brief À connecter sur TransferService::transferStarted (Release 8).
      * Corrèle le transferKey avec la PendingFileTransfer correspondante.
      */

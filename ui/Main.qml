@@ -9,6 +9,7 @@ import "FileTransfer"
 import "Call"
 import "Admin"
 import "Settings"
+import "About"
 import "SharedFolder"
 import "Components"
 
@@ -197,6 +198,9 @@ ApplicationWindow {
             onSharedFoldersRequested: {
                 stackView.push(sharedFolderViewComponent)
             }
+            onAboutRequested: {
+                stackView.push(aboutViewComponent)
+            }
         }
     }
 
@@ -235,6 +239,16 @@ ApplicationWindow {
         id: settingsViewComponent
 
         SettingsView {
+            onBackRequested: {
+                stackView.pop()
+            }
+        }
+    }
+
+    Component {
+        id: aboutViewComponent
+
+        AboutView {
             onBackRequested: {
                 stackView.pop()
             }

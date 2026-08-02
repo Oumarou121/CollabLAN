@@ -35,6 +35,7 @@ Item {
     signal adminRequested()
     signal settingsRequested()
     signal sharedFoldersRequested()
+    signal aboutRequested()
 
     // Nombre de postes detectes sur le reseau local (network::PeersModel,
     // cf. app/main.cpp). Repli a 0 en contexte preview/design sans backend.
@@ -429,6 +430,43 @@ Item {
                                     onClicked: {
                                         menuPopup.close()
                                         root.settingsRequested()
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 1
+                                color: Theme.border
+                            }
+
+                            // Acces a l'ecran "A propos" (nom/version de
+                            // l'application, editeur NEXIS, fonctionnalites).
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 38
+                                radius: Theme.radiusSmall
+                                color: aboutArea.containsMouse ? Theme.surfaceHover : "transparent"
+                                Behavior on color { ColorAnimation { duration: 150 } }
+
+                                Label {
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.leftMargin: Theme.spacingSmall
+                                    text: qsTr("À propos")
+                                    color: Theme.text
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.family: Theme.fontFamily
+                                }
+
+                                MouseArea {
+                                    id: aboutArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        menuPopup.close()
+                                        root.aboutRequested()
                                     }
                                 }
                             }

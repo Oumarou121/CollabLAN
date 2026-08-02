@@ -1198,9 +1198,14 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_syncEngine, &core::sync::SyncEngine::folderReindexed,
             m_folderSyncService, &core::sync::FolderSyncService::onLocalFolderReindexed);
 
-    // Connecter folderCreated pour démarrer la surveillance des dossiers locaux
-    connect(m_sharedFolderManager, &core::SharedFolderManager::folderCreated,
-            m_syncEngine, &core::sync::SyncEngine::onFolderCreated);
+    // NB : folderCreated -> SyncEngine::onFolderCreated (démarre la
+    // surveillance d'un nouveau dossier partagé local) est déjà câblé à
+    // l'intérieur même du constructeur de SyncEngine (cf. SyncEngine.cpp) --
+    // pas besoin de le refaire ici. Un doublon existait à cet endroit
+    // (le même signal connecté deux fois au même slot, donc onFolderCreated()
+    // s'exécutait deux fois par création de dossier) ; retiré, sans effet
+    // fonctionnel puisque watchFolder()/reindexFolder() sont idempotents,
+    // mais inutilement coûteux et trompeur à la lecture.
 
     // Connecter folderRemoved pour arrêter la surveillance
     connect(m_sharedFolderManager, &core::SharedFolderManager::folderRemoved,
@@ -1300,6 +1305,20 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // pour récupérer les opérations manquées (rattrapage hors-ligne).
     connect(m_messagingService, &network::MessagingService::connected,
             m_folderSyncService, &core::sync::FolderSyncService::onConnectedToServer);
+
+    // CORRECTIF (bug "l'émetteur ne transmet pas ses changements au
+    // destinataire") : dès qu'un canal de diffusion (re)devient disponible
+    // -- un client se connecte à nous (SERVER), ou nous nous reconnectons à
+    // un SERVER (CLIENT) -- on retente toute opération locale restée
+    // bloquée faute de destinataire au moment de sa diffusion initiale (cf.
+    // FolderSyncService::broadcastMessage()/retryPendingBroadcasts()). Sans
+    // ce câblage, une telle opération ne pouvait être rattrapée qu'en
+    // modifiant à nouveau un fichier du même dossier (nouveau
+    // folderReindexed), potentiellement jamais.
+    connect(m_messagingServer, &network::MessagingServer::clientConnected,
+            m_folderSyncService, &core::sync::FolderSyncService::retryPendingBroadcasts);
+    connect(m_messagingService, &network::MessagingService::connected,
+            m_folderSyncService, &core::sync::FolderSyncService::retryPendingBroadcasts);
 
     // Release 8 : intégration des fichiers reçus dans les dossiers partagés.
     // transferStarted permet de corréler le transferKey avec la demande en attente ;

@@ -349,6 +349,40 @@ Item {
                                     border.width: 1
                                     border.color: Theme.border
                                 }
+                                delegate: ItemDelegate {
+                                    width: eventTypeFilter.width
+                                    highlighted: eventTypeFilter.highlightedIndex === index
+                                    background: Rectangle {
+                                        color: eventTypeFilter.highlightedIndex === index ? Theme.primaryMuted
+                                               : (hovered ? Theme.surfaceHover : Theme.surface)
+                                    }
+                                    contentItem: Label {
+                                        text: modelData
+                                        color: Theme.text
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        verticalAlignment: Text.AlignVCenter
+                                        leftPadding: Theme.spacingSmall
+                                    }
+                                }
+                                popup: Popup {
+                                    y: eventTypeFilter.height
+                                    width: eventTypeFilter.width
+                                    implicitHeight: contentItem.implicitHeight
+                                    padding: 1
+                                    contentItem: ListView {
+                                        clip: true
+                                        implicitHeight: contentHeight
+                                        model: eventTypeFilter.popup.visible ? eventTypeFilter.delegateModel : null
+                                        currentIndex: eventTypeFilter.highlightedIndex
+                                        ScrollIndicator.vertical: ScrollIndicator { }
+                                    }
+                                    background: Rectangle {
+                                        color: Theme.surface
+                                        border.width: 1
+                                        border.color: Theme.border
+                                        radius: Theme.radiusMedium
+                                    }
+                                }
                                 onCurrentTextChanged: {
                                     if (currentIndex === 0)
                                         auditLogModel.clearFilters()
@@ -1151,12 +1185,60 @@ ColumnLayout {
 
             ComboBox {
                 id: detectedMachineSelector
+                palette.window: Theme.surface
+                palette.base: Theme.surfaceAlt
+                palette.button: Theme.surfaceAlt
+                palette.text: Theme.text
+                palette.buttonText: Theme.text
+                palette.highlight: Theme.primary
+                palette.highlightedText: Theme.primaryText
                 Layout.fillWidth: true
                 model: (typeof discoveryService !== "undefined" && discoveryService)
                        ? discoveryService.machineCandidates() : []
                 textRole: "name"
                 displayText: currentIndex >= 0 && currentIndex < count
                              ? (model[currentIndex].name + " — " + model[currentIndex].ip) : qsTr("Sélectionner un poste détecté")
+                background: Rectangle {
+                    radius: Theme.radiusMedium
+                    color: Theme.background
+                    border.width: 1
+                    border.color: Theme.border
+                }
+                delegate: ItemDelegate {
+                    width: detectedMachineSelector.width
+                    highlighted: detectedMachineSelector.highlightedIndex === index
+                    background: Rectangle {
+                        color: detectedMachineSelector.highlightedIndex === index ? Theme.primaryMuted
+                               : (hovered ? Theme.surfaceHover : Theme.surface)
+                    }
+                    contentItem: Label {
+                        text: modelData.name + " — " + modelData.ip
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                        verticalAlignment: Text.AlignVCenter
+                        leftPadding: Theme.spacingSmall
+                        elide: Text.ElideRight
+                    }
+                }
+                popup: Popup {
+                    y: detectedMachineSelector.height
+                    width: detectedMachineSelector.width
+                    implicitHeight: contentItem.implicitHeight
+                    padding: 1
+                    contentItem: ListView {
+                        clip: true
+                        implicitHeight: contentHeight
+                        model: detectedMachineSelector.popup.visible ? detectedMachineSelector.delegateModel : null
+                        currentIndex: detectedMachineSelector.highlightedIndex
+                        ScrollIndicator.vertical: ScrollIndicator { }
+                    }
+                    background: Rectangle {
+                        color: Theme.surface
+                        border.width: 1
+                        border.color: Theme.border
+                        radius: Theme.radiusMedium
+                    }
+                }
                 onActivated: {
                     const candidate = model[index]
                     if (!candidate) return
@@ -1374,6 +1456,40 @@ ColumnLayout {
                     color: Theme.background
                     border.width: 1
                     border.color: Theme.border
+                }
+                delegate: ItemDelegate {
+                    width: newUserRole.width
+                    highlighted: newUserRole.highlightedIndex === index
+                    background: Rectangle {
+                        color: newUserRole.highlightedIndex === index ? Theme.primaryMuted
+                               : (hovered ? Theme.surfaceHover : Theme.surface)
+                    }
+                    contentItem: Label {
+                        text: modelData
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                        verticalAlignment: Text.AlignVCenter
+                        leftPadding: Theme.spacingSmall
+                    }
+                }
+                popup: Popup {
+                    y: newUserRole.height
+                    width: newUserRole.width
+                    implicitHeight: contentItem.implicitHeight
+                    padding: 1
+                    contentItem: ListView {
+                        clip: true
+                        implicitHeight: contentHeight
+                        model: newUserRole.popup.visible ? newUserRole.delegateModel : null
+                        currentIndex: newUserRole.highlightedIndex
+                        ScrollIndicator.vertical: ScrollIndicator { }
+                    }
+                    background: Rectangle {
+                        color: Theme.surface
+                        border.width: 1
+                        border.color: Theme.border
+                        radius: Theme.radiusMedium
+                    }
                 }
             }
 

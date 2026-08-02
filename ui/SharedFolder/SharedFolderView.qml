@@ -570,8 +570,29 @@ Item {
                         spacing: Theme.spacingSmall
 
                         CheckBox {
+                            id: userCheckBox
                             checked: selected
                             onCheckedChanged: availableUsersModel.setProperty(index, "selected", checked)
+
+                            indicator: Rectangle {
+                                implicitWidth: 18
+                                implicitHeight: 18
+                                x: userCheckBox.leftPadding
+                                y: (userCheckBox.height - height) / 2
+                                radius: Theme.radiusSmall
+                                color: userCheckBox.checked ? Theme.primary : Theme.surface
+                                border.width: 1
+                                border.color: userCheckBox.checked ? Theme.primary : Theme.border
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "\u2713"
+                                    visible: userCheckBox.checked
+                                    color: Theme.primaryText
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                            }
                         }
                         Label {
                             Layout.fillWidth: true
@@ -601,6 +622,25 @@ Item {
                     verticalAlignment: Text.AlignVCenter
                     color: Theme.text
                     font.pixelSize: Theme.fontSizeSmall
+                }
+                indicator: Rectangle {
+                    implicitWidth: 18
+                    implicitHeight: 18
+                    x: allowWriteCheckBox.leftPadding
+                    y: (allowWriteCheckBox.height - height) / 2
+                    radius: Theme.radiusSmall
+                    color: allowWriteCheckBox.checked ? Theme.primary : Theme.surface
+                    border.width: 1
+                    border.color: allowWriteCheckBox.checked ? Theme.primary : Theme.border
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\u2713"
+                        visible: allowWriteCheckBox.checked
+                        color: Theme.primaryText
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
                 }
             }
 
@@ -1273,6 +1313,25 @@ Item {
                         color: Theme.text
                         font.pixelSize: Theme.fontSizeSmall
                     }
+                    indicator: Rectangle {
+                        implicitWidth: 18
+                        implicitHeight: 18
+                        x: addWriteCheckBox.leftPadding
+                        y: (addWriteCheckBox.height - height) / 2
+                        radius: Theme.radiusSmall
+                        color: addWriteCheckBox.checked ? Theme.primary : Theme.surface
+                        border.width: 1
+                        border.color: addWriteCheckBox.checked ? Theme.primary : Theme.border
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "\u2713"
+                            visible: addWriteCheckBox.checked
+                            color: Theme.primaryText
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                    }
                 }
 
                 AppButton {
@@ -1644,34 +1703,13 @@ Item {
                     color: Theme.border
                 }
 
-                // ---- Actions propres au dossier ouvert ----
-                AppButton {
-                    visible: root.openedFolderId >= 0
-                    text: root.showHistory ? qsTr("Fichiers") : qsTr("Historique")
-                    variant: "ghost"
-                    onClicked: root.showHistory = !root.showHistory
-                }
-
-                AppButton {
-                    visible: root.openedFolderId >= 0
-                    enabled: root.openedFolderIsLocalOrigin
-                    text: qsTr("Réindexer")
-                    variant: "secondary"
-                    onClicked: {
-                        if (root.context) {
-                            root.context.shareFolder(root.openedFolderId)
-                            root.refreshFiles()
-                            root.refreshHistory()
-                        }
-                    }
-                }
-
-                // ---- Menu « ⋯ » regroupant les actions secondaires ----
-                AppButton {
+                // APRÈS
+                IconButton {
                     id: moreActionsBtn
                     visible: root.openedFolderId >= 0
-                    text: qsTr("⋯")
-                    variant: "secondary"
+                    glyph: "\uf142"   // ellipsis-v (Font Awesome) — menu "plus d'actions"
+                    variant: "ghost"
+                    size: 30
                     onClicked: moreActionsMenu.open()
 
                     Menu {
@@ -1707,6 +1745,56 @@ Item {
                                 radius: Theme.radiusSmall
                                 color: parent.highlighted ? Theme.primaryMuted : "transparent"
                             }
+                            text: root.showHistory ? qsTr("Fichiers") : qsTr("Historique")
+                            onTriggered: root.showHistory = !root.showHistory
+                        }
+                        MenuItem {
+                            width: parent.width - 2 * Theme.spacingXs
+                            height: 40
+                            enabled: root.openedFolderIsLocalOrigin
+                            contentItem: Label {
+                                text: parent.text
+                                color: parent.enabled ? Theme.text : Theme.textTertiary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeSmall
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: Theme.spacingSmall
+                            }
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: parent.highlighted ? Theme.primaryMuted : "transparent"
+                            }
+                            text: qsTr("Réindexer")
+                            onTriggered: {
+                                if (root.context) {
+                                    root.context.shareFolder(root.openedFolderId)
+                                    root.refreshFiles()
+                                    root.refreshHistory()
+                                }
+                            }
+                        }
+                        MenuSeparator {
+                            contentItem: Rectangle {
+                                implicitHeight: 1
+                                color: Theme.border
+                            }
+                        }
+                        MenuItem {
+                            width: parent.width - 2 * Theme.spacingXs
+                            height: 40
+                            visible: root.openedFolderIsLocalOrigin
+                            contentItem: Label {
+                                text: parent.text
+                                color: Theme.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeSmall
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: Theme.spacingSmall
+                            }
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: parent.highlighted ? Theme.primaryMuted : "transparent"
+                            }
                             text: qsTr("Exclusions…")
                             onTriggered: {
                                 editExcludePatternsDialog.targetFolderId = root.openedFolderId
@@ -1717,6 +1805,7 @@ Item {
                         MenuItem {
                             width: parent.width - 2 * Theme.spacingXs
                             height: 40
+                            visible: root.openedFolderIsLocalOrigin
                             contentItem: Label {
                                 text: parent.text
                                 color: Theme.text

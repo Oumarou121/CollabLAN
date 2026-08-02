@@ -190,14 +190,56 @@ void FolderSyncService::cleanupRevokedFolder(const models::SharedFolder &folder)
 
 bool FolderSyncService::broadcastMessage(const QString &json)
 {
+    // CORRECTIF (bug "l'émetteur ne transmet jamais ses changements au
+    // destinataire, alors que l'inverse fonctionne") : MessagingServer::
+    // isRunning() indique seulement que le socket d'écoute local est actif,
+    // PAS qu'un pair est effectivement connecté pour recevoir le message.
+    // Quand ce poste local est SERVER (typiquement le propriétaire d'un
+    // dossier fraîchement partagé, ou un poste dont le seul client vient de
+    // se déconnecter momentanément), broadcastMessage() renvoyait
+    // inconditionnellement true dès que isRunning() était vrai -- y compris
+    // avec zéro client dans m_clients. onLocalFolderReindexed() considérait
+    // alors l'opération comme livrée et faisait avancer
+    // m_lastBroadcastOpIdByFolder, alors qu'aucun octet n'avait quitté la
+    // machine : l'opération était perdue pour de bon, sans jamais être
+    // retentée (le curseur avait déjà dépassé son op_id). Côté CLIENT au
+    // contraire, isConnected() reflète un état de connexion réel au SERVER,
+    // donc ce problème ne s'y posait pas -- d'où l'asymétrie observée
+    // (le destinataire, toujours CLIENT dans ce cas, voyait ses propres
+    // modifications correctement remontées vers le SERVER/émetteur).
+    //
+    // On utilise donc désormais le nombre RÉEL de clients touchés
+    // (MessagingServer::broadcastMessage() le renvoie déjà) : sans
+    // destinataire connecté, on retombe dans la branche "aucun canal
+    // disponible" ci-dessous comme le fait déjà le CLIENT déconnecté, ce
+    // qui laisse le curseur en place pour une retentative ultérieure (cf.
+    // retryPendingBroadcasts(), déclenché dès qu'un pair se (re)connecte).
     if (m_messagingServer && m_messagingServer->isRunning()) {
-        m_messagingServer->broadcastMessage(json);
-        return true;
+        const int sentCount = m_messagingServer->broadcastMessage(json);
+        return sentCount > 0;
     } else if (m_messagingService && m_messagingService->isConnected()) {
         m_messagingService->sendMessage(json);
         return true;
     }
     return false;
+}
+
+void FolderSyncService::retryPendingBroadcasts()
+{
+    if (!m_folderManager) return;
+
+    // Un canal de diffusion vient de (re)devenir disponible (nouveau client
+    // connecté côté SERVER, ou reconnexion réussie côté CLIENT) : on
+    // retente tous les dossiers plutôt que d'attendre une hypothétique
+    // future modification locale pour déclencher un nouveau
+    // folderReindexed(). onLocalFolderReindexed() relit lui-même le journal
+    // SyncOperations depuis m_lastBroadcastOpIdByFolder (pas depuis
+    // changeCount, cf. son commentaire) : cet appel avec changeCount=0 est
+    // donc un no-op silencieux pour tout dossier déjà entièrement diffusé,
+    // et rattrape uniquement les opérations réellement en retard.
+    for (const models::SharedFolder &folder : m_folderManager->getFolders()) {
+        onLocalFolderReindexed(folder.id(), 0);
+    }
 }
 
 void FolderSyncService::sendMessageToServer(const QString &json)
