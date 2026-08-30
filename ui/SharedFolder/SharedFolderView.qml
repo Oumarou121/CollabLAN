@@ -470,34 +470,34 @@ Item {
             width: parent.width
             spacing: Theme.spacingMedium
 
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 58
-                radius: Theme.radiusMedium
-                color: Theme.primaryMuted
+            // Rectangle {
+            //     Layout.fillWidth: true
+            //     Layout.preferredHeight: 58
+            //     radius: Theme.radiusMedium
+            //     color: Theme.primaryMuted
 
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: Theme.spacingMedium
-                    anchors.rightMargin: Theme.spacingMedium
-                    spacing: Theme.spacingSmall
+            //     RowLayout {
+            //         anchors.fill: parent
+            //         anchors.leftMargin: Theme.spacingMedium
+            //         anchors.rightMargin: Theme.spacingMedium
+            //         spacing: Theme.spacingSmall
 
-                    FaIcon {
-                        glyph: "\uf07b"
-                        font.pixelSize: 18
-                        color: Theme.primary
-                    }
+            //         FaIcon {
+            //             glyph: "\uf07b"
+            //             font.pixelSize: 18
+            //             color: Theme.primary
+            //         }
 
-                    Label {
-                        Layout.fillWidth: true
-                        text: qsTr("Configurez un dossier à partager avec les utilisateurs sélectionnés.")
-                        color: Theme.text
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeSmall
-                        wrapMode: Text.WordWrap
-                    }
-                }
-            }
+            //         Label {
+            //             Layout.fillWidth: true
+            //             text: qsTr("Configurez un dossier à partager avec les utilisateurs sélectionnés.")
+            //             color: Theme.text
+            //             font.family: Theme.fontFamily
+            //             font.pixelSize: Theme.fontSizeSmall
+            //             wrapMode: Text.WordWrap
+            //         }
+            //     }
+            // }
 
             Label {
                 text: qsTr("Nom du dossier partagé")

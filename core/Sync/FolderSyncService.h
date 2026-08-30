@@ -57,10 +57,14 @@ namespace core::sync {
  *   TransferService::sendFile().
  *
  * Release 7 — Récupération hors-ligne
- *   À chaque connexion au serveur, le CLIENT envoie folder_hello avec son
- *   dernier op_id connu (SyncOperationRepository::latestId()). Le SERVER
- *   répond avec toutes les opérations postérieures (folder_catchup_batch).
- *   Le CLIENT applique le batch et demande les fichiers manquants.
+ *   À chaque connexion au serveur, le CLIENT envoie folder_hello. Le SERVER
+ *   répond avec un folder_catchup_batch construit comme un ÉTAT COURANT
+ *   (snapshot) du dossier plutôt qu'un rejeu chronologique complet : une
+ *   seule ligne par fichier -- sa dernière opération connue
+ *   (SyncOperationRepository::getLatestPerFileByFolderId()) -- ce qui borne
+ *   le volume renvoyé par le nombre de fichiers du dossier, jamais par son
+ *   historique d'édition (cf. getLatestPerFileByFolderId()). Le CLIENT
+ *   applique le batch et demande les fichiers manquants.
  *
  * Release 8 — Intégration des fichiers reçus + gestion des conflits
  *   Quand TransferService complète un transfert déclenché par un

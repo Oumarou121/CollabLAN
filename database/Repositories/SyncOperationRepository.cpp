@@ -81,6 +81,39 @@ QVector<models::FileSyncOperation> SyncOperationRepository::getByFolderId(qint64
     return operations;
 }
 
+QVector<models::FileSyncOperation> SyncOperationRepository::getLatestPerFileByFolderId(qint64 folderId, int limit) const
+{
+    QVector<models::FileSyncOperation> operations;
+    QSqlQuery query(m_db);
+    // Pour chaque file_id du dossier, ne garder que la ligne dont l'id est
+    // le MAX(so2.id) parmi toutes les operations connues pour CE fichier
+    // (sous-requete correlee, appuyee par l'index idx_sync_operations_file_id
+    // deja present depuis la migration 020/023) -- c'est litteralement l'etat
+    // le plus recent de ce fichier, quel que soit le nombre d'evenements
+    // intermediaires. Un dossier avec 30 fichiers reedites 500 fois chacun
+    // renvoie ici 30 lignes, pas 15000 : c'est la difference structurelle
+    // avec getByFolderId(), dont le LIMIT porte sur le nombre d'EVENEMENTS.
+    query.prepare(QStringLiteral(
+        "SELECT so.*, sf.relative_path AS shared_relative_path FROM SyncOperations so "
+        "JOIN SharedFiles sf ON sf.id = so.file_id "
+        "WHERE sf.folder_id = :folder_id "
+        "AND so.id = (SELECT MAX(so2.id) FROM SyncOperations so2 WHERE so2.file_id = so.file_id) "
+        "ORDER BY so.id DESC LIMIT :limit"));
+    query.bindValue(QStringLiteral(":folder_id"), folderId);
+    query.bindValue(QStringLiteral(":limit"), limit);
+
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return operations;
+    }
+    while (query.next()) {
+        models::FileSyncOperation operation = operationFromQuery(query);
+        operation.setRelativePath(query.value(QStringLiteral("shared_relative_path")).toString());
+        operations.append(operation);
+    }
+    return operations;
+}
+
 QVector<models::FileSyncOperation> SyncOperationRepository::getSinceId(qint64 sinceId, int limit) const
 {
     QVector<models::FileSyncOperation> operations;

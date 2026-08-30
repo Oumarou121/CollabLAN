@@ -846,7 +846,20 @@ void FolderSyncService::handleFolderHello(const QJsonObject &obj)
             continue;
         }
 
-        const auto ops = m_repository.getByFolderId(folder.id(), 500);
+        // CORRECTIF (option 1 -- rattrapage par etat courant plutot que par
+        // historique) : getByFolderId(folder.id(), 500) rejouait les 500
+        // DERNIERS EVENEMENTS du dossier (tout fichier confondu) -- pour un
+        // dossier tres actif (beaucoup de reeditions), la fenetre pouvait
+        // etre entierement consommee par un seul fichier tres modifie,
+        // faisant perdre le rattrapage d'AUTRES fichiers du meme dossier
+        // moins recemment touches mais tout aussi desynchronises. On envoie
+        // desormais une seule ligne par fichier -- sa derniere operation
+        // connue -- ce qui borne le volume par le nombre de fichiers du
+        // dossier plutot que par son historique d'edition. lastOpId reste
+        // inspecte (toujours 0 en pratique, cf. onConnectedToServer()) mais
+        // n'a plus d'effet de troncature ici puisque chaque fichier n'a
+        // desormais qu'une seule ligne candidate.
+        const auto ops = m_repository.getLatestPerFileByFolderId(folder.id());
         for (const auto &op : ops) {
             if (op.id() <= lastOpId) break;
             QJsonObject opObj = buildFolderOpJson(op, folder);
@@ -1045,6 +1058,34 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
                 const QString peerIdentifier = userUuid.isEmpty() ? machineId : userUuid;
                 if (effectivePermission(folder, peerIdentifier) == models::SharedFolderPermission::None) {
                     qWarning() << "[FolderSync] catchup Rename ignoré : accès révoqué pour" << peerIdentifier;
+                    break;
+                }
+                // CORRECTIF (option 1 -- rattrapage par etat courant) :
+                // avec getLatestPerFileByFolderId(), le SEUL evenement
+                // recu pour un fichier peut desormais etre un Rename,
+                // sans que le pair qui se rattrape ait jamais recu le
+                // Create d'origine (nouveau membre du dossier, ou fichier
+                // jamais telecharge avant cette reconnexion). Or
+                // applyRemoteRename() suppose que l'ANCIEN chemin existe
+                // deja localement pour deplacer un contenu deja present :
+                // si ni l'ancien ni le nouveau chemin ne sont connus en
+                // base localement, il n'y a rien a "renommer" -- se
+                // rabattre sur un telechargement normal a l'emplacement
+                // ACTUEL (meme chemin que branchement Create/Update
+                // ci-dessus), sous peine de perdre silencieusement ce
+                // fichier pour ce pair (aucune ligne SharedFiles créée,
+                // aucun telechargement demande, cf. avertissement déjà
+                // présent dans applyRemoteRename() pour ce cas).
+                const bool knownLocally =
+                    m_fileRepository.findByRelativePath(folder.id(), oldRelPath).has_value()
+                    || m_fileRepository.findByRelativePath(folder.id(), relativePath).has_value();
+                if (!knownLocally) {
+                    if (folder.localPath().isEmpty()) {
+                        registerCatchupPlaceholder(folder, relativePath, fileHash, version, machineId);
+                    } else {
+                        requestRemoteFile(folderUuid, relativePath, machineId,
+                                          folder.id(), folder.localPath(), fileHash, version);
+                    }
                     break;
                 }
                 applyRemoteRename(folder, oldRelPath, relativePath, machineId);
@@ -1412,8 +1453,13 @@ void FolderSyncService::handleFolderResyncRequest(const QJsonObject &obj)
     const quint16 selfPort = m_transferService ? m_transferService->port()
                                                : network::TransferService::defaultPort();
 
+    // CORRECTIF (option 1, cf. handleFolderHello()) : un nouveau membre qui
+    // vient d'obtenir un accès a besoin de l'état COURANT du dossier, pas
+    // d'un rejeu chronologique -- getLatestPerFileByFolderId() évite le même
+    // risque de troncature par un fichier très réédité que pour le
+    // rattrapage de reconnexion.
     QJsonArray opsArray;
-    const auto ops = m_repository.getByFolderId(folder->id(), 500);
+    const auto ops = m_repository.getLatestPerFileByFolderId(folder->id());
     for (const auto &op : ops) {
         if (op.id() <= sinceOpId) break;
         QJsonObject opObj = buildFolderOpJson(op, *folder);

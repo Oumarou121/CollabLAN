@@ -35,6 +35,21 @@ public:
     /// SyncOperation retournee est renseigne pour l'affichage.
     QVector<models::FileSyncOperation> getByFolderId(qint64 folderId, int limit = 100) const;
 
+    /// Etat courant (snapshot) d'un dossier partage, une seule ligne par
+    /// fichier -- sa DERNIERE operation connue (Create/Update/Delete/
+    /// Rename), les plus recentes d'abord. Utilisee pour le rattrapage
+    /// hors-ligne (FolderSyncService::handleFolderHello(), Release 7) a la
+    /// place de getByFolderId() : contrairement a un rejeu chronologique
+    /// complet, le volume renvoye est ici borne par le nombre de fichiers
+    /// DISTINCTS jamais connus dans le dossier (actuels + tombstones),
+    /// jamais par le nombre d'evenements survenus au fil du temps -- un
+    /// fichier reedite des centaines de fois ne compte que pour UNE seule
+    /// ligne (son etat final), au lieu de saturer une fenetre de taille
+    /// fixe et de faire perdre les operations plus anciennes d'AUTRES
+    /// fichiers du meme dossier. relativePath() de chaque SyncOperation
+    /// retournee est renseigne pour l'affichage, comme getByFolderId().
+    QVector<models::FileSyncOperation> getLatestPerFileByFolderId(qint64 folderId, int limit = 2000) const;
+
     /// Operations dont id() > sinceId, triees par id croissant -- utilise
     /// par un futur mecanisme de reprise apres deconnexion (Release 7)
     /// pour rattraper un poste qui indique sa derniere operation connue.
