@@ -119,6 +119,8 @@ Dialog {
         border.color: Theme.border
     }
 
+    font.family: Theme.fontFamily
+
     Rectangle {
         anchors.fill: parent
         z: 100

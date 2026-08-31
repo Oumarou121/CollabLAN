@@ -142,6 +142,7 @@ Item {
         shareConfirmDialog.targetFolderName = next.folderName
         shareConfirmDialog.ownerName = next.ownerName
         shareConfirmDialog.suggestedPath = next.suggestedPath
+        shareConfirmDialog.allowWrite = next.allowWrite
         shareConfirmDialog.open()
     }
 
@@ -277,12 +278,13 @@ Item {
         // l'auto-provisionner silencieusement). Plusieurs demandes peuvent
         // arriver d'affilée (plusieurs dossiers reçus en rafale) : on les
         // met en file et on les affiche une par une.
-        function onFolderShareConfirmationRequested(folderId, folderName, ownerName, suggestedPath) {
+        function onFolderShareConfirmationRequested(folderId, folderName, ownerName, suggestedPath, allowWrite) {
             root.pendingShareConfirmations.push({
                 folderId: folderId,
                 folderName: folderName,
                 ownerName: ownerName,
-                suggestedPath: suggestedPath
+                suggestedPath: suggestedPath,
+                allowWrite: allowWrite
             })
             root.showNextShareConfirmation()
         }
@@ -419,22 +421,32 @@ Item {
         }
     }
 
-    // ---- dialogue de création ----
+    // ---- dialogue de création (en 2 etapes : Dossier puis Partage) ----
     AppDialog {
         id: createDialog
         title: qsTr("Nouveau dossier partagé")
         headerIcon: "\uf07b"
         dialogWidth: 500
-        dialogHeight: 620
+        // Hauteur calculee sur le contenu reel de l'etape affichee : les
+        // ColumnLayout des etapes 1/2 sont visible:false en alternance et
+        // sont donc exclus du calcul d'implicitHeight par ColumnLayout
+        // (comportement standard QtQuick.Layouts), ce qui fait varier
+        // naturellement la hauteur de la carte d'une etape a l'autre.
+        dialogHeight: createDialogMainColumn.implicitHeight + Theme.spacingMedium * 2
         standardButtons: Dialog.NoButton
         busyText: qsTr("Indexation et partage en cours…")
 
         onClosed: busy = false
 
         property string localPath: ""
+        // 1 = "Dossier" (nom, emplacement local, exclusions)
+        // 2 = "Partage" (destinataires, permission)
+        property int step: 1
+        readonly property bool step1Valid: nameField.text.trim().length > 0 && createDialog.localPath.length > 0
 
         onOpened: {
             nameField.text = ""
+            createDialog.step = 1
             // Propose le repertoire de partage par defaut configure dans
             // Parametres (settingsModel.defaultSharedFolderPath), sinon
             // aucune selection (comportement precedent).
@@ -458,218 +470,239 @@ Item {
             }
         }
 
-        // Contenu scrollable : dialogHeight (680) peut etre plafonnee sur
-        // petite fenetre (minimumHeight 480, cf. Main.qml), donc le
-        // contenu doit pouvoir defiler plutot que deborder de la carte.
-        ScrollView {
-            anchors.fill: parent
-            contentWidth: availableWidth
-            clip: true
-
-            ColumnLayout {
+        ColumnLayout {
+            id: createDialogMainColumn
             width: parent.width
             spacing: Theme.spacingMedium
 
-            // Rectangle {
-            //     Layout.fillWidth: true
-            //     Layout.preferredHeight: 58
-            //     radius: Theme.radiusMedium
-            //     color: Theme.primaryMuted
-
-            //     RowLayout {
-            //         anchors.fill: parent
-            //         anchors.leftMargin: Theme.spacingMedium
-            //         anchors.rightMargin: Theme.spacingMedium
-            //         spacing: Theme.spacingSmall
-
-            //         FaIcon {
-            //             glyph: "\uf07b"
-            //             font.pixelSize: 18
-            //             color: Theme.primary
-            //         }
-
-            //         Label {
-            //             Layout.fillWidth: true
-            //             text: qsTr("Configurez un dossier à partager avec les utilisateurs sélectionnés.")
-            //             color: Theme.text
-            //             font.family: Theme.fontFamily
-            //             font.pixelSize: Theme.fontSizeSmall
-            //             wrapMode: Text.WordWrap
-            //         }
-            //     }
-            // }
-
-            Label {
-                text: qsTr("Nom du dossier partagé")
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeSmall
-            }
-            TextField {
-                id: nameField
-                Layout.fillWidth: true
-                placeholderText: qsTr("ex : Documents projet")
-                font.pixelSize: Theme.fontSizeBody
-                color: Theme.text
-                background: Rectangle {
-                    radius: Theme.radiusMedium
-                    color: Theme.surfaceAlt
-                    border.width: 1
-                    border.color: nameField.activeFocus ? Theme.primary : Theme.border
-                }
-            }
-
-            Label {
-                text: qsTr("Dossier local à partager")
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeSmall
-            }
+            // ── Indicateur d'etape ──────────────────────────────────────
             RowLayout {
                 Layout.fillWidth: true
+                Layout.bottomMargin: Theme.spacingXs
                 spacing: Theme.spacingSmall
 
-                Label {
-                    Layout.fillWidth: true
-                    text: createDialog.localPath.length > 0 ? createDialog.localPath : qsTr("Aucun dossier sélectionné")
-                    color: createDialog.localPath.length > 0 ? Theme.text : Theme.textTertiary
-                    elide: Text.ElideMiddle
-                    font.pixelSize: Theme.fontSizeSmall
-                }
-                AppButton {
-                    text: qsTr("Parcourir…")
-                    variant: "secondary"
-                    onClicked: folderPickerDialog.open()
-                }
-            }
-
-            Label {
-                text: qsTr("Partager avec")
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeSmall
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 160
-                radius: Theme.radiusMedium
-                color: Theme.surfaceAlt
-                border.width: 1
-                border.color: Theme.border
-
-                ListView {
-                    id: usersListView
-                    anchors.fill: parent
-                    anchors.margins: Theme.spacingSmall
-                    clip: true
-                    spacing: 4
-                    model: ListModel { id: availableUsersModel }
-
-                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                Repeater {
+                    model: [
+                        { n: 1, label: qsTr("Dossier") },
+                        { n: 2, label: qsTr("Partage") }
+                    ]
 
                     delegate: RowLayout {
-                        width: usersListView.width
                         spacing: Theme.spacingSmall
 
-                        CheckBox {
-                            id: userCheckBox
-                            checked: selected
-                            onCheckedChanged: availableUsersModel.setProperty(index, "selected", checked)
+                        Rectangle {
+                            readonly property bool isCurrent: createDialog.step === modelData.n
+                            readonly property bool isDone: createDialog.step > modelData.n
+                            Layout.preferredWidth: 22
+                            Layout.preferredHeight: 22
+                            radius: Theme.radiusPill
+                            color: isCurrent || isDone ? Theme.primary : Theme.surfaceAlt
+                            border.width: 1
+                            border.color: isCurrent || isDone ? Theme.primary : Theme.border
 
-                            indicator: Rectangle {
-                                implicitWidth: 18
-                                implicitHeight: 18
-                                x: userCheckBox.leftPadding
-                                y: (userCheckBox.height - height) / 2
-                                radius: Theme.radiusSmall
-                                color: userCheckBox.checked ? Theme.primary : Theme.surface
-                                border.width: 1
-                                border.color: userCheckBox.checked ? Theme.primary : Theme.border
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "\u2713"
-                                    visible: userCheckBox.checked
-                                    color: Theme.primaryText
-                                    font.pixelSize: 12
-                                    font.bold: true
-                                }
+                            Text {
+                                anchors.centerIn: parent
+                                text: parent.isDone ? "\u2713" : String(modelData.n)
+                                color: parent.isCurrent || parent.isDone ? Theme.primaryText : Theme.textTertiary
+                                font.pixelSize: 11
+                                font.bold: true
                             }
                         }
                         Label {
-                            Layout.fillWidth: true
-                            text: username
-                            color: Theme.text
+                            text: modelData.label
+                            color: createDialog.step === modelData.n ? Theme.text : Theme.textTertiary
                             font.pixelSize: Theme.fontSizeSmall
+                            font.bold: createDialog.step === modelData.n
+                        }
+                        Rectangle {
+                            visible: modelData.n === 1
+                            Layout.preferredWidth: 24
+                            Layout.preferredHeight: 2
+                            radius: 1
+                            color: createDialog.step > 1 ? Theme.primary : Theme.border
                         }
                     }
                 }
 
+                Item { Layout.fillWidth: true }
+            }
+
+            // ── Étape 1 : Dossier ────────────────────────────────────────
+            ColumnLayout {
+                id: step1Column
+                Layout.fillWidth: true
+                visible: createDialog.step === 1
+                spacing: Theme.spacingMedium
+
                 Label {
-                    anchors.centerIn: parent
-                    visible: availableUsersModel.count === 0
-                    text: qsTr("Aucun autre utilisateur")
+                    text: qsTr("Nom du dossier partagé")
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeSmall
+                }
+                TextField {
+                    id: nameField
+                    Layout.fillWidth: true
+                    placeholderText: qsTr("ex : Documents projet")
+                    font.pixelSize: Theme.fontSizeBody
+                    color: Theme.text
+                    background: Rectangle {
+                        radius: Theme.radiusMedium
+                        color: Theme.surfaceAlt
+                        border.width: 1
+                        border.color: nameField.activeFocus ? Theme.primary : Theme.border
+                    }
+                }
+
+                Label {
+                    text: qsTr("Dossier local à partager")
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeSmall
+                }
+
+                FolderDropzone {
+                    path: createDialog.localPath
+                    onBrowseRequested: folderPickerDialog.open()
+                }
+
+                Label {
+                    text: qsTr("Exclure de la synchronisation (optionnel)")
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeSmall
+                }
+                TextField {
+                    id: excludePatternsField
+                    Layout.fillWidth: true
+                    placeholderText: qsTr("ex : *.log, node_modules, drafts/*")
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.text
+                    background: Rectangle {
+                        radius: Theme.radiusMedium
+                        color: Theme.surfaceAlt
+                        border.width: 1
+                        border.color: excludePatternsField.activeFocus ? Theme.primary : Theme.border
+                    }
+                }
+                Label {
+                    text: qsTr("Motifs séparés par des virgules. S'applique en plus des exclusions par défaut (dossiers systèmes, fichiers temporaires…). Local à ce poste.")
                     color: Theme.textTertiary
                     font.pixelSize: Theme.fontSizeSmall
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
                 }
             }
 
-            CheckBox {
-                id: allowWriteCheckBox
-                text: qsTr("Autoriser la modification (lecture/écriture)")
-                checked: true
-                contentItem: Label {
-                    text: allowWriteCheckBox.text
-                    leftPadding: allowWriteCheckBox.indicator.width + Theme.spacingSmall
-                    verticalAlignment: Text.AlignVCenter
-                    color: Theme.text
+            // ── Étape 2 : Partage ────────────────────────────────────────
+            ColumnLayout {
+                id: step2Column
+                Layout.fillWidth: true
+                visible: createDialog.step === 2
+                spacing: Theme.spacingMedium
+
+                Label {
+                    text: qsTr("Partager avec")
+                    color: Theme.textSecondary
                     font.pixelSize: Theme.fontSizeSmall
                 }
-                indicator: Rectangle {
-                    implicitWidth: 18
-                    implicitHeight: 18
-                    x: allowWriteCheckBox.leftPadding
-                    y: (allowWriteCheckBox.height - height) / 2
-                    radius: Theme.radiusSmall
-                    color: allowWriteCheckBox.checked ? Theme.primary : Theme.surface
-                    border.width: 1
-                    border.color: allowWriteCheckBox.checked ? Theme.primary : Theme.border
 
-                    Text {
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 160
+                    radius: Theme.radiusMedium
+                    color: Theme.surfaceAlt
+                    border.width: 1
+                    border.color: Theme.border
+
+                    ListView {
+                        id: usersListView
+                        anchors.fill: parent
+                        anchors.margins: Theme.spacingSmall
+                        clip: true
+                        spacing: 4
+                        model: ListModel { id: availableUsersModel }
+
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                        delegate: RowLayout {
+                            width: usersListView.width
+                            spacing: Theme.spacingSmall
+
+                            CheckBox {
+                                id: userCheckBox
+                                checked: selected
+                                onCheckedChanged: availableUsersModel.setProperty(index, "selected", checked)
+
+                                indicator: Rectangle {
+                                    implicitWidth: 18
+                                    implicitHeight: 18
+                                    x: userCheckBox.leftPadding
+                                    y: (userCheckBox.height - height) / 2
+                                    radius: Theme.radiusSmall
+                                    color: userCheckBox.checked ? Theme.primary : Theme.surface
+                                    border.width: 1
+                                    border.color: userCheckBox.checked ? Theme.primary : Theme.border
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "\u2713"
+                                        visible: userCheckBox.checked
+                                        color: Theme.primaryText
+                                        font.pixelSize: 12
+                                        font.bold: true
+                                    }
+                                }
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: username
+                                color: Theme.text
+                                font.pixelSize: Theme.fontSizeSmall
+                            }
+                        }
+                    }
+
+                    Label {
                         anchors.centerIn: parent
-                        text: "\u2713"
-                        visible: allowWriteCheckBox.checked
-                        color: Theme.primaryText
-                        font.pixelSize: 12
-                        font.bold: true
+                        visible: availableUsersModel.count === 0
+                        text: qsTr("Aucun autre utilisateur")
+                        color: Theme.textTertiary
+                        font.pixelSize: Theme.fontSizeSmall
+                    }
+                }
+
+                CheckBox {
+                    id: allowWriteCheckBox
+                    text: qsTr("Autoriser la modification (lecture/écriture)")
+                    checked: true
+                    contentItem: Label {
+                        text: allowWriteCheckBox.text
+                        leftPadding: allowWriteCheckBox.indicator.width + Theme.spacingSmall
+                        verticalAlignment: Text.AlignVCenter
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeSmall
+                    }
+                    indicator: Rectangle {
+                        implicitWidth: 18
+                        implicitHeight: 18
+                        x: allowWriteCheckBox.leftPadding
+                        y: (allowWriteCheckBox.height - height) / 2
+                        radius: Theme.radiusSmall
+                        color: allowWriteCheckBox.checked ? Theme.primary : Theme.surface
+                        border.width: 1
+                        border.color: allowWriteCheckBox.checked ? Theme.primary : Theme.border
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "\u2713"
+                            visible: allowWriteCheckBox.checked
+                            color: Theme.primaryText
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
                     }
                 }
             }
 
-            Label {
-                text: qsTr("Exclure de la synchronisation (optionnel)")
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeSmall
-            }
-            TextField {
-                id: excludePatternsField
-                Layout.fillWidth: true
-                placeholderText: qsTr("ex : *.log, node_modules, drafts/*")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.text
-                background: Rectangle {
-                    radius: Theme.radiusMedium
-                    color: Theme.surfaceAlt
-                    border.width: 1
-                    border.color: excludePatternsField.activeFocus ? Theme.primary : Theme.border
-                }
-            }
-            Label {
-                text: qsTr("Motifs séparés par des virgules. S'applique en plus des exclusions par défaut (dossiers systèmes, fichiers temporaires…). Local à ce poste.")
-                color: Theme.textTertiary
-                font.pixelSize: Theme.fontSizeSmall
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
-
+            // ── Actions (differentes selon l'etape) ─────────────────────
             RowLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: Theme.spacingSmall
@@ -680,12 +713,27 @@ Item {
                 AppButton {
                     text: qsTr("Annuler")
                     variant: "ghost"
+                    visible: createDialog.step === 1
                     onClicked: createDialog.close()
+                }
+                AppButton {
+                    text: qsTr("Retour")
+                    variant: "secondary"
+                    visible: createDialog.step === 2
+                    onClicked: createDialog.step = 1
+                }
+                AppButton {
+                    text: qsTr("Suivant")
+                    variant: "primary"
+                    visible: createDialog.step === 1
+                    enabled: createDialog.step1Valid
+                    onClicked: createDialog.step = 2
                 }
                 AppButton {
                     text: qsTr("Créer")
                     variant: "primary"
-                    enabled: nameField.text.trim().length > 0 && createDialog.localPath.length > 0
+                    visible: createDialog.step === 2
+                    enabled: createDialog.step1Valid
                     onClicked: {
                         if (!root.context) return
                         createDialog.busy = true
@@ -707,7 +755,6 @@ Item {
             }
         }
     }
-    }
 
     // ---- dialogue de modification des motifs d'exclusion (debrief point #4) ----
     AppDialog {
@@ -715,26 +762,51 @@ Item {
         title: qsTr("Exclusions — %1").arg(editExcludePatternsDialog.targetFolderName)
         headerIcon: "\uf05e"
         dialogWidth: 420
-        dialogHeight: 320
+        // Hauteur calculee sur le contenu reel (mainColumn.implicitHeight),
+        // meme pattern que AdminView.qml : sans ca, height retombe sur
+        // Popup.implicitHeight qui ne remonte pas correctement celui du
+        // ColumnLayout enfant (cf. commentaire dans AppDialog.qml).
+        dialogHeight: mainColumn.implicitHeight + Theme.spacingMedium * 2
         standardButtons: Dialog.NoButton
 
         property int targetFolderId: -1
         property string targetFolderName: ""
         property var impactedPaths: []
+        // Motifs representes sous forme de chips (plutot qu'un seul champ
+        // texte a virgules) : direction visuelle validee sur la maquette.
+        property var patternsList: []
+        readonly property string patternsText: patternsList.join(",")
+
+        function addPattern(raw) {
+            var value = raw.trim()
+            if (value.length === 0) return
+            if (editExcludePatternsDialog.patternsList.indexOf(value) === -1) {
+                editExcludePatternsDialog.patternsList = editExcludePatternsDialog.patternsList.concat([value])
+            }
+            impactPreviewTimer.restart()
+        }
+
+        function removePattern(value) {
+            editExcludePatternsDialog.patternsList = editExcludePatternsDialog.patternsList.filter(function(p) { return p !== value })
+            impactPreviewTimer.restart()
+        }
 
         function refreshImpactPreview() {
             if (root.context && editExcludePatternsDialog.targetFolderId >= 0) {
                 editExcludePatternsDialog.impactedPaths =
                     root.context.previewExcludePatternsImpact(editExcludePatternsDialog.targetFolderId,
-                                                               excludePatternsEditField.text.trim())
+                                                               editExcludePatternsDialog.patternsText)
             } else {
                 editExcludePatternsDialog.impactedPaths = []
             }
         }
 
         onOpened: {
-            excludePatternsEditField.text =
-                root.context ? root.context.excludePatternsForFolder(editExcludePatternsDialog.targetFolderId) : ""
+            var current = root.context ? root.context.excludePatternsForFolder(editExcludePatternsDialog.targetFolderId) : ""
+            editExcludePatternsDialog.patternsList = current.length > 0
+                ? current.split(",").map(function(p) { return p.trim() }).filter(function(p) { return p.length > 0 })
+                : []
+            excludePatternsEditField.text = ""
             // Motifs actuellement enregistres : par definition aucun fichier
             // deja indexe ne peut les matcher (ils seraient deja tombstones),
             // donc l'impact initial est toujours vide -- pas la peine
@@ -743,11 +815,12 @@ Item {
         }
 
         ColumnLayout {
-            anchors.fill: parent
+            id: mainColumn
+            width: parent.width
             spacing: Theme.spacingMedium
 
             Label {
-                text: qsTr("Motifs glob séparés par des virgules (ex : *.log, node_modules, drafts/*). S'ajoutent aux exclusions par défaut. Ne s'applique qu'à ce poste.")
+                text: qsTr("Motifs glob (ex : *.log, node_modules, drafts/*). S'ajoutent aux exclusions par défaut. Ne s'applique qu'à ce poste.")
                 color: Theme.textSecondary
                 font.pixelSize: Theme.fontSizeSmall
                 wrapMode: Text.WordWrap
@@ -757,7 +830,7 @@ Item {
             TextField {
                 id: excludePatternsEditField
                 Layout.fillWidth: true
-                placeholderText: qsTr("ex : *.log, node_modules, drafts/*")
+                placeholderText: qsTr("Tapez un motif puis Entrée…")
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.text
                 background: Rectangle {
@@ -766,12 +839,73 @@ Item {
                     border.width: 1
                     border.color: excludePatternsEditField.activeFocus ? Theme.primary : Theme.border
                 }
-                // Previsualisation live (debounce 250ms) de l'impact sur les
-                // fichiers deja partages : sans ca, un motif trop large
-                // ("*.md" tape par erreur au lieu de "*.tmp") ne se
-                // remarquait qu'apres coup, une fois les fichiers disparus
-                // de la liste suite a l'enregistrement.
-                onTextChanged: impactPreviewTimer.restart()
+                onAccepted: {
+                    editExcludePatternsDialog.addPattern(text)
+                    text = ""
+                }
+                // Une virgule tapee en cours de saisie cree directement une
+                // chip (comportement familier, ex. champs "tags" web).
+                onTextChanged: {
+                    if (text.indexOf(",") !== -1) {
+                        var parts = text.split(",")
+                        for (var i = 0; i < parts.length - 1; i++) {
+                            editExcludePatternsDialog.addPattern(parts[i])
+                        }
+                        text = parts[parts.length - 1]
+                    }
+                }
+            }
+
+            // Chips des motifs actifs.
+            Flow {
+                Layout.fillWidth: true
+                spacing: Theme.spacingSmall
+                visible: editExcludePatternsDialog.patternsList.length > 0
+
+                Repeater {
+                    model: editExcludePatternsDialog.patternsList
+
+                    delegate: Rectangle {
+                        radius: Theme.radiusPill
+                        color: Theme.primaryMuted
+                        border.width: 1
+                        border.color: Theme.primary
+                        height: 28
+                        width: chipRow.implicitWidth + Theme.spacingMedium
+
+                        RowLayout {
+                            id: chipRow
+                            anchors.centerIn: parent
+                            spacing: 6
+
+                            Label {
+                                text: modelData
+                                color: Theme.primaryDeep
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.bold: true
+                            }
+                            Text {
+                                text: "\u2715"
+                                color: Theme.primaryDeep
+                                font.pixelSize: 10
+                                MouseArea {
+                                    anchors.fill: parent
+                                    anchors.margins: -4
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: editExcludePatternsDialog.removePattern(modelData)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Label {
+                visible: editExcludePatternsDialog.patternsList.length === 0
+                text: qsTr("Aucun motif d'exclusion pour ce dossier.")
+                color: Theme.textTertiary
+                font.pixelSize: Theme.fontSizeCaption
+                font.italic: true
             }
 
             Timer {
@@ -804,10 +938,9 @@ Item {
                 Layout.fillWidth: true
             }
 
-            Item { Layout.fillHeight: true }
-
             RowLayout {
                 Layout.fillWidth: true
+                Layout.topMargin: Theme.spacingSmall
                 spacing: Theme.spacingSmall
 
                 AppButton {
@@ -823,7 +956,7 @@ Item {
                     onClicked: {
                         if (root.context && editExcludePatternsDialog.targetFolderId >= 0) {
                             if (root.context.updateExcludePatterns(editExcludePatternsDialog.targetFolderId,
-                                                                    excludePatternsEditField.text.trim())) {
+                                                                    editExcludePatternsDialog.patternsText)) {
                                 editExcludePatternsDialog.close()
                                 root.refreshFiles()
                                 root.refreshHistory()
@@ -870,22 +1003,10 @@ Item {
                 color: Theme.textSecondary
                 font.pixelSize: Theme.fontSizeSmall
             }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Theme.spacingSmall
-
-                Label {
-                    Layout.fillWidth: true
-                    text: setLocalPathDialog.localPath.length > 0 ? setLocalPathDialog.localPath : qsTr("Aucun dossier sélectionné")
-                    color: setLocalPathDialog.localPath.length > 0 ? Theme.text : Theme.textTertiary
-                    elide: Text.ElideMiddle
-                    font.pixelSize: Theme.fontSizeSmall
-                }
-                AppButton {
-                    text: qsTr("Parcourir…")
-                    variant: "secondary"
-                    onClicked: remoteFolderPickerDialog.open()
-                }
+            FolderDropzone {
+                path: setLocalPathDialog.localPath
+                emptyHint: qsTr("Cliquez pour choisir le dossier de destination")
+                onBrowseRequested: remoteFolderPickerDialog.open()
             }
 
             Item { Layout.fillHeight: true }
@@ -960,20 +1081,57 @@ Item {
         property string targetFolderName: ""
         property string ownerName: ""
         property string suggestedPath: ""
+        property bool allowWrite: false
 
         ColumnLayout {
             anchors.fill: parent
             spacing: Theme.spacingMedium
 
-            Label {
-                text: shareConfirmDialog.ownerName.length > 0
-                    ? qsTr("« %1 » vient de partager le dossier « %2 » avec vous.")
-                        .arg(shareConfirmDialog.ownerName).arg(shareConfirmDialog.targetFolderName)
-                    : qsTr("Un dossier partagé « %1 » a été reçu.").arg(shareConfirmDialog.targetFolderName)
-                color: Theme.text
-                font.pixelSize: Theme.fontSizeBody
-                wrapMode: Text.WordWrap
+            RowLayout {
                 Layout.fillWidth: true
+                spacing: Theme.spacingSmall
+
+                Label {
+                    Layout.fillWidth: true
+                    text: shareConfirmDialog.ownerName.length > 0
+                        ? qsTr("« %1 » vient de partager le dossier « %2 » avec vous.")
+                            .arg(shareConfirmDialog.ownerName).arg(shareConfirmDialog.targetFolderName)
+                        : qsTr("Un dossier partagé « %1 » a été reçu.").arg(shareConfirmDialog.targetFolderName)
+                    color: Theme.text
+                    font.pixelSize: Theme.fontSizeBody
+                    wrapMode: Text.WordWrap
+                }
+
+                // Badge de permission : direction visuelle validee sur la
+                // maquette. Reflete l'acces reellement accorde par le
+                // proprietaire (lecture seule si allowWrite est faux).
+                Rectangle {
+                    Layout.alignment: Qt.AlignTop
+                    radius: Theme.radiusPill
+                    color: shareConfirmDialog.allowWrite ? Theme.successMuted : Theme.surfaceAlt
+                    border.width: 1
+                    border.color: shareConfirmDialog.allowWrite ? Theme.success : Theme.border
+                    height: 24
+                    width: permissionBadgeRow.implicitWidth + Theme.spacingMedium
+
+                    RowLayout {
+                        id: permissionBadgeRow
+                        anchors.centerIn: parent
+                        spacing: 4
+
+                        FaIcon {
+                            glyph: shareConfirmDialog.allowWrite ? "\uf044" : "\uf06e"
+                            font.pixelSize: 10
+                            color: shareConfirmDialog.allowWrite ? Theme.success : Theme.textSecondary
+                        }
+                        Label {
+                            text: shareConfirmDialog.allowWrite ? qsTr("Lecture/écriture") : qsTr("Lecture seule")
+                            color: shareConfirmDialog.allowWrite ? Theme.success : Theme.textSecondary
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.bold: true
+                        }
+                    }
+                }
             }
 
             Label {
@@ -1041,7 +1199,12 @@ Item {
         title: qsTr("Gérer les accès — %1").arg(manageAccessDialog.targetFolderName)
         headerIcon: "\uf0c0"
         dialogWidth: 460
-        dialogHeight: 560
+        // Hauteur calculee sur le contenu reel (meme pattern que
+        // AdminView.qml / editExcludePatternsDialog), plafonnee a 560
+        // pour garder un filet de securite si la liste d'acces est
+        // longue (le ScrollView de la liste prend le relais du scroll
+        // au-dela de sa propre limite, cf. plus bas).
+        dialogHeight: Math.min(manageAccessMainColumn.implicitHeight + Theme.spacingMedium * 2, 560)
         standardButtons: Dialog.NoButton
 
         property int    targetFolderId: -1
@@ -1065,7 +1228,8 @@ Item {
         }
 
         ColumnLayout {
-            anchors.fill: parent
+            id: manageAccessMainColumn
+            width: parent.width
             spacing: Theme.spacingMedium
 
             // ── Section « utilisateurs actuels » ──────────────────────────
@@ -1081,8 +1245,8 @@ Item {
                 id: revokeConfirmBanner
                 Layout.fillWidth: true
                 height: 52
-                radius: Theme.radiusSmall
-                color: "#fff5f5"
+                radius: Theme.radiusMedium
+                color: Theme.errorMuted
                 border.color: Theme.error
                 border.width: 1
                 visible: manageAccessDialog.pendingRevokeUserId >= 0
@@ -1121,7 +1285,11 @@ Item {
 
             ScrollView {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 180
+                // La liste epouse son contenu reel (nombre d'acces
+                // accordes) au lieu d'une hauteur fixe de 180px qui
+                // laissait un grand vide des qu'il y avait peu
+                // d'utilisateurs. Plafonnee a 180 : au-dela, ca defile.
+                Layout.preferredHeight: Math.min(Math.max(grantsListView.contentHeight, 56), 180)
                 clip: true
 
                 ListView {
@@ -1144,38 +1312,32 @@ Item {
                             anchors.rightMargin: Theme.spacingSmall
                             spacing: Theme.spacingSmall
 
-                            // Nom + permission (cliquable pour basculer Read↔Write)
-                            ColumnLayout {
+                            // Nom seul : la permission est portee par la
+                            // bascule segmentee a droite (direction visuelle
+                            // validee sur la maquette, remplace le bouton
+                            // "→ Lecture/Écriture" et le sous-libelle).
+                            Label {
                                 Layout.fillWidth: true
-                                spacing: 0
-                                Label {
-                                    text: modelData.username
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.bold: true
-                                }
-                                Label {
-                                    text: modelData.permission === "Write"
-                                          ? qsTr("Lecture / écriture")
-                                          : qsTr("Lecture seule")
-                                    color: Theme.textTertiary
-                                    font.pixelSize: Theme.fontSizeCaption
-                                }
+                                text: modelData.username
+                                color: Theme.text
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.bold: true
                             }
 
-                            // Bouton bascule Read ↔ Write
-                            AppButton {
-                                text: modelData.permission === "Write"
-                                      ? qsTr("→ Lecture")
-                                      : qsTr("→ Écriture")
-                                variant: "secondary"
-                                onClicked: {
+                            // Bascule segmentee Lecture / Écriture
+                            AppSegmentedControl {
+                                Layout.preferredWidth: 190
+                                model: [
+                                    { label: qsTr("Lecture"), glyph: "\uf06e" },
+                                    { label: qsTr("Écriture"), glyph: "\uf044" }
+                                ]
+                                currentIndex: modelData.permission === "Write" ? 1 : 0
+                                onActivated: function(index) {
                                     if (root.context) {
-                                        const newWrite = (modelData.permission !== "Write")
                                         root.context.changePermission(
                                             manageAccessDialog.targetFolderId,
                                             modelData.userId,
-                                            newWrite)
+                                            index === 1)
                                         manageAccessDialog.reload()
                                     }
                                 }
@@ -1349,19 +1511,6 @@ Item {
                     }
                 }
             }
-
-            Item { Layout.fillHeight: true }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Theme.spacingSmall
-                Item { Layout.fillWidth: true }
-                AppButton {
-                    text: qsTr("Fermer")
-                    variant: "ghost"
-                    onClicked: manageAccessDialog.close()
-                }
-            }
         }
     }
 
@@ -1380,12 +1529,32 @@ Item {
             anchors.fill: parent
             spacing: Theme.spacingMedium
 
-            Label {
+            RowLayout {
                 Layout.fillWidth: true
-                text: qsTr("« %1 » ne sera plus partagé. Les fichiers restent intacts sur le disque : seul l'enregistrement dans CollabLAN est supprimé.").arg(removeConfirmDialog.targetFolderName)
-                color: Theme.textSecondary
-                wrapMode: Text.WordWrap
-                font.pixelSize: Theme.fontSizeSmall
+                spacing: Theme.spacingSmall
+
+                Rectangle {
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    Layout.alignment: Qt.AlignTop
+                    radius: Theme.radiusMedium
+                    color: Theme.errorMuted
+
+                    FaIcon {
+                        anchors.centerIn: parent
+                        glyph: "\uf071"
+                        font.pixelSize: 15
+                        color: Theme.error
+                    }
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("« %1 » ne sera plus partagé. Les fichiers restent intacts sur le disque : seul l'enregistrement dans CollabLAN est supprimé.").arg(removeConfirmDialog.targetFolderName)
+                    color: Theme.textSecondary
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: Theme.fontSizeSmall
+                }
             }
 
             RowLayout {

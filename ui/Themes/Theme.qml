@@ -44,9 +44,10 @@ QtObject {
 
     // Accent principal : indigo moderne, un peu plus distinctif que le
     // bleu "par defaut" tout en restant sobre et lisible.
-    readonly property color primary: darkMode ? "#7C8CFF" : "#4C5BFF"
-    readonly property color primaryHover: darkMode ? "#93A0FF" : "#3B49E6"
-    readonly property color primaryMuted: darkMode ? "#2A2E45" : "#E8E9FF"
+    readonly property color primary: darkMode ? "#818CF8" : "#4F46E5"
+    readonly property color primaryHover: darkMode ? "#9AA3FF" : "#4338CA"
+    readonly property color primaryMuted: darkMode ? "#2A2A45" : "#EEF0FE"
+    readonly property color primaryDeep: darkMode ? "#6366F1" : "#3730A3"
     readonly property color accent: primary
     readonly property color accentDark: primaryHover
     readonly property color primaryText: "#FFFFFF"
@@ -57,7 +58,8 @@ QtObject {
 
     readonly property color border: darkMode ? "#2E323C" : "#E4E7F0"
     readonly property color divider: border
-    readonly property color shadow: darkMode ? "#00000066" : "#1A1D2122"
+    readonly property color shadow: darkMode ? "#00000080" : "#1A1D2118"
+    readonly property color shadowSoft: darkMode ? "#00000055" : "#1A1D210F"
     readonly property color overlay: darkMode ? "#000000AA" : "#1A1D2166"
 
     // ---- Jetons "explorateur de fichiers" ---------------------------------
@@ -110,13 +112,15 @@ QtObject {
     readonly property int spacingLarge: 24
     readonly property int spacingXl: 32
 
-    readonly property int radiusSmall: 6
-    readonly property int radiusMedium: 10
-    readonly property int radiusLarge: 16
+    readonly property int radiusSmall: 8
+    readonly property int radiusMedium: 12
+    readonly property int radiusLarge: 20
+    readonly property int radiusXl: 26
     readonly property int radiusPill: 999
 
     // ---- Typographie -------------------------------------------------------
-    readonly property string fontFamily: "Segoe UI"
+    readonly property string fontFamily: "Inter"
+    readonly property string fontFamilyFallback: "Segoe UI"
     readonly property int fontSizeTitle: 26
     readonly property int fontSizeHeading: 18
     readonly property int fontSizeSubheading: 15

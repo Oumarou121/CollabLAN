@@ -253,9 +253,13 @@ signals:
      * @param suggestedPath Aperçu (previewDefaultLocalPath(), sans effet de
      *                      bord) du chemin qui serait utilisé en cas
      *                      d'acceptation.
+     * @param allowWrite    Permission accordée par le propriétaire (lecture
+     *                      seule si false), affichée sous forme de badge
+     *                      dans la boîte de confirmation.
      */
     void folderShareConfirmationRequested(qint64 folderId, const QString &folderName,
-                                           const QString &ownerName, const QString &suggestedPath);
+                                           const QString &ownerName, const QString &suggestedPath,
+                                           bool allowWrite);
 
     /**
      * @brief Retransmis depuis FolderSyncService::folderTransferProgress

@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include "models/SharedFolderPermission.h"
 
 namespace core {
 
@@ -66,7 +67,19 @@ void SharedFolderContext::setSharedFolderManager(SharedFolderManager *manager)
                     }
 
                     const QString suggestedPath = m_manager->previewDefaultLocalPath(folderId).value_or(QString());
-                    emit folderShareConfirmationRequested(folderId, folder->name(), ownerName, suggestedPath);
+
+                    // Permission accordee a l'utilisateur courant sur ce dossier,
+                    // pour affichage d'un badge lecture/ecriture dans la boite de
+                    // confirmation (direction visuelle validee sur la maquette).
+                    bool allowWrite = false;
+                    for (const models::SharedFolderAccess &access : m_manager->accessForFolder(folderId)) {
+                        if (access.userId() == userId) {
+                            allowWrite = models::canWrite(access.permission());
+                            break;
+                        }
+                    }
+
+                    emit folderShareConfirmationRequested(folderId, folder->name(), ownerName, suggestedPath, allowWrite);
                 });
         // Rafraîchir l'UI quand un accès est révoqué localement (toujours émis)
         connect(m_manager, &SharedFolderManager::accessRevokedLocal,

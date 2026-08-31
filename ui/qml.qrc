@@ -28,6 +28,7 @@
         <file>Components/AppPasswordField.qml</file>
         <file>Components/AppDivider.qml</file>
         <file>Components/AppSegmentedControl.qml</file>
+        <file>Components/FolderDropzone.qml</file>
         <file>Components/IconButton.qml</file>
         <file>Components/FaIcon.qml</file>
         <file>Components/Avatar.qml</file>
