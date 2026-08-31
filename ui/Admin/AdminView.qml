@@ -1165,8 +1165,15 @@ ColumnLayout {
         id: addMachineDialog
         title: qsTr("Ajouter une machine autorisée")
         headerIcon: "\uf109"
-        dialogWidth: 500
-        dialogHeight: 600
+        dialogWidth: 460
+        // CORRECTIF (grand vide sous les boutons) : une hauteur figee
+        // (600) laissait un espace mort des que le contenu reel etait
+        // plus court que ca -- ce qui est desormais toujours le cas
+        // depuis la reorganisation en maquette. On se cale sur la
+        // hauteur naturelle du formulaire (mainColumn.implicitHeight),
+        // plafonnee a 560 pour garder un filet de securite (scroll) sur
+        // les petites fenetres/hauts de casse imprevus.
+        dialogHeight: Math.min(mainColumn.implicitHeight + Theme.spacingMedium * 2, 560)
 
         ScrollView {
             anchors.fill: parent
@@ -1174,202 +1181,191 @@ ColumnLayout {
             contentWidth: availableWidth
 
             ColumnLayout {
+                id: mainColumn
                 width: parent.width
-                spacing: Theme.spacingSmall
+                spacing: Theme.spacingMedium
 
-            Label {
-                text: qsTr("Postes détectés")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.textSecondary
-            }
-
-            ComboBox {
-                id: detectedMachineSelector
-                palette.window: Theme.surface
-                palette.base: Theme.surfaceAlt
-                palette.button: Theme.surfaceAlt
-                palette.text: Theme.text
-                palette.buttonText: Theme.text
-                palette.highlight: Theme.primary
-                palette.highlightedText: Theme.primaryText
-                Layout.fillWidth: true
-                model: (typeof discoveryService !== "undefined" && discoveryService)
-                       ? discoveryService.machineCandidates() : []
-                textRole: "name"
-                displayText: currentIndex >= 0 && currentIndex < count
-                             ? (model[currentIndex].name + " — " + model[currentIndex].ip) : qsTr("Sélectionner un poste détecté")
-                background: Rectangle {
+                // ---- Section "detection auto" : mise en avant dans une
+                // carte a part, car c'est le chemin rapide dans l'immense
+                // majorite des cas (poste deja visible sur le LAN). ----
+                Rectangle {
+                    Layout.fillWidth: true
                     radius: Theme.radiusMedium
                     color: Theme.background
-                    border.width: 1
-                    border.color: Theme.border
-                }
-                delegate: ItemDelegate {
-                    width: detectedMachineSelector.width
-                    highlighted: detectedMachineSelector.highlightedIndex === index
-                    background: Rectangle {
-                        color: detectedMachineSelector.highlightedIndex === index ? Theme.primaryMuted
-                               : (hovered ? Theme.surfaceHover : Theme.surface)
+                    implicitHeight: detectedColumn.implicitHeight + Theme.spacingMedium * 2
+
+                    ColumnLayout {
+                        id: detectedColumn
+                        anchors.fill: parent
+                        anchors.margins: Theme.spacingMedium
+                        spacing: Theme.spacingXs
+
+                        Label {
+                            text: qsTr("Poste détecté sur le réseau")
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: Theme.fontFamily
+                            color: Theme.textSecondary
+                        }
+
+                        ComboBox {
+                            id: detectedMachineSelector
+                            palette.window: Theme.surface
+                            palette.base: Theme.surfaceAlt
+                            palette.button: Theme.surfaceAlt
+                            palette.text: Theme.text
+                            palette.buttonText: Theme.text
+                            palette.highlight: Theme.primary
+                            palette.highlightedText: Theme.primaryText
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 40
+                            model: (typeof discoveryService !== "undefined" && discoveryService)
+                                   ? discoveryService.machineCandidates() : []
+                            textRole: "name"
+                            displayText: currentIndex >= 0 && currentIndex < count
+                                         ? (model[currentIndex].name + " — " + model[currentIndex].ip) : qsTr("Sélectionner un poste détecté")
+                            background: Rectangle {
+                                radius: Theme.radiusMedium
+                                color: Theme.surface
+                                border.width: 1
+                                border.color: Theme.border
+                            }
+                            delegate: ItemDelegate {
+                                width: detectedMachineSelector.width
+                                highlighted: detectedMachineSelector.highlightedIndex === index
+                                background: Rectangle {
+                                    color: detectedMachineSelector.highlightedIndex === index ? Theme.primaryMuted
+                                           : (hovered ? Theme.surfaceHover : Theme.surface)
+                                }
+                                contentItem: Label {
+                                    text: modelData.name + " — " + modelData.ip
+                                    color: Theme.text
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    verticalAlignment: Text.AlignVCenter
+                                    leftPadding: Theme.spacingSmall
+                                    elide: Text.ElideRight
+                                }
+                            }
+                            popup: Popup {
+                                y: detectedMachineSelector.height
+                                width: detectedMachineSelector.width
+                                implicitHeight: contentItem.implicitHeight
+                                padding: 1
+                                contentItem: ListView {
+                                    clip: true
+                                    implicitHeight: contentHeight
+                                    model: detectedMachineSelector.popup.visible ? detectedMachineSelector.delegateModel : null
+                                    currentIndex: detectedMachineSelector.highlightedIndex
+                                    ScrollIndicator.vertical: ScrollIndicator { }
+                                }
+                                background: Rectangle {
+                                    color: Theme.surface
+                                    border.width: 1
+                                    border.color: Theme.border
+                                    radius: Theme.radiusMedium
+                                }
+                            }
+                            onActivated: {
+                                const candidate = model[index]
+                                if (!candidate) return
+                                newMachineFingerprint.text = candidate.fingerprint || ""
+                                newMachineUuid.text = candidate.id || ""
+                                newMachineIp.text = candidate.ip || ""
+                                newMachineHostname.text = candidate.name || ""
+                            }
+                        }
+
+                        Label {
+                            Layout.topMargin: 4
+                            Layout.fillWidth: true
+                            text: qsTr("Pré-remplit l'empreinte, l'UUID, l'IP et le nom automatiquement")
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.family: Theme.fontFamily
+                            color: Theme.textTertiary
+                            wrapMode: Text.WordWrap
+                        }
                     }
-                    contentItem: Label {
-                        text: modelData.name + " — " + modelData.ip
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                        verticalAlignment: Text.AlignVCenter
-                        leftPadding: Theme.spacingSmall
-                        elide: Text.ElideRight
+                }
+
+                AppDivider {
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spacingXs
+                    label: qsTr("ou saisir manuellement")
+                }
+
+                AppTextField {
+                    id: newMachineFingerprint
+                    Layout.fillWidth: true
+                    label: qsTr("Empreinte SHA-256 du certificat")
+                    placeholderText: qsTr("empreinte SHA-256 complète")
+                }
+
+                AppTextField {
+                    id: newMachineUuid
+                    Layout.fillWidth: true
+                    label: qsTr("UUID de la machine")
+                    placeholderText: qsTr("UUID annoncé par le poste")
+                }
+
+                // Hote + IP sur une meme ligne : deux champs courts et
+                // apparentes, inutile de leur donner chacun une ligne
+                // pleine largeur comme c'etait le cas avant.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingSmall
+
+                    AppTextField {
+                        id: newMachineHostname
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        label: qsTr("Nom d'hôte")
+                        placeholderText: qsTr("DESKTOP-MARIE")
+                    }
+
+                    AppTextField {
+                        id: newMachineIp
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        label: qsTr("Dernière IP")
+                        placeholderText: "192.168.1.x"
                     }
                 }
-                popup: Popup {
-                    y: detectedMachineSelector.height
-                    width: detectedMachineSelector.width
-                    implicitHeight: contentItem.implicitHeight
-                    padding: 1
-                    contentItem: ListView {
-                        clip: true
-                        implicitHeight: contentHeight
-                        model: detectedMachineSelector.popup.visible ? detectedMachineSelector.delegateModel : null
-                        currentIndex: detectedMachineSelector.highlightedIndex
-                        ScrollIndicator.vertical: ScrollIndicator { }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Nom d'hôte et IP sont optionnels — utiles pour retrouver ce poste plus tard.")
+                    font.pixelSize: Theme.fontSizeCaption
+                    font.family: Theme.fontFamily
+                    color: Theme.textTertiary
+                    wrapMode: Text.WordWrap
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spacingSmall
+                    spacing: Theme.spacingSmall
+
+                    Item { Layout.fillWidth: true }
+
+                    AppButton {
+                        variant: "ghost"
+                        text: qsTr("Annuler")
+                        onClicked: addMachineDialog.close()
                     }
-                    background: Rectangle {
-                        color: Theme.surface
-                        border.width: 1
-                        border.color: Theme.border
-                        radius: Theme.radiusMedium
-                    }
-                }
-                onActivated: {
-                    const candidate = model[index]
-                    if (!candidate) return
-                    newMachineFingerprint.text = candidate.fingerprint || ""
-                    newMachineUuid.text = candidate.id || ""
-                    newMachineIp.text = candidate.ip || ""
-                    newMachineHostname.text = candidate.name || ""
-                }
-            }
 
-            Label {
-                text: qsTr("Empreinte SHA-256 du certificat")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.textSecondary
-            }
-
-            TextField {
-                id: newMachineFingerprint
-                Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                placeholderText: qsTr("empreinte SHA-256 complète")
-                color: Theme.text
-                leftPadding: Theme.spacingMedium
-                background: Rectangle {
-                    radius: Theme.radiusMedium
-                    color: Theme.background
-                    border.width: 1
-                    border.color: Theme.border
-                }
-            }
-
-            Label {
-                text: qsTr("Nom d'hôte (optionnel)")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.textSecondary
-                Layout.topMargin: Theme.spacingSmall
-            }
-
-            Label {
-                text: qsTr("UUID de la machine")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.textSecondary
-                Layout.topMargin: Theme.spacingSmall
-            }
-
-            TextField {
-                id: newMachineUuid
-                Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                placeholderText: qsTr("UUID annoncé par le poste")
-                color: Theme.text
-                leftPadding: Theme.spacingMedium
-                background: Rectangle {
-                    radius: Theme.radiusMedium
-                    color: Theme.background
-                    border.width: 1
-                    border.color: Theme.border
-                }
-            }
-
-            Label {
-                text: qsTr("Dernière adresse IP (optionnel)")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.textSecondary
-                Layout.topMargin: Theme.spacingSmall
-            }
-
-            TextField {
-                id: newMachineIp
-                Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                placeholderText: "192.168.1.x"
-                color: Theme.text
-                leftPadding: Theme.spacingMedium
-                background: Rectangle {
-                    radius: Theme.radiusMedium
-                    color: Theme.background
-                    border.width: 1
-                    border.color: Theme.border
-                }
-            }
-
-            Label {
-                text: qsTr("Nom d'hôte (optionnel)")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.textSecondary
-                Layout.topMargin: Theme.spacingSmall
-            }
-
-            TextField {
-                id: newMachineHostname
-                Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                placeholderText: qsTr("Nom de la machine")
-                color: Theme.text
-                leftPadding: Theme.spacingMedium
-                background: Rectangle {
-                    radius: Theme.radiusMedium
-                    color: Theme.background
-                    border.width: 1
-                    border.color: Theme.border
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.spacingMedium
-                spacing: Theme.spacingSmall
-
-                Item { Layout.fillWidth: true }
-
-                AppButton {
-                    variant: "ghost"
-                    text: qsTr("Annuler")
-                    onClicked: addMachineDialog.close()
-                }
-
-                AppButton {
-                    variant: "primary"
-                    text: qsTr("Ajouter")
-                    onClicked: {
-                        authorizedMachineModel.addMachineByCertificate(
-                            newMachineFingerprint.text, newMachineUuid.text,
-                            newMachineIp.text, newMachineHostname.text,
-                            "Ajouté par admin")
-                        addMachineDialog.close()
+                    AppButton {
+                        variant: "primary"
+                        text: qsTr("Ajouter la machine")
+                        onClicked: {
+                            authorizedMachineModel.addMachineByCertificate(
+                                newMachineFingerprint.text, newMachineUuid.text,
+                                newMachineIp.text, newMachineHostname.text,
+                                "Ajouté par admin")
+                            addMachineDialog.close()
+                        }
                     }
                 }
             }
         }
-    }
     }
 
     AppDialog {
@@ -1377,125 +1373,56 @@ ColumnLayout {
         title: qsTr("Ajouter un utilisateur")
         headerIcon: "\uf234"
         dialogWidth: 380
-        dialogHeight: 440
+        // Hauteur calculee sur le contenu reel (meme principe que la
+        // modale "Ajouter une machine" juste au-dessus). contentColumn
+        // n'utilise que `width: parent.width` (pas anchors.fill), donc
+        // son implicitHeight ne depend que de son propre contenu -- pas
+        // de dependance circulaire.
+        dialogHeight: contentColumn.implicitHeight + Theme.spacingMedium * 2
 
-        ScrollView {
-            anchors.fill: parent
-            clip: true
-            contentWidth: availableWidth
+        ColumnLayout {
+            id: contentColumn
+            width: parent.width
+            spacing: Theme.spacingMedium
 
-            ColumnLayout {
-                width: parent.width
-                spacing: Theme.spacingSmall
-
-            Label {
-                text: qsTr("Nom d'utilisateur")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.textSecondary
-            }
-
-            TextField {
+            AppTextField {
                 id: newUserName
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                placeholderText: qsTr("Nom d'utilisateur")
-                color: Theme.text
-                leftPadding: Theme.spacingMedium
-                background: Rectangle {
-                    radius: Theme.radiusMedium
-                    color: Theme.background
-                    border.width: 1
-                    border.color: Theme.border
-                }
+                label: qsTr("Nom d'utilisateur")
+                placeholderText: qsTr("marie.dupont")
             }
 
-            Label {
-                text: qsTr("Mot de passe")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.textSecondary
-                Layout.topMargin: Theme.spacingSmall
-            }
-
-            TextField {
+            AppPasswordField {
                 id: newUserPassword
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                placeholderText: qsTr("Mot de passe")
-                echoMode: TextInput.Password
-                color: Theme.text
-                leftPadding: Theme.spacingMedium
-                background: Rectangle {
-                    radius: Theme.radiusMedium
-                    color: Theme.background
-                    border.width: 1
-                    border.color: Theme.border
-                }
+                label: qsTr("Mot de passe")
+                placeholderText: qsTr("8 caractères minimum")
             }
 
-            Label {
-                text: qsTr("Rôle")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.textSecondary
-                Layout.topMargin: Theme.spacingSmall
-            }
-
-            ComboBox {
-                id: newUserRole
-                palette.window: Theme.surface
-                palette.base: Theme.surfaceAlt
-                palette.button: Theme.surfaceAlt
-                palette.text: Theme.text
-                palette.buttonText: Theme.text
-                palette.highlight: Theme.primary
-                palette.highlightedText: Theme.primaryText
+            ColumnLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 40
-                model: [qsTr("Utilisateur"), qsTr("Administrateur")]
-                background: Rectangle {
-                    radius: Theme.radiusMedium
-                    color: Theme.background
-                    border.width: 1
-                    border.color: Theme.border
+                spacing: Theme.spacingXs
+
+                Label {
+                    text: qsTr("Rôle")
+                    font.pixelSize: Theme.fontSizeSmall
+                    font.family: Theme.fontFamily
+                    color: Theme.textSecondary
                 }
-                delegate: ItemDelegate {
-                    width: newUserRole.width
-                    highlighted: newUserRole.highlightedIndex === index
-                    background: Rectangle {
-                        color: newUserRole.highlightedIndex === index ? Theme.primaryMuted
-                               : (hovered ? Theme.surfaceHover : Theme.surface)
-                    }
-                    contentItem: Label {
-                        text: modelData
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                        verticalAlignment: Text.AlignVCenter
-                        leftPadding: Theme.spacingSmall
-                    }
-                }
-                popup: Popup {
-                    y: newUserRole.height
-                    width: newUserRole.width
-                    implicitHeight: contentItem.implicitHeight
-                    padding: 1
-                    contentItem: ListView {
-                        clip: true
-                        implicitHeight: contentHeight
-                        model: newUserRole.popup.visible ? newUserRole.delegateModel : null
-                        currentIndex: newUserRole.highlightedIndex
-                        ScrollIndicator.vertical: ScrollIndicator { }
-                    }
-                    background: Rectangle {
-                        color: Theme.surface
-                        border.width: 1
-                        border.color: Theme.border
-                        radius: Theme.radiusMedium
-                    }
+
+                AppSegmentedControl {
+                    id: newUserRole
+                    Layout.fillWidth: true
+                    model: [
+                        { label: qsTr("Utilisateur"), glyph: "\uf007" },
+                        { label: qsTr("Administrateur"), glyph: "\uf132" }
+                    ]
+                    currentIndex: 0
                 }
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: Theme.spacingMedium
                 spacing: Theme.spacingSmall
 
                 Item { Layout.fillWidth: true }
@@ -1517,34 +1444,76 @@ ColumnLayout {
                 }
             }
         }
-        }
     }
 
     AppDialog {
         id: accessDeniedDialog
-        title: qsTr("Accès refusé")
-        headerIcon: "\uf071"
-        dialogWidth: 360
+        // Modale d'alerte pure (pas un formulaire) : pas de barre
+        // d'en-tete Label+icone+croix comme les autres dialogs, l'icone
+        // est integree en grand format au centre du contenu -- plus
+        // lisible pour un message court et bloquant.
+        dialogWidth: 340
+        showHeader: false
         showCloseButton: false
         closePolicy: Popup.NoAutoClose
+        // Meme principe que les 2 dialogs precedents : showHeader:false
+        // donc pas de +60, juste le contenu + le padding du Dialog.
+        dialogHeight: alertColumn.implicitHeight + Theme.spacingMedium * 2
+
+        FontLoader {
+            id: accessDeniedIconFont
+            source: "../Assets/fonts/fontawesome-webfont.ttf"
+        }
 
         ColumnLayout {
-            anchors.fill: parent
+            id: alertColumn
+            width: parent.width
             spacing: Theme.spacingMedium
+
+            Item { Layout.preferredHeight: Theme.spacingXs }
+
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: 48
+                Layout.preferredHeight: 48
+                radius: width / 2
+                color: Theme.errorMuted
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "\uf023"
+                    font.family: accessDeniedIconFont.name
+                    font.pixelSize: 20
+                    color: Theme.error
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                Layout.topMargin: Theme.spacingXs
+                text: qsTr("Accès refusé")
+                horizontalAlignment: Text.AlignHCenter
+                color: Theme.text
+                font.pixelSize: Theme.fontSizeHeading
+                font.bold: true
+                font.family: Theme.fontFamily
+            }
 
             Label {
                 Layout.fillWidth: true
                 text: qsTr("Vous n'avez pas les droits administrateur pour accéder à cette page.")
-                color: Theme.text
+                horizontalAlignment: Text.AlignHCenter
+                color: Theme.textSecondary
                 font.pixelSize: Theme.fontSizeBody
                 font.family: Theme.fontFamily
                 wrapMode: Text.WordWrap
             }
 
             AppButton {
-                Layout.alignment: Qt.AlignRight
+                Layout.fillWidth: true
+                Layout.topMargin: Theme.spacingXs
                 variant: "primary"
-                text: qsTr("OK")
+                text: qsTr("Retour")
                 onClicked: {
                     accessDeniedDialog.close()
                     root.backRequested()

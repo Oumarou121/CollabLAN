@@ -48,6 +48,23 @@ Dialog {
     // doivent etre fermes que via une action explicite (ex. confirmation
     // bloquante).
     property bool showCloseButton: true
+    // Masque entierement la barre d'en-tete (icone+titre+fermer), pour
+    // les modales de type "alerte" qui composent leur propre en-tete
+    // visuel dans le contenu (icone centree en grand format, cf.
+    // "Acces refuse"). NB: on ne peut pas se contenter de visible:false
+    // sur le header -- Popup se base sur son implicitHeight pour
+    // calculer la taille totale de la fenetre (cf. commentaire plus bas),
+    // donc un header invisible mais de hauteur non nulle laisse un bandeau
+    // vide en haut de la modale.
+    property bool showHeader: true
+    // Hauteur reelle du header (icone+titre+croix), reutilisee a la fois
+    // par le header lui-meme (ligne ~163) et par le calcul de `height`
+    // ci-dessous. Avant, ce `60` etait duplique/oublie : dialogHeight
+    // fourni par l'appelant (cf. AdminView.qml) ne comptait que le
+    // contenu + padding, jamais le header, ce qui faisait deborder le
+    // contenu (ex. les boutons Annuler/Ajouter) sous la carte de la
+    // modale des que showHeader:true.
+    readonly property int headerAreaHeight: 60
     // Etat d'une operation longue : verrouille le contenu et affiche un
     // retour visuel uniforme dans toutes les modales.
     property bool busy: false
@@ -72,8 +89,14 @@ Dialog {
     palette.highlightedText: Theme.primaryText
 
     width: Math.min(dialogWidth, (parent ? parent.width : dialogWidth + Theme.spacingXl * 2) - Theme.spacingXl * 2)
+    // dialogHeight (fourni par l'appelant) represente la hauteur du
+    // CONTENU + son padding (cf. commentaires dans AdminView.qml : "Hauteur
+    // calculee sur le contenu reel"). On y ajoute ici la hauteur du header
+    // pour obtenir la hauteur totale reelle du Popup, sinon le contenu
+    // deborde de la carte des que showHeader:true.
     height: dialogHeight > 0
-            ? Math.min(dialogHeight, (parent ? parent.height : dialogHeight + Theme.spacingXl * 2) - Theme.spacingXl * 2)
+            ? Math.min(dialogHeight + (root.showHeader ? root.headerAreaHeight : 0),
+                        (parent ? parent.height : dialogHeight + Theme.spacingXl * 2) - Theme.spacingXl * 2)
             : implicitHeight
 
     // ---- Overlay d'arriere-plan assombri, coherent avec Theme.overlay --
@@ -130,6 +153,18 @@ Dialog {
         }
     }
 
+    // NB : une tentative anterieure de surcharger `contentItem` ici pour
+    // remonter automatiquement l'implicitHeight du contenu a ete
+    // abandonnee -- elle cassait le rattachement automatique des enfants
+    // declares par l'appelant (le formulaire se retrouvait rendu hors de
+    // la carte, sur le fond de l'ecran). A la place, chaque dialog qui a
+    // besoin d'une hauteur automatique calcule sa propre `dialogHeight`
+    // a partir de l'implicitHeight de son ColumnLayout (cf. AdminView.qml,
+    // dialogs "Ajouter une machine"/"Ajouter un utilisateur"/"Acces
+    // refuse"), sans jamais utiliser `anchors.fill: parent` sur ce
+    // ColumnLayout (seulement `width: parent.width`) pour eviter une
+    // dependance circulaire.
+
     // ---- Header stylise (remplace la barre de titre Qt par defaut) ----
     // IMPORTANT : Popup calcule la taille totale (donc celle du
     // background) a partir de implicitHeight du header/contentItem/
@@ -139,12 +174,27 @@ Dialog {
     // de la carte.
     header: Item {
         width: parent ? parent.width : 0
-        implicitHeight: 60
+        implicitHeight: root.showHeader ? root.headerAreaHeight : 0
         height: implicitHeight
+        visible: root.showHeader
         clip: true
 
+        // NB : QtQuick.Rectangle n'a pas de radius par coin (pas de
+        // bottomLeftRadius/bottomRightRadius, indisponibles avant Qt 6.7,
+        // et le projet cible juste "Qt6" sans version minor precise). Le
+        // rectangle etait arrondi sur ses 4 coins alors que le header ne
+        // doit l'etre qu'en haut (pour suivre l'arrondi de la carte) --
+        // ca laissait un petit "mordillage" arrondi visible aux 2 coins
+        // bas du bandeau, la ou il rejoint le contenu blanc en dessous.
+        // Fix : on etend le rectangle sous la zone visible du header
+        // (qui a clip:true) de `radius` pixels ; ses coins bas arrondis
+        // se retrouvent alors hors du clip et sont simplement coupes,
+        // ne laissant que des bords bas bien droits.
         Rectangle {
-            anchors.fill: parent
+            x: 0
+            y: 0
+            width: parent.width
+            height: parent.height + Theme.radiusLarge
             color: Theme.surfaceAlt
             radius: Theme.radiusLarge
         }

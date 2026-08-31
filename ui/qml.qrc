@@ -24,6 +24,10 @@
         <file>Components/AppHeader.qml</file>
         <file>Components/AppButton.qml</file>
         <file>Components/AppDialog.qml</file>
+        <file>Components/AppTextField.qml</file>
+        <file>Components/AppPasswordField.qml</file>
+        <file>Components/AppDivider.qml</file>
+        <file>Components/AppSegmentedControl.qml</file>
         <file>Components/IconButton.qml</file>
         <file>Components/FaIcon.qml</file>
         <file>Components/Avatar.qml</file>
