@@ -1774,6 +1774,18 @@ Item {
                             }
                         }
                         MenuSeparator {
+                            // CORRECTIF (espace vide conservé pour un dossier
+                            // "Reçu") : ce séparateur n'a de sens que devant
+                            // "Exclusions…"/"Gérer les accès…", masqués juste
+                            // en dessous pour un dossier distant. `visible`
+                            // seul ne suffit pas ici : dans le ListView/Column
+                            // interne de Menu, un delegate invisible garde sa
+                            // hauteur de mise en page (seul le rendu est
+                            // masqué) -- d'où le "trou" observé. On force donc
+                            // aussi height à 0 quand il est masqué, comme pour
+                            // les deux MenuItem ci-dessous.
+                            visible: root.openedFolderIsLocalOrigin
+                            height: visible ? implicitHeight : 0
                             contentItem: Rectangle {
                                 implicitHeight: 1
                                 color: Theme.border
@@ -1781,8 +1793,8 @@ Item {
                         }
                         MenuItem {
                             width: parent.width - 2 * Theme.spacingXs
-                            height: 40
                             visible: root.openedFolderIsLocalOrigin
+                            height: visible ? 40 : 0
                             contentItem: Label {
                                 text: parent.text
                                 color: Theme.text
@@ -1804,8 +1816,8 @@ Item {
                         }
                         MenuItem {
                             width: parent.width - 2 * Theme.spacingXs
-                            height: 40
                             visible: root.openedFolderIsLocalOrigin
+                            height: visible ? 40 : 0
                             contentItem: Label {
                                 text: parent.text
                                 color: Theme.text

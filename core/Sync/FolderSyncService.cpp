@@ -444,7 +444,31 @@ std::optional<QJsonObject> FolderSyncService::buildAccessGrantedJson(qint64 fold
     obj[QStringLiteral("owner_uuid")]        = owner->uuid();
     obj[QStringLiteral("user_uuid")]         = grantedUser->uuid();
     obj[QStringLiteral("permission")]        = models::sharedFolderPermissionToString(permission);
-    obj[QStringLiteral("origin_machine_id")] = m_machineId;
+    // CORRECTIF (dossier local de l'expediteur bascule a tort en "Recu"
+    // apres un simple redemarrage) : cette fonction sert a la fois a
+    // announceAccessGranted() (partage EN DIRECT, ou m_machineId est bien
+    // l'origine reelle du dossier) et a handleFolderHello() (rattrapage
+    // "folder_catchup_batch" a la reconnexion, ou c'est le SERVEUR qui
+    // rejoue TOUS les acces qu'il connait via m_accessRepository.getSinceId(),
+    // y compris ceux de dossiers dont il n'est PAS l'origine). Stamper
+    // inconditionnellement m_machineId ecrasait alors l'origine reelle du
+    // dossier par celle du serveur qui rejoue le message : quand le
+    // proprietaire du dossier se reconnectait (ex. relance de l'app), son
+    // propre folder_hello recevait en retour son propre partage avec
+    // origin_machine_id = ID DU SERVEUR, et handleFolderAccessGranted()
+    // (correctif ligne ~1267, "dossier bloque origine locale a tort")
+    // reconciliait alors son dossier LOCAL vers cette fausse origine des
+    // qu'elle differait de son m_machineId -- perdant silencieusement le
+    // statut "Local" (badge, Reindexer, Exclusions/Gerer les acces) au
+    // premier redemarrage suivant un partage.
+    //
+    // On ne stampe donc m_machineId que si CE poste est reellement
+    // l'origine du dossier (isLocalOrigin()) ; sinon on repropage
+    // l'origin_machine_id deja connu du dossier, qui reste alors correct
+    // quel que soit le nombre de rebonds/rattrapages successifs.
+    obj[QStringLiteral("origin_machine_id")] = folder->isLocalOrigin()
+        ? m_machineId
+        : folder->originMachineId();
     return obj;
 }
 
