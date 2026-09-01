@@ -534,23 +534,11 @@ Item {
                 visible: createDialog.step === 1
                 spacing: Theme.spacingMedium
 
-                Label {
-                    text: qsTr("Nom du dossier partagé")
-                    color: Theme.textSecondary
-                    font.pixelSize: Theme.fontSizeSmall
-                }
-                TextField {
+                AppTextField {
                     id: nameField
                     Layout.fillWidth: true
+                    label: qsTr("Nom du dossier partagé")
                     placeholderText: qsTr("ex : Documents projet")
-                    font.pixelSize: Theme.fontSizeBody
-                    color: Theme.text
-                    background: Rectangle {
-                        radius: Theme.radiusMedium
-                        color: Theme.surfaceAlt
-                        border.width: 1
-                        border.color: nameField.activeFocus ? Theme.primary : Theme.border
-                    }
                 }
 
                 Label {
@@ -564,30 +552,12 @@ Item {
                     onBrowseRequested: folderPickerDialog.open()
                 }
 
-                Label {
-                    text: qsTr("Exclure de la synchronisation (optionnel)")
-                    color: Theme.textSecondary
-                    font.pixelSize: Theme.fontSizeSmall
-                }
-                TextField {
+                AppTextField {
                     id: excludePatternsField
                     Layout.fillWidth: true
+                    label: qsTr("Exclure de la synchronisation (optionnel)")
                     placeholderText: qsTr("ex : *.log, node_modules, drafts/*")
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.text
-                    background: Rectangle {
-                        radius: Theme.radiusMedium
-                        color: Theme.surfaceAlt
-                        border.width: 1
-                        border.color: excludePatternsField.activeFocus ? Theme.primary : Theme.border
-                    }
-                }
-                Label {
-                    text: qsTr("Motifs séparés par des virgules. S'applique en plus des exclusions par défaut (dossiers systèmes, fichiers temporaires…). Local à ce poste.")
-                    color: Theme.textTertiary
-                    font.pixelSize: Theme.fontSizeSmall
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
+                    helperText: qsTr("Motifs séparés par des virgules. S'applique en plus des exclusions par défaut (dossiers systèmes, fichiers temporaires…). Local à ce poste.")
                 }
             }
 
@@ -827,25 +797,17 @@ Item {
                 Layout.fillWidth: true
             }
 
-            TextField {
+            AppTextField {
                 id: excludePatternsEditField
                 Layout.fillWidth: true
                 placeholderText: qsTr("Tapez un motif puis Entrée…")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.text
-                background: Rectangle {
-                    radius: Theme.radiusSmall
-                    color: Theme.surfaceAlt
-                    border.width: 1
-                    border.color: excludePatternsEditField.activeFocus ? Theme.primary : Theme.border
-                }
-                onAccepted: {
+                field.onAccepted: {
                     editExcludePatternsDialog.addPattern(text)
                     text = ""
                 }
                 // Une virgule tapee en cours de saisie cree directement une
                 // chip (comportement familier, ex. champs "tags" web).
-                onTextChanged: {
+                field.onTextChanged: {
                     if (text.indexOf(",") !== -1) {
                         var parts = text.split(",")
                         for (var i = 0; i < parts.length - 1; i++) {

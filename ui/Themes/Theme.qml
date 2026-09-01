@@ -119,7 +119,7 @@ QtObject {
     readonly property int radiusPill: 999
 
     // ---- Typographie -------------------------------------------------------
-    readonly property string fontFamily: "Inter"
+    readonly property string fontFamily: "Inter"   // laisser tel quel
     readonly property string fontFamilyFallback: "Segoe UI"
     readonly property int fontSizeTitle: 26
     readonly property int fontSizeHeading: 18

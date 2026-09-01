@@ -35,6 +35,30 @@ ApplicationWindow {
     title: qsTr("Collab LAN")
     color: Theme.background
 
+    // Chargement global de la police Inter (issue design) : chargee une
+    // seule fois ici plutot que localement dans chaque vue, pour que
+    // Theme.fontFamily corresponde a une police reellement embarquee.
+    FontLoader {
+        id: interRegular
+        source: "qrc:/ui/Assets/fonts/Inter-Regular.ttf"
+    }
+    FontLoader {
+        id: interMedium
+        source: "qrc:/ui/Assets/fonts/Inter-Medium.ttf"
+    }
+    FontLoader {
+        id: interSemiBold
+        source: "qrc:/ui/Assets/fonts/Inter-SemiBold.ttf"
+    }
+    FontLoader {
+        id: interBold
+        source: "qrc:/ui/Assets/fonts/Inter-Bold.ttf"
+    }
+
+    // Police par defaut de toute l'application : tous les Text/Label/Button
+    // enfants heritent de font.family sauf override explicite.
+    font.family: interRegular.status === FontLoader.Ready ? interRegular.name : Theme.fontFamilyFallback
+
     // Référence à la propriété globale messagingContext pour l'utiliser dans les Components
     property var globalMessagingContext: messagingContext
 
