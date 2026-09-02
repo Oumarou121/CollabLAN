@@ -422,7 +422,7 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 32
-                    radius: Theme.radiusPill
+                    radius: Theme.radiusSmall
                     color: Theme.breadcrumbChipHover
                     border.width: 1
                     border.color: Theme.border
@@ -489,7 +489,7 @@ Item {
                 Rectangle {
                     Layout.preferredWidth: 190
                     Layout.preferredHeight: 32
-                    radius: Theme.radiusPill
+                    radius: Theme.radiusSmall
                     color: Theme.surfaceAlt
                     border.width: 1
                     border.color: addressSearchField.activeFocus ? Theme.primary : Theme.border
@@ -881,7 +881,7 @@ Item {
                 delegate: Rectangle {
                     height: 24
                     width: filterChipRow.implicitWidth + 20
-                    radius: Theme.radiusPill
+                    radius: Theme.radiusSmall
                     color: root.activeFilter === modelData.key ? Theme.primaryMuted : Theme.surfaceAlt
                     border.width: 1
                     border.color: root.activeFilter === modelData.key ? Theme.primary : Theme.border

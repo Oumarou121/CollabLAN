@@ -1519,7 +1519,7 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 32
-                    radius: Theme.radiusPill
+                    radius: Theme.radiusSmall
                     color: Theme.breadcrumbChipHover
                     border.width: 1
                     border.color: Theme.border
@@ -1624,7 +1624,7 @@ Item {
                     visible: !root.showHistory
                     Layout.preferredWidth: 190
                     Layout.preferredHeight: 32
-                    radius: Theme.radiusPill
+                    radius: Theme.radiusSmall
                     color: Theme.surfaceAlt
                     border.width: 1
                     border.color: addressSearchField.activeFocus ? Theme.primary : Theme.border
@@ -1908,7 +1908,7 @@ Item {
                 delegate: Rectangle {
                     height: 24
                     width: filterChipRow.implicitWidth + 20
-                    radius: Theme.radiusPill
+                    radius: Theme.radiusSmall
                     color: root.activeFilter === modelData.key ? Theme.primaryMuted : Theme.surfaceAlt
                     border.width: 1
                     border.color: root.activeFilter === modelData.key ? Theme.primary : Theme.border
@@ -2266,33 +2266,6 @@ Item {
                                 ToolTip.visible: truncated && folderTile.hovered
                                 ToolTip.text: model.name
                                 ToolTip.delay: 500
-                            }
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: model.fileCount === 1 ? qsTr("1 fichier indexé") : qsTr("%1 fichiers indexés").arg(model.fileCount)
-                                color: Theme.textSecondary
-                                font.pixelSize: Theme.fontSizeCaption
-                                font.family: Theme.fontFamily
-                                horizontalAlignment: Text.AlignHCenter
-                                elide: Text.ElideRight
-                                maximumLineCount: 1
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Layout.topMargin: 2
-                                spacing: 6
-
-                                Item { Layout.fillWidth: true }
-
-                                StatusBadge {
-                                    tone: model.hasConflict ? "warning" : (model.isLocalOrigin ? "info" : "success")
-                                    text: model.hasConflict ? qsTr("Conflit")
-                                          : (model.isLocalOrigin ? qsTr("Local") : qsTr("Reçu"))
-                                }
-
-                                Item { Layout.fillWidth: true }
                             }
                         }
 

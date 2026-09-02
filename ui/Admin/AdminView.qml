@@ -1318,7 +1318,7 @@ ColumnLayout {
                         Layout.fillWidth: true
                         Layout.preferredWidth: 1
                         label: qsTr("Nom d'hôte")
-                        placeholderText: qsTr("DESKTOP-MARIE")
+                        placeholderText: qsTr("DESKTOP-DG")
                     }
 
                     AppTextField {
@@ -1389,14 +1389,14 @@ ColumnLayout {
                 id: newUserName
                 Layout.fillWidth: true
                 label: qsTr("Nom d'utilisateur")
-                placeholderText: qsTr("marie.dupont")
+                placeholderText: qsTr("loukmane")
             }
 
             AppPasswordField {
                 id: newUserPassword
                 Layout.fillWidth: true
                 label: qsTr("Mot de passe")
-                placeholderText: qsTr("nctères minimum")
+                placeholderText: qsTr("8 caratères minimum")
             }
 
             ColumnLayout {
