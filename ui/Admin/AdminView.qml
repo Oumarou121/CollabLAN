@@ -1396,7 +1396,7 @@ ColumnLayout {
                 id: newUserPassword
                 Layout.fillWidth: true
                 label: qsTr("Mot de passe")
-                placeholderText: qsTr("8 caractères minimum")
+                placeholderText: qsTr("nctères minimum")
             }
 
             ColumnLayout {

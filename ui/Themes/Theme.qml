@@ -27,11 +27,11 @@ QtObject {
     }
 
     // ---- Couleurs de base ------------------------------------------------
-    readonly property color background: darkMode ? "#15171C" : "#F5F6FA"
+    readonly property color background: darkMode ? "#15171C" : "#F2F5F8"
     readonly property color surface: darkMode ? "#1D2027" : "#FFFFFF"
-    readonly property color surfaceAlt: darkMode ? "#262A32" : "#EEF0F6"
-    readonly property color surfaceHover: darkMode ? "#2C313A" : "#E6E9F2"
-    readonly property color secondaryBackground: darkMode ? "#1D2027" : "#EEF0F6"
+    readonly property color surfaceAlt: darkMode ? "#262A32" : "#E7EDF3"
+    readonly property color surfaceHover: darkMode ? "#2C313A" : "#DCE5EE"
+    readonly property color secondaryBackground: darkMode ? "#1D2027" : "#E7EDF3"
 
     // Panneau lateral (sidebar) : legerement plus fonce/distinct de la
     // surface de contenu pour marquer la hierarchie de navigation.
@@ -44,19 +44,19 @@ QtObject {
 
     // Accent principal : indigo moderne, un peu plus distinctif que le
     // bleu "par defaut" tout en restant sobre et lisible.
-    readonly property color primary: darkMode ? "#818CF8" : "#4F46E5"
-    readonly property color primaryHover: darkMode ? "#9AA3FF" : "#4338CA"
-    readonly property color primaryMuted: darkMode ? "#2A2A45" : "#EEF0FE"
-    readonly property color primaryDeep: darkMode ? "#6366F1" : "#3730A3"
+    readonly property color primary: darkMode ? "#818CF8" : "#2457A6"
+    readonly property color primaryHover: darkMode ? "#9AA3FF" : "#1D4689"
+    readonly property color primaryMuted: darkMode ? "#2A2A45" : "#E5ECF7"
+    readonly property color primaryDeep: darkMode ? "#6366F1" : "#163B73"
     readonly property color accent: primary
     readonly property color accentDark: primaryHover
     readonly property color primaryText: "#FFFFFF"
 
-    readonly property color text: darkMode ? "#F2F3F7" : "#1A1D29"
-    readonly property color textSecondary: darkMode ? "#9AA0B2" : "#616881"
-    readonly property color textTertiary: darkMode ? "#6E7486" : "#8B92A6"
+    readonly property color text: darkMode ? "#F2F3F7" : "#17212B"
+    readonly property color textSecondary: darkMode ? "#9AA0B2" : "#536273"
+    readonly property color textTertiary: darkMode ? "#6E7486" : "#6B7785"
 
-    readonly property color border: darkMode ? "#2E323C" : "#E4E7F0"
+    readonly property color border: darkMode ? "#2E323C" : "#C7D1DC"
     readonly property color divider: border
     readonly property color shadow: darkMode ? "#00000080" : "#1A1D2118"
     readonly property color shadowSoft: darkMode ? "#00000055" : "#1A1D210F"
@@ -71,14 +71,14 @@ QtObject {
 
     // Barre d'adresse / fil d'Ariane et en-tête de liste (vue "Détails").
     readonly property color addressBarBackground: darkMode ? "#1A1C22" : "#FFFFFF"
-    readonly property color breadcrumbChipHover: darkMode ? "#262A32" : "#EEF0F6"
-    readonly property color listHeaderBackground: darkMode ? "#1A1C22" : "#F3F4F9"
+    readonly property color breadcrumbChipHover: darkMode ? "#262A32" : "#E7EDF3"
+    readonly property color listHeaderBackground: darkMode ? "#1A1C22" : "#E7EDF3"
 
     // Barre d'état inférieure (fine, collée en bas, comme un vrai explorateur).
-    readonly property color statusBarBackground: darkMode ? "#12141A" : "#EEF0F6"
+    readonly property color statusBarBackground: darkMode ? "#12141A" : "#E7EDF3"
 
     // Ascenseur discret.
-    readonly property color scrollbarThumb: darkMode ? "#3A3F4A" : "#C8CCDA"
+    readonly property color scrollbarThumb: darkMode ? "#3A3F4A" : "#AEBBC8"
 
     readonly property color error: darkMode ? "#FF7A7A" : "#D6455A"
     readonly property color errorMuted: darkMode ? "#3A2229" : "#FCEBEC"

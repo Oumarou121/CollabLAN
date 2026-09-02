@@ -76,10 +76,10 @@ Item {
     }
 
     // ---- Jetons locaux (alignes sur LoginView, meme palette navy) ----
-    readonly property color blue700: Theme.darkMode ? "#3E6C99" : "#1E3A5F"
-    readonly property color blue600: Theme.darkMode ? "#4E86B8" : "#2E6BAA"
-    readonly property color blueTint: Theme.darkMode ? "#1B2531" : "#E8F1F9"
-    readonly property color accentSky: "#4FC3F7"
+    readonly property color blue700: Theme.primaryDeep
+    readonly property color blue600: Theme.primary
+    readonly property color blueTint: Theme.primaryMuted
+    readonly property color accentSky: Theme.primary
 
     // Meme police d'accent embarquee que LoginView, pour un rendu identique
     // quel que soit le poste.

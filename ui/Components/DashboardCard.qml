@@ -35,11 +35,11 @@ Rectangle {
 
     // Jetons alignes sur LoginView (meme palette navy que le reste de
     // l'app : primary / primary-dark / primary-light / primary-mid).
-    readonly property color primary: Theme.darkMode ? "#4E86B8" : "#2E6BAA"
-    readonly property color primaryDark: Theme.darkMode ? "#3E6C99" : "#1E3A5F"
-    readonly property color primaryLight: Theme.darkMode ? "#1B2531" : "#E8F1F9"
-    readonly property color primaryMid: Theme.darkMode ? "#2E3D4E" : "#C2D9EE"
-    readonly property color borderIdle: Theme.darkMode ? Theme.border : "#242E6BAA"
+    readonly property color primary: Theme.primary
+    readonly property color primaryDark: Theme.primaryDeep
+    readonly property color primaryLight: Theme.primaryMuted
+    readonly property color primaryMid: Theme.selectionBackgroundHover
+    readonly property color borderIdle: Theme.border
 
     readonly property int bannerHeight: 116
 

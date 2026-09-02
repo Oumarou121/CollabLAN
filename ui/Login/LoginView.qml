@@ -77,13 +77,13 @@ Item {
     }
 
     // ---- Jetons locaux (palette pro/corporate, sensibles au theme) ----
-    readonly property color paper: Theme.darkMode ? "#171D26" : "#F4F6F9"
-    readonly property color ink: Theme.darkMode ? "#F2F3F7" : "#2C3440"
-    readonly property color inkMuted: Theme.darkMode ? "#9AA0B2" : "#5A6474"
-    readonly property color inkFaint: Theme.darkMode ? "#6E7486" : "#8A94A6"
-    readonly property color blue700: Theme.darkMode ? "#3E6C99" : "#1E3A5F"
-    readonly property color blue600: Theme.darkMode ? "#4E86B8" : "#2E6BAA"
-    readonly property color borderCol: Theme.darkMode ? "#2A2E37" : "#DDE3E8"
+    readonly property color paper: Theme.background
+    readonly property color ink: Theme.text
+    readonly property color inkMuted: Theme.textSecondary
+    readonly property color inkFaint: Theme.textTertiary
+    readonly property color blue700: Theme.primaryDeep
+    readonly property color blue600: Theme.primary
+    readonly property color borderCol: Theme.border
     readonly property color errorText: Theme.darkMode ? "#FF9A8A" : "#E5484D"
     readonly property color onAccent: "#FFFFFF"
     readonly property color disabledBg: Theme.darkMode ? "#3A4048" : "#9CA3AF"
