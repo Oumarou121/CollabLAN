@@ -596,30 +596,10 @@ Item {
                             width: usersListView.width
                             spacing: Theme.spacingSmall
 
-                            CheckBox {
+                            AppCheckBox {
                                 id: userCheckBox
                                 checked: selected
                                 onCheckedChanged: availableUsersModel.setProperty(index, "selected", checked)
-
-                                indicator: Rectangle {
-                                    implicitWidth: 18
-                                    implicitHeight: 18
-                                    x: userCheckBox.leftPadding
-                                    y: (userCheckBox.height - height) / 2
-                                    radius: Theme.radiusSmall
-                                    color: userCheckBox.checked ? Theme.primary : Theme.surface
-                                    border.width: 1
-                                    border.color: userCheckBox.checked ? Theme.primary : Theme.border
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "\u2713"
-                                        visible: userCheckBox.checked
-                                        color: Theme.primaryText
-                                        font.pixelSize: 12
-                                        font.bold: true
-                                    }
-                                }
                             }
                             Label {
                                 Layout.fillWidth: true
@@ -639,36 +619,10 @@ Item {
                     }
                 }
 
-                CheckBox {
+                AppCheckBox {
                     id: allowWriteCheckBox
                     text: qsTr("Autoriser la modification (lecture/écriture)")
                     checked: true
-                    contentItem: Label {
-                        text: allowWriteCheckBox.text
-                        leftPadding: allowWriteCheckBox.indicator.width + Theme.spacingSmall
-                        verticalAlignment: Text.AlignVCenter
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                    }
-                    indicator: Rectangle {
-                        implicitWidth: 18
-                        implicitHeight: 18
-                        x: allowWriteCheckBox.leftPadding
-                        y: (allowWriteCheckBox.height - height) / 2
-                        radius: Theme.radiusSmall
-                        color: allowWriteCheckBox.checked ? Theme.primary : Theme.surface
-                        border.width: 1
-                        border.color: allowWriteCheckBox.checked ? Theme.primary : Theme.border
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "\u2713"
-                            visible: allowWriteCheckBox.checked
-                            color: Theme.primaryText
-                            font.pixelSize: 12
-                            font.bold: true
-                        }
-                    }
                 }
             }
 
@@ -1376,36 +1330,13 @@ Item {
                     addUserCombo.selectedUsername = ""
                 }
 
-                ComboBox {
+                AppComboBox {
                     id: addUserComboBox
-                    palette.window: Theme.surface
-                    palette.base: Theme.surfaceAlt
-                    palette.button: Theme.surfaceAlt
-                    palette.text: Theme.text
-                    palette.buttonText: Theme.text
-                    palette.highlight: Theme.primary
-                    palette.highlightedText: Theme.primaryText
                     Layout.fillWidth: true
                     model: ListModel { id: candidateModel }
                     textRole: "username"
                     currentIndex: -1
                     displayText: currentIndex < 0 ? qsTr("Choisir un utilisateur…") : currentText
-
-                    background: Rectangle {
-                        radius: Theme.radiusSmall
-                        color: Theme.surfaceAlt
-                        border.width: 1
-                        border.color: addUserComboBox.activeFocus ? Theme.primary : Theme.border
-                    }
-
-                    contentItem: Label {
-                        leftPadding: Theme.spacingSmall
-                        text: addUserComboBox.displayText
-                        color: addUserComboBox.currentIndex < 0 ? Theme.textTertiary : Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                        verticalAlignment: Text.AlignVCenter
-                        elide: Text.ElideRight
-                    }
 
                     onCurrentIndexChanged: {
                         if (currentIndex >= 0 && currentIndex < candidateModel.count) {
@@ -1426,36 +1357,10 @@ Item {
                     }
                 }
 
-                CheckBox {
+                AppCheckBox {
                     id: addWriteCheckBox
                     text: qsTr("Écriture")
                     checked: true
-                    contentItem: Label {
-                        text: addWriteCheckBox.text
-                        leftPadding: addWriteCheckBox.indicator.width + Theme.spacingXs
-                        verticalAlignment: Text.AlignVCenter
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                    }
-                    indicator: Rectangle {
-                        implicitWidth: 18
-                        implicitHeight: 18
-                        x: addWriteCheckBox.leftPadding
-                        y: (addWriteCheckBox.height - height) / 2
-                        radius: Theme.radiusSmall
-                        color: addWriteCheckBox.checked ? Theme.primary : Theme.surface
-                        border.width: 1
-                        border.color: addWriteCheckBox.checked ? Theme.primary : Theme.border
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "\u2713"
-                            visible: addWriteCheckBox.checked
-                            color: Theme.primaryText
-                            font.pixelSize: 12
-                            font.bold: true
-                        }
-                    }
                 }
 
                 AppButton {

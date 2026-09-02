@@ -23,7 +23,14 @@
         <file>Components/ThemeToggleButton.qml</file>
         <file>Components/AppHeader.qml</file>
         <file>Components/AppButton.qml</file>
+        <file>Components/AppCheckBox.qml</file>
+        <file>Components/AppComboBox.qml</file>
         <file>Components/AppDialog.qml</file>
+        <file>Components/AppMenu.qml</file>
+        <file>Components/AppMenuItem.qml</file>
+        <file>Components/AppSlider.qml</file>
+        <file>Components/AppSpinBox.qml</file>
+        <file>Components/AppSwitch.qml</file>
         <file>Components/AppTextField.qml</file>
         <file>Components/AppPasswordField.qml</file>
         <file>Components/AppDivider.qml</file>
