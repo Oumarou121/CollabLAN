@@ -45,7 +45,7 @@ Rectangle {
 
     width: Math.min(360, parent ? parent.width - 32 : 360)
     height: contentColumn.implicitHeight + Theme.spacingMedium * 2
-    radius: Theme.radiusMedium
+    radius: Theme.radiusSmall
     color: Theme.surface
     border.color: Theme.border
     border.width: 1

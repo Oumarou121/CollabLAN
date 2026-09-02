@@ -37,7 +37,7 @@ ColumnLayout {
     Rectangle {
         Layout.fillWidth: true
         Layout.preferredHeight: cardColumn.implicitHeight + Theme.spacingLarge * 2
-        radius: Theme.radiusLarge
+        radius: Theme.radiusSmall
         color: Theme.surface
         border.width: 1
         border.color: Theme.border

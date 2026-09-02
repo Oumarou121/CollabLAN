@@ -361,7 +361,7 @@ Item {
                 Item {
                     id: usernameFieldWrapper
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 46
+                    Layout.preferredHeight: 48
 
                     TextField {
                         id: usernameField
@@ -377,7 +377,7 @@ Item {
 
                         background: Rectangle {
                             radius: Theme.radiusSmall
-                            color: Theme.darkMode ? "#141A22" : "#F8FAFC"
+                            color: Theme.surface
                             border.width: (usernameField.activeFocus || errorLabel.text.length > 0) ? 2 : 1
                             border.color: usernameField.activeFocus
                                    ? root.blue600
@@ -399,7 +399,7 @@ Item {
                 Item {
                     id: passwordFieldWrapper
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 46
+                    Layout.preferredHeight: 48
 
                     TextField {
                         id: passwordField
@@ -416,7 +416,7 @@ Item {
 
                         background: Rectangle {
                             radius: Theme.radiusSmall
-                            color: Theme.darkMode ? "#141A22" : "#F8FAFC"
+                            color: Theme.surface
                             border.width: (passwordField.activeFocus || errorLabel.text.length > 0) ? 2 : 1
                             border.color: passwordField.activeFocus
                                    ? root.blue600
@@ -588,7 +588,7 @@ Item {
                     Layout.topMargin: Theme.spacingMedium
                     Layout.fillWidth: true
                     Layout.preferredHeight: 44
-                    radius: Theme.radiusMedium
+                    radius: Theme.radiusSmall
                     color: userManager.busy ? root.disabledBg : (loginMouseArea.containsMouse ? root.blue600 : root.blue700)
                     Behavior on color { ColorAnimation { duration: 100 } }
 

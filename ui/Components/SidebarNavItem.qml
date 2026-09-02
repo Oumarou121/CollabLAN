@@ -16,21 +16,21 @@ Rectangle {
 
     signal clicked()
 
-    Layout.preferredHeight: 40
-    radius: Theme.radiusMedium
+    Layout.preferredHeight: 44
+    radius: Theme.radiusSmall
     color: active ? Theme.sidebarActive : (mouseArea.containsMouse ? Theme.sidebarHover : "transparent")
 
     Behavior on color { ColorAnimation { duration: 100 } }
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: Theme.spacingSmall
-        anchors.rightMargin: Theme.spacingSmall
+        anchors.leftMargin: Theme.spacingMedium
+        anchors.rightMargin: Theme.spacingMedium
         spacing: Theme.spacingSmall
 
         Text {
             text: root.icon
-            font.pixelSize: 16
+            font.pixelSize: 17
             color: Theme.sidebarText
             Layout.preferredWidth: 20
             horizontalAlignment: Text.AlignHCenter
@@ -39,7 +39,7 @@ Rectangle {
         Label {
             text: root.label
             color: Theme.sidebarText
-            font.pixelSize: Theme.fontSizeBody
+            font.pixelSize: Theme.fontSizeSubheading
             font.family: Theme.fontFamily
             Layout.fillWidth: true
             elide: Text.ElideRight

@@ -23,9 +23,9 @@ Item {
 
     property string glyph: ""
     property string variant: "ghost"
-    property int size: 36
+    property int size: 40
     property int iconSize: Math.round(size * 0.42)
-    property int radius: Theme.radiusMedium
+    property int radius: Theme.radiusSmall
     property bool enabledLook: true
     property bool bold: false
 

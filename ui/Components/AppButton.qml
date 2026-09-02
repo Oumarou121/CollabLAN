@@ -47,7 +47,7 @@ Button {
     }
 
     Layout.fillWidth: fullWidth
-    implicitHeight: 40
+    implicitHeight: 44
     implicitWidth: contentItem.implicitWidth + Theme.spacingLarge
     hoverEnabled: true
     opacity: enabled ? 1.0 : 0.55
@@ -60,7 +60,7 @@ Button {
     }
 
     background: Rectangle {
-        radius: Theme.radiusMedium
+        radius: Theme.radiusSmall
         color: root.pressed ? Qt.darker(root.hovered ? root.hoverColor : root.baseColor, 1.08)
                              : (root.hovered ? root.hoverColor : root.baseColor)
         border.width: (root.isGhost || root.variant === "secondary" || root.isOutline) ? 1 : 0

@@ -45,7 +45,7 @@ Item {
         // ---- En-tete (identique au style ConversationsView/UsersView) ----
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 64
+            Layout.preferredHeight: 72
             color: Theme.surface
 
             Rectangle {
@@ -57,8 +57,8 @@ Item {
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.spacingMedium
-                anchors.rightMargin: Theme.spacingMedium
+                anchors.leftMargin: Theme.spacingLarge
+                anchors.rightMargin: Theme.spacingLarge
                 spacing: Theme.spacingSmall
 
                 IconButton {
@@ -103,7 +103,7 @@ Item {
                 TextField {
                     id: searchField
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 40
+                    Layout.preferredHeight: 48
                     placeholderText: qsTr("Rechercher un utilisateur...")
                     color: Theme.text
                     font.pixelSize: Theme.fontSizeBody
@@ -113,7 +113,7 @@ Item {
 
                     background: Rectangle {
                         color: Theme.surfaceAlt
-                        radius: Theme.radiusLarge
+                        radius: Theme.radiusSmall
                         border.width: searchField.activeFocus ? 2 : 0
                         border.color: Theme.primary
                     }
@@ -134,7 +134,7 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    radius: Theme.radiusLarge
+                    radius: Theme.radiusSmall
                     color: Theme.surface
                     border.color: Theme.border
                     border.width: 1
@@ -206,7 +206,7 @@ Item {
                             width: usersListView.width
                             height: 60
                             color: itemMouse.containsMouse ? Theme.surfaceHover : Theme.surfaceAlt
-                            radius: Theme.radiusMedium
+                            radius: Theme.radiusSmall
                             border.color: Theme.border
                             border.width: 1
 

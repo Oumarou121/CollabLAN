@@ -110,19 +110,14 @@ Item {
         // ---- En-tete : marque, badge central, profil -----------------------
         Rectangle {
             Layout.fillWidth: true
-            // Alignee sur la hauteur (64px) utilisee par tous les autres
-            // ecrans (Postes connectes, Parametres, Appels, Discussions -
-            // cf. Components/AppHeader.qml) : Home restait a 76px, ce qui
-            // produisait un leger "saut" visuel de l'en-tete en naviguant
-            // depuis l'accueil.
-            Layout.preferredHeight: 64
+            Layout.preferredHeight: 72
             color: Theme.surface
             border.width: 1
             border.color: Theme.border
 
             Item {
                 anchors.fill: parent
-                anchors.margins: Theme.spacingMedium
+                anchors.margins: Theme.spacingLarge
 
                 // ---- Lockup de marque (logo + nom), aligne a gauche -------
                 RowLayout {
@@ -131,14 +126,14 @@ Item {
                     spacing: Theme.spacingSmall
 
                     Rectangle {
-                        width: 42
-                        height: 42
+                        width: 44
+                        height: 44
                         radius: Theme.radiusMedium
                         color: root.blue700
 
                         Image {
                             anchors.fill: parent
-                            anchors.margins: 8
+                            anchors.margins: 9
                             source: "../Assets/logo.png"
                             fillMode: Image.PreserveAspectFit
                             smooth: true
@@ -238,7 +233,7 @@ Item {
                     id: profileButton
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    height: 40
+                    height: 44
                     implicitWidth: profileRow.implicitWidth + Theme.spacingMedium * 2
                     radius: height / 2
                     color: (profileArea.containsMouse || menuPopup.visible) ? Theme.surfaceAlt : Theme.surface
@@ -253,7 +248,7 @@ Item {
 
                         Avatar {
                             name: root.username
-                            size: 28
+                            size: 30
                         }
 
                         Label {
@@ -527,7 +522,72 @@ Item {
                 // Centre horizontalement le bloc de contenu (margin: 0 auto)
                 x: (parent.width - width) / 2
                 y: Theme.spacingXl
-                spacing: Theme.spacingLarge
+                    spacing: Theme.spacingXl
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacingLarge
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        spacing: Theme.spacingXs
+
+                        Label {
+                            text: root.username.length > 0
+                                  ? qsTr("Bonjour, %1").arg(root.username)
+                                  : qsTr("Bienvenue dans CollabLAN")
+                            font.pixelSize: Theme.fontSizeTitle
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                            color: Theme.text
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+
+                        Label {
+                            text: qsTr("Retrouvez vos équipes et vos fichiers sur votre réseau local.")
+                            font.pixelSize: Theme.fontSizeBody
+                            font.family: Theme.fontFamily
+                            color: Theme.textSecondary
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.alignment: Qt.AlignVCenter
+                        Layout.preferredHeight: 36
+                        implicitWidth: networkStatusRow.implicitWidth + Theme.spacingMedium * 2
+                        radius: Theme.radiusSmall
+                        color: Theme.surface
+                        border.width: 1
+                        border.color: Theme.border
+
+                        RowLayout {
+                            id: networkStatusRow
+                            anchors.centerIn: parent
+                            spacing: Theme.spacingSmall
+
+                            Rectangle {
+                                Layout.preferredWidth: 8
+                                Layout.preferredHeight: 8
+                                radius: 4
+                                color: root.serverStatusColor
+                            }
+
+                            Label {
+                                text: root.peersCount > 0
+                                      ? qsTr("%1 poste(s) en ligne").arg(root.peersCount)
+                                      : qsTr("Réseau local")
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.bold: true
+                                font.family: Theme.fontFamily
+                                color: Theme.textSecondary
+                            }
+                        }
+                    }
+                }
 
                 // Grille d'acces rapide
                 ColumnLayout {
@@ -536,7 +596,7 @@ Item {
 
                     Label {
                         text: qsTr("Accès rapides")
-                        font.pixelSize: Theme.fontSizeSubheading
+                        font.pixelSize: Theme.fontSizeHeading
                         font.bold: true
                         font.family: Theme.fontFamily
                         color: Theme.text
@@ -548,8 +608,8 @@ Item {
                         // Seuils alignes sur .card-grid : 3 colonnes par
                         // defaut, 2 sous 980px, 1 sous 560px.
                         columns: contentColumn.width > 980 ? 3 : (contentColumn.width > 560 ? 2 : 1)
-                        columnSpacing: 20
-                        rowSpacing: 20
+                        columnSpacing: Theme.spacingMedium
+                        rowSpacing: Theme.spacingMedium
 
                         DashboardCard {
                             Layout.fillWidth: true

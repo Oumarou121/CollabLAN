@@ -48,7 +48,7 @@ ColumnLayout {
     TextField {
         id: field
         Layout.fillWidth: true
-        Layout.preferredHeight: 44
+        Layout.preferredHeight: 48
         color: Theme.text
         font.pixelSize: Theme.fontSizeBody
         font.family: Theme.fontFamily
@@ -58,8 +58,8 @@ ColumnLayout {
         placeholderTextColor: Theme.textTertiary
 
         background: Rectangle {
-            radius: Theme.radiusMedium
-            color: Theme.surfaceAlt
+            radius: Theme.radiusSmall
+            color: Theme.surface
             border.width: field.activeFocus ? 2 : 1
             border.color: field.activeFocus ? Theme.primary : Theme.border
 

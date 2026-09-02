@@ -41,11 +41,11 @@ Rectangle {
     readonly property color primaryMid: Theme.darkMode ? "#2E3D4E" : "#C2D9EE"
     readonly property color borderIdle: Theme.darkMode ? Theme.border : "#242E6BAA"
 
-    readonly property int bannerHeight: 126
+    readonly property int bannerHeight: 116
 
-    Layout.preferredHeight: 210
+    Layout.preferredHeight: 184
     Layout.minimumWidth: 220
-    radius: 20
+    radius: Theme.radiusLarge
     color: Theme.surface
     border.width: 1
     border.color: mouseArea.containsMouse ? root.primaryMid : root.borderIdle
@@ -81,16 +81,12 @@ Rectangle {
 
             Rectangle {
                 anchors.fill: parent
-                topLeftRadius: 20
-                topRightRadius: 20
+                   topLeftRadius: Theme.radiusLarge
+                   topRightRadius: Theme.radiusLarge
                 bottomLeftRadius: 0
                 bottomRightRadius: 0
 
-                gradient: Gradient {
-                    orientation: Gradient.Vertical
-                    GradientStop { position: 0.0; color: root.primary }
-                    GradientStop { position: 1.0; color: root.primaryDark }
-                }
+                   color: root.primaryDark
 
                 // Cercle decoratif en fond de bandeau (cf. reference SCSS
                 // ::after - width/height 110px, decale en bas-droite).
@@ -102,7 +98,7 @@ Rectangle {
                     height: 110
                     radius: 55
                     color: "#ffffff"
-                    opacity: Theme.darkMode ? 0.12 : 0.07
+                       opacity: Theme.darkMode ? 0.08 : 0.05
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     anchors.rightMargin: -24
@@ -116,7 +112,7 @@ Rectangle {
                     anchors.margins: Theme.spacingMedium
                     font.family: root.iconFontFamily
                     text: root.icon
-                    font.pixelSize: 45
+                    font.pixelSize: 34
                     color: "#ffffff"
                     opacity: 0.94
                 }

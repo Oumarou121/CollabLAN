@@ -43,7 +43,7 @@ Item {
         // ---- En-tete --------------------------------------------------
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 64
+            Layout.preferredHeight: 72
             color: Theme.surface
 
             Rectangle {
@@ -105,7 +105,7 @@ Item {
                     TextField {
                         id: groupNameField
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 40
+                        Layout.preferredHeight: 48
                         placeholderText: qsTr("Entrez le nom du groupe")
                         color: Theme.text
                         font.pixelSize: Theme.fontSizeBody
@@ -115,7 +115,7 @@ Item {
 
                         background: Rectangle {
                             color: Theme.surfaceAlt
-                            radius: Theme.radiusMedium
+                            radius: Theme.radiusSmall
                             border.color: groupNameField.activeFocus ? Theme.primary : Theme.border
                             border.width: groupNameField.activeFocus ? 2 : 1
                         }
@@ -169,7 +169,7 @@ Item {
                     TextField {
                         id: memberSearchField
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 40
+                        Layout.preferredHeight: 48
                         placeholderText: qsTr("Rechercher un utilisateur...")
                         color: Theme.text
                         font.pixelSize: Theme.fontSizeBody
@@ -179,7 +179,7 @@ Item {
 
                         background: Rectangle {
                             color: Theme.surfaceAlt
-                            radius: Theme.radiusLarge
+                            radius: Theme.radiusSmall
                             border.width: memberSearchField.activeFocus ? 2 : 0
                             border.color: Theme.primary
                         }
@@ -200,7 +200,7 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        radius: Theme.radiusLarge
+                        radius: Theme.radiusSmall
                         color: Theme.surface
                         border.color: Theme.border
                         border.width: 1

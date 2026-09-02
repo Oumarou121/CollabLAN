@@ -65,7 +65,7 @@ Item {
         // Header de la conversation
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 64
+            Layout.preferredHeight: 72
             color: Theme.surface
             border.width: 0
 
@@ -251,7 +251,7 @@ Item {
                         id: bubble
                         width: parent.width
                         height: bubbleColumn.implicitHeight + 2 * Theme.spacingSmall
-                        radius: Theme.radiusLarge
+                        radius: Theme.radiusMedium
                         color: messageDelegate.isMine ? Theme.primary : Theme.surface
                         border.width: messageDelegate.isMine ? 0 : 1
                         border.color: Theme.border
@@ -301,7 +301,7 @@ Item {
         // Zone de saisie de message
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 76
+            Layout.preferredHeight: 80
             color: Theme.surface
 
             Rectangle {
@@ -319,7 +319,7 @@ Item {
                 TextField {
                     id: messageInput
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 44
+                    Layout.preferredHeight: 48
                     placeholderText: qsTr("Ecrivez votre message...")
                     color: Theme.text
                     font.pixelSize: Theme.fontSizeBody
@@ -330,7 +330,7 @@ Item {
 
                     background: Rectangle {
                         color: Theme.background
-                        radius: Theme.radiusPill
+                        radius: Theme.radiusSmall
                         border.color: messageInput.activeFocus ? Theme.primary : Theme.border
                         border.width: messageInput.activeFocus ? 2 : 1
                         Behavior on border.color { ColorAnimation { duration: 100 } }
@@ -342,7 +342,7 @@ Item {
                 IconButton {
                     id: sendButton
                     size: 44
-                    radius: Theme.radiusPill
+                    radius: Theme.radiusSmall
                     variant: "primary"
                     glyph: "\uf1d8"
                     enabledLook: messageInput.text.trim().length > 0

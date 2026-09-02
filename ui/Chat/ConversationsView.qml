@@ -55,7 +55,7 @@ Item {
         // Header
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 64
+            Layout.preferredHeight: 72
             color: Theme.surface
 
             Rectangle {
@@ -67,8 +67,8 @@ Item {
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.spacingMedium
-                anchors.rightMargin: Theme.spacingMedium
+                anchors.leftMargin: Theme.spacingLarge
+                anchors.rightMargin: Theme.spacingLarge
                 spacing: Theme.spacingSmall
 
                 IconButton {
@@ -118,7 +118,7 @@ Item {
 
                 background: Rectangle {
                     color: Theme.surfaceAlt
-                    radius: Theme.radiusLarge
+                    radius: Theme.radiusMedium
                     border.width: searchField.activeFocus ? 2 : 0
                     border.color: Theme.primary
                 }
@@ -201,7 +201,7 @@ Item {
                 color: isSelected
                        ? Theme.selectionBackground
                        : (itemMouse.containsMouse ? Theme.surfaceHover : Theme.surface)
-                radius: Theme.radiusMedium
+                radius: Theme.radiusSmall
                 border.color: isSelected ? Theme.selectionBorder : Theme.border
                 border.width: isSelected ? 2 : 1
 
@@ -209,7 +209,7 @@ Item {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: Theme.spacingMedium
+                    anchors.margins: Theme.spacingLarge
                     spacing: Theme.spacingMedium
 
                     Avatar {
@@ -326,7 +326,7 @@ Item {
             anchors.centerIn: parent
             width: Math.min(320, parent.width - Theme.spacingXl * 2)
             height: actionColumn.implicitHeight + Theme.spacingLarge * 2
-            radius: Theme.radiusLarge
+                    radius: Theme.radiusSmall
             color: Theme.surface
             border.width: 1
             border.color: Theme.border

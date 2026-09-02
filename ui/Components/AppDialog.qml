@@ -113,7 +113,7 @@ Dialog {
     }
 
     background: Rectangle {
-        radius: Theme.radiusLarge
+        radius: Theme.radiusSmall
         color: Theme.surface
         border.width: 1
         border.color: Theme.border
@@ -126,7 +126,7 @@ Dialog {
         z: 100
         visible: root.busy
         color: Qt.rgba(Theme.surface.r, Theme.surface.g, Theme.surface.b, 0.92)
-        radius: Theme.radiusLarge
+        radius: Theme.radiusSmall
 
         MouseArea {
             anchors.fill: parent
@@ -196,9 +196,9 @@ Dialog {
             x: 0
             y: 0
             width: parent.width
-            height: parent.height + Theme.radiusLarge
+            height: parent.height + Theme.radiusSmall
             color: Theme.surfaceAlt
-            radius: Theme.radiusLarge
+            radius: Theme.radiusSmall
         }
 
         // Meme police Font Awesome 4.7 embarquee que les autres

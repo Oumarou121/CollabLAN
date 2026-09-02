@@ -38,7 +38,7 @@ Rectangle {
     // Layout.fillWidth: true sur cet element, comme pour n'importe quel
     // autre enfant de ColumnLayout.
     Layout.fillWidth: true
-    Layout.preferredHeight: 64
+    Layout.preferredHeight: 72
     color: Theme.surface
 
     // Titre affiche apres le bouton retour / l'icone de contexte.
@@ -80,22 +80,22 @@ Rectangle {
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: Theme.spacingMedium
-        anchors.rightMargin: Theme.spacingMedium
+        anchors.leftMargin: Theme.spacingLarge
+        anchors.rightMargin: Theme.spacingLarge
         spacing: Theme.spacingMedium
 
         IconButton {
             visible: root.showBackButton
             glyph: "\uf060"
             variant: "ghost"
-            size: 36
+            size: 40
             onClicked: root.backRequested()
         }
 
         Rectangle {
             visible: root.leadingIcon.length > 0
-            Layout.preferredWidth: 36
-            Layout.preferredHeight: 36
+            Layout.preferredWidth: 40
+            Layout.preferredHeight: 40
             radius: Theme.radiusMedium
             color: Theme.primaryMuted
 
@@ -110,7 +110,7 @@ Rectangle {
 
         Text {
             text: root.title
-            font.pixelSize: Theme.fontSizeSubheading
+            font.pixelSize: Theme.fontSizeHeading
             font.bold: true
             font.family: Theme.fontFamily
             color: Theme.text
