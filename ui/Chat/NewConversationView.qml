@@ -42,17 +42,25 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // ---- En-tete (identique au style ConversationsView/UsersView) ----
+        // ---- En-tete (aligne sur ChatView/ConversationsView : ombre douce
+        // flottante plutot qu'un filet 1px) ----
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 72
             color: Theme.surface
+            z: 2
 
             Rectangle {
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 1
-                color: Theme.border
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.bottom
+                height: 8
+                z: -1
+                gradient: Gradient {
+                    orientation: Gradient.Vertical
+                    GradientStop { position: 0.0; color: Theme.shadowSoft }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
             }
 
             RowLayout {
@@ -113,9 +121,10 @@ Item {
 
                     background: Rectangle {
                         color: Theme.surfaceAlt
-                        radius: Theme.radiusSmall
-                        border.width: searchField.activeFocus ? 2 : 0
-                        border.color: Theme.primary
+                        radius: Theme.radiusMedium
+                        border.color: searchField.activeFocus ? Theme.primary : Theme.border
+                        border.width: searchField.activeFocus ? 2 : 1
+                        Behavior on border.color { ColorAnimation { duration: 100 } }
                     }
 
                     Text {
@@ -134,11 +143,18 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    radius: Theme.radiusSmall
+                    radius: Theme.radiusLarge
                     color: Theme.surface
-                    border.color: Theme.border
-                    border.width: 1
+                    border.width: 0
                     clip: true
+
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.topMargin: 2
+                        radius: parent.radius
+                        color: Theme.shadowSoft
+                        z: -1
+                    }
 
                     // Etat vide : affiche tant qu'aucun autre utilisateur n'existe.
                     ColumnLayout {
@@ -206,9 +222,8 @@ Item {
                             width: usersListView.width
                             height: 60
                             color: itemMouse.containsMouse ? Theme.surfaceHover : Theme.surfaceAlt
-                            radius: Theme.radiusSmall
-                            border.color: Theme.border
-                            border.width: 1
+                            radius: Theme.radiusMedium
+                            border.width: 0
 
                             Behavior on color { ColorAnimation { duration: 100 } }
 

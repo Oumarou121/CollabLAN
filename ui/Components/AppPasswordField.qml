@@ -54,8 +54,8 @@ ColumnLayout {
         echoMode: revealButton.revealed ? TextInput.Normal : TextInput.Password
 
         background: Rectangle {
-            radius: Theme.radiusSmall
-            color: Theme.surface
+            radius: Theme.radiusMedium
+            color: Theme.colorTextField
             border.width: field.activeFocus ? 2 : 1
             border.color: field.activeFocus ? Theme.primary : Theme.border
 

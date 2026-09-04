@@ -8,6 +8,12 @@ import "../Components"
 /*
  * ChatView - Interface de conversation individuelle
  * Branchee sur MessagingManager via MessagingContext
+ *
+ * REFONTE (alignement design system) : header et zone de saisie flottants
+ * avec ombre douce plutot que des filets 1px, bulles regroupees par
+ * expediteur (WhatsApp/Telegram-like) avec avatar affiche uniquement sur
+ * le dernier message d'un groupe, separateurs de date en "pilule", et
+ * etat vide illustre. Aucune logique metier modifiee.
  */
 Item {
     id: root
@@ -32,6 +38,14 @@ Item {
 
     signal backRequested()
 
+    // Police d'icones Font Awesome 4.7.0 pour l'illustration de l'etat vide
+    // (meme police que IconButton/Avatar, chargee ici car ce glyphe est
+    // utilise en dehors de ces composants).
+    FontLoader {
+        id: emptyStateIconFont
+        source: "../Assets/fonts/fontawesome-webfont.ttf"
+    }
+
     // CORRECTIF : un echec d'envoi (pas de conversation active, service
     // deconnecte, erreur base de donnees...) ne produisait auparavant
     // qu'un qWarning() cote C++ -- rien ne remontait jamais ici. Bandeau
@@ -53,6 +67,9 @@ Item {
         onTriggered: sendErrorBanner.visible = false
     }
 
+    // Fond legerement teinte (au lieu d'un blanc/gris plat) pour donner de
+    // la profondeur derriere les bulles, a la maniere des messageries
+    // modernes -- tres subtil, reste dans la palette du theme.
     Rectangle {
         anchors.fill: parent
         color: Theme.background
@@ -62,18 +79,27 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // Header de la conversation
+        // Header de la conversation -- flotte au-dessus de la liste avec
+        // une ombre douce plutot qu'un filet 1px, pour un rendu plus
+        // "carte" et moins tableur.
         Rectangle {
+            id: header
             Layout.fillWidth: true
             Layout.preferredHeight: 72
             color: Theme.surface
-            border.width: 0
+            z: 2
 
             Rectangle {
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 1
-                color: Theme.border
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.bottom
+                height: 8
+                z: -1
+                gradient: Gradient {
+                    orientation: Gradient.Vertical
+                    GradientStop { position: 0.0; color: Theme.shadowSoft }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
             }
 
             RowLayout {
@@ -99,7 +125,7 @@ Item {
 
                     Avatar {
                         name: root.displayName
-                        size: 36
+                        size: 40
                     }
 
                     ColumnLayout {
@@ -112,6 +138,8 @@ Item {
                             font.bold: true
                             font.family: Theme.fontFamily
                             color: Theme.text
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
                         }
 
                         // Le statut "En ligne" fige a ete retire : il n'y a pas
@@ -168,7 +196,7 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.margins: Theme.spacingMedium
-            spacing: Theme.spacingSmall
+            spacing: 0
             clip: true
             verticalLayoutDirection: ListView.TopToBottom
 
@@ -208,53 +236,110 @@ Item {
                 id: messageDelegate
                 readonly property bool isMine: senderId === root.currentUserId
                 width: messageListView.width
-                spacing: Theme.spacingXs
+                spacing: 2
+
+                // Le message precedent (meme expediteur, meme jour) : sert a
+                // regrouper visuellement une rafale de messages consecutifs
+                // (moins d'espace entre eux, nom/avatar affiches une seule
+                // fois) plutot que de repeter l'en-tete a chaque bulle.
+                readonly property var prevItem: (index > 0 && messagingContext)
+                    ? messagingContext.messageModel.get(index - 1) : null
+                readonly property var nextItem: (messagingContext && index < messagingContext.messageModel.count - 1)
+                    ? messagingContext.messageModel.get(index + 1) : null
+
+                readonly property bool sameSenderAsPrev: prevItem && prevItem.senderId === senderId
+                readonly property bool sameSenderAsNext: nextItem && nextItem.senderId === senderId
 
                 // Separateur de date : affiche si la date change par rapport au message precedent
-                Label {
-                    id: dateSeparator
+                Item {
                     width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    text: {
+                    height: dateSeparator.visible ? dateSeparator.implicitHeight + Theme.spacingMedium * 2 : 0
+
+                    readonly property string dateText: {
                         if (!timestamp) return ""
                         const dateStr = Qt.formatDate(timestamp, "dd MMMM yyyy")
-                        const prevIndex = index - 1
-                        if (prevIndex >= 0 && messagingContext) {
-                            const prevTimestamp = messagingContext.messageModel.get(prevIndex).timestamp
-                            if (prevTimestamp) {
-                                const prevDateStr = Qt.formatDate(prevTimestamp, "dd MMMM yyyy")
-                                if (dateStr === prevDateStr) return ""
-                            }
+                        if (messageDelegate.prevItem && messageDelegate.prevItem.timestamp) {
+                            const prevDateStr = Qt.formatDate(messageDelegate.prevItem.timestamp, "dd MMMM yyyy")
+                            if (dateStr === prevDateStr) return ""
                         }
                         return dateStr
                     }
-                    visible: text.length > 0
-                    font.pixelSize: Theme.fontSizeCaption
-                    font.family: Theme.fontFamily
-                    color: Theme.textTertiary
-                    topPadding: Theme.spacingSmall
-                    bottomPadding: Theme.spacingSmall
+
+                    Rectangle {
+                        anchors.centerIn: parent
+                        visible: dateSeparator.visible
+                        radius: Theme.radiusPill
+                        color: Theme.surfaceAlt
+                        width: dateSeparator.implicitWidth + Theme.spacingMedium * 2
+                        height: dateSeparator.implicitHeight + Theme.spacingXs * 2
+
+                        Label {
+                            id: dateSeparator
+                            anchors.centerIn: parent
+                            text: parent.parent.dateText
+                            visible: text.length > 0
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.bold: true
+                            font.family: Theme.fontFamily
+                            color: Theme.textSecondary
+                        }
+                    }
                 }
 
-                Row {
+                // Espace entre groupes de messages : resserre au sein d'une
+                // meme rafale (meme expediteur, meme jour), plus genereux
+                // entre deux interlocuteurs differents.
+                Item {
+                    width: 1
+                    height: (messageDelegate.sameSenderAsPrev && dateSeparator.text.length === 0)
+                            ? Theme.spacingXs
+                            : Theme.spacingMedium
+                }
+
+                RowLayout {
+                    id: messageRow
                     anchors.right: messageDelegate.isMine ? parent.right : undefined
                     anchors.left: messageDelegate.isMine ? undefined : parent.left
+                    spacing: Theme.spacingXs
+                    layoutDirection: messageDelegate.isMine ? Qt.RightToLeft : Qt.LeftToRight
+
+                    // Avatar affiche uniquement sur le dernier message d'une
+                    // rafale (comme WhatsApp) : evite de repeter la meme
+                    // pastille a cote de chaque ligne d'une meme personne.
+                    // Un espaceur invisible de meme largeur garde les bulles
+                    // alignees pour le reste de la rafale.
+                    Avatar {
+                        Layout.alignment: Qt.AlignBottom
+                        visible: !messageDelegate.isMine && root.isGroup
+                        name: messagingContext ? messagingContext.userName(senderId) : ""
+                        size: 26
+                        opacity: !messageDelegate.sameSenderAsNext ? 1 : 0
+                    }
+
                     // Plafond absolu (640px) en plus du pourcentage : sur un
                     // ecran desktop tres large, une bulle a 72% de la
                     // largeur de la liste peut depasser 1000px et devenir
                     // difficile a lire malgre le wrapMode.
-                    width: Math.min(bubbleColumn.implicitWidth + 2 * Theme.spacingMedium,
-                                    Math.min(messageListView.width * 0.72, 640))
-                    spacing: Theme.spacingXs
-
                     Rectangle {
                         id: bubble
-                        width: parent.width
-                        height: bubbleColumn.implicitHeight + 2 * Theme.spacingSmall
+                        Layout.preferredWidth: Math.min(bubbleColumn.implicitWidth + 2 * Theme.spacingMedium,
+                                                         Math.min(messageListView.width * 0.72, 640))
+                        Layout.preferredHeight: bubbleColumn.implicitHeight + 2 * Theme.spacingSmall
                         radius: Theme.radiusMedium
                         color: messageDelegate.isMine ? Theme.primary : Theme.surface
                         border.width: messageDelegate.isMine ? 0 : 1
                         border.color: Theme.border
+
+                        // Ombre douce simulee (meme technique que Toast.qml)
+                        // plutot qu'une bordure epaisse -- donne du relief
+                        // aux bulles sans alourdir visuellement le fil.
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.topMargin: 2
+                            radius: parent.radius
+                            color: Theme.shadowSoft
+                            z: -1
+                        }
 
                         ColumnLayout {
                             id: bubbleColumn
@@ -265,7 +350,10 @@ Item {
                             Label {
                                 Layout.fillWidth: true
                                 text: messagingContext ? messagingContext.userName(senderId) : ""
-                                visible: !messageDelegate.isMine && root.isGroup
+                                // Uniquement sur le premier message d'une rafale : le
+                                // nom de l'expediteur n'a pas besoin d'etre repete
+                                // sur chaque ligne d'une meme personne.
+                                visible: !messageDelegate.isMine && root.isGroup && !messageDelegate.sameSenderAsPrev
                                 font.pixelSize: Theme.fontSizeCaption
                                 font.bold: true
                                 font.family: Theme.fontFamily
@@ -296,19 +384,68 @@ Item {
             ScrollBar.vertical: ScrollBar {
                 policy: ScrollBar.AsNeeded
             }
+
+            // Etat vide : premiere ouverture d'une conversation sans historique.
+            ColumnLayout {
+                anchors.centerIn: parent
+                visible: messageListView.count === 0
+                spacing: Theme.spacingSmall
+
+                Rectangle {
+                    Layout.alignment: Qt.AlignHCenter
+                    width: 64
+                    height: 64
+                    radius: 32
+                    color: Theme.surfaceAlt
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\uf0e6"
+                        font.family: emptyStateIconFont.name
+                        font.pixelSize: 24
+                        color: Theme.textTertiary
+                    }
+                }
+
+                Label {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: qsTr("Aucun message pour le moment")
+                    font.pixelSize: Theme.fontSizeBody
+                    font.bold: true
+                    font.family: Theme.fontFamily
+                    color: Theme.textSecondary
+                }
+
+                Label {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: qsTr("Envoyez le premier message pour demarrer la conversation.")
+                    font.pixelSize: Theme.fontSizeSmall
+                    font.family: Theme.fontFamily
+                    color: Theme.textTertiary
+                }
+            }
         }
 
-        // Zone de saisie de message
+        // Zone de saisie de message -- pilule flottante (fond distinct du
+        // champ) plutot qu'un simple champ carre pose sur un filet, pour un
+        // rendu plus proche des messageries actuelles.
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 80
             color: Theme.surface
+            z: 2
 
             Rectangle {
-                anchors.top: parent.top
-                width: parent.width
-                height: 1
-                color: Theme.border
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.top
+                height: 8
+                z: -1
+                gradient: Gradient {
+                    orientation: Gradient.Vertical
+                    GradientStop { position: 0.0; color: "transparent" }
+                    GradientStop { position: 1.0; color: Theme.shadowSoft }
+                }
             }
 
             RowLayout {
@@ -329,8 +466,8 @@ Item {
                     selectByMouse: true
 
                     background: Rectangle {
-                        color: Theme.background
-                        radius: Theme.radiusSmall
+                        color: Theme.surfaceAlt
+                        radius: Theme.radiusMedium
                         border.color: messageInput.activeFocus ? Theme.primary : Theme.border
                         border.width: messageInput.activeFocus ? 2 : 1
                         Behavior on border.color { ColorAnimation { duration: 100 } }
@@ -342,7 +479,7 @@ Item {
                 IconButton {
                     id: sendButton
                     size: 44
-                    radius: Theme.radiusSmall
+                    radius: Theme.radiusMedium
                     variant: "primary"
                     glyph: "\uf1d8"
                     enabledLook: messageInput.text.trim().length > 0

@@ -782,7 +782,7 @@ Item {
                     model: editExcludePatternsDialog.patternsList
 
                     delegate: Rectangle {
-                        radius: Theme.radiusPill
+                        radius: Theme.radiusMedium
                         color: Theme.primaryMuted
                         border.width: 1
                         border.color: Theme.primary

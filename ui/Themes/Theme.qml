@@ -32,6 +32,7 @@ QtObject {
     readonly property color surfaceAlt: darkMode ? "#262A32" : "#E7EDF3"
     readonly property color surfaceHover: darkMode ? "#2C313A" : "#DCE5EE"
     readonly property color secondaryBackground: darkMode ? "#1D2027" : "#E7EDF3"
+    readonly property color colorTextField: darkMode ? "#262A32" : "#F2F5F8"
 
     // Panneau lateral (sidebar) : legerement plus fonce/distinct de la
     // surface de contenu pour marquer la hierarchie de navigation.

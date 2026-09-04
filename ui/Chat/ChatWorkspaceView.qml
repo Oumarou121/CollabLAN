@@ -91,11 +91,21 @@ Item {
             onCreateGroupRequested: root.createGroupRequested()
         }
 
-        // Separateur vertical entre les deux panneaux.
-        Rectangle {
-            Layout.preferredWidth: 1
+        // Separateur vertical entre les deux panneaux -- ombre douce plutot
+        // qu'un filet 1px plein, pour rester coherent avec le reste du
+        // module chat (header/zone de saisie/cartes de conversation).
+        Item {
+            Layout.preferredWidth: 8
             Layout.fillHeight: true
-            color: Theme.border
+
+            Rectangle {
+                anchors.fill: parent
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: Theme.shadowSoft }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
+            }
         }
 
         // Panneau de droite : conversation active, ou etat vide si rien
@@ -126,12 +136,20 @@ Item {
                 spacing: Theme.spacingMedium
                 visible: !chatPanel.visible
 
-                Text {
+                Rectangle {
                     Layout.alignment: Qt.AlignHCenter
-                    text: "\uf0e0"
-                    font.family: root.iconFontFamily
-                    font.pixelSize: 48
-                    color: Theme.primary
+                    width: 88
+                    height: 88
+                    radius: 44
+                    color: Theme.primaryMuted
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "\uf0e0"
+                        font.family: root.iconFontFamily
+                        font.pixelSize: 36
+                        color: Theme.primary
+                    }
                 }
 
                 Label {

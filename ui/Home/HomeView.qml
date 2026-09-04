@@ -120,7 +120,7 @@ Item {
                 anchors.margins: Theme.spacingLarge
 
                 // ---- Lockup de marque (logo + nom), aligne a gauche -------
-                RowLayout {
+               RowLayout {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: Theme.spacingSmall
@@ -128,12 +128,10 @@ Item {
                     Rectangle {
                         width: 32
                         height: 32
-                        radius: Theme.radiusMedium
-                        // color: root.blue700
+                        color: "transparent"
 
                         Image {
                             anchors.fill: parent
-                            anchors.margins: 0
                             source: "../Assets/logo.png"
                             fillMode: Image.PreserveAspectFit
                             smooth: true

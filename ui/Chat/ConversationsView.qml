@@ -52,17 +52,27 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // Header
+        // Header -- flotte au-dessus de la liste avec une ombre douce
+        // (meme technique que ChatView) plutot qu'un filet 1px, pour un
+        // rendu plus "carte" et coherent avec le reste du module chat.
         Rectangle {
+            id: header
             Layout.fillWidth: true
             Layout.preferredHeight: 72
             color: Theme.surface
+            z: 2
 
             Rectangle {
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 1
-                color: Theme.border
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.bottom
+                height: 8
+                z: -1
+                gradient: Gradient {
+                    orientation: Gradient.Vertical
+                    GradientStop { position: 0.0; color: Theme.shadowSoft }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
             }
 
             RowLayout {
@@ -119,8 +129,9 @@ Item {
                 background: Rectangle {
                     color: Theme.surfaceAlt
                     radius: Theme.radiusMedium
-                    border.width: searchField.activeFocus ? 2 : 0
-                    border.color: Theme.primary
+                    border.color: searchField.activeFocus ? Theme.primary : Theme.border
+                    border.width: searchField.activeFocus ? 2 : 1
+                    Behavior on border.color { ColorAnimation { duration: 100 } }
                 }
 
                 Text {
@@ -201,11 +212,23 @@ Item {
                 color: isSelected
                        ? Theme.selectionBackground
                        : (itemMouse.containsMouse ? Theme.surfaceHover : Theme.surface)
-                radius: Theme.radiusSmall
-                border.color: isSelected ? Theme.selectionBorder : Theme.border
-                border.width: isSelected ? 2 : 1
+                radius: Theme.radiusLarge
+                border.color: isSelected ? Theme.selectionBorder : "transparent"
+                border.width: isSelected ? 2 : 0
 
                 Behavior on color { ColorAnimation { duration: 100 } }
+
+                // Ombre douce simulee (meme technique que les bulles de
+                // ChatView / Toast.qml) plutot qu'une bordure -- carte plus
+                // "moderne" que "tableur", coherente avec le reste du module.
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.topMargin: 2
+                    radius: parent.radius
+                    color: Theme.shadowSoft
+                    visible: !conversationDelegate.isSelected
+                    z: -1
+                }
 
                 RowLayout {
                     anchors.fill: parent
@@ -326,10 +349,17 @@ Item {
             anchors.centerIn: parent
             width: Math.min(320, parent.width - Theme.spacingXl * 2)
             height: actionColumn.implicitHeight + Theme.spacingLarge * 2
-                    radius: Theme.radiusSmall
+            radius: Theme.radiusLarge
             color: Theme.surface
-            border.width: 1
-            border.color: Theme.border
+            border.width: 0
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.topMargin: 2
+                radius: parent.radius
+                color: Theme.shadowSoft
+                z: -1
+            }
 
             ColumnLayout {
                 id: actionColumn
