@@ -13,7 +13,7 @@
 namespace network {
 
 namespace {
-Q_LOGGING_CATEGORY(lcTls, "collablan.network.tls")
+Q_LOGGING_CATEGORY(lcTls, "localink.network.tls")
 } // namespace
 
 // ---------------------------------------------------------------------------

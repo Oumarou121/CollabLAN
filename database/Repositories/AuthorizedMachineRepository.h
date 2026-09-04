@@ -15,7 +15,7 @@ namespace database {
 /**
  * @brief Accès aux données de la table AuthorizedMachines (issue #68).
  *
- * Gère la liste blanche/noire des machines pouvant rejoindre le réseau CollabLAN.
+ * Gère la liste blanche/noire des machines pouvant rejoindre le réseau LocaLink.
  */
 class AuthorizedMachineRepository
 {

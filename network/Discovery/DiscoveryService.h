@@ -71,7 +71,7 @@ public:
      *
      * Par defaut, m_localId est un QUuid::createUuid() genere a CHAQUE
      * lancement du processus (jamais sauvegarde nulle part) : deux lancements
-     * successifs de CollabLAN.exe sur la MEME machine obtiennent donc deux
+     * successifs de LocaLink.exe sur la MEME machine obtiennent donc deux
      * identites reseau totalement differentes. Consequence concrete : tout
      * ce qui correle des donnees par machine_id a travers un redemarrage
      * casse silencieusement -- notamment FolderSyncService, qui journalise

@@ -1,8 +1,8 @@
-# Fonctionnement de CollabLAN
+# Fonctionnement de LocaLink
 
 ## Objectif du document
 
-Ce document décrit **comment CollabLAN fonctionne concrètement** une fois déployé sur un réseau local, à travers un scénario de référence impliquant **trois postes**. Il complète le [Cahier des charges](Cahier_des_charges.pdf) (besoins) et l'[ARCHITECTURE.md](ARCHITECTURE.md) (structure du code) en expliquant le déroulement réel des échanges réseau, poste par poste, fonctionnalité par fonctionnalité.
+Ce document décrit **comment LocaLink fonctionne concrètement** une fois déployé sur un réseau local, à travers un scénario de référence impliquant **trois postes**. Il complète le [Cahier des charges](Cahier_des_charges.pdf) (besoins) et l'[ARCHITECTURE.md](ARCHITECTURE.md) (structure du code) en expliquant le déroulement réel des échanges réseau, poste par poste, fonctionnalité par fonctionnalité.
 
 ---
 
@@ -22,13 +22,13 @@ On considère trois ordinateurs connectés au même réseau local (même sous-r�
                         └───────────────────────────────┘
 ```
 
-Chaque poste exécute une instance de CollabLAN. Il n'y a **aucune connexion Internet** requise. Le mode utilisé ici est le mode **Peer-to-Peer** (chaque poste est à la fois client et serveur) ; le mode **Serveur local** fonctionne sur le même principe mais avec un poste faisant office de serveur central.
+Chaque poste exécute une instance de LocaLink. Il n'y a **aucune connexion Internet** requise. Le mode utilisé ici est le mode **Peer-to-Peer** (chaque poste est à la fois client et serveur) ; le mode **Serveur local** fonctionne sur le même principe mais avec un poste faisant office de serveur central.
 
 ---
 
 ## 1. Démarrage de l'application
 
-Au lancement, chaque instance de CollabLAN :
+Au lancement, chaque instance de LocaLink :
 
 1. Charge les paramètres locaux (nom du poste, langue, thème, dossier de téléchargement — voir `Settings`).
 2. Initialise le module `Security` (OpenSSL) : génère ou charge le certificat/clé du poste.
@@ -86,7 +86,7 @@ Si PC-C n'est pas autorisé par l'administrateur du réseau (ex. machine non app
 ### Message de groupe
 
 1. Alice crée un groupe incluant Bilal et Chaima.
-2. Lorsqu'elle envoie un message au groupe, CollabLAN diffuse le message **en parallèle** vers PC-B et PC-C via WebSocket.
+2. Lorsqu'elle envoie un message au groupe, LocaLink diffuse le message **en parallèle** vers PC-B et PC-C via WebSocket.
 3. Chaque poste reçoit, affiche et enregistre le message dans l'historique du groupe.
 
 ```
@@ -103,7 +103,7 @@ PC-A ──message──┬─► PC-B
 **Protocole : TCP**
 
 1. Chaima (PC-C) sélectionne un fichier à envoyer à Alice (PC-A).
-2. CollabLAN ouvre une **connexion TCP dédiée** entre PC-C et PC-A pour ce transfert (distincte du canal de messagerie).
+2. LocaLink ouvre une **connexion TCP dédiée** entre PC-C et PC-A pour ce transfert (distincte du canal de messagerie).
 3. Le fichier est transféré par blocs (chunks) ; une **barre de progression** est affichée en temps réel sur les deux postes.
 4. En cas d'interruption (perte réseau, fermeture de l'app), le transfert peut être **repris** à partir du dernier bloc reçu, sans repartir de zéro.
 5. À la fin du transfert, PC-A reçoit une **notification** et le fichier est déposé dans le dossier de téléchargement configuré (`Settings`).

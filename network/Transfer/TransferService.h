@@ -292,7 +292,7 @@ private:
 
 public:
     /// Permet de surcharger le repertoire de reception (tests). Vide =
-    /// repertoire "CollabLAN Transfers" dans les documents de l'utilisateur.
+    /// repertoire "LocaLink Transfers" dans les documents de l'utilisateur.
     void setReceiveDirectory(const QString &dir);
 
     /// Identifiant machine (DiscoveryService::localId()) embarque dans
@@ -336,7 +336,7 @@ public:
     /// Fonction de resolution du nom de dossier utilise pour regrouper,
     /// cote reception, tous les fichiers recus d'un meme correspondant
     /// dans un seul sous-dossier de receiveDirectory() (ex.
-    /// "CollabLAN Transfers/laptop-marie/", au lieu d'un unique
+    /// "LocaLink Transfers/laptop-marie/", au lieu d'un unique
     /// repertoire plat) - reçoit l'adresse IP et l'UUID machine
     /// (senderMachineId, voir encodeHeader()) du pair, doit renvoyer un
     /// nom de dossier deja nettoye des caracteres invalides sous Windows

@@ -307,7 +307,7 @@ QString TransferService::receiveDirectory() const
         return m_receiveDirOverride;
     }
     const QString base = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-    return base + QStringLiteral("/CollabLAN Transfers");
+    return base + QStringLiteral("/LocaLink Transfers");
 }
 
 QString TransferService::makeTransferKey(QTcpSocket *socket)

@@ -54,7 +54,7 @@ class AudioService;
 }
 
 /**
- * @brief Point d'entree logique de CollabLAN : initialise les services
+ * @brief Point d'entree logique de LocaLink : initialise les services
  * (reseau, base de donnees, parametres) au demarrage de l'application.
  */
 class Application : public QObject
@@ -250,7 +250,7 @@ private:
     /// MessagingService::messageReceived). Persiste localement (ou
     /// deduplique si deja connu) puis, si `relay` est vrai (poste SERVER
     /// disposant d'autres clients connectes), rediffuse le payload tel
-    /// quel : dans la topologie en etoile de CollabLAN, un message envoye
+    /// quel : dans la topologie en etoile de LocaLink, un message envoye
     /// par un client n'atteignait jusqu'ici QUE le SERVER (qui le
     /// persistait dans SA PROPRE base sans jamais le retransmettre au
     /// veritable destinataire) - c'etait la cause principale des messages

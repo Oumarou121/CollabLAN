@@ -13,7 +13,7 @@
 namespace network {
 
 namespace {
-const char *kPacketType = "collablan.election";
+const char *kPacketType = "localink.election";
 const int kPacketVersion = 1;
 
 const char *kMsgHeartbeat = "heartbeat";

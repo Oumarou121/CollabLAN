@@ -1,4 +1,4 @@
-# Roadmap — CollabLAN
+# Roadmap — LocaLink
 
 ## Version 1.0 — Functional Foundation
 

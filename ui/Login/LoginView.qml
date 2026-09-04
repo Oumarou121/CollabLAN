@@ -194,7 +194,7 @@ Item {
                     }
 
                     Label {
-                        text: "Collab LAN"
+                        text: "LocaLink"
                         font.pixelSize: 28
                         font.family: root.displayFont
                         color: root.brandInk
@@ -328,7 +328,7 @@ Item {
                     }
 
                     Label {
-                        text: "Collab LAN"
+                        text: "LocaLink"
                         font.pixelSize: 22
                         font.family: root.displayFont
                         color: root.ink

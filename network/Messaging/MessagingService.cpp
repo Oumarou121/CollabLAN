@@ -69,7 +69,7 @@ void MessagingService::configureSsl()
         }
     }
 
-    // Mode permissif pour certificats auto-signés (CollabLAN est P2P avec certificats auto-signés)
+    // Mode permissif pour certificats auto-signés (LocaLink est P2P avec certificats auto-signés)
     // Le chiffrement TLS est toujours actif, mais on ne vérifie pas l'autorité de certification
     sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
     sslConfig.setProtocol(QSsl::TlsV1_2OrLater);
@@ -195,7 +195,7 @@ void MessagingService::onSslErrors(const QList<QSslError> &errors)
         qWarning() << "  -" << error.errorString();
     }
 
-    // Pour CollabLAN P2P avec certificats auto-signés, on ignore les erreurs de hostname
+    // Pour LocaLink P2P avec certificats auto-signés, on ignore les erreurs de hostname
     // car les certificats sont générés avec le hostname réel mais on peut se connecter via IP
     bool hasHostnameMismatch = false;
     for (const QSslError &error : errors) {

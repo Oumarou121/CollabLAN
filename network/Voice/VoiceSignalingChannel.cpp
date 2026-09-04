@@ -56,7 +56,7 @@ VoiceSignalingChannel::VoiceSignalingChannel(SecurityService *securityService, Q
 
     configureClientSsl();
 
-    m_server = new QWebSocketServer(QStringLiteral("CollabLAN-VoiceSignaling"),
+    m_server = new QWebSocketServer(QStringLiteral("LocaLink-VoiceSignaling"),
                                      QWebSocketServer::SecureMode, this);
     connect(m_server, &QWebSocketServer::newConnection, this, &VoiceSignalingChannel::onServerNewConnection);
 }

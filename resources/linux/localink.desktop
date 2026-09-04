@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=LocaLink
+Comment=Messagerie et partage de fichiers en réseau local
+Exec=LocaLink
+Icon=localink
+Terminal=false
+Categories=Network;Chat;FileTransfer;

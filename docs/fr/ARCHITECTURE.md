@@ -1,4 +1,4 @@
-# Architecture technique — CollabLAN
+# Architecture technique — LocaLink
 
 ## Architecture en couches
 
@@ -42,7 +42,7 @@ Le logiciel fonctionne en mode **Peer-to-Peer** ou en mode **Serveur local**, en
 ## Structure du projet
 
 ```
-CollabLAN/
+LocaLink/
 │
 ├── app/
 ├── ui/

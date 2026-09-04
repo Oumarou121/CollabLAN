@@ -69,8 +69,8 @@ int main(int argc, char *argv[])
     // lancement a l'autre (cle vide ou emplacement incoherent selon l'OS).
     // A definir AVANT toute construction de QSettings (SettingsModel est
     // cree plus bas, mais reste prudent de le faire au plus tot).
-    QCoreApplication::setOrganizationName(QStringLiteral("CollabLAN"));
-    QCoreApplication::setApplicationName(QStringLiteral("CollabLAN"));
+    QCoreApplication::setOrganizationName(QStringLiteral("LocaLink"));
+    QCoreApplication::setApplicationName(QStringLiteral("LocaLink"));
 
     // CORRECTIF (persistance des ports reseau, ecran Parametres > Ports
     // reseau) : messagingPort/discoveryPort etaient bien sauvegardes dans
@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
 
     // Parser les arguments de ligne de commande
     QCommandLineParser parser;
-    parser.setApplicationDescription("CollabLAN - Application de collaboration locale");
+    parser.setApplicationDescription("LocaLink - Application de collaboration locale");
     parser.addHelpOption();
     parser.addVersionOption();
 
@@ -278,7 +278,7 @@ int main(int argc, char *argv[])
     // CORRECTIF : defaultDownloadPath restait une simple valeur d'affichage
     // dans SettingsView.qml, jamais consommee par le reseau -- les fichiers
     // recus continuaient d'atterrir dans le repertoire par defaut de
-    // TransferService (~/Documents/CollabLAN Transfers) quel que soit le
+    // TransferService (~/Documents/LocaLink Transfers) quel que soit le
     // reglage. On applique la valeur persistee au demarrage, puis on
     // repercute tout changement ulterieur (ecran Parametres) en temps reel.
     if (application.transferService() && !settingsModel->defaultDownloadPath().isEmpty()) {

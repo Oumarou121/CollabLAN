@@ -40,7 +40,7 @@ enum class CallState {
  *  - la capture/lecture audio locale (VoiceAudioIO), branchee sur la piste
  *    audio de la PeerConnection une fois la session etablie.
  *
- * Aucun serveur STUN/TURN externe n'est configure : CollabLAN fonctionne
+ * Aucun serveur STUN/TURN externe n'est configure : LocaLink fonctionne
  * en LAN, les candidats ICE "host" (adresses locales) suffisent a etablir
  * la connexion directement entre les deux postes.
  */

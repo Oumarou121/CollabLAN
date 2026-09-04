@@ -33,7 +33,7 @@ namespace database {
  */
 class DatabaseManager {
 public:
-    explicit DatabaseManager(const QString &connectionName = QStringLiteral("collablan_db"));
+    explicit DatabaseManager(const QString &connectionName = QStringLiteral("localink_db"));
     ~DatabaseManager();
 
     DatabaseManager(const DatabaseManager &) = delete;

@@ -6,7 +6,7 @@
 -- final, aucun utilisateur ne dispose d'un historique de ses appels,
 -- meme au sein d'une seule session. Cette table corrige cela.
 --
--- Chaque poste CollabLAN a sa propre base SQLite locale (architecture
+-- Chaque poste LocaLink a sa propre base SQLite locale (architecture
 -- P2P sur LAN) : CallHistory persiste donc, du point de vue de CE poste
 -- uniquement, les appels emis/recus. local_user_id reste volontairement
 -- NULLABLE (jamais NOT NULL) : la migration 014 a deja corrige exactement

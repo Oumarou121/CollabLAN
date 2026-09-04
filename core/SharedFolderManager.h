@@ -168,7 +168,7 @@ public:
 
     /// Assigne automatiquement un chemin local par défaut à un dossier
     /// partagé DISTANT qui n'en a pas encore (registerRemoteFolder() laisse
-    /// localPath vide, cf. son commentaire) : Documents/CollabLAN Shared
+    /// localPath vide, cf. son commentaire) : Documents/LocaLink Shared
     /// Folders/<nom du dossier>, désambiguïsé ("<nom> (2)", "<nom> (3)"...)
     /// si ce nom est déjà pris sur le disque OU par un autre SharedFolder
     /// connu -- au lieu d'attendre que l'utilisateur choisisse lui-même un
@@ -210,7 +210,7 @@ public:
     /// d'écriture disque n'est possible ici puisque rien n'est écrit.
     std::optional<QString> previewDefaultLocalPath(qint64 folderId) const;
 
-    /// Permet de substituer le dossier de base "Documents/CollabLAN Shared
+    /// Permet de substituer le dossier de base "Documents/LocaLink Shared
     /// Folders" utilisé par previewDefaultLocalPath()/provisionDefaultLocalPath()
     /// -- EXCLUSIVEMENT destiné aux tests automatisés (QStandardPaths::
     /// setTestModeOn() n'étant pas disponible avec cette configuration Qt/
@@ -218,7 +218,7 @@ public:
     /// devaient nettoyer le vrai dossier Documents de la machine avant/après
     /// chaque exécution, ce qui supprimait les vrais dossiers/fichiers
     /// partagés de l'utilisateur à chaque `ctest`. Chaîne vide (défaut) =
-    /// comportement normal (vrai Documents/CollabLAN Shared Folders).
+    /// comportement normal (vrai Documents/LocaLink Shared Folders).
     void setSharedFoldersBaseDirOverrideForTests(const QString &baseDir);
 
     /// Met a jour les motifs d'exclusion (debrief point #4, sync

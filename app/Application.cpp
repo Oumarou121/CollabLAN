@@ -93,12 +93,12 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // - initialiser la securite (Security)
 
     // Nom de connexion Qt SQL unique par instance : par defaut DatabaseManager
-    // utilise "collablan_db" pour tout le monde, ce qui casse silencieusement
+    // utilise "localink_db" pour tout le monde, ce qui casse silencieusement
     // (connexion partagee/ecrasee) des qu'on instancie plusieurs Application
     // dans le meme process, comme le font les tests d'integration multi-
     // postes (HYBRID_SERVER_FAILOVER.md section 9, etape 3).
     m_databaseManager = std::make_unique<database::DatabaseManager>(
-        QStringLiteral("collablan_db_%1").arg(reinterpret_cast<quintptr>(this)));
+        QStringLiteral("localink_db_%1").arg(reinterpret_cast<quintptr>(this)));
     if (!m_databaseManager->open(dbFilePath)) {
         // On ne bloque pas le demarrage : UserManager signale proprement
         // l'indisponibilite de la base a la connexion (voir loginFailed).
@@ -1097,7 +1097,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
 
         // Regroupe cote reception tous les fichiers d'un meme
         // correspondant dans un seul sous-dossier de receiveDirectory()
-        // (ex. "CollabLAN Transfers/laptop-marie/"), a la maniere d'un
+        // (ex. "LocaLink Transfers/laptop-marie/"), a la maniere d'un
         // explorateur de fichiers Windows organise par contact plutot
         // qu'un unique repertoire plat.
         //
@@ -1239,7 +1239,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // filtre, l'utilisateur revoyait la notification "dossier partagé avec
     // vous" à chaque reconnexion pour un partage déjà connu.
     //
-    // L'auto-provisionnement du chemin local (Documents/CollabLAN Shared
+    // L'auto-provisionnement du chemin local (Documents/LocaLink Shared
     // Folders/<nom>) n'est PLUS déclenché automatiquement ici : il nécessite
     // désormais la confirmation explicite de l'utilisateur (dialogue de
     // partage, cf. core::SharedFolderContext::folderShareConfirmationRequested()

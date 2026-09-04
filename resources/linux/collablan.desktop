@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=CollabLAN
+Name=LocaLink
 Comment=Messagerie et partage de fichiers en réseau local
-Exec=CollabLAN
-Icon=collablan
+Exec=LocaLink
+Icon=localink
 Terminal=false
 Categories=Network;Chat;FileTransfer;

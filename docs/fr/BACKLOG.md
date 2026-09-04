@@ -1,4 +1,4 @@
-# Backlog — CollabLAN
+# Backlog — LocaLink
 
 ## Objectif du document
 

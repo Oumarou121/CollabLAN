@@ -21,7 +21,7 @@ Item {
     signal backRequested()
 
     // ---- Constantes de contenu (version 1) --------------------------------
-    readonly property string appName: "CollabLAN"
+    readonly property string appName: "LocaLink"
     readonly property string appVersion: "1.0.0"
     readonly property string companyName: "NEXIS"
     readonly property string companyFullName: "Next Intelligent Systems"

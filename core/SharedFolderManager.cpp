@@ -701,7 +701,7 @@ std::optional<QString> SharedFolderManager::previewDefaultLocalPath(qint64 folde
 
     const QString baseDir = m_sharedFoldersBaseDirOverride.isEmpty()
         ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
-              + QStringLiteral("/CollabLAN Shared Folders")
+              + QStringLiteral("/LocaLink Shared Folders")
         : m_sharedFoldersBaseDirOverride;
 
     // Assainit le nom pour l'utiliser comme nom de dossier sur le disque :

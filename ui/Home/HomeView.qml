@@ -126,8 +126,8 @@ Item {
                     spacing: Theme.spacingSmall
 
                     Rectangle {
-                        width: 44
-                        height: 44
+                        width: 32
+                        height: 32
                         radius: Theme.radiusMedium
                         // color: root.blue700
 
@@ -140,26 +140,6 @@ Item {
                             mipmap: true
                         }
                     }
-
-                    // ColumnLayout {
-                    //     spacing: -2
-
-                    //     Label {
-                    //         text: qsTr("Collab Lan")
-                    //         font.pixelSize: 19
-                    //         font.bold: true
-                    //         font.family: root.displayFont
-                    //         font.letterSpacing: 0.4
-                    //         color: Theme.text
-                    //     }
-
-                    //     Label {
-                    //         text: qsTr("Réseau local")
-                    //         font.pixelSize: 11
-                    //         font.family: Theme.fontFamily
-                    //         color: root.blue600
-                    //     }
-                    // }
                 }
 
                 // ---- Badge central : nombre de postes en ligne ------------
@@ -536,7 +516,7 @@ Item {
                         Label {
                             text: root.username.length > 0
                                   ? qsTr("Bonjour, %1").arg(root.username)
-                                  : qsTr("Bienvenue dans CollabLAN")
+                                  : qsTr("Bienvenue dans LocaLink")
                             font.pixelSize: Theme.fontSizeTitle
                             font.bold: true
                             font.family: Theme.fontFamily

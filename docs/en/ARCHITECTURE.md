@@ -1,4 +1,4 @@
-# Technical Architecture — CollabLAN
+# Technical Architecture — LocaLink
 
 ## Layered Architecture
 
@@ -42,7 +42,7 @@ The software runs in **Peer-to-Peer** mode or **Local Server** mode, entirely on
 ## Project Structure
 
 ```
-CollabLAN/
+LocaLink/
 │
 ├── app/
 ├── ui/

@@ -18,7 +18,7 @@ inline const QString Revoked = QStringLiteral("revoked");
 }
 
 /**
- * @brief Représente une machine autorisée, en attente ou révoquée dans le réseau CollabLAN (issue #68).
+ * @brief Représente une machine autorisée, en attente ou révoquée dans le réseau LocaLink (issue #68).
  */
 class AuthorizedMachine
 {

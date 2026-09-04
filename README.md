@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="ui/Assets/logo.png" alt="CollabLAN Logo" width="180"/>
+  <img src="ui/Assets/logo.png" alt="LocaLink Logo" width="180"/>
 </p>
 
-<h1 align="center">CollabLAN</h1>
+<h1 align="center">LocaLink</h1>
 
 <p align="center">
 Application de collaboration d'équipe fonctionnant entièrement sur réseau local (LAN), sans dépendance à Internet.
@@ -16,7 +16,7 @@ C++23 · Qt 6 / QML · SQLite · UDP · TCP · WebSocket · WebRTC · OpenSSL (T
 
 ## Présentation
 
-**CollabLAN** permet aux membres d'un même réseau local de se découvrir automatiquement, d'échanger des messages (individuels et de groupe), de partager des fichiers et des dossiers synchronisés, de passer des appels vocaux et de suivre l'activité du réseau via un journal d'audit — le tout sans connexion Internet et sans serveur central obligatoire.
+**LocaLink** permet aux membres d'un même réseau local de se découvrir automatiquement, d'échanger des messages (individuels et de groupe), de partager des fichiers et des dossiers synchronisés, de passer des appels vocaux et de suivre l'activité du réseau via un journal d'audit — le tout sans connexion Internet et sans serveur central obligatoire.
 
 Le logiciel s'adresse aux petites équipes, établissements scolaires, administrations ou laboratoires souhaitant une solution de communication locale, chiffrée de bout en bout entre postes autorisés, et résiliente aux pannes.
 
@@ -96,7 +96,7 @@ SQLite, gérée par `DatabaseManager` avec un système de migrations versionnée
 ## Structure du projet
 
 ```
-CollabLAN/
+LocaLink/
 ├── app/            # Point d'entrée : main.cpp, Application.cpp
 ├── ui/             # Interface Qt Quick/QML
 ├── core/           # Logique métier (managers, modèles QML, Sync/ pour les dossiers partagés)

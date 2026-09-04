@@ -3,7 +3,7 @@ add_library(network STATIC)
 # libdatachannel : implementation WebRTC (PeerConnection, ICE, DTLS-SRTP)
 # utilisee par VoiceService pour l'appel audio P2P (issues #60/#61).
 # Recuperee via FetchContent plutot que vendorisee ; le websocket interne
-# de la lib est desactive (CollabLAN utilise deja Qt WebSockets pour sa
+# de la lib est desactive (LocaLink utilise deja Qt WebSockets pour sa
 # propre signalisation, cf. VoiceSignalingChannel).
 include(FetchContent)
 set(NO_WEBSOCKET ON CACHE BOOL "" FORCE)

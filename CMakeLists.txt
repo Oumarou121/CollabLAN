@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(CollabLAN LANGUAGES CXX)
+project(LocaLink LANGUAGES CXX)
 
-set(APP_BUNDLE_IDENTIFIER "com.nexis.collablan" CACHE STRING "macOS bundle identifier")
+set(APP_BUNDLE_IDENTIFIER "com.nexis.localink" CACHE STRING "macOS bundle identifier")
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)

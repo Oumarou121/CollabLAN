@@ -71,7 +71,7 @@ SecurityService::SecurityService(const QString &storageDirOverride)
 
     m_subjectName = QHostInfo::localHostName();
     if (m_subjectName.isEmpty())
-        m_subjectName = QStringLiteral("collablan-device");
+        m_subjectName = QStringLiteral("localink-device");
 }
 
 SecurityService::~SecurityService()
@@ -338,7 +338,7 @@ bool SecurityService::generateAndStore()
 
     const QByteArray cnUtf8 = m_subjectName.toUtf8();
     X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
-                                reinterpret_cast<const unsigned char *>("CollabLAN"), -1, -1, 0);
+                                reinterpret_cast<const unsigned char *>("LocaLink"), -1, -1, 0);
     X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
                                 reinterpret_cast<const unsigned char *>(cnUtf8.constData()), -1, -1, 0);
 

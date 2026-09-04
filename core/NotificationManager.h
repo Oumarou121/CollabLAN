@@ -61,7 +61,7 @@ public slots:
     /// localPath (peut être vide si le dossier est introuvable au moment de
     /// l'appel) est inclus dans le message pour couvrir aussi le cas du
     /// tout premier provisionnement automatique (chemin local par défaut
-    /// assigné sous Documents/CollabLAN Shared Folders/, cf.
+    /// assigné sous Documents/LocaLink Shared Folders/, cf.
     /// core::SharedFolderManager::provisionDefaultLocalPath()) : plutôt
     /// qu'une notification séparée "la synchronisation démarre dans X" puis
     /// une seconde "N fichiers reçus" quelques secondes après, un seul

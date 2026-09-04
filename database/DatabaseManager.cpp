@@ -29,7 +29,7 @@ DatabaseManager::~DatabaseManager()
 QString DatabaseManager::defaultDatabaseFilePath()
 {
     const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    return QDir(dataDir).filePath(QStringLiteral("collablan.db"));
+    return QDir(dataDir).filePath(QStringLiteral("localink.db"));
 }
 
 bool DatabaseManager::open(const QString &dbFilePath)
@@ -41,7 +41,7 @@ bool DatabaseManager::open(const QString &dbFilePath)
     m_dbFilePath = dbFilePath.isEmpty() ? defaultDatabaseFilePath() : dbFilePath;
 
     // Cree le repertoire parent du fichier de base si necessaire
-    // (ex: ~/.local/share/CollabLAN sous Linux), sauf pour les bases
+    // (ex: ~/.local/share/LocaLink sous Linux), sauf pour les bases
     // en memoire (":memory:") utilisees dans les tests.
     if (m_dbFilePath != QStringLiteral(":memory:")) {
         const QFileInfo dbFileInfo(m_dbFilePath);

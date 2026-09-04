@@ -2,8 +2,8 @@ cmake --preset windows-msvc
 
 cmake --build build --config Debug
 
-.\build\app\Debug\CollabLAN.exe --port 12345 --db C:\Dev\CollabLAN\instance1.db --port 1250 --role SERVER
+.\build\app\Debug\LocaLink.exe --port 12345 --db C:\Dev\LocaLink\instance1.db --port 1250 --role SERVER
 
-.\build\app\Debug\CollabLAN.exe --port 22345 --db C:\Dev\CollabLAN\instance2.db --role CLIENT --priority-weight 50
+.\build\app\Debug\LocaLink.exe --port 22345 --db C:\Dev\LocaLink\instance2.db --role CLIENT --priority-weight 50
 
-.\build\app\Debug\CollabLAN.exe --port 32345 --db C:\Dev\CollabLAN\instance3.db --role CLIENT --priority-weight 10
+.\build\app\Debug\LocaLink.exe --port 32345 --db C:\Dev\LocaLink\instance3.db --role CLIENT --priority-weight 10

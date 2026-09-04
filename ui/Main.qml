@@ -14,7 +14,7 @@ import "SharedFolder"
 import "Components"
 
 /*
- * Main - fenetre racine de CollabLAN.
+ * Main - fenetre racine de LocaLink.
  * Gere la navigation de base entre les ecrans via un StackView :
  *   Login -> Home (issue #6)
  * Applique le theme global (issue #7) via le singleton Themes.Theme.
@@ -32,7 +32,7 @@ ApplicationWindow {
     // fraction de seconde avant d'etre remplace par Home ("Se souvenir de
     // moi", migration #026).
     visible: false
-    title: qsTr("Collab LAN")
+    title: qsTr("LocaLink")
     color: Theme.background
 
     // Chargement global de la police Inter (issue design) : chargee une

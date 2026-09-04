@@ -149,11 +149,11 @@ private slots:
         QVERIFY(id >= 0);
         QVERIFY(repo.findById(id)->filePath().isEmpty());
 
-        QVERIFY(repo.updateFilePath(id, QStringLiteral("/tmp/collablan/d.txt")));
+        QVERIFY(repo.updateFilePath(id, QStringLiteral("/tmp/localink/d.txt")));
 
         const auto found = repo.findById(id);
         QVERIFY(found.has_value());
-        QCOMPARE(found->filePath(), QStringLiteral("/tmp/collablan/d.txt"));
+        QCOMPARE(found->filePath(), QStringLiteral("/tmp/localink/d.txt"));
     }
 
     void testCreatePersistsPeerAddressAndName()

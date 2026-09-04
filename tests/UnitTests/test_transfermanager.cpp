@@ -278,7 +278,7 @@ private slots:
     }
     void resolvePeerName_usesPersistedCacheEvenWithoutDiscoveryService()
     {
-        // Reproduit le bug signale : le dossier physique "CollabLAN
+        // Reproduit le bug signale : le dossier physique "LocaLink
         // Transfers/<nom>/" et la colonne peer_name en base etaient
         // resolus a CHAQUE transfert via DiscoveryService::peers(), dont
         // le champ "name" est en realite le nom d'utilisateur *actuellement*

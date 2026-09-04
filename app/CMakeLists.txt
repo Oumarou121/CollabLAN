@@ -23,22 +23,22 @@ elseif(APPLE)
     )
 endif()
 
-add_executable(CollabLAN
+add_executable(LocaLink
     main.cpp
     ../ui/qml.qrc
     ${APP_ICON_RESOURCE}
 )
 
 if(APPLE)
-    set_target_properties(CollabLAN PROPERTIES
+    set_target_properties(LocaLink PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_ICON_FILE app.icns
-        MACOSX_BUNDLE_BUNDLE_NAME "CollabLAN"
+        MACOSX_BUNDLE_BUNDLE_NAME "LocaLink"
         MACOSX_BUNDLE_GUI_IDENTIFIER "${APP_BUNDLE_IDENTIFIER}"
     )
 endif()
 
-target_link_libraries(CollabLAN PRIVATE
+target_link_libraries(LocaLink PRIVATE
     Qt6::Quick
     Qt6::Qml
     Qt6::QuickControls2
@@ -46,10 +46,10 @@ target_link_libraries(CollabLAN PRIVATE
 )
 
 if(UNIX AND NOT APPLE)
-    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../resources/linux/collablan.desktop
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../resources/linux/localink.desktop
             DESTINATION share/applications)
     foreach(size 16 24 32 48 64 128 256 512)
-        install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../resources/linux/icons/${size}x${size}/collablan.png
+        install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../resources/linux/icons/${size}x${size}/localink.png
                 DESTINATION share/icons/hicolor/${size}x${size}/apps)
     endforeach()
 endif()

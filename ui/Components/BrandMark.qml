@@ -2,7 +2,7 @@ import QtQuick
 import Themes
 
 /*
- * BrandMark - Logo de marque CollabLAN
+ * BrandMark - Logo de marque LocaLink
  *
  * Composant reutilisable affichant le logo fourni par l'equipe dans un
  * badge clair, pour rester lisible aussi bien en theme clair qu'en theme

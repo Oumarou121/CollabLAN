@@ -1,2 +1,2 @@
-// Fichier ressource Windows : associe app.ico à l'exécutable CollabLAN.exe
+// Fichier ressource Windows : associe app.ico à l'exécutable LocaLink.exe
 IDI_ICON1 ICON "app.ico"

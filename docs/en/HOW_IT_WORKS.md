@@ -1,8 +1,8 @@
-# How CollabLAN Works
+# How LocaLink Works
 
 ## Purpose of this document
 
-This document describes **how CollabLAN works in practice** once deployed on a local network, through a reference scenario involving **three machines**. It complements the [Requirements Specification](Cahier_des_charges.pdf) (needs) and [ARCHITECTURE.md](ARCHITECTURE.md) (code structure) by explaining how network exchanges actually unfold, machine by machine, feature by feature.
+This document describes **how LocaLink works in practice** once deployed on a local network, through a reference scenario involving **three machines**. It complements the [Requirements Specification](Cahier_des_charges.pdf) (needs) and [ARCHITECTURE.md](ARCHITECTURE.md) (code structure) by explaining how network exchanges actually unfold, machine by machine, feature by feature.
 
 ---
 
@@ -22,13 +22,13 @@ Consider three computers connected to the same local network (same subnet, e.g. 
                         └───────────────────────────────┘
 ```
 
-Each machine runs an instance of CollabLAN. **No Internet connection** is required. The mode used here is **Peer-to-Peer** mode (each machine is both a client and a server); **Local Server** mode works on the same principle but with one machine acting as a central server.
+Each machine runs an instance of LocaLink. **No Internet connection** is required. The mode used here is **Peer-to-Peer** mode (each machine is both a client and a server); **Local Server** mode works on the same principle but with one machine acting as a central server.
 
 ---
 
 ## 1. Application Startup
 
-On launch, each CollabLAN instance:
+On launch, each LocaLink instance:
 
 1. Loads local settings (machine name, language, theme, download folder — see `Settings`).
 2. Initializes the `Security` module (OpenSSL): generates or loads the machine's certificate/key.
@@ -86,7 +86,7 @@ If PC-C is not authorized by the network administrator (e.g. an unapproved machi
 ### Group message
 
 1. Alice creates a group including Bilal and Chaima.
-2. When she sends a message to the group, CollabLAN broadcasts the message **in parallel** to PC-B and PC-C via WebSocket.
+2. When she sends a message to the group, LocaLink broadcasts the message **in parallel** to PC-B and PC-C via WebSocket.
 3. Each machine receives, displays, and saves the message to the group history.
 
 ```
@@ -103,7 +103,7 @@ PC-A ──message──┬─► PC-B
 **Protocol: TCP**
 
 1. Chaima (PC-C) selects a file to send to Alice (PC-A).
-2. CollabLAN opens a **dedicated TCP connection** between PC-C and PC-A for this transfer (separate from the messaging channel).
+2. LocaLink opens a **dedicated TCP connection** between PC-C and PC-A for this transfer (separate from the messaging channel).
 3. The file is transferred in chunks; a **progress bar** is displayed in real time on both machines.
 4. In case of interruption (network loss, app closing), the transfer can be **resumed** from the last received chunk, without starting over.
 5. At the end of the transfer, PC-A receives a **notification** and the file is placed in the configured download folder (`Settings`).

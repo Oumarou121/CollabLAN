@@ -35,7 +35,7 @@ bool MessagingServer::start(quint16 port)
     }
 
     // Créer le serveur WebSocket sécurisé
-    m_server = new QWebSocketServer(QStringLiteral("CollabLAN Messaging Server"), QWebSocketServer::SecureMode, this);
+    m_server = new QWebSocketServer(QStringLiteral("LocaLink Messaging Server"), QWebSocketServer::SecureMode, this);
 
     // Configurer SSL/TLS avec SecurityService
     bool sslConfigured = false;
@@ -71,7 +71,7 @@ bool MessagingServer::start(quint16 port)
         qWarning() << "SecurityService not ready, using insecure mode";
         // En mode développement, on peut utiliser un mode non sécurisé
         delete m_server;
-        m_server = new QWebSocketServer(QStringLiteral("CollabLAN Messaging Server"), QWebSocketServer::NonSecureMode, this);
+        m_server = new QWebSocketServer(QStringLiteral("LocaLink Messaging Server"), QWebSocketServer::NonSecureMode, this);
     }
 
     connect(m_server, &QWebSocketServer::newConnection, this, &MessagingServer::onNewConnection);

@@ -15,8 +15,8 @@ namespace network {
 
 namespace {
 // Marqueur inclus dans chaque paquet pour ignorer tout trafic UDP
-// broadcast qui ne proviendrait pas de CollabLAN (autre appli sur le meme port).
-const char *kPacketType = "collablan.discovery";
+// broadcast qui ne proviendrait pas de LocaLink (autre appli sur le meme port).
+const char *kPacketType = "localink.discovery";
 const int kPacketVersion = 1;
 }
 
@@ -285,7 +285,7 @@ void DiscoveryService::handleAnnouncePacket(const QByteArray &data, const QHostA
 
     const QJsonObject obj = doc.object();
     if (obj.value("type").toString() != QString::fromLatin1(kPacketType))
-        return; // trafic UDP non lie a CollabLAN sur ce port : on ignore
+        return; // trafic UDP non lie a LocaLink sur ce port : on ignore
 
     const QString peerId = obj.value("id").toString();
     if (peerId.isEmpty() || peerId == m_localId)

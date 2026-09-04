@@ -569,15 +569,15 @@ private slots:
     // MSVC2022 -- "n'est pas membre de QStandardPaths"). On utilise donc
     // SharedFolderManager::setSharedFoldersBaseDirOverrideForTests() pour
     // rediriger ces tests vers un QTemporaryDir isole, plutot que d'operer
-    // (et de removeRecursively()!) sur le vrai Documents/CollabLAN Shared
+    // (et de removeRecursively()!) sur le vrai Documents/LocaLink Shared
     // Folders/ de la machine -- une precedente version de ces tests faisait
     // exactement ca et effacait les vrais dossiers/fichiers partages de
     // l'utilisateur a chaque execution de ctest. Le sous-dossier
-    // "CollabLAN Shared Folders" est conserve dans le chemin pour que les
+    // "LocaLink Shared Folders" est conserve dans le chemin pour que les
     // assertions QVERIFY(path->contains(...)) restent valides.
     QString sharedFoldersBaseDirForTest()
     {
-        return m_sharedFoldersBaseDir->path() + QStringLiteral("/CollabLAN Shared Folders");
+        return m_sharedFoldersBaseDir->path() + QStringLiteral("/LocaLink Shared Folders");
     }
 
     void provisionDefaultLocalPathCreatesDirectoryUnderDocuments()
@@ -594,7 +594,7 @@ private slots:
 
         const auto path = mgr.provisionDefaultLocalPath(folder->id());
         QVERIFY2(path.has_value(), qPrintable(mgr.lastErrorString()));
-        QVERIFY(path->contains(QStringLiteral("CollabLAN Shared Folders")));
+        QVERIFY(path->contains(QStringLiteral("LocaLink Shared Folders")));
         QVERIFY(path->contains(QStringLiteral("Projet")));
         QVERIFY(QDir(*path).exists());
 
@@ -680,7 +680,7 @@ private slots:
         // fois sans laisser de dossiers vides orphelins.
         const auto preview = mgr.previewDefaultLocalPath(folder->id());
         QVERIFY(preview.has_value());
-        QVERIFY(preview->contains(QStringLiteral("CollabLAN Shared Folders")));
+        QVERIFY(preview->contains(QStringLiteral("LocaLink Shared Folders")));
         QVERIFY(preview->contains(QStringLiteral("Projet")));
         QVERIFY(!QDir(*preview).exists());
 

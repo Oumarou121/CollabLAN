@@ -115,8 +115,8 @@ public:
      */
     Q_INVOKABLE bool openFileLocation(const QString &filePath) const;
 
-    /// Ouvre directement le dossier dans lequel CollabLAN enregistre les
-    /// fichiers recus (par defaut "CollabLAN Transfers" dans les documents
+    /// Ouvre directement le dossier dans lequel LocaLink enregistre les
+    /// fichiers recus (par defaut "LocaLink Transfers" dans les documents
     /// de l'utilisateur), independamment de tout transfert particulier.
     Q_INVOKABLE bool openDownloadsFolder() const;
 

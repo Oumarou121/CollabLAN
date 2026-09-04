@@ -94,7 +94,7 @@ public:
     Q_INVOKABLE bool removeFolder(qint64 folderId);
 
     /// Reindexe le contenu local d'un dossier deja partage (ex: apres
-    /// modification manuelle des fichiers hors CollabLAN).
+    /// modification manuelle des fichiers hors LocaLink).
     Q_INVOKABLE bool shareFolder(qint64 folderId);
 
     /// Contenu (fichiers non supprimes) d'un dossier partage, pret a
@@ -143,7 +143,7 @@ public:
 
     /// Accepte un partage de dossier distant en attente de confirmation
     /// (cf. folderShareConfirmationRequested()) : assigne le chemin local
-    /// par défaut sous Documents/CollabLAN Shared Folders/<nom>
+    /// par défaut sous Documents/LocaLink Shared Folders/<nom>
     /// (SharedFolderManager::provisionDefaultLocalPath()) et déclenche un
     /// resync auprès du propriétaire pour récupérer le contenu (via le
     /// signal SharedFolderManager::folderLocalPathProvisioned, câblé dans

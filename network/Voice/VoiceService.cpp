@@ -12,7 +12,7 @@ namespace network {
 
 namespace {
 
-/// Aucun serveur STUN/TURN : CollabLAN est un reseau local, seuls des
+/// Aucun serveur STUN/TURN : LocaLink est un reseau local, seuls des
 /// candidats ICE "host" (adresses locales des postes) sont necessaires
 /// pour etablir la connexion directe entre les deux machines (issue #60).
 rtc::Configuration lanOnlyConfiguration()
@@ -151,7 +151,7 @@ void VoiceService::createPeerConnection()
     // tout en restant standard et lisible par n'importe quel decodeur
     // WebRTC. Voir VoiceAudioIO pour l'encodage/decodage.
     rtc::Description::Audio media("audio", rtc::Description::Direction::SendRecv);
-    media.addSSRC(m_rtpSsrc, "collablan-audio");
+    media.addSSRC(m_rtpSsrc, "localink-audio");
     // RtpMap attend une unique chaine au format SDP "a=rtpmap" :
     // "<payloadType> <format>/<clockRate>" (ex. "0 PCMU/8000").
     rtc::Description::Media::RtpMap rtpMap(

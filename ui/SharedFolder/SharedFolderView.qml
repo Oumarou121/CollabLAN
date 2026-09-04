@@ -1417,7 +1417,7 @@ Item {
 
                 Label {
                     Layout.fillWidth: true
-                    text: qsTr("« %1 » ne sera plus partagé. Les fichiers restent intacts sur le disque : seul l'enregistrement dans CollabLAN est supprimé.").arg(removeConfirmDialog.targetFolderName)
+                    text: qsTr("« %1 » ne sera plus partagé. Les fichiers restent intacts sur le disque : seul l'enregistrement dans LocaLink est supprimé.").arg(removeConfirmDialog.targetFolderName)
                     color: Theme.textSecondary
                     wrapMode: Text.WordWrap
                     font.pixelSize: Theme.fontSizeSmall

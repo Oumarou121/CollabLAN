@@ -17,8 +17,8 @@ namespace network {
  * @brief Election de serveur temporaire et detection de panne pour l'architecture
  *        hybride a bascule automatique (HYBRID_SERVER_FAILOVER.md, sections 4 a 8).
  *
- * Principe (paquets UDP JSON, marques "collablan.election" pour ignorer tout
- * trafic non lie a CollabLAN sur ce port) :
+ * Principe (paquets UDP JSON, marques "localink.election" pour ignorer tout
+ * trafic non lie a LocaLink sur ce port) :
  *  - Le poste en role Server ou TempServer diffuse un heartbeat toutes les
  *    heartbeatIntervalMs() (3000 ms par defaut, cf. doc section 4).
  *  - Chaque poste surveille le dernier heartbeat recu ; au-dela de
