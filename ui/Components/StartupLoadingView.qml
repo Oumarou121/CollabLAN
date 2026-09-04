@@ -13,15 +13,9 @@ Item {
         anchors.centerIn: parent
         spacing: Theme.spacingMedium
 
-        Label {
-            Layout.alignment: Qt.AlignHCenter
-            text: qsTr("CollabLAN")
-            color: Theme.primary
-            font.pixelSize: 30
-            font.bold: true
-        }
         BusyIndicator {
             Layout.alignment: Qt.AlignHCenter
+            palette.highlight: Theme.primary
             running: true
         }
         Label {

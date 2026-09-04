@@ -129,11 +129,11 @@ Item {
                         width: 44
                         height: 44
                         radius: Theme.radiusMedium
-                        color: root.blue700
+                        // color: root.blue700
 
                         Image {
                             anchors.fill: parent
-                            anchors.margins: 9
+                            anchors.margins: 0
                             source: "../Assets/logo.png"
                             fillMode: Image.PreserveAspectFit
                             smooth: true
@@ -141,25 +141,25 @@ Item {
                         }
                     }
 
-                    ColumnLayout {
-                        spacing: -2
+                    // ColumnLayout {
+                    //     spacing: -2
 
-                        Label {
-                            text: qsTr("CollabLAN")
-                            font.pixelSize: 19
-                            font.bold: true
-                            font.family: root.displayFont
-                            font.letterSpacing: 0.4
-                            color: Theme.text
-                        }
+                    //     Label {
+                    //         text: qsTr("Collab Lan")
+                    //         font.pixelSize: 19
+                    //         font.bold: true
+                    //         font.family: root.displayFont
+                    //         font.letterSpacing: 0.4
+                    //         color: Theme.text
+                    //     }
 
-                        Label {
-                            text: qsTr("Réseau local")
-                            font.pixelSize: 11
-                            font.family: Theme.fontFamily
-                            color: root.blue600
-                        }
-                    }
+                    //     Label {
+                    //         text: qsTr("Réseau local")
+                    //         font.pixelSize: 11
+                    //         font.family: Theme.fontFamily
+                    //         color: root.blue600
+                    //     }
+                    // }
                 }
 
                 // ---- Badge central : nombre de postes en ligne ------------
@@ -235,7 +235,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     height: 44
                     implicitWidth: profileRow.implicitWidth + Theme.spacingMedium * 2
-                    radius: height / 2
+                    radius: 18
                     color: (profileArea.containsMouse || menuPopup.visible) ? Theme.surfaceAlt : Theme.surface
                     border.width: 1
                     border.color: Theme.border
