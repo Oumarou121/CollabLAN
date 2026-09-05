@@ -100,6 +100,29 @@ Item {
         return value
     }
 
+    // Resout un libelle d'acteur lisible pour une entree d'audit. La
+    // plupart des evenements authentifies (message, transfert...) ne
+    // renseignent que userId (pas d'etiquette libre type IP), donc
+    // afficher uniquement actorLabel comme avant affichait "N/A" a tort
+    // des qu'un utilisateur connu avait agi. On resout ici le nom via
+    // userManagementModel (deja charge pour l'onglet Utilisateurs) avant
+    // de retomber sur "N/A" si vraiment aucun acteur n'est identifiable
+    // (ex : compte supprime depuis, ou tentative non authentifiee sans
+    // adresse).
+    function actorLabelFor(entryModel) {
+        if (entryModel.actorLabel && entryModel.actorLabel.length > 0)
+            return entryModel.actorLabel
+        if (entryModel.userId && entryModel.userId > 0) {
+            for (let i = 0; i < userManagementModel.rowCount(); ++i) {
+                const idx = userManagementModel.index(i, 0)
+                if (userManagementModel.data(idx, Qt.UserRole + 1) === entryModel.userId)
+                    return userManagementModel.data(idx, Qt.UserRole + 2)
+            }
+        }
+        return qsTr("N/A")
+    }
+
+
     onCurrentTabChanged: {
         if (currentTab === 3)
             refreshElectionHistory()
@@ -554,7 +577,7 @@ Item {
                                 }
 
                                 Label {
-                                    text: qsTr("Acteur : %1").arg(model.actorLabel || "N/A")
+                                    text: qsTr("Acteur : %1").arg(root.actorLabelFor(model))
                                     font.pixelSize: Theme.fontSizeSmall
                                     color: Theme.textSecondary
                                     font.family: Theme.fontFamily
