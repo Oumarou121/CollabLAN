@@ -208,16 +208,21 @@ Item {
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.margins: Theme.spacingLarge
+                    anchors.leftMargin: Theme.spacingLarge
+                    anchors.rightMargin: Theme.spacingLarge
+                    anchors.topMargin: Theme.spacingMedium
+                    anchors.bottomMargin: Theme.spacingMedium
                     spacing: Theme.spacingMedium
 
                     Avatar {
                         name: name
                         size: 44
+                        Layout.alignment: Qt.AlignVCenter
                     }
 
                     ColumnLayout {
                         Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignVCenter
                         spacing: 2
 
                         Label {

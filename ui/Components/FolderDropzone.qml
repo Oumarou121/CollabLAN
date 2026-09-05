@@ -148,14 +148,19 @@ Rectangle {
     // second plan (plus lisible qu'un chemin complet brut, surtout sur
     // les arborescences profondes), et bouton pour changer.
     RowLayout {
-        anchors.fill: parent
-        anchors.margins: Theme.spacingMedium
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: Theme.spacingMedium
+        anchors.rightMargin: Theme.spacingMedium
+        anchors.verticalCenter: parent.verticalCenter
+        height: 36
         visible: root.path.length > 0
         spacing: Theme.spacingSmall
 
         Rectangle {
             Layout.preferredWidth: 36
             Layout.preferredHeight: 36
+            Layout.alignment: Qt.AlignVCenter
             radius: Theme.radiusSmall
             color: Theme.primaryMuted
 
@@ -169,6 +174,7 @@ Rectangle {
 
         ColumnLayout {
             Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
             spacing: 1
 
             Label {
@@ -190,6 +196,7 @@ Rectangle {
         }
 
         AppButton {
+            Layout.alignment: Qt.AlignVCenter
             text: root.filledActionLabel
             variant: "secondary"
             onClicked: root.browseRequested()
