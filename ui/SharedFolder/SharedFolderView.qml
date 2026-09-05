@@ -476,55 +476,11 @@ Item {
             spacing: Theme.spacingMedium
 
             // ── Indicateur d'etape ──────────────────────────────────────
-            RowLayout {
+            AppStepper {
                 Layout.fillWidth: true
                 Layout.bottomMargin: Theme.spacingXs
-                spacing: Theme.spacingSmall
-
-                Repeater {
-                    model: [
-                        { n: 1, label: qsTr("Dossier") },
-                        { n: 2, label: qsTr("Partage") }
-                    ]
-
-                    delegate: RowLayout {
-                        spacing: Theme.spacingSmall
-
-                        Rectangle {
-                            readonly property bool isCurrent: createDialog.step === modelData.n
-                            readonly property bool isDone: createDialog.step > modelData.n
-                            Layout.preferredWidth: 22
-                            Layout.preferredHeight: 22
-                            radius: Theme.radiusPill
-                            color: isCurrent || isDone ? Theme.primary : Theme.surfaceAlt
-                            border.width: 1
-                            border.color: isCurrent || isDone ? Theme.primary : Theme.border
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: parent.isDone ? "\u2713" : String(modelData.n)
-                                color: parent.isCurrent || parent.isDone ? Theme.primaryText : Theme.textTertiary
-                                font.pixelSize: 11
-                                font.bold: true
-                            }
-                        }
-                        Label {
-                            text: modelData.label
-                            color: createDialog.step === modelData.n ? Theme.text : Theme.textTertiary
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.bold: createDialog.step === modelData.n
-                        }
-                        Rectangle {
-                            visible: modelData.n === 1
-                            Layout.preferredWidth: 24
-                            Layout.preferredHeight: 2
-                            radius: 1
-                            color: createDialog.step > 1 ? Theme.primary : Theme.border
-                        }
-                    }
-                }
-
-                Item { Layout.fillWidth: true }
+                steps: [qsTr("Dossier"), qsTr("Partage")]
+                currentStep: createDialog.step
             }
 
             // ── Étape 1 : Dossier ────────────────────────────────────────
@@ -550,6 +506,7 @@ Item {
                 FolderDropzone {
                     path: createDialog.localPath
                     onBrowseRequested: folderPickerDialog.open()
+                    onPathDropped: function (droppedPath) { createDialog.localPath = droppedPath }
                 }
 
                 AppTextField {
@@ -921,8 +878,9 @@ Item {
             }
             FolderDropzone {
                 path: setLocalPathDialog.localPath
-                emptyHint: qsTr("Cliquez pour choisir le dossier de destination")
+                emptyHint: qsTr("Cliquez ou glissez le dossier de destination ici")
                 onBrowseRequested: remoteFolderPickerDialog.open()
+                onPathDropped: function (droppedPath) { setLocalPathDialog.localPath = droppedPath }
             }
 
             Item { Layout.fillHeight: true }

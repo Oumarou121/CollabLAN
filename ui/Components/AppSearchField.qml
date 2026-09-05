@@ -43,8 +43,8 @@ Rectangle {
     property real rightInset: 0
 
     implicitHeight: compact ? 28 : 48
-    radius: compact ? height / 2 : Theme.radiusMedium
-    color: compact ? "transparent" : Theme.surfaceAlt
+    radius: Theme.radiusMedium
+    color:  Theme.surfaceAlt
     border.width: compact ? 1 : (field.activeFocus ? 2 : 1)
     border.color: field.activeFocus ? Theme.primary : Theme.border
 

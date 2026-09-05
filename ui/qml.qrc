@@ -34,6 +34,7 @@
         <file>Components/AppTextField.qml</file>
         <file>Components/AppPasswordField.qml</file>
         <file>Components/AppSearchField.qml</file>
+        <file>Components/AppStepper.qml</file>
         <file>Components/AppDivider.qml</file>
         <file>Components/AppSegmentedControl.qml</file>
         <file>Components/FolderDropzone.qml</file>
