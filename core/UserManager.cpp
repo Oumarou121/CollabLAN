@@ -360,6 +360,12 @@ std::vector<models::User> UserManager::allUsers() const
     return m_userRepository.findAll();
 }
 
+QString UserManager::usernameForId(qint64 userId) const
+{
+    const auto user = m_userRepository.findById(static_cast<int>(userId));
+    return user.has_value() ? user->name() : QString();
+}
+
 void UserManager::emitUsersChanged()
 {
     // Émettre le signal dans le thread principal pour éviter les crashs Qt

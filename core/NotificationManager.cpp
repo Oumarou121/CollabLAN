@@ -1,4 +1,5 @@
 #include "NotificationManager.h"
+#include "UserManager.h"
 
 #include <QDebug>
 
@@ -21,8 +22,12 @@ void NotificationManager::onMessageReceived(const models::Message &message)
         return;
     }
 
-    // Generer une notification pour le nouveau message
-    const QString title = QStringLiteral("Nouveau message");
+    // Titre = nom de l'expediteur quand il est resolvable (necessaire au
+    // nouveau design de notification enrichi, qui affiche un avatar +
+    // nom d'expediteur - cf. Toast.qml), sinon repli sur le titre
+    // generique precedent.
+    const QString senderName = m_userManager ? m_userManager->usernameForId(message.senderId()) : QString();
+    const QString title = senderName.isEmpty() ? QStringLiteral("Nouveau message") : senderName;
     const QString notificationMessage = message.content();
 
     qDebug() << "[NotificationManager] Emitting notificationRequested for message:" << notificationMessage;

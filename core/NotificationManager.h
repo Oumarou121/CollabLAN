@@ -9,6 +9,8 @@
 
 namespace core {
 
+class UserManager;
+
 /**
  * @brief Generation et distribution des notifications internes.
  *
@@ -25,6 +27,12 @@ public:
     /// Active ou desactive les notifications.
     void setNotificationsEnabled(bool enabled) { m_notificationsEnabled = enabled; }
     bool notificationsEnabled() const { return m_notificationsEnabled; }
+
+    /// Permet de resoudre le nom de l'expediteur d'un message pour
+    /// enrichir la notification (cf. onMessageReceived). Optionnel : si
+    /// jamais renseigne, le titre generique "Nouveau message" reste
+    /// utilise comme avant (comportement inchange en son absence).
+    void setUserManager(UserManager *userManager) { m_userManager = userManager; }
 
 public slots:
     /// Appelé lorsqu'un nouveau message est reçu.
@@ -87,6 +95,7 @@ signals:
 
 private:
     bool m_notificationsEnabled = true;
+    UserManager *m_userManager = nullptr;
 };
 
 } // namespace core

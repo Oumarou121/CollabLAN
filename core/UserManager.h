@@ -138,6 +138,12 @@ public:
 
     std::vector<models::User> allUsers() const;
 
+    /// Resout le nom d'un utilisateur a partir de son id, ou une chaine
+    /// vide si l'id est inconnu (utile pour enrichir des notifications
+    /// avec le nom de l'expediteur sans dupliquer un lookup repository
+    /// dans chaque appelant, cf. NotificationManager).
+    QString usernameForId(qint64 userId) const;
+
     /**
      * @brief Emet le signal usersChanged() pour notifier que la liste
      *        d'utilisateurs a change (apres synchronisation par exemple).

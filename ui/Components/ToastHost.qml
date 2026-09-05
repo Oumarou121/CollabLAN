@@ -39,12 +39,19 @@ Item {
             model: root.toastQueue
 
             delegate: Toast {
-                width: 360
+                // Chaque Toast calcule sa propre largeur (carte 360px pour
+                // les messages, pilule compacte pour le reste) ; on l'aligne
+                // a droite de la colonne hote sans lui imposer une largeur.
+                anchors.right: parent.right
                 title: modelData.title
                 message: modelData.message
                 category: modelData.category
 
                 onDismissed: root.removeToast(modelData.key)
+                // TODO: brancher sur la navigation reelle vers la
+                // conversation une fois qu'un identifiant (senderId /
+                // conversationId) sera transporte par notificationRequested.
+                onReplyRequested: (senderName) => console.log("[ToastHost] Repondre demande pour", senderName)
             }
         }
     }

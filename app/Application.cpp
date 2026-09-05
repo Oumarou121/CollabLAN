@@ -578,6 +578,9 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     }
     // Initialiser le NotificationManager pour les notifications
     m_notificationManager = new core::NotificationManager(this);
+    // Permet a onMessageReceived() de resoudre le nom de l'expediteur pour
+    // le titre de la notification enrichie (cf. NotificationManager::setUserManager).
+    m_notificationManager->setUserManager(m_userManager);
 
     // Initialiser le TransferService pour le transfert de fichiers par
     // blocs (issue #53). Ecoute sur le port de messagerie + 1 par
