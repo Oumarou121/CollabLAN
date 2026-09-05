@@ -24,6 +24,7 @@ ColumnLayout {
     property alias placeholderText: field.placeholderText
     property alias text: field.text
     property alias field: field
+    signal accepted()
 
     spacing: Theme.spacingXs
 
@@ -73,6 +74,8 @@ ColumnLayout {
             size: 30
             onClicked: revealed = !revealed
         }
+
+        onAccepted: root.accepted()
     }
 
     Label {

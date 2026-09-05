@@ -8,6 +8,29 @@
 
 namespace core {
 
+namespace {
+
+QString auditStatusLabel(const QString &status)
+{
+    if (status == QStringLiteral("pending"))     return QStringLiteral("En attente");
+    if (status == QStringLiteral("in_progress")) return QStringLiteral("En cours");
+    if (status == QStringLiteral("completed"))   return QStringLiteral("Termine");
+    if (status == QStringLiteral("missed"))      return QStringLiteral("Manque");
+    if (status == QStringLiteral("rejected"))    return QStringLiteral("Refuse");
+    if (status == QStringLiteral("cancelled"))   return QStringLiteral("Annule");
+    if (status == QStringLiteral("failed"))      return QStringLiteral("Echoue");
+    return status;
+}
+
+QString auditDirectionLabel(const QString &direction)
+{
+    if (direction == QStringLiteral("outgoing")) return QStringLiteral("Sortant");
+    if (direction == QStringLiteral("incoming")) return QStringLiteral("Entrant");
+    return direction;
+}
+
+}
+
 QString auditEventTypeToString(AuditEventType type)
 {
     switch (type) {
@@ -86,7 +109,7 @@ void AuditManager::logTransfer(qint64 userId, const QString &fileName, qint64 fi
                                 const QString &status, const QString &detail)
 {
     QString description = QStringLiteral("Transfert '%1' (%2 octets) : %3")
-                               .arg(fileName).arg(fileSizeBytes).arg(status);
+                               .arg(fileName).arg(fileSizeBytes).arg(auditStatusLabel(status));
     if (!detail.isEmpty()) {
         description += QStringLiteral(" (%1)").arg(detail);
     }
@@ -97,7 +120,15 @@ void AuditManager::logTransfer(qint64 userId, const QString &fileName, qint64 fi
 void AuditManager::logCall(std::optional<qint64> userId, const QHostAddress &peerAddress,
                             const QString &status, const QString &detail)
 {
-    QString description = QStringLiteral("Appel avec %1 : %2").arg(peerAddress.toString(), status);
+    QString displayStatus = status;
+    for (const QString &direction : {QStringLiteral("outgoing"), QStringLiteral("incoming")})
+        displayStatus.replace(direction, auditDirectionLabel(direction));
+    for (const QString &callStatus : {QStringLiteral("in_progress"), QStringLiteral("completed"),
+                                      QStringLiteral("missed"), QStringLiteral("rejected"),
+                                      QStringLiteral("cancelled"), QStringLiteral("failed")})
+        displayStatus.replace(callStatus, auditStatusLabel(callStatus));
+
+    QString description = QStringLiteral("Appel avec %1 : %2").arg(peerAddress.toString(), displayStatus);
     if (!detail.isEmpty()) {
         description += QStringLiteral(" (%1)").arg(detail);
     }

@@ -9,6 +9,38 @@
 
 namespace core {
 
+namespace {
+
+QString localizedAuditText(QString value)
+{
+    const QList<QPair<QString, QString>> labels = {
+        {QStringLiteral("in_progress"), QStringLiteral("En cours")},
+        {QStringLiteral("pending"), QStringLiteral("En attente")},
+        {QStringLiteral("completed"), QStringLiteral("Termine")},
+        {QStringLiteral("missed"), QStringLiteral("Manque")},
+        {QStringLiteral("rejected"), QStringLiteral("Refuse")},
+        {QStringLiteral("cancelled"), QStringLiteral("Annule")},
+        {QStringLiteral("failed"), QStringLiteral("Echoue")},
+        {QStringLiteral("outgoing"), QStringLiteral("Sortant")},
+        {QStringLiteral("incoming"), QStringLiteral("Entrant")}
+    };
+    for (const auto &label : labels)
+        value.replace(label.first, label.second);
+    return value;
+}
+
+QString localizedAuditEventType(const QString &eventType)
+{
+    if (eventType == QStringLiteral("connection")) return QStringLiteral("Connexion");
+    if (eventType == QStringLiteral("message")) return QStringLiteral("Message");
+    if (eventType == QStringLiteral("transfer")) return QStringLiteral("Transfert");
+    if (eventType == QStringLiteral("call")) return QStringLiteral("Appel");
+    if (eventType == QStringLiteral("access_denied")) return QStringLiteral("Acces refuse");
+    return eventType;
+}
+
+}
+
 AuditLogModel::AuditLogModel(QObject *parent)
     : QAbstractListModel(parent)
 {
@@ -170,8 +202,8 @@ QString AuditLogModel::exportToCsv(const QString &filePath)
     for (const models::AuditLog &log : m_logs) {
         out << log.id() << ","
             << log.timestamp().toString(Qt::ISODate) << ","
-            << log.eventType() << ","
-            << log.description() << ","
+            << localizedAuditEventType(log.eventType()) << ","
+            << localizedAuditText(log.description()) << ","
             << log.userId().value_or(0) << ","
             << log.actorLabel() << "\n";
     }

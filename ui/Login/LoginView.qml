@@ -365,98 +365,12 @@ Item {
                     Layout.fillWidth: true
                     implicitHeight: passwordAppField.implicitHeight
 
-                    AppTextField {
+                    AppPasswordField {
                         id: passwordAppField
-                        anchors.left: parent.left
-                        anchors.right: parent.right
+                        anchors.fill: parent
                         label: qsTr("Mot de passe")
                         placeholderText: qsTr("Votre mot de passe")
-                        echoMode: root.showPassword ? TextInput.Normal : TextInput.Password
-                        hasError: errorLabel.text.length > 0
-                        rightPadding: 40
                         onAccepted: root.attemptLogin()
-                    }
-
-                    // Bascule "afficher / masquer le mot de passe" - icone
-                    // oeil dessinee en vectoriel (pas d'emoji : ignore la
-                    // couleur du theme). Item hors du ColumnLayout interne
-                    // d'AppTextField (frere de passwordAppField dans ce
-                    // conteneur), pour se superposer au champ sans etre
-                    // empile par le layout.
-                    Item {
-                        width: 32
-                        height: passwordAppField.field.height
-                        anchors.right: passwordAppField.field.right
-                        anchors.verticalCenter: passwordAppField.field.verticalCenter
-
-                        // Zone cliquable circulaire avec effet de survol,
-                        // plus grande que l'icone pour un meilleur ciblage.
-                        Rectangle {
-                            id: eyeHoverBg
-                            width: 30
-                            height: 30
-                            radius: width / 2
-                            anchors.centerIn: parent
-                            color: root.blue600
-                            opacity: eyeMouseArea.containsMouse ? (Theme.darkMode ? 0.16 : 0.08) : 0
-                            Behavior on opacity { NumberAnimation { duration: 120 } }
-                        }
-
-                        Canvas {
-                            id: eyeIcon
-                            width: 18
-                            height: 18
-                            anchors.centerIn: parent
-                            property color strokeColor: root.showPassword ? root.blue600 : root.inkFaint
-                            Component.onCompleted: requestPaint()
-                            onPaint: {
-                                const ctx = getContext("2d")
-                                ctx.clearRect(0, 0, width, height)
-                                ctx.strokeStyle = strokeColor
-                                ctx.lineWidth = 1.5
-                                ctx.lineJoin = "round"
-                                ctx.lineCap = "round"
-
-                                if (root.showPassword) {
-                                    // Mot de passe visible : oeil ouvert plein.
-                                    ctx.beginPath()
-                                    ctx.moveTo(1.2, 9)
-                                    ctx.quadraticCurveTo(9, 1.8, 16.8, 9)
-                                    ctx.quadraticCurveTo(9, 16.2, 1.2, 9)
-                                    ctx.closePath()
-                                    ctx.stroke()
-                                    ctx.beginPath()
-                                    ctx.arc(9, 9, 2.6, 0, Math.PI * 2)
-                                    ctx.stroke()
-                                } else {
-                                    // Mot de passe masque : paupiere fermee
-                                    // (courbe simple) + barre diagonale, a la
-                                    // maniere de l'icone "eye-off" standard.
-                                    ctx.beginPath()
-                                    ctx.moveTo(1.2, 10.5)
-                                    ctx.quadraticCurveTo(9, 4.5, 16.8, 10.5)
-                                    ctx.stroke()
-                                    ctx.beginPath()
-                                    ctx.moveTo(2.2, 2.2)
-                                    ctx.lineTo(15.8, 15.8)
-                                    ctx.stroke()
-                                }
-                            }
-                            Behavior on strokeColor { ColorAnimation { duration: 120 } }
-                            onStrokeColorChanged: requestPaint()
-                            Connections {
-                                target: root
-                                function onShowPasswordChanged() { eyeIcon.requestPaint() }
-                            }
-                        }
-
-                        MouseArea {
-                            id: eyeMouseArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.showPassword = !root.showPassword
-                        }
                     }
                 }
 

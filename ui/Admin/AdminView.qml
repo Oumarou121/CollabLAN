@@ -71,6 +71,35 @@ Item {
         }
     }
 
+    function eventTypeLabel(eventType) {
+        switch (eventType) {
+        case "connection": return qsTr("Connexion")
+        case "message": return qsTr("Message")
+        case "transfer": return qsTr("Transfert")
+        case "call": return qsTr("Appel")
+        case "access_denied": return qsTr("Accès refusé")
+        default: return eventType
+        }
+    }
+
+    function auditDescriptionLabel(description) {
+        let value = description || ""
+        const labels = {
+            "in_progress": qsTr("En cours"),
+            "pending": qsTr("En attente"),
+            "completed": qsTr("Terminé"),
+            "missed": qsTr("Manqué"),
+            "rejected": qsTr("Refusé"),
+            "cancelled": qsTr("Annulé"),
+            "failed": qsTr("Échoué"),
+            "outgoing": qsTr("Sortant"),
+            "incoming": qsTr("Entrant")
+        }
+        for (const key in labels)
+            value = value.replace(new RegExp("\\b" + key + "\\b", "g"), labels[key])
+        return value
+    }
+
     onCurrentTabChanged: {
         if (currentTab === 3)
             refreshElectionHistory()
@@ -339,6 +368,7 @@ Item {
                                 palette.buttonText: Theme.text
                                 palette.highlight: Theme.primary
                                 palette.highlightedText: Theme.primaryText
+                                displayText: root.eventTypeLabel(currentText)
                                 Layout.alignment: Qt.AlignVCenter
                                 Layout.preferredWidth: 180
                                 Layout.preferredHeight: 40
@@ -357,7 +387,7 @@ Item {
                                                : (hovered ? Theme.surfaceHover : Theme.surface)
                                     }
                                     contentItem: Label {
-                                        text: modelData
+                                        text: root.eventTypeLabel(modelData)
                                         color: Theme.text
                                         font.pixelSize: Theme.fontSizeSmall
                                         verticalAlignment: Text.AlignVCenter
@@ -504,7 +534,7 @@ Item {
                                         Label {
                                             id: eventTypeLabel
                                             anchors.centerIn: parent
-                                            text: model.eventType
+                                            text: root.eventTypeLabel(model.eventType)
                                             font.pixelSize: Theme.fontSizeCaption
                                             font.bold: true
                                             color: Theme.primary
@@ -515,7 +545,7 @@ Item {
                                 }
 
                                 Label {
-                                    text: model.description
+                                    text: root.auditDescriptionLabel(model.description)
                                     font.pixelSize: Theme.fontSizeBody
                                     color: Theme.text
                                     wrapMode: Text.WordWrap
