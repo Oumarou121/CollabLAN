@@ -134,6 +134,33 @@ QString MessagingContext::userName(qint64 userId) const
     return QStringLiteral("Utilisateur %1").arg(userId);
 }
 
+qint64 MessagingContext::otherParticipantId(qint64 conversationId) const
+{
+    if (conversationId <= 0 || !m_messagingManager) {
+        return 0;
+    }
+
+    const qint64 currentId = currentUserId();
+    const auto conversations = m_messagingManager->getUserConversations(currentId);
+    for (const auto &conv : conversations) {
+        if (conv.id() == conversationId) {
+            return conv.participant1Id() == currentId ? conv.participant2Id() : conv.participant1Id();
+        }
+    }
+    return 0;
+}
+
+QString MessagingContext::userStatus(qint64 userId) const
+{
+    if (m_userManager) {
+        const auto status = m_userManager->status(static_cast<int>(userId));
+        if (status.has_value()) {
+            return models::userStatusToString(*status);
+        }
+    }
+    return QStringLiteral("offline");
+}
+
 qint64 MessagingContext::currentUserId() const
 {
     if (m_userManager) {

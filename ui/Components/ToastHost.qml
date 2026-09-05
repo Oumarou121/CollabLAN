@@ -155,8 +155,24 @@ Item {
     }
 
     Connections {
+        target: userManager
+        function onAuthenticationChanged() {
+            if (!userManager.authenticated) {
+                toastHost.messageQueue = []
+                toastHost.otherQueue = []
+            }
+        }
+    }
+
+    Connections {
         target: notificationManager
         function onNotificationRequested(title, message, category, conversationId) {
+            // Securite : un utilisateur non connecte (ecran de login) ne
+            // doit ni voir de notification, ni pouvoir cliquer dessus pour
+            // etre redirige vers une conversation/vue qui suppose une
+            // session active.
+            if (!userManager || !userManager.authenticated)
+                return
             toastHost.addToast(title, message, category, conversationId || 0)
         }
     }

@@ -38,6 +38,55 @@ Item {
 
     signal backRequested()
 
+    // Statut de presence de l'autre participant (conversation individuelle
+    // uniquement -- une conversation de groupe n'a pas de statut unique).
+    // Rafraichi manuellement via refreshPresence(), car userStatus()/
+    // otherParticipantId() sont des Q_INVOKABLE sans NOTIFY : un binding
+    // direct ne se reevaluerait pas quand le statut change cote C++.
+    property string otherUserStatus: "offline"
+
+    function refreshPresence() {
+        if (!messagingContext || root.isGroup || root.conversationId <= 0) {
+            root.otherUserStatus = "offline"
+            return
+        }
+        const otherId = messagingContext.otherParticipantId(root.conversationId)
+        root.otherUserStatus = otherId > 0 ? messagingContext.userStatus(otherId) : "offline"
+    }
+
+    function presenceLabel(status) {
+        switch (status) {
+        case "online": return qsTr("En ligne")
+        case "away": return qsTr("Absent")
+        default: return qsTr("Hors ligne")
+        }
+    }
+
+    function presenceColor(status) {
+        switch (status) {
+        case "online": return Theme.success
+        case "away": return Theme.warning
+        default: return Theme.textTertiary
+        }
+    }
+
+    // Le statut peut changer (login/logout/mise en veille d'un autre
+    // poste) pendant que la conversation reste ouverte -- on ecoute donc
+    // le meme signal qu'utilise availableUsers() (emis par UserManager a
+    // chaque userUpdated/usersChanged) plutot que de ne rafraichir qu'a
+    // l'ouverture.
+    Connections {
+        target: messagingContext
+        function onAvailableUsersChanged() { root.refreshPresence() }
+    }
+
+    onConversationIdChanged: {
+        root.refreshPresence()
+        if (messagingContext && conversationId > 0)
+            messagingContext.setConversation(conversationId)
+    }
+    onIsGroupChanged: root.refreshPresence()
+
     // Police d'icones Font Awesome 4.7.0 pour l'illustration de l'etat vide
     // (meme police que IconButton/Avatar, chargee ici car ce glyphe est
     // utilise en dehors de ces composants).
@@ -126,6 +175,8 @@ Item {
                     Avatar {
                         name: root.displayName
                         size: 40
+                        showStatus: !root.isGroup
+                        online: root.otherUserStatus === "online"
                     }
 
                     ColumnLayout {
@@ -142,8 +193,16 @@ Item {
                             Layout.fillWidth: true
                         }
 
-                        // Le statut "En ligne" fige a ete retire : il n'y a pas
-                        // encore de vrai suivi de presence par conversation.
+                        // Statut de presence reel de l'autre participant
+                        // (UserManager), absent pour les conversations de
+                        // groupe qui n'ont pas d'interlocuteur unique.
+                        Label {
+                            visible: !root.isGroup
+                            text: root.presenceLabel(root.otherUserStatus)
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.family: Theme.fontFamily
+                            color: root.presenceColor(root.otherUserStatus)
+                        }
                     }
                 }
             }
@@ -479,17 +538,11 @@ Item {
         }
     }
 
-    // Charger la conversation lorsque conversationId change
-    onConversationIdChanged: {
-        if (messagingContext && conversationId > 0) {
-            messagingContext.setConversation(conversationId)
-        }
-    }
-
     // Charger la conversation au demarrage
     Component.onCompleted: {
         if (messagingContext && conversationId > 0) {
             messagingContext.setConversation(conversationId)
         }
+        root.refreshPresence()
     }
 }

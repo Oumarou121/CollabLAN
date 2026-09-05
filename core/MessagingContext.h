@@ -89,6 +89,17 @@ public:
     /// "Utilisateur <id>" si l'utilisateur est inconnu.
     Q_INVOKABLE QString userName(qint64 userId) const;
 
+    /// Id de l'autre participant d'une conversation individuelle (jamais
+    /// le notre). Retourne 0 si la conversation est un groupe, inconnue,
+    /// ou si aucun MessagingManager n'est configure. Utilise par ChatView
+    /// pour savoir de quel utilisateur suivre le statut de presence.
+    Q_INVOKABLE qint64 otherParticipantId(qint64 conversationId) const;
+
+    /// Statut de connexion d'un utilisateur ("online", "away" ou
+    /// "offline"), tel que suivi par UserManager. Retourne "offline" si
+    /// l'utilisateur est inconnu ou si aucun UserManager n'est configure.
+    Q_INVOKABLE QString userStatus(qint64 userId) const;
+
     /// Id de l'utilisateur actuellement authentifie (depuis UserManager).
     Q_INVOKABLE qint64 currentUserId() const;
 
