@@ -40,12 +40,14 @@ Item {
 
             delegate: Toast {
                 // Chaque Toast calcule sa propre largeur (carte 360px pour
-                // les messages, pilule compacte pour le reste) ; on l'aligne
-                // a droite de la colonne hote sans lui imposer une largeur.
+                // les messages, pilule compacte pour le reste, groupe
+                // empile pour les rafales) ; on l'aligne a droite de la
+                // colonne hote sans lui imposer une largeur.
                 anchors.right: parent.right
                 title: modelData.title
                 message: modelData.message
                 category: modelData.category
+                count: modelData.count
 
                 onDismissed: root.removeToast(modelData.key)
                 // TODO: brancher sur la navigation reelle vers la
@@ -57,8 +59,27 @@ Item {
     }
 
     function addToast(title, message, category) {
+        // Regroupement (design C) : si un toast de la meme categorie est
+        // deja affiche (rafale d'evenements identiques, ex. plusieurs
+        // messages ou connexions coup sur coup), on l'incremente au lieu
+        // d'empiler un nouveau toast individuel.
+        const existingIndex = toastQueue.findIndex(function(t) { return t.category === category })
+        if (existingIndex !== -1) {
+            const merged = toastQueue.slice()
+            const existing = merged[existingIndex]
+            merged[existingIndex] = {
+                key: existing.key,
+                title: title,
+                message: message,
+                category: category,
+                count: existing.count + 1
+            }
+            toastQueue = merged
+            return
+        }
+
         const key = _nextKey++
-        const updated = toastQueue.concat([{ key: key, title: title, message: message, category: category }])
+        const updated = toastQueue.concat([{ key: key, title: title, message: message, category: category, count: 1 }])
         toastQueue = updated.length > maxVisible ? updated.slice(updated.length - maxVisible) : updated
     }
 

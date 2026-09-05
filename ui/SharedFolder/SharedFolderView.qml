@@ -847,7 +847,11 @@ Item {
         title: qsTr("Définir le dossier local — %1").arg(setLocalPathDialog.targetFolderName)
         headerIcon: "\uf07c"
         dialogWidth: 420
-        dialogHeight: 280
+        // Hauteur calculee sur le contenu reel (cf. createDialog plus haut) :
+        // une valeur fixe (280 auparavant) ne tenait pas compte du texte
+        // d'intro sur plusieurs lignes ni de la zone de depot vide (116px),
+        // ce qui poussait les boutons Annuler/Definir hors de la carte.
+        dialogHeight: setLocalPathColumn.implicitHeight + Theme.spacingMedium * 2
         standardButtons: Dialog.NoButton
 
         property int targetFolderId: -1
@@ -860,7 +864,8 @@ Item {
         }
 
         ColumnLayout {
-            anchors.fill: parent
+            id: setLocalPathColumn
+            width: parent.width
             spacing: Theme.spacingMedium
 
             Label {
@@ -883,10 +888,9 @@ Item {
                 onPathDropped: function (droppedPath) { setLocalPathDialog.localPath = droppedPath }
             }
 
-            Item { Layout.fillHeight: true }
-
             RowLayout {
                 Layout.fillWidth: true
+                Layout.topMargin: Theme.spacingSmall
                 spacing: Theme.spacingSmall
 
                 AppButton {

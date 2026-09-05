@@ -21,11 +21,30 @@ Rectangle {
     property string category: "message" // "message" | "transfer" | "connection" | "disconnection" | "group" | "folder"
     property int duration: 4000
 
+    // Nombre d'evenements regroupes dans ce toast (rafale, cf.
+    // ToastHost::addToast). count === 1 : affichage normal (design A ou B).
+    // count > 1 : design C (groupe empile + compteur), quelle que soit la
+    // categorie, au lieu d'empiler un toast par evenement individuel.
+    property int count: 1
+    readonly property bool isGrouped: count > 1
+
     // Design A (carte enrichie, cf. notification_design_concepts.html)
     // reserve aux messages : avatar + nom d'expediteur, le reste
     // (transfert/connexion/deconnexion/groupe/dossier) reste sur le
-    // design B (pilule compacte, une ligne).
-    readonly property bool isCard: category === "message"
+    // design B (pilule compacte, une ligne). Ignore si isGrouped (design C).
+    readonly property bool isCard: category === "message" && !isGrouped
+
+    function groupedLabel() {
+        switch (category) {
+        case "message": return qsTr("%1 nouveaux messages").arg(count)
+        case "transfer": return qsTr("%1 transferts terminés").arg(count)
+        case "connection": return qsTr("%1 postes connectés").arg(count)
+        case "disconnection": return qsTr("%1 postes déconnectés").arg(count)
+        case "group": return qsTr("%1 nouveaux groupes").arg(count)
+        case "folder": return qsTr("%1 dossiers partagés").arg(count)
+        default: return qsTr("%1 notifications").arg(count)
+        }
+    }
 
     // Emis quand l'utilisateur clique "Repondre" sur une carte message.
     // NB: notificationRequested() ne transporte aujourd'hui ni l'id de
@@ -92,18 +111,28 @@ Rectangle {
         onTriggered: root._tick++
     }
 
-    width: root.isCard
-           ? Math.min(360, parent ? parent.width - 32 : 360)
-           : Math.min(pillRow.implicitWidth + Theme.spacingMedium * 2, parent ? parent.width - 32 : 320)
-    height: root.isCard ? cardColumn.implicitHeight + Theme.spacingMedium * 2 : 44
+    // stackPeek : marge reservee pour laisser depasser les deux calques
+    // arriere du design C (cf. mockup "Groupe empile", rectangles decales
+    // en haut/a droite derriere la carte de premier plan).
+    readonly property int stackPeek: 8
+
+    width: root.isGrouped
+           ? Math.min(360, parent ? parent.width - 32 : 360) + stackPeek
+           : (root.isCard
+              ? Math.min(360, parent ? parent.width - 32 : 360)
+              : Math.min(pillRow.implicitWidth + Theme.spacingMedium * 2, parent ? parent.width - 32 : 320))
+    height: root.isGrouped ? 52 + stackPeek : (root.isCard ? cardColumn.implicitHeight + Theme.spacingMedium * 2 : 44)
     radius: root.isCard ? Theme.radiusMedium : Theme.radiusPill
-    color: Theme.surface
+    // En mode groupe, le fond/la bordure du calque de premier plan
+    // jouent ce role (cf. groupedStack ci-dessous) ; root reste transparent.
+    color: root.isGrouped ? "transparent" : Theme.surface
     border.color: Theme.border
-    border.width: 1
-    clip: true
+    border.width: root.isGrouped ? 0 : 1
+    clip: !root.isGrouped
 
     // Legere ombre portee simulee par un rectangle en fond, decale.
     Rectangle {
+        visible: !root.isGrouped
         anchors.fill: parent
         anchors.topMargin: 3
         radius: parent.radius
@@ -118,7 +147,7 @@ Rectangle {
 
     Row {
         id: cardRow
-        visible: root.isCard
+        visible: root.isCard && !root.isGrouped
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
@@ -213,7 +242,7 @@ Rectangle {
     // Barre de progression (temps restant avant disparition automatique).
     Rectangle {
         id: progressBar
-        visible: root.isCard
+        visible: root.isCard && !root.isGrouped
         height: 2
         anchors.left: parent.left
         anchors.bottom: parent.bottom
@@ -225,17 +254,27 @@ Rectangle {
 
     // ---- Design B : pilule minimaliste (transfert / connexion / etc.) -----
 
+    // Largeur max utilisable pour le texte de la pilule, calculee a partir
+    // du parent (pas de root.width !) pour eviter un binding circulaire :
+    // root.width se calcule a partir de pillRow.implicitWidth, qui inclut
+    // la largeur de pillMessage -- si celle-ci dependait a son tour de
+    // pillRow.width/root.width, le tout se figeait a 0 (texte invisible,
+    // seuls icone + croix restaient visibles).
+    readonly property real pillMaxTextWidth: (parent ? parent.width - 32 : 320)
+                                               - Theme.spacingMedium - Theme.spacingSmall
+                                               - pillIcon.implicitWidth - closeLabelPill.implicitWidth
+                                               - Theme.spacingSmall - Theme.spacingXs
+
     Row {
         id: pillRow
-        visible: !root.isCard
+        visible: !root.isCard && !root.isGrouped
         anchors.verticalCenter: parent.verticalCenter
         anchors.left: parent.left
-        anchors.right: parent.right
         anchors.leftMargin: Theme.spacingMedium
-        anchors.rightMargin: Theme.spacingSmall
         spacing: Theme.spacingSmall
 
         Text {
+            id: pillIcon
             text: root.iconGlyph
             color: root.accentColor
             font.pixelSize: Theme.fontSizeBody
@@ -249,7 +288,7 @@ Rectangle {
             font.pixelSize: Theme.fontSizeSmall
             elide: Text.ElideRight
             anchors.verticalCenter: parent.verticalCenter
-            width: pillRow.width - pillRow.spacing * 2 - closeLabelPill.width - 16
+            width: Math.min(implicitWidth, root.pillMaxTextWidth)
         }
 
         Text {
@@ -268,6 +307,100 @@ Rectangle {
         }
     }
 
+    // ---- Design C : groupe empile (rafale d'evenements identiques) -------
+    //
+    // Utilise quand plusieurs notifications de meme categorie arrivent
+    // coup sur coup (cf. ToastHost::addToast) : au lieu d'empiler un toast
+    // par evenement, on affiche une seule carte avec un compteur, deux
+    // calques legerement decales en dessous suggerant la pile.
+
+    Item {
+        id: groupedStack
+        visible: root.isGrouped
+        anchors.fill: parent
+
+        Rectangle {
+            anchors.top: parent.top
+            anchors.topMargin: root.stackPeek
+            anchors.left: parent.left
+            anchors.leftMargin: root.stackPeek
+            width: parent.width - root.stackPeek
+            height: 52
+            radius: Theme.radiusMedium
+            color: Theme.background
+            border.color: Theme.border
+            border.width: 1
+        }
+
+        Rectangle {
+            anchors.top: parent.top
+            anchors.topMargin: root.stackPeek * 0.4
+            anchors.left: parent.left
+            anchors.leftMargin: root.stackPeek * 0.4
+            width: parent.width - root.stackPeek * 0.4
+            height: 52
+            radius: Theme.radiusMedium
+            color: Theme.surfaceAlt
+            border.color: Theme.border
+            border.width: 1
+        }
+
+        Rectangle {
+            anchors.top: parent.top
+            anchors.left: parent.left
+            width: parent.width - root.stackPeek
+            height: 52
+            radius: Theme.radiusMedium
+            color: Theme.surface
+            border.color: Theme.border
+            border.width: 1
+
+            Row {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Theme.spacingMedium
+                anchors.rightMargin: Theme.spacingMedium
+                spacing: Theme.spacingSmall
+
+                Text {
+                    text: root.iconGlyph
+                    color: root.accentColor
+                    font.pixelSize: Theme.fontSizeBody
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Text {
+                    id: groupedLabelText
+                    text: root.groupedLabel()
+                    color: Theme.text
+                    font.pixelSize: Theme.fontSizeSmall
+                    elide: Text.ElideRight
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - parent.spacing * 2 - 16 - countBadge.width
+                }
+
+                Rectangle {
+                    id: countBadge
+                    radius: Theme.radiusPill
+                    color: Theme.primaryMuted
+                    height: 20
+                    width: countLabel.implicitWidth + Theme.spacingSmall * 2
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Text {
+                        id: countLabel
+                        anchors.centerIn: parent
+                        text: "+" + root.count
+                        color: Theme.primary
+                        font.pixelSize: Theme.fontSizeCaption
+                        font.bold: true
+                    }
+                }
+            }
+        }
+    }
+
     Behavior on opacity { NumberAnimation { duration: 150 } }
     Behavior on scale { NumberAnimation { duration: 150 } }
 
@@ -277,6 +410,15 @@ Rectangle {
         running: false
         repeat: false
         onTriggered: root.hide()
+    }
+
+    // A chaque nouvel evenement regroupe (count incremente par
+    // ToastHost::addToast), on repousse la disparition automatique : une
+    // rafale en cours ne doit pas voir son toast disparaitre au milieu.
+    onCountChanged: {
+        if (count > 1) {
+            autoHideTimer.restart()
+        }
     }
 
     function show() {
