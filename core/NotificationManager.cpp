@@ -31,7 +31,8 @@ void NotificationManager::onMessageReceived(const models::Message &message)
     const QString notificationMessage = message.content();
 
     qDebug() << "[NotificationManager] Emitting notificationRequested for message:" << notificationMessage;
-    emit notificationRequested(title, notificationMessage, QStringLiteral("message"));
+    emit notificationRequested(title, notificationMessage, QStringLiteral("message"),
+                               message.conversationId());
 }
 
 void NotificationManager::onTransferCompleted(const QString &transferKey, const QString &filePath)

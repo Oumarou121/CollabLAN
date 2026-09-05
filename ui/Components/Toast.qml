@@ -20,6 +20,7 @@ Rectangle {
     property string message: ""
     property string category: "message" // "message" | "transfer" | "connection" | "disconnection" | "group" | "folder"
     property int duration: 4000
+    property int conversationId: 0
 
     // Nombre d'evenements regroupes dans ce toast (rafale, cf.
     // ToastHost::addToast). count === 1 : affichage normal (design A ou B).
@@ -28,11 +29,13 @@ Rectangle {
     property int count: 1
     readonly property bool isGrouped: count > 1
 
-    // Design A (carte enrichie, cf. notification_design_concepts.html)
-    // reserve aux messages : avatar + nom d'expediteur, le reste
-    // (transfert/connexion/deconnexion/groupe/dossier) reste sur le
-    // design B (pilule compacte, une ligne). Ignore si isGrouped (design C).
-    readonly property bool isCard: category === "message" && !isGrouped
+    // Design A (carte enrichie) : utilise pour TOUTES les categories des
+    // qu'il n'y a qu'un seul evenement (isGrouped == false). Les messages
+    // gardent un avatar avec initiales ; les autres categories affichent
+    // un badge icone colore (accentColor) a la place. Design C (groupe
+    // empile) prend le relais des qu'un meme type d'evenement se repete.
+    readonly property bool isCard: !isGrouped
+    readonly property bool isMessageCategory: category === "message"
 
     function groupedLabel() {
         switch (category) {
@@ -53,7 +56,27 @@ Rectangle {
     // remonter pour l'instant. Pour ouvrir reellement la conversation
     // correspondante il faudra etendre le signal C++ avec un identifiant.
     signal replyRequested(string senderName)
+    signal conversationRequested(int conversationId)
+    // Emis quand l'utilisateur clique sur une notification non-message
+    // (transfert/connexion/deconnexion/groupe/dossier) ou son lien
+    // d'action : ToastHost le relaie a Main.qml qui route vers l'ecran
+    // pertinent pour cette categorie.
+    signal actionRequested(string category)
     signal dismissed()
+
+    // Libelle du lien d'action affiche sous le message, adapte a la
+    // categorie (ex: "Repondre" pour un message, "Voir" pour les autres).
+    function actionLabel() {
+        switch (category) {
+        case "message": return qsTr("Répondre")
+        case "transfer": return qsTr("Voir les transferts")
+        case "folder": return qsTr("Ouvrir le dossier")
+        case "connection":
+        case "disconnection": return qsTr("Voir les postes")
+        case "group": return qsTr("Voir les groupes")
+        default: return qsTr("Voir")
+        }
+    }
 
     readonly property color accentColor: {
         switch (category) {
@@ -116,18 +139,16 @@ Rectangle {
     // en haut/a droite derriere la carte de premier plan).
     readonly property int stackPeek: 8
 
-    width: root.isGrouped
-           ? Math.min(360, parent ? parent.width - 32 : 360) + stackPeek
-           : (root.isCard
-              ? Math.min(360, parent ? parent.width - 32 : 360)
-              : Math.min(pillRow.implicitWidth + Theme.spacingMedium * 2, parent ? parent.width - 32 : 320))
-    height: root.isGrouped ? 52 + stackPeek : (root.isCard ? cardColumn.implicitHeight + Theme.spacingMedium * 2 : 44)
-    radius: root.isCard ? Theme.radiusMedium : Theme.radiusPill
+    width: Math.min(360, parent ? parent.width - 32 : 360) + (root.isGrouped ? stackPeek : 0)
+    height: root.isGrouped ? 52 + stackPeek : cardColumn.implicitHeight + Theme.spacingMedium * 2
+    radius: Theme.radiusMedium
     // En mode groupe, le fond/la bordure du calque de premier plan
     // jouent ce role (cf. groupedStack ci-dessous) ; root reste transparent.
     color: root.isGrouped ? "transparent" : Theme.surface
     border.color: Theme.border
     border.width: root.isGrouped ? 0 : 1
+    // La barre de progression reste confinee dans la notification afin de
+    // ne pas depasser de ses bords arrondis.
     clip: !root.isGrouped
 
     // Legere ombre portee simulee par un rectangle en fond, decale.
@@ -143,11 +164,27 @@ Rectangle {
     opacity: 0
     scale: 0.96
 
-    // ---- Design A : carte enrichie (messages) -----------------------------
+    // ---- Design A : carte enrichie (toutes categories, count === 1) ------
+
+    // Zone de clic pleine carte : place en sibling de cardRow (et non a
+    // l'interieur, un Row n'accepte pas d'ancrage sur ses enfants -- c'etait
+    // la cause des warnings "Cannot specify ... anchors for items inside
+    // Row"). z:-1 pour rester derriere le contenu texte/liens, qui ont
+    // chacun leur propre MouseArea prioritaire.
+    MouseArea {
+        anchors.fill: cardRow
+        visible: root.isCard
+        z: -1
+        enabled: root.isMessageCategory ? root.conversationId > 0 : true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: root.isMessageCategory
+                   ? root.conversationRequested(root.conversationId)
+                   : root.actionRequested(root.category)
+    }
 
     Row {
         id: cardRow
-        visible: root.isCard && !root.isGrouped
+        visible: root.isCard
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
@@ -161,13 +198,13 @@ Rectangle {
             width: 36
             height: 36
             radius: 18
-            color: Theme.colorForName(root.title)
+            color: root.isMessageCategory ? Theme.colorForName(root.title) : root.accentColor
 
             Text {
                 anchors.centerIn: parent
-                text: root.initials(root.title)
+                text: root.isMessageCategory ? root.initials(root.title) : root.iconGlyph
                 color: "#FFFFFF"
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: root.isMessageCategory ? Theme.fontSizeSmall : Theme.fontSizeBody
                 font.bold: true
             }
         }
@@ -209,7 +246,7 @@ Rectangle {
             }
 
             Text {
-                text: qsTr("Répondre")
+                text: root.actionLabel()
                 color: Theme.primary
                 font.pixelSize: Theme.fontSizeSmall
                 font.bold: true
@@ -219,7 +256,9 @@ Rectangle {
                     anchors.fill: parent
                     anchors.margins: -4
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.replyRequested(root.title)
+                    onClicked: root.isMessageCategory
+                               ? root.replyRequested(root.title)
+                               : root.actionRequested(root.category)
                 }
             }
         }
@@ -240,70 +279,28 @@ Rectangle {
     }
 
     // Barre de progression (temps restant avant disparition automatique).
-    Rectangle {
-        id: progressBar
+
+    Item {
+        id: progressTrack
         visible: root.isCard && !root.isGrouped
-        height: 2
-        anchors.left: parent.left
+        height: 3
         anchors.bottom: parent.bottom
-        color: root.accentColor
-        width: parent.width * progressFraction
-
-        property real progressFraction: 1.0
-    }
-
-    // ---- Design B : pilule minimaliste (transfert / connexion / etc.) -----
-
-    // Largeur max utilisable pour le texte de la pilule, calculee a partir
-    // du parent (pas de root.width !) pour eviter un binding circulaire :
-    // root.width se calcule a partir de pillRow.implicitWidth, qui inclut
-    // la largeur de pillMessage -- si celle-ci dependait a son tour de
-    // pillRow.width/root.width, le tout se figeait a 0 (texte invisible,
-    // seuls icone + croix restaient visibles).
-    readonly property real pillMaxTextWidth: (parent ? parent.width - 32 : 320)
-                                               - Theme.spacingMedium - Theme.spacingSmall
-                                               - pillIcon.implicitWidth - closeLabelPill.implicitWidth
-                                               - Theme.spacingSmall - Theme.spacingXs
-
-    Row {
-        id: pillRow
-        visible: !root.isCard && !root.isGrouped
-        anchors.verticalCenter: parent.verticalCenter
         anchors.left: parent.left
-        anchors.leftMargin: Theme.spacingMedium
-        spacing: Theme.spacingSmall
+        anchors.right: parent.right
+        anchors.leftMargin: 4
+        anchors.rightMargin: 4
+        anchors.bottomMargin: 1
 
-        Text {
-            id: pillIcon
-            text: root.iconGlyph
+        Rectangle {
+            id: progressBar
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            radius: root.radius
             color: root.accentColor
-            font.pixelSize: Theme.fontSizeBody
-            anchors.verticalCenter: parent.verticalCenter
-        }
+            width: parent.width * progressFraction
 
-        Text {
-            id: pillMessage
-            text: root.message
-            color: Theme.text
-            font.pixelSize: Theme.fontSizeSmall
-            elide: Text.ElideRight
-            anchors.verticalCenter: parent.verticalCenter
-            width: Math.min(implicitWidth, root.pillMaxTextWidth)
-        }
-
-        Text {
-            id: closeLabelPill
-            text: "\u2715"
-            color: Theme.textSecondary
-            font.pixelSize: Theme.fontSizeCaption
-            anchors.verticalCenter: parent.verticalCenter
-
-            MouseArea {
-                anchors.fill: parent
-                anchors.margins: -8
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.hide()
-            }
+            property real progressFraction: 1.0
         }
     }
 
@@ -346,6 +343,7 @@ Rectangle {
         }
 
         Rectangle {
+            id: groupedFront
             anchors.top: parent.top
             anchors.left: parent.left
             width: parent.width - root.stackPeek
@@ -354,6 +352,14 @@ Rectangle {
             color: Theme.surface
             border.color: Theme.border
             border.width: 1
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.isMessageCategory
+                           ? root.conversationRequested(root.conversationId)
+                           : root.actionRequested(root.category)
+            }
 
             Row {
                 anchors.left: parent.left

@@ -91,7 +91,8 @@ signals:
     /// sonorisee par l'UI. category identifie le type d'evenement
     /// ("message", "transfer", "connection", "disconnection") afin que
     /// le son joue coherent avec l'evenement (issue #58).
-    void notificationRequested(const QString &title, const QString &message, const QString &category);
+    void notificationRequested(const QString &title, const QString &message, const QString &category,
+                               qint64 conversationId = 0);
 
 private:
     bool m_notificationsEnabled = true;

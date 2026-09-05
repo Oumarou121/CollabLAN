@@ -105,7 +105,39 @@ ApplicationWindow {
     // Superposition globale des toasts (issue #58) : place en dernier
     // pour rester au-dessus du StackView quelle que soit la vue active.
     ToastHost {
+        id: toastHost
         anchors.fill: parent
+        onConversationRequested: function(conversationId) {
+            if (conversationId <= 0)
+                return
+            if (stackView.currentItem && stackView.currentItem.objectName === "chatWorkspaceView") {
+                stackView.currentItem.openConversation(conversationId, "")
+                return
+            }
+            stackView.push(chatWorkspaceComponent)
+            if (stackView.currentItem && stackView.currentItem.objectName === "chatWorkspaceView")
+                stackView.currentItem.openConversation(conversationId, "")
+        }
+        // Redirection pour les notifications non-message (clic sur la
+        // carte ou son lien d'action) : chaque categorie ouvre l'ecran ou
+        // se trouve l'information correspondante.
+        onActionRequested: function(category) {
+            switch (category) {
+            case "transfer":
+                stackView.push(fileTransferViewComponent)
+                break
+            case "folder":
+                stackView.push(sharedFolderViewComponent)
+                break
+            case "connection":
+            case "disconnection":
+                stackView.push(usersViewComponent)
+                break
+            case "group":
+                stackView.push(usersViewComponent)
+                break
+            }
+        }
     }
 
     // Barre(s) de progression globale(s) pour le partage de dossiers :
