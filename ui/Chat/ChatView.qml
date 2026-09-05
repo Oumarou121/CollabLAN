@@ -453,26 +453,10 @@ Item {
                 anchors.margins: Theme.spacingMedium
                 spacing: Theme.spacingSmall
 
-                TextField {
+                AppTextField {
                     id: messageInput
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 48
                     placeholderText: qsTr("Ecrivez votre message...")
-                    color: Theme.text
-                    font.pixelSize: Theme.fontSizeBody
-                    font.family: Theme.fontFamily
-                    leftPadding: Theme.spacingMedium
-                    rightPadding: Theme.spacingMedium
-                    selectByMouse: true
-
-                    background: Rectangle {
-                        color: Theme.surfaceAlt
-                        radius: Theme.radiusMedium
-                        border.color: messageInput.activeFocus ? Theme.primary : Theme.border
-                        border.width: messageInput.activeFocus ? 2 : 1
-                        Behavior on border.color { ColorAnimation { duration: 100 } }
-                    }
-
                     onAccepted: sendButton.clicked()
                 }
 
@@ -487,7 +471,7 @@ Item {
                         if (messageInput.text.trim() !== "" && messagingContext) {
                             messagingContext.sendMessage(messageInput.text)
                             messageInput.text = ""
-                            messageInput.forceActiveFocus()
+                            messageInput.field.forceActiveFocus()
                         }
                     }
                 }

@@ -110,24 +110,10 @@ Item {
                         color: Theme.text
                     }
 
-                    TextField {
+                    AppTextField {
                         id: groupNameField
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 48
                         placeholderText: qsTr("Entrez le nom du groupe")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeBody
-                        font.family: Theme.fontFamily
-                        leftPadding: Theme.spacingMedium
-                        selectByMouse: true
-
-                        background: Rectangle {
-                            color: Theme.surfaceAlt
-                            radius: Theme.radiusMedium
-                            border.color: groupNameField.activeFocus ? Theme.primary : Theme.border
-                            border.width: groupNameField.activeFocus ? 2 : 1
-                            Behavior on border.color { ColorAnimation { duration: 100 } }
-                        }
                     }
                 }
 
@@ -175,35 +161,10 @@ Item {
                         property int count: 0
                     }
 
-                    TextField {
+                    AppSearchField {
                         id: memberSearchField
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 48
                         placeholderText: qsTr("Rechercher un utilisateur...")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeBody
-                        font.family: Theme.fontFamily
-                        leftPadding: 40
-                        selectByMouse: true
-
-                        background: Rectangle {
-                            color: Theme.surfaceAlt
-                            radius: Theme.radiusMedium
-                            border.color: memberSearchField.activeFocus ? Theme.primary : Theme.border
-                            border.width: memberSearchField.activeFocus ? 2 : 1
-                            Behavior on border.color { ColorAnimation { duration: 100 } }
-                        }
-
-                        Text {
-                            anchors.left: parent.left
-                            anchors.leftMargin: Theme.spacingMedium
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "\uf002"
-                            color: Theme.textTertiary
-                            font.family: root.iconFontFamily
-                            font.pixelSize: 13
-                        }
-
                         onTextChanged: membersListView.applyFilter(text)
                     }
 

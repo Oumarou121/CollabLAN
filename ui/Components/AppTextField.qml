@@ -27,6 +27,7 @@ ColumnLayout {
 
     property string label: ""
     property string helperText: ""
+    property bool hasError: false
     property alias placeholderText: field.placeholderText
     property alias text: field.text
     property alias echoMode: field.echoMode
@@ -34,6 +35,8 @@ ColumnLayout {
     property alias inputMethodHints: field.inputMethodHints
     property alias fontFamily: field.font.family
     property alias field: field
+    property alias rightPadding: field.rightPadding
+    signal accepted
 
     spacing: Theme.spacingXs
 
@@ -56,12 +59,15 @@ ColumnLayout {
         rightPadding: Theme.spacingMedium
         selectByMouse: true
         placeholderTextColor: Theme.textTertiary
+        onAccepted: root.accepted()
 
         background: Rectangle {
             radius: Theme.radiusMedium
             color: Theme.colorTextField
-            border.width: field.activeFocus ? 2 : 1
-            border.color: field.activeFocus ? Theme.primary : Theme.border
+            border.width: (field.activeFocus || root.hasError) ? 2 : 1
+            border.color: field.activeFocus
+                          ? (root.hasError ? Theme.error : Theme.primary)
+                          : (root.hasError ? Theme.error : Theme.border)
 
             Behavior on border.color { ColorAnimation { duration: 100 } }
         }
@@ -72,7 +78,7 @@ ColumnLayout {
         text: root.helperText
         font.pixelSize: Theme.fontSizeCaption
         font.family: Theme.fontFamily
-        color: Theme.textTertiary
+        color: root.hasError ? Theme.error : Theme.textTertiary
         wrapMode: Text.WordWrap
         Layout.fillWidth: true
     }

@@ -402,21 +402,11 @@ Item {
                                 font.family: Theme.fontFamily
                                 font.bold: true
                             }
-                            TextField {
+                            AppTextField {
                                 id: dateFrom
                                 Layout.alignment: Qt.AlignVCenter
                                 Layout.preferredWidth: 150
-                                Layout.preferredHeight: 40
                                 placeholderText: "YYYY-MM-DD"
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeSmall
-                                leftPadding: Theme.spacingMedium
-                                background: Rectangle {
-                                    radius: Theme.radiusMedium
-                                    color: Theme.background
-                                    border.width: dateFrom.activeFocus ? 2 : 1
-                                    border.color: dateFrom.activeFocus ? Theme.primary : Theme.border
-                                }
                             }
                         }
 
@@ -430,21 +420,11 @@ Item {
                                 font.family: Theme.fontFamily
                                 font.bold: true
                             }
-                            TextField {
+                            AppTextField {
                                 id: dateTo
                                 Layout.alignment: Qt.AlignVCenter
                                 Layout.preferredWidth: 150
-                                Layout.preferredHeight: 40
                                 placeholderText: "YYYY-MM-DD"
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeSmall
-                                leftPadding: Theme.spacingMedium
-                                background: Rectangle {
-                                    radius: Theme.radiusMedium
-                                    color: Theme.background
-                                    border.width: dateTo.activeFocus ? 2 : 1
-                                    border.color: dateTo.activeFocus ? Theme.primary : Theme.border
-                                }
                             }
                         }
 

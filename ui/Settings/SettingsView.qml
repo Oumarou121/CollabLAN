@@ -111,21 +111,10 @@ Item {
                             Layout.fillWidth: true
                             spacing: Theme.spacingSmall
 
-                            TextField {
+                            AppTextField {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 40
                                 text: settingsModel.defaultDownloadPath
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeBody
-                                leftPadding: Theme.spacingMedium
                                 onTextChanged: settingsModel.defaultDownloadPath = text
-
-                                background: Rectangle {
-                                    radius: Theme.radiusMedium
-                                    color: Theme.background
-                                    border.width: 1
-                                    border.color: Theme.border
-                                }
                             }
 
                             Button {
@@ -176,21 +165,10 @@ Item {
                             Layout.fillWidth: true
                             spacing: Theme.spacingSmall
 
-                            TextField {
+                            AppTextField {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 40
                                 text: settingsModel.defaultSharedFolderPath
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeBody
-                                leftPadding: Theme.spacingMedium
                                 onTextChanged: settingsModel.defaultSharedFolderPath = text
-
-                                background: Rectangle {
-                                    radius: Theme.radiusMedium
-                                    color: Theme.background
-                                    border.width: 1
-                                    border.color: Theme.border
-                                }
                             }
 
                             Button {

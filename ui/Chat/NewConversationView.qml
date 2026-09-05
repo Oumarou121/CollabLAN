@@ -108,35 +108,10 @@ Item {
                     color: Theme.text
                 }
 
-                TextField {
+                AppSearchField {
                     id: searchField
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 48
                     placeholderText: qsTr("Rechercher un utilisateur...")
-                    color: Theme.text
-                    font.pixelSize: Theme.fontSizeBody
-                    font.family: Theme.fontFamily
-                    leftPadding: 40
-                    selectByMouse: true
-
-                    background: Rectangle {
-                        color: Theme.surfaceAlt
-                        radius: Theme.radiusMedium
-                        border.color: searchField.activeFocus ? Theme.primary : Theme.border
-                        border.width: searchField.activeFocus ? 2 : 1
-                        Behavior on border.color { ColorAnimation { duration: 100 } }
-                    }
-
-                    Text {
-                        anchors.left: parent.left
-                        anchors.leftMargin: Theme.spacingMedium
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "\uf002"
-                        color: Theme.textTertiary
-                        font.family: root.iconFontFamily
-                        font.pixelSize: 13
-                    }
-
                     onTextChanged: usersListView.applyFilter(text)
                 }
 

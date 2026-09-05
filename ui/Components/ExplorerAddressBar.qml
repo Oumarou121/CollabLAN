@@ -156,46 +156,31 @@ Rectangle {
         }
 
         // ---- Recherche ----
-        Rectangle {
+        Item {
             visible: root.showSearch
             Layout.preferredWidth: 220
             Layout.preferredHeight: 32
-            radius: Theme.radiusPill
-            color: Theme.surfaceAlt
-            border.width: 1
-            border.color: searchField.activeFocus ? Theme.primary : Theme.border
 
-            RowLayout {
+            AppSearchField {
+                id: searchField
+                compact: true
                 anchors.fill: parent
-                anchors.leftMargin: 10
-                anchors.rightMargin: 6
-                spacing: 4
-                Label {
-                    text: "🔍"
-                    font.pixelSize: 12
-                    color: Theme.textSecondary
-                }
-                TextField {
-                    id: searchField
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 28
-                    placeholderText: root.searchPlaceholder
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.text
-                    placeholderTextColor: Theme.textTertiary
-                    selectionColor: Theme.primary
-                    selectedTextColor: Theme.primaryText
-                    background: Rectangle { color: "transparent" }
-                    text: root.searchText
-                    onTextChanged: root.searchQueryChanged(text)
-                }
-                ToolbarIconButton {
-                    glyph: "\u2715"
-                    visible: root.searchText.length > 0
-                    implicitWidth: 22
-                    implicitHeight: 22
-                    onClicked: { searchField.text = ""; root.searchQueryChanged("") }
-                }
+                placeholderText: root.searchPlaceholder
+                text: root.searchText
+                rightInset: clearButton.visible ? clearButton.width + 4 : 0
+                onTextChanged: root.searchQueryChanged(text)
+            }
+
+            ToolbarIconButton {
+                id: clearButton
+                glyph: "\u2715"
+                visible: root.searchText.length > 0
+                implicitWidth: 22
+                implicitHeight: 22
+                anchors.right: parent.right
+                anchors.rightMargin: 4
+                anchors.verticalCenter: parent.verticalCenter
+                onClicked: { searchField.text = ""; root.searchQueryChanged("") }
             }
         }
 

@@ -62,8 +62,8 @@ Item {
         if (userManager.busy)
             return
 
-        const username = usernameField.text.trim()
-        const password = passwordField.text
+        const username = usernameAppField.text.trim()
+        const password = passwordAppField.text
 
         if (username.length === 0 || password.length === 0) {
             errorLabel.text = qsTr("Merci de renseigner un nom d'utilisateur et un mot de passe.")
@@ -117,11 +117,11 @@ Item {
         const remembered = (typeof settingsModel !== "undefined" && settingsModel)
                 ? settingsModel.rememberedUsername : ""
         if (remembered.length > 0) {
-            usernameField.text = remembered
+            usernameAppField.text = remembered
             root.rememberMe = true
-            Qt.callLater(passwordField.forceActiveFocus)
+            Qt.callLater(passwordAppField.field.forceActiveFocus)
         } else {
-            Qt.callLater(usernameField.forceActiveFocus)
+            Qt.callLater(usernameAppField.field.forceActiveFocus)
         }
     }
 
@@ -350,88 +350,44 @@ Item {
                     Layout.bottomMargin: Theme.spacingMedium
                 }
 
-                Label {
-                    text: qsTr("Nom d'utilisateur")
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.family: Theme.fontFamily
-                    color: root.inkMuted
-                    font.bold: true
+                AppTextField {
+                    id: usernameAppField
+                    label: qsTr("Nom d'utilisateur")
+                    placeholderText: qsTr("Votre nom d'utilisateur")
+                    hasError: errorLabel.text.length > 0
+                    Layout.fillWidth: true
+                    onAccepted: passwordAppField.field.forceActiveFocus()
                 }
 
                 Item {
-                    id: usernameFieldWrapper
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 48
-
-                    TextField {
-                        id: usernameField
-                        anchors.fill: parent
-                        placeholderText: qsTr("Votre nom d'utilisateur")
-                        selectByMouse: true
-                        color: root.ink
-                        font.pixelSize: Theme.fontSizeBody
-                        font.family: Theme.fontFamily
-                        leftPadding: 12
-                        rightPadding: 12
-                        onAccepted: passwordField.forceActiveFocus()
-
-                        background: Rectangle {
-                            radius: Theme.radiusSmall
-                            color: Theme.surface
-                            border.width: (usernameField.activeFocus || errorLabel.text.length > 0) ? 2 : 1
-                            border.color: usernameField.activeFocus
-                                   ? root.blue600
-                                   : (errorLabel.text.length > 0 ? root.errorText : root.borderCol)
-                            Behavior on border.color { ColorAnimation { duration: 100 } }
-                        }
-                    }
-                }
-
-                Label {
-                    text: qsTr("Mot de passe")
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.family: Theme.fontFamily
-                    color: root.inkMuted
-                    font.bold: true
+                    id: passwordFieldContainer
                     Layout.topMargin: Theme.spacingSmall
-                }
-
-                Item {
-                    id: passwordFieldWrapper
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 48
+                    implicitHeight: passwordAppField.implicitHeight
 
-                    TextField {
-                        id: passwordField
-                        anchors.fill: parent
+                    AppTextField {
+                        id: passwordAppField
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        label: qsTr("Mot de passe")
                         placeholderText: qsTr("Votre mot de passe")
                         echoMode: root.showPassword ? TextInput.Normal : TextInput.Password
-                        selectByMouse: true
-                        color: root.ink
-                        font.pixelSize: Theme.fontSizeBody
-                        font.family: Theme.fontFamily
-                        leftPadding: 12
+                        hasError: errorLabel.text.length > 0
                         rightPadding: 40
                         onAccepted: root.attemptLogin()
-
-                        background: Rectangle {
-                            radius: Theme.radiusSmall
-                            color: Theme.surface
-                            border.width: (passwordField.activeFocus || errorLabel.text.length > 0) ? 2 : 1
-                            border.color: passwordField.activeFocus
-                                   ? root.blue600
-                                   : (errorLabel.text.length > 0 ? root.errorText : root.borderCol)
-                            Behavior on border.color { ColorAnimation { duration: 100 } }
-                        }
                     }
 
                     // Bascule "afficher / masquer le mot de passe" - icone
                     // oeil dessinee en vectoriel (pas d'emoji : ignore la
-                    // couleur du theme).
+                    // couleur du theme). Item hors du ColumnLayout interne
+                    // d'AppTextField (frere de passwordAppField dans ce
+                    // conteneur), pour se superposer au champ sans etre
+                    // empile par le layout.
                     Item {
                         width: 32
-                        height: parent.height
-                        anchors.right: parent.right
+                        height: passwordAppField.field.height
+                        anchors.right: passwordAppField.field.right
+                        anchors.verticalCenter: passwordAppField.field.verticalCenter
 
                         // Zone cliquable circulaire avec effet de survol,
                         // plus grande que l'icone pour un meilleur ciblage.
@@ -667,20 +623,20 @@ Item {
     SequentialAnimation {
         id: shakeAnim
         loops: 1
-        NumberAnimation { target: usernameFieldWrapper; property: "x"; to: -8; duration: 55; easing.type: Easing.OutQuad }
-        NumberAnimation { target: usernameFieldWrapper; property: "x"; to: 8; duration: 55; easing.type: Easing.InOutQuad }
-        NumberAnimation { target: usernameFieldWrapper; property: "x"; to: -5; duration: 55; easing.type: Easing.InOutQuad }
-        NumberAnimation { target: usernameFieldWrapper; property: "x"; to: 5; duration: 55; easing.type: Easing.InOutQuad }
-        NumberAnimation { target: usernameFieldWrapper; property: "x"; to: 0; duration: 55; easing.type: Easing.InQuad }
+        NumberAnimation { target: usernameAppField; property: "x"; to: -8; duration: 55; easing.type: Easing.OutQuad }
+        NumberAnimation { target: usernameAppField; property: "x"; to: 8; duration: 55; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: usernameAppField; property: "x"; to: -5; duration: 55; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: usernameAppField; property: "x"; to: 5; duration: 55; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: usernameAppField; property: "x"; to: 0; duration: 55; easing.type: Easing.InQuad }
     }
     SequentialAnimation {
         id: shakeAnimPassword
         loops: 1
-        NumberAnimation { target: passwordFieldWrapper; property: "x"; to: -8; duration: 55; easing.type: Easing.OutQuad }
-        NumberAnimation { target: passwordFieldWrapper; property: "x"; to: 8; duration: 55; easing.type: Easing.InOutQuad }
-        NumberAnimation { target: passwordFieldWrapper; property: "x"; to: -5; duration: 55; easing.type: Easing.InOutQuad }
-        NumberAnimation { target: passwordFieldWrapper; property: "x"; to: 5; duration: 55; easing.type: Easing.InOutQuad }
-        NumberAnimation { target: passwordFieldWrapper; property: "x"; to: 0; duration: 55; easing.type: Easing.InQuad }
+        NumberAnimation { target: passwordFieldContainer; property: "x"; to: -8; duration: 55; easing.type: Easing.OutQuad }
+        NumberAnimation { target: passwordFieldContainer; property: "x"; to: 8; duration: 55; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: passwordFieldContainer; property: "x"; to: -5; duration: 55; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: passwordFieldContainer; property: "x"; to: 5; duration: 55; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: passwordFieldContainer; property: "x"; to: 0; duration: 55; easing.type: Easing.InQuad }
     }
 
     onErrorPulseChanged: {
@@ -708,7 +664,7 @@ Item {
             root.manualLoginPending = false
 
             errorLabel.text = ""
-            passwordField.text = ""
+            passwordAppField.text = ""
 
             if (typeof settingsModel !== "undefined" && settingsModel) {
                 if (root.rememberMe) {

@@ -1620,53 +1620,35 @@ Item {
                 }
 
                 // Champ de recherche
-                Rectangle {
+                Item {
                     visible: !root.showHistory
                     Layout.preferredWidth: 190
                     Layout.preferredHeight: 32
-                    radius: Theme.radiusSmall
-                    color: Theme.surfaceAlt
-                    border.width: 1
-                    border.color: addressSearchField.activeFocus ? Theme.primary : Theme.border
-                    Behavior on border.color { ColorAnimation { duration: 100 } }
 
-                    RowLayout {
+                    AppSearchField {
+                        id: addressSearchField
+                        compact: true
                         anchors.fill: parent
-                        anchors.leftMargin: 10
-                        anchors.rightMargin: 10
-                        spacing: 6
+                        placeholderText: qsTr("Rechercher...")
+                        text: root.searchText
+                        rightInset: clearIcon.visible ? 18 : 0
+                        onTextChanged: root.searchText = text
+                    }
 
-                        FaIcon {
-                            glyph: "\uf002"
-                            font.pixelSize: 13
-                            color: Theme.textTertiary
-                        }
-
-                        TextField {
-                            id: addressSearchField
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 28
-                            placeholderText: qsTr("Rechercher...")
-                            text: root.searchText
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: Theme.fontFamily
-                            color: Theme.textSecondary
-                            placeholderTextColor: Theme.textTertiary
-                            background: Rectangle { color: "transparent" }
-                            onTextChanged: root.searchText = text
-                        }
-
-                        FaIcon {
-                            visible: root.searchText.length > 0
-                            glyph: "\uf00d"
-                            font.pixelSize: 11
-                            color: Theme.textTertiary
-                            MouseArea {
-                                anchors.fill: parent
-                                anchors.margins: -6
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: addressSearchField.clear()
-                            }
+                    FaIcon {
+                        id: clearIcon
+                        visible: root.searchText.length > 0
+                        glyph: "\uf00d"
+                        font.pixelSize: 11
+                        color: Theme.textTertiary
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -6
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: addressSearchField.text = ""
                         }
                     }
                 }
