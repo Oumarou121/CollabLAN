@@ -73,7 +73,27 @@ Rectangle {
             ctx.strokeStyle = Theme.primary
             ctx.lineWidth = dragging ? 2 : 1.5
             ctx.setLineDash(dragging ? [4, 4] : [6, 5])
-            ctx.strokeRect(1, 1, width - 2, height - 2)
+
+            const inset = ctx.lineWidth / 2
+            const left = inset
+            const top = inset
+            const right = width - inset
+            const bottom = height - inset
+            const radius = Math.max(0, Math.min(root.radius - inset,
+                                                (right - left) / 2,
+                                                (bottom - top) / 2))
+
+            ctx.beginPath()
+            ctx.moveTo(left + radius, top)
+            ctx.lineTo(right - radius, top)
+            ctx.quadraticCurveTo(right, top, right, top + radius)
+            ctx.lineTo(right, bottom - radius)
+            ctx.quadraticCurveTo(right, bottom, right - radius, bottom)
+            ctx.lineTo(left + radius, bottom)
+            ctx.quadraticCurveTo(left, bottom, left, bottom - radius)
+            ctx.lineTo(left, top + radius)
+            ctx.quadraticCurveTo(left, top, left + radius, top)
+            ctx.stroke()
         }
     }
 
