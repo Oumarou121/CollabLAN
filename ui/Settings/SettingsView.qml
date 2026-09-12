@@ -358,7 +358,7 @@ Item {
                         Component {
                             id: soundCategoryRow
 
-                            RowLayout {
+                            ColumnLayout {
                                 property string categoryIcon: ""
                                 property string categoryLabel: ""
                                 property var eventType
@@ -367,110 +367,152 @@ Item {
                                 property var onSelect: function(id) {}
 
                                 Layout.fillWidth: true
-                                Layout.topMargin: Theme.spacingXs
-                                Layout.bottomMargin: Theme.spacingXs
-                                spacing: Theme.spacingMedium
+                                Layout.topMargin: Theme.spacingSmall
+                                Layout.bottomMargin: Theme.spacingSmall
+                                spacing: Theme.spacingXs
 
-                                Rectangle {
-                                    Layout.preferredWidth: 32
-                                    Layout.preferredHeight: 32
-                                    radius: Theme.radiusSmall
-                                    color: Theme.surfaceAlt
-
-                                    Label {
-                                        anchors.centerIn: parent
-                                        text: categoryIcon
-                                        font.family: soundIconFont.name
-                                        font.pixelSize: 14
-                                        color: Theme.textSecondary
-                                    }
-                                }
-
-                                ColumnLayout {
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    spacing: Theme.spacingXs
+                                    spacing: Theme.spacingMedium
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 32
+                                        Layout.preferredHeight: 32
+                                        radius: Theme.radiusSmall
+                                        color: Theme.surfaceAlt
+
+                                        Label {
+                                            anchors.centerIn: parent
+                                            text: categoryIcon
+                                            font.family: soundIconFont.name
+                                            font.pixelSize: 14
+                                            color: Theme.textSecondary
+                                        }
+                                    }
 
                                     Label {
+                                        Layout.fillWidth: true
                                         text: categoryLabel
                                         color: Theme.text
                                         font.pixelSize: Theme.fontSizeSmall
                                         font.family: Theme.fontFamily
                                     }
-
-                                    // Selecteur segmente "pilule" : un seul fond
-                                    // arrondi contenant les 3 options, l'option
-                                    // active se detache avec la couleur d'accent.
-                                    Rectangle {
-                                        Layout.preferredHeight: 30
-                                        Layout.preferredWidth: pillRow.implicitWidth + 4
-                                        radius: Theme.radiusPill
-                                        color: Theme.surfaceAlt
-
-                                        RowLayout {
-                                            id: pillRow
-                                            anchors.centerIn: parent
-                                            spacing: 2
-
-                                            Repeater {
-                                                model: (typeof audioService !== "undefined") ? audioService.soundVariants(eventType) : []
-
-                                                Rectangle {
-                                                    id: segment
-                                                    readonly property bool selected: modelData === currentValue
-                                                    Layout.preferredHeight: 26
-                                                    Layout.preferredWidth: segmentLabel.implicitWidth + 20
-                                                    radius: Theme.radiusPill
-                                                    color: selected ? Theme.primary : "transparent"
-
-                                                    Label {
-                                                        id: segmentLabel
-                                                        anchors.centerIn: parent
-                                                        text: variantLabels[modelData] || modelData
-                                                        font.pixelSize: Theme.fontSizeCaption
-                                                        font.family: Theme.fontFamily
-                                                        font.weight: segment.selected ? Font.Medium : Font.Normal
-                                                        color: segment.selected ? Theme.primaryText : Theme.textSecondary
-                                                    }
-
-                                                    MouseArea {
-                                                        anchors.fill: parent
-                                                        cursorShape: Qt.PointingHandCursor
-                                                        onClicked: onSelect(modelData)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
                                 }
 
-                                Rectangle {
-                                    Layout.preferredWidth: 30
-                                    Layout.preferredHeight: 30
-                                    radius: 15
-                                    color: Theme.surface
-                                    border.width: 1
-                                    border.color: Theme.border
+                                // Chaque variante de son est sa propre rangee
+                                // (style radio) : un clic sur la rangee
+                                // selectionne la variante, et le bouton ▶ de
+                                // CETTE rangee ecoute TOUJOURS le son de CETTE
+                                // rangee (modelData), jamais currentValue --
+                                // c'etait le bug precedent (le bouton jouait
+                                // systematiquement la variante selectionnee
+                                // au lieu de celle sur laquelle on cliquait).
+                                //
+                                // On utilise des Item ancres plutot que des
+                                // MouseArea anchors.fill: parent posees
+                                // directement comme enfants d'un RowLayout :
+                                // RowLayout documente ce cas comme "undefined
+                                // behavior" pour ses enfants geres, ce qui
+                                // pouvait faire mal resoudre les clics.
+                                Repeater {
+                                    model: (typeof audioService !== "undefined") ? audioService.soundVariants(eventType) : []
 
-                                    Label {
-                                        anchors.centerIn: parent
-                                        anchors.horizontalCenterOffset: 1
-                                        text: "\u25B6"
-                                        font.pixelSize: Theme.fontSizeCaption
-                                        color: Theme.text
-                                    }
+                                    Item {
+                                        id: variantRow
+                                        readonly property bool selected: modelData === currentValue
+                                        Layout.fillWidth: true
+                                        Layout.leftMargin: 40
+                                        Layout.preferredHeight: 34
 
-                                    MouseArea {
-                                        id: previewArea
-                                        anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
-                                        hoverEnabled: true
-                                        onClicked: {
-                                            if (typeof audioService !== "undefined")
-                                                audioService.previewSound(eventType, currentValue)
+                                        Rectangle {
+                                            anchors.fill: parent
+                                            radius: Theme.radiusSmall
+                                            color: variantRow.selected ? Theme.surfaceAlt : "transparent"
+                                        }
+
+                                        Rectangle {
+                                            id: radioOuter
+                                            anchors.left: parent.left
+                                            anchors.leftMargin: 8
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            width: 16
+                                            height: 16
+                                            radius: 8
+                                            color: "transparent"
+                                            border.width: 1.5
+                                            border.color: variantRow.selected ? Theme.primary : Theme.border
+
+                                            Rectangle {
+                                                anchors.centerIn: parent
+                                                width: 8
+                                                height: 8
+                                                radius: 4
+                                                color: Theme.primary
+                                                visible: variantRow.selected
+                                            }
+                                        }
+
+                                        Label {
+                                            anchors.left: radioOuter.right
+                                            anchors.leftMargin: 10
+                                            anchors.right: previewButton.left
+                                            anchors.rightMargin: 10
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: variantLabels[modelData] || modelData
+                                            font.pixelSize: Theme.fontSizeSmall
+                                            font.family: Theme.fontFamily
+                                            font.weight: variantRow.selected ? Font.Medium : Font.Normal
+                                            color: variantRow.selected ? Theme.text : Theme.textSecondary
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Item {
+                                            anchors.left: parent.left
+                                            anchors.right: previewButton.left
+                                            anchors.top: parent.top
+                                            anchors.bottom: parent.bottom
+
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: onSelect(modelData)
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            id: previewButton
+                                            anchors.right: parent.right
+                                            anchors.rightMargin: 8
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            width: 26
+                                            height: 26
+                                            radius: 13
+                                            color: Theme.surface
+                                            border.width: 1
+                                            border.color: Theme.border
+
+                                            Label {
+                                                anchors.centerIn: parent
+                                                anchors.horizontalCenterOffset: 1
+                                                text: "\u25B6"
+                                                font.pixelSize: Theme.fontSizeCaption
+                                                color: Theme.text
+                                            }
+
+                                            MouseArea {
+                                                id: previewArea
+                                                anchors.fill: parent
+                                                cursorShape: Qt.PointingHandCursor
+                                                hoverEnabled: true
+                                                onClicked: {
+                                                    if (typeof audioService !== "undefined")
+                                                        audioService.previewSound(eventType, modelData)
+                                                }
+                                            }
+                                            ToolTip.visible: previewArea.containsMouse
+                                            ToolTip.text: qsTr("Écouter")
                                         }
                                     }
-                                    ToolTip.visible: previewArea.containsMouse
-                                    ToolTip.text: qsTr("Écouter")
                                 }
                             }
                         }
@@ -582,7 +624,7 @@ Item {
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.family: Theme.fontFamily
                             }
-                            SpinBox {
+                            AppSpinBox {
                                 Layout.fillWidth: true
                                 from: 1024
                                 to: 65535
@@ -601,7 +643,7 @@ Item {
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.family: Theme.fontFamily
                             }
-                            SpinBox {
+                            AppSpinBox {
                                 Layout.fillWidth: true
                                 from: 1024
                                 to: 65535
@@ -817,6 +859,37 @@ Item {
                 anchors.rightMargin: Theme.spacingLarge
                 spacing: Theme.spacingMedium
 
+                // Confirmation transitoire apres clic sur "Enregistrer" :
+                // sans ca, rien ne distingue visuellement un enregistrement
+                // reussi d'un clic ignore -- l'utilisateur n'a aucune
+                // information que la sauvegarde a bien eu lieu.
+                RowLayout {
+                    spacing: Theme.spacingXs
+                    opacity: saveConfirmation.visible ? 1 : 0
+                    Behavior on opacity { NumberAnimation { duration: 150 } }
+
+                    Label {
+                        id: saveConfirmationIcon
+                        text: "\u2713"
+                        color: Theme.success !== undefined ? Theme.success : Theme.primary
+                        font.bold: true
+                    }
+                    Label {
+                        id: saveConfirmation
+                        visible: false
+                        text: qsTr("Enregistré")
+                        color: Theme.textSecondary
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                    }
+                }
+
+                Timer {
+                    id: saveConfirmationTimer
+                    interval: 2200
+                    onTriggered: saveConfirmation.visible = false
+                }
+
                 Item { Layout.fillWidth: true }
 
                 Button {
@@ -839,7 +912,11 @@ Item {
                         verticalAlignment: Text.AlignVCenter
                     }
 
-                    onClicked: settingsModel.load()
+                    onClicked: {
+                        settingsModel.load()
+                        saveConfirmationTimer.stop()
+                        saveConfirmation.visible = false
+                    }
                 }
 
                 Button {
@@ -860,7 +937,11 @@ Item {
                         verticalAlignment: Text.AlignVCenter
                     }
 
-                    onClicked: settingsModel.save()
+                    onClicked: {
+                        settingsModel.save()
+                        saveConfirmation.visible = true
+                        saveConfirmationTimer.restart()
+                    }
                 }
             }
         }
