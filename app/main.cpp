@@ -442,13 +442,21 @@ int main(int argc, char *argv[])
         Q_UNUSED(category);
     });
     QObject::connect(application.voiceService(), &network::VoiceService::incomingCall,
-                     window, [&trayIcon, window, notificationIcon, applicationIcon](
+                     window, [&trayIcon, window, notificationIcon, applicationIcon, &application](
                          const QHostAddress &callerAddress) {
         if (!window->isVisible()) {
             const QIcon icon = notificationIcon(QStringLiteral("call"));
             trayIcon.setIcon(icon);
+            // Meme resolution que CallView.qml (PeersModel::nameForAddress) :
+            // sans ca, la notification en arriere-plan n'affichait que
+            // l'adresse IP de l'appelant au lieu de son nom, contrairement
+            // au premier plan ou CallView resout deja ce nom.
+            const QString resolvedName = application.peersModel()
+                ? application.peersModel()->nameForAddress(callerAddress.toString())
+                : QString();
+            const QString callerLabel = resolvedName.isEmpty() ? callerAddress.toString() : resolvedName;
             trayIcon.showMessage(QObject::tr("Appel entrant"),
-                                 QObject::tr("Appel de %1").arg(callerAddress.toString()),
+                                 QObject::tr("Appel de %1").arg(callerLabel),
                                  icon, 10000);
             QTimer::singleShot(750, window, [&trayIcon, applicationIcon]() {
                 trayIcon.setIcon(applicationIcon);
