@@ -68,8 +68,26 @@ Item {
 
     property var context: (typeof transferContext !== "undefined") ? transferContext : null
 
-    property string selectedFilePath: ""
-    property string selectedFileName: ""
+    property var selectedFilePaths: []
+    property var selectedRecipients: []
+
+    function isRecipientSelected(machineId) {
+        for (let i = 0; i < selectedRecipients.length; ++i) {
+            if (selectedRecipients[i].machineId === machineId) return true
+        }
+        return false
+    }
+
+    function toggleRecipient(recipient) {
+        const list = selectedRecipients.slice()
+        const idx = list.findIndex(function(r) { return r.machineId === recipient.machineId })
+        if (idx >= 0) {
+            list.splice(idx, 1)
+        } else {
+            list.push(recipient)
+        }
+        selectedRecipients = list
+    }
 
     // Sous ce seuil (fenetre partagee / petit ecran, minimum 640px pour
     // la fenetre entiere - cf. Main.qml), les colonnes secondaires de la
@@ -79,6 +97,11 @@ Item {
     signal backRequested()
 
     // ---- fonctions utilitaires ----
+    function fileNameFromPath(path) {
+        const parts = path.split("/")
+        return parts[parts.length - 1]
+    }
+
     function formatBytes(bytes) {
         if (!bytes || bytes <= 0) return "0 Ko"
         const units = ["o", "Ko", "Mo", "Go"]
@@ -362,11 +385,14 @@ Item {
             // ---- dialogues ----
             FileDialog {
                 id: fileDialog
-                title: qsTr("Choisir un fichier à envoyer")
+                title: qsTr("Choisir un ou plusieurs fichiers à envoyer")
+                fileMode: FileDialog.OpenFiles
                 onAccepted: {
-                    root.selectedFilePath = selectedFile.toString()
-                    const parts = root.selectedFilePath.split("/")
-                    root.selectedFileName = parts[parts.length - 1]
+                    const paths = []
+                    for (let i = 0; i < selectedFiles.length; ++i) {
+                        paths.push(selectedFiles[i].toString())
+                    }
+                    root.selectedFilePaths = paths
                 }
             }
 
@@ -582,7 +608,7 @@ Item {
         // =========================================================
         // Panneau d'envoi (compact, sous la barre d'adresse) : choix du
         // fichier + destinataire + bouton Envoyer + accès au dossier de
-        // réception. Réutilise `fileDialog`/`selectedFilePath` déjà
+        // réception. Réutilise `fileDialog`/`selectedFilePaths` déjà
         // déclarés.
         // =========================================================
         Rectangle {
@@ -605,9 +631,11 @@ Item {
                 anchors.fill: parent
                 onDropped: function(drop) {
                     if (drop.hasUrls && drop.urls.length > 0) {
-                        root.selectedFilePath = drop.urls[0].toString()
-                        const parts = root.selectedFilePath.split("/")
-                        root.selectedFileName = parts[parts.length - 1]
+                        const paths = []
+                        for (let i = 0; i < drop.urls.length; ++i) {
+                            paths.push(drop.urls[i].toString())
+                        }
+                        root.selectedFilePaths = paths
                     }
                 }
             }
@@ -643,18 +671,20 @@ Item {
                             id: sendFileLabel
                             Layout.fillWidth: true
                             text: sendDropArea.containsDrag
-                                  ? qsTr("Déposez le fichier ici")
-                                  : (root.selectedFileName.length > 0
-                                     ? root.selectedFileName
-                                     : qsTr("Sélectionner ou déposer un fichier..."))
+                                  ? qsTr("Déposez le(s) fichier(s) ici")
+                                  : (root.selectedFilePaths.length === 1
+                                     ? root.fileNameFromPath(root.selectedFilePaths[0])
+                                     : (root.selectedFilePaths.length > 1
+                                        ? qsTr("%1 fichiers sélectionnés").arg(root.selectedFilePaths.length)
+                                        : qsTr("Sélectionner ou déposer un ou plusieurs fichiers...")))
                             color: sendDropArea.containsDrag ? Theme.primary
-                                   : (root.selectedFileName.length > 0 ? Theme.text : Theme.textTertiary)
+                                   : (root.selectedFilePaths.length > 0 ? Theme.text : Theme.textTertiary)
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: Theme.fontFamily
                             elide: Text.ElideMiddle
 
-                            ToolTip.visible: truncated && sendFileLabelArea.containsMouse
-                            ToolTip.text: root.selectedFileName
+                            ToolTip.visible: (truncated || root.selectedFilePaths.length > 1) && sendFileLabelArea.containsMouse
+                            ToolTip.text: root.selectedFilePaths.map(root.fileNameFromPath).join("\n")
                             ToolTip.delay: 500
 
                             MouseArea {
@@ -683,19 +713,21 @@ Item {
                     }
                 }
 
-                ComboBox {
-                    id: recipientCombo
-                    palette.window: Theme.surface
-                    palette.base: Theme.surfaceAlt
-                    palette.button: Theme.surfaceAlt
-                    palette.text: Theme.text
-                    palette.buttonText: Theme.text
-                    palette.highlight: Theme.primary
-                    palette.highlightedText: Theme.primaryText
+                Rectangle {
+                    id: recipientPicker
                     Layout.preferredWidth: 190
                     Layout.preferredHeight: 34
-                    textRole: "label"
-                    model: {
+                    radius: Theme.radiusSmall
+                    color: Theme.surface
+                    border.width: 1
+                    border.color: recipientPopup.visible ? Theme.primary : Theme.border
+                    Behavior on border.color { ColorAnimation { duration: 100 } }
+
+                    // Selection multiple de destinataires (remplace le
+                    // ComboBox a choix unique) : chaque pair coche est
+                    // ajoute a root.selectedRecipients ; le bouton Envoyer
+                    // boucle ensuite sur destinataires x fichiers.
+                    readonly property var availableRecipients: {
                         const peers = root.context ? root.context.availableRecipients() : []
                         const result = []
                         for (let i = 0; i < peers.length; ++i) {
@@ -713,35 +745,45 @@ Item {
                         return result
                     }
 
-                    background: Rectangle {
-                        radius: Theme.radiusSmall
-                        color: Theme.surface
-                        border.width: 1
-                        border.color: recipientCombo.activeFocus ? Theme.primary : Theme.border
-                        Behavior on border.color { ColorAnimation { duration: 100 } }
+                    readonly property string summaryText: {
+                        if (root.selectedRecipients.length === 0) return qsTr("Aucun destinataire")
+                        if (root.selectedRecipients.length === 1) return root.selectedRecipients[0].label
+                        return qsTr("%1 destinataires").arg(root.selectedRecipients.length)
                     }
-                    contentItem: Text {
-                        leftPadding: 8
-                        rightPadding: 8
-                        text: recipientCombo.displayText.length > 0 ? recipientCombo.displayText : qsTr("Aucun destinataire")
-                        color: recipientCombo.count > 0 ? Theme.text : Theme.textTertiary
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: Theme.fontFamily
-                        verticalAlignment: Text.AlignVCenter
-                        elide: Text.ElideRight
-                    }
-                    indicator: FaIcon {
-                        anchors.right: parent.right
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 8
                         anchors.rightMargin: 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        glyph: "\uf107"
-                        color: Theme.textSecondary
-                        font.pixelSize: 12
+                        spacing: 4
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: recipientPicker.summaryText
+                            color: root.selectedRecipients.length > 0 ? Theme.text : Theme.textTertiary
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: Theme.fontFamily
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                        FaIcon {
+                            glyph: "\uf107"
+                            color: Theme.textSecondary
+                            font.pixelSize: 12
+                        }
                     }
-                    popup: Popup {
-                        y: recipientCombo.height + 2
-                        width: recipientCombo.width
-                        implicitHeight: Math.min(contentItem.implicitHeight, 200)
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: recipientPopup.visible ? recipientPopup.close() : recipientPopup.open()
+                    }
+
+                    Popup {
+                        id: recipientPopup
+                        y: recipientPicker.height + 2
+                        width: Math.max(recipientPicker.width, 220)
+                        implicitHeight: Math.min(recipientListView.contentHeight + 8, 220)
                         padding: 4
 
                         background: Rectangle {
@@ -750,28 +792,55 @@ Item {
                             border.width: 1
                             border.color: Theme.border
                         }
+
                         contentItem: ListView {
+                            id: recipientListView
                             clip: true
                             implicitHeight: contentHeight
-                            model: recipientCombo.popup.visible ? recipientCombo.delegateModel : null
-                            currentIndex: recipientCombo.highlightedIndex
-                        }
-                    }
-                    delegate: ItemDelegate {
-                        width: recipientCombo.width
-                        height: 32
-                        highlighted: recipientCombo.highlightedIndex === index
-                        background: Rectangle {
-                            radius: Theme.radiusSmall
-                            color: parent.highlighted ? Theme.surfaceHover : "transparent"
-                        }
-                        contentItem: Text {
-                            text: modelData.label
-                            color: Theme.text
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: Theme.fontFamily
-                            verticalAlignment: Text.AlignVCenter
-                            elide: Text.ElideRight
+                            model: recipientPicker.availableRecipients
+                            delegate: ItemDelegate {
+                                width: recipientListView.width
+                                height: 32
+
+                                background: Rectangle {
+                                    radius: Theme.radiusSmall
+                                    color: parent.hovered ? Theme.surfaceHover : "transparent"
+                                }
+
+                                contentItem: RowLayout {
+                                    spacing: 8
+                                    anchors.leftMargin: 6
+                                    anchors.rightMargin: 6
+
+                                    Rectangle {
+                                        width: 16
+                                        height: 16
+                                        radius: 3
+                                        color: root.isRecipientSelected(modelData.machineId) ? Theme.primary : "transparent"
+                                        border.width: 1.5
+                                        border.color: root.isRecipientSelected(modelData.machineId) ? Theme.primary : Theme.border
+
+                                        Label {
+                                            anchors.centerIn: parent
+                                            text: "\u2713"
+                                            visible: root.isRecipientSelected(modelData.machineId)
+                                            color: Theme.primaryText
+                                            font.pixelSize: 11
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.label
+                                        color: Theme.text
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.family: Theme.fontFamily
+                                        elide: Text.ElideRight
+                                    }
+                                }
+
+                                onClicked: root.toggleRecipient(modelData)
+                            }
                         }
                     }
                 }
@@ -781,8 +850,8 @@ Item {
                     Layout.preferredWidth: 104
                     Layout.preferredHeight: 34
                     radius: Theme.radiusSmall
-                    readonly property bool sendEnabled: root.selectedFilePath.length > 0
-                                                         && recipientCombo.count > 0 && root.context !== null
+                    readonly property bool sendEnabled: root.selectedFilePaths.length > 0
+                                                         && root.selectedRecipients.length > 0 && root.context !== null
                     color: sendEnabled ? (sendButtonArea.containsMouse ? Theme.primaryHover : Theme.primary)
                                         : Theme.surface
                     border.width: sendEnabled ? 0 : 1
@@ -813,13 +882,32 @@ Item {
                         enabled: sendButton.sendEnabled
                         cursorShape: sendButton.sendEnabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                         onClicked: {
-                            const selected = recipientCombo.model[recipientCombo.currentIndex]
-                            if (!selected || !root.context) return
-                            if (root.context.sendFile(root.selectedFilePath.toString(), selected.address, selected.port, selected.machineId)) {
-                                root.selectedFilePath = ""
-                                root.selectedFileName = ""
+                            if (!root.context || root.selectedRecipients.length === 0) return
+
+                            // Boucle destinataires x fichiers : chaque
+                            // combinaison est un appel sendFile() distinct,
+                            // chacun mis en file cote TransferService pour
+                            // sa propre destination -- aucun changement
+                            // backend necessaire pour le multi-destinataires,
+                            // comme pour le multi-fichiers.
+                            let failedCount = 0
+                            let totalAttempts = 0
+                            for (let r = 0; r < root.selectedRecipients.length; ++r) {
+                                const recipient = root.selectedRecipients[r]
+                                for (let i = 0; i < root.selectedFilePaths.length; ++i) {
+                                    totalAttempts++
+                                    const ok = root.context.sendFile(root.selectedFilePaths[i], recipient.address, recipient.port, recipient.machineId)
+                                    if (!ok) failedCount++
+                                }
+                            }
+
+                            if (failedCount === 0) {
+                                root.selectedFilePaths = []
+                            } else if (failedCount === totalAttempts) {
+                                errorBanner.show(qsTr("Impossible d'envoyer le(s) fichier(s)."))
                             } else {
-                                errorBanner.show(qsTr("Impossible d'envoyer le fichier."))
+                                errorBanner.show(qsTr("%1 envoi(s) sur %2 ont échoué.").arg(failedCount).arg(totalAttempts))
+                                root.selectedFilePaths = []
                             }
                         }
                     }
