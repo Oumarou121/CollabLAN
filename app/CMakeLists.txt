@@ -46,6 +46,26 @@ target_link_libraries(LocaLink PRIVATE
     app_core
 )
 
+if(WIN32)
+    # Necessaire pour SetCurrentProcessExplicitAppUserModelID (main.cpp) :
+    # sans AUMID enregistre, les notifications systeme affichent le nom brut
+    # de l'executable au lieu de "LocaLink".
+    target_link_libraries(LocaLink PRIVATE Shell32)
+
+    # CORRECTIF (logo absent des notifications) : la cle de registre
+    # IconUri de l'AppUserModelId (main.cpp) exige un chemin direct vers un
+    # fichier .ico -- la syntaxe "exe,index" (utilisee pour d'autres
+    # mecanismes Windows comme DefaultIcon) n'est pas valide ici et laissait
+    # le logo vide. app.ico n'etait jusque-la qu'embarque dans les
+    # ressources de l'exe (app.rc) : on en copie aussi une version brute a
+    # cote de l'executable pour que le registre puisse la referencer.
+    add_custom_command(TARGET LocaLink POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/../resources/win/app.ico
+            $<TARGET_FILE_DIR:LocaLink>/app.ico
+    )
+endif()
+
 if(UNIX AND NOT APPLE)
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../resources/linux/localink.desktop
             DESTINATION share/applications)

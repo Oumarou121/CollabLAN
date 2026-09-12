@@ -12,6 +12,7 @@
 #include <QAction>
 #include <QCommandLineParser>
 #include <QSettings>
+#include <QDir>
 #include <QDebug>
 
 #include "Application.h"
@@ -36,6 +37,10 @@
 #include "Voice/VoiceService.h"
 
 #include <rtc/rtc.hpp>
+
+#ifdef Q_OS_WIN
+#include <shobjidl.h>
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -68,8 +73,47 @@ int main(int argc, char *argv[])
         QQuickStyle::setStyle(QStringLiteral("Basic"));
     }
 
+#ifdef Q_OS_WIN
+    // CORRECTIF : sans AppUserModelID explicite, Windows n'a aucun moyen de
+    // retrouver un nom d'affichage propre pour le processus et retombe sur
+    // le nom brut de l'executable (ex: "LocaLink.exe") dans l'en-tete des
+    // notifications systeme (Action Center / toasts). Cet appel doit se
+    // faire avant toute creation de fenetre/QApplication pour etre pris en
+    // compte par le shell. Contrairement a QCoreApplication::applicationName()
+    // (qui ne concerne que Qt), l'AUMID est ce que Windows utilise
+    // reellement pour l'identite du processus aupres du systeme.
+    SetCurrentProcessExplicitAppUserModelID(L"LocaLink.SharedFolderApp");
+#endif
+
     QApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
+
+#ifdef Q_OS_WIN
+    // CORRECTIF (suite) : SetCurrentProcessExplicitAppUserModelID() dit a
+    // Windows QUEL identifiant utiliser pour ce processus, mais sans mapping
+    // enregistre vers un nom/icone, l'Action Center affiche l'AUMID brut
+    // ("LocaLink.SharedFolderApp") au lieu d'un nom lisible. Pour une appli
+    // Win32 classique (pas de paquet MSIX/installeur creant un raccourci
+    // Menu Demarrer avec proprietes Shell), la methode documentee par
+    // Microsoft est d'enregistrer ce mapping directement dans le registre
+    // sous HKCU\Software\Classes\AppUserModelId\<AUMID>. Idempotent : se
+    // recree a l'identique a chaque lancement, sans effet de bord si deja
+    // present.
+    {
+        QSettings aumIdSettings(
+            QStringLiteral("HKEY_CURRENT_USER\\Software\\Classes\\AppUserModelId\\LocaLink.SharedFolderApp"),
+            QSettings::NativeFormat);
+        aumIdSettings.setValue(QStringLiteral("DisplayName"), QStringLiteral("LocaLink"));
+        // IconUri exige un chemin direct vers un fichier .ico -- la syntaxe
+        // "exe,index" (valable pour DefaultIcon) n'est pas supportee ici et
+        // laissait le logo absent des notifications. app.ico est copie a
+        // cote de l'executable par CMakeLists.txt (app/CMakeLists.txt,
+        // POST_BUILD) specifiquement pour cet usage.
+        aumIdSettings.setValue(QStringLiteral("IconUri"),
+                                QDir::toNativeSeparators(
+                                    QCoreApplication::applicationDirPath() + QStringLiteral("/app.ico")));
+    }
+#endif
 
     // CORRECTIF : sans ces deux appels, QSettings (core::SettingsModel,
     // "Se souvenir de moi") n'a pas d'organisation/application stable pour
