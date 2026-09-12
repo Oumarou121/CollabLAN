@@ -1,7 +1,15 @@
-#include <QGuiApplication>
+#include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QWindow>
+#include <QIcon>
+#include <QPainter>
+#include <QFontDatabase>
+#include <QTimer>
+#include <QSystemTrayIcon>
+#include <QMenu>
+#include <QAction>
 #include <QCommandLineParser>
 #include <QSettings>
 #include <QDebug>
@@ -25,6 +33,7 @@
 #include "SettingsModel.h"
 #include "Election/ElectionService.h"
 #include "Transfer/TransferService.h"
+#include "Voice/VoiceService.h"
 
 #include <rtc/rtc.hpp>
 
@@ -59,7 +68,8 @@ int main(int argc, char *argv[])
         QQuickStyle::setStyle(QStringLiteral("Basic"));
     }
 
-    QGuiApplication app(argc, argv);
+    QApplication app(argc, argv);
+    app.setQuitOnLastWindowClosed(false);
 
     // CORRECTIF : sans ces deux appels, QSettings (core::SettingsModel,
     // "Se souvenir de moi") n'a pas d'organisation/application stable pour
@@ -319,6 +329,142 @@ int main(int argc, char *argv[])
 
     if (engine.rootObjects().isEmpty())
         return -1;
+
+    auto *window = qobject_cast<QWindow *>(engine.rootObjects().constFirst());
+    if (!window)
+        return -1;
+
+    QSystemTrayIcon trayIcon(QIcon(QStringLiteral(":/ui/Assets/logo.png")), &app);
+    const QIcon applicationIcon = trayIcon.icon();
+    const int iconFontId = QFontDatabase::addApplicationFont(
+        QStringLiteral(":/ui/Assets/fonts/fontawesome-webfont.ttf"));
+    const QString iconFontFamily = iconFontId >= 0
+        ? QFontDatabase::applicationFontFamilies(iconFontId).value(0)
+        : QString();
+    // Table alignee sur Toast.qml (accentColor / iconGlyph) afin que
+    // l'icone de la notification systeme (tray, hors-plan) corresponde a
+    // la meme categorie que la notification en avant-plan. Avant ce
+    // correctif, seuls "call" et "transfer" avaient un rendu dedie ;
+    // "connection", "disconnection", "group" et "folder" retombaient tous
+    // sur l'enveloppe verte generique du cas "message", ce qui les rendait
+    // non representatifs (ex: une deconnexion de poste affichait la meme
+    // icone qu'un nouveau message).
+    const auto notificationIcon = [iconFontFamily](const QString &category) {
+        QPixmap pixmap(64, 64);
+        pixmap.fill(Qt::transparent);
+
+        QPainter painter(&pixmap);
+        const QColor color = category == QStringLiteral("call")
+            ? QColor(QStringLiteral("#D6455A"))         // Theme.error (light)
+            : category == QStringLiteral("transfer")
+                ? QColor(QStringLiteral("#2457A6"))     // Theme.primary (light)
+                : category == QStringLiteral("connection")
+                    ? QColor(QStringLiteral("#1FA971")) // Theme.success (light)
+                    : category == QStringLiteral("disconnection")
+                        ? QColor(QStringLiteral("#536273")) // Theme.textSecondary (light)
+                        : category == QStringLiteral("group")
+                            ? QColor(QStringLiteral("#2457A6")) // Theme.accent (= Theme.primary)
+                            : category == QStringLiteral("folder")
+                                ? QColor(QStringLiteral("#2457A6")) // Theme.primary (light)
+                                : QColor(QStringLiteral("#2457A6")); // "message" (defaut) : Theme.accent
+        painter.setBrush(color);
+        painter.setPen(Qt::NoPen);
+        painter.drawEllipse(2, 2, 60, 60);
+
+        if (!iconFontFamily.isEmpty()) {
+            QFont font(iconFontFamily, 28);
+            painter.setFont(font);
+            painter.setPen(Qt::white);
+            const QString glyph = category == QStringLiteral("call")
+                ? QStringLiteral("\uf095")              // telephone
+                : category == QStringLiteral("transfer")
+                    ? QStringLiteral("\uf019")           // telechargement
+                    : category == QStringLiteral("connection")
+                        ? QStringLiteral("\uf234")       // utilisateur connecte
+                        : category == QStringLiteral("disconnection")
+                            ? QStringLiteral("\uf235")   // utilisateur deconnecte
+                            : category == QStringLiteral("group")
+                                ? QStringLiteral("\uf0c0")   // groupe d'utilisateurs
+                                : category == QStringLiteral("folder")
+                                    ? QStringLiteral("\uf07b")   // dossier
+                                    : QStringLiteral("\uf0e0");  // enveloppe (message)
+            painter.drawText(pixmap.rect(), Qt::AlignCenter, glyph);
+        }
+        return QIcon(pixmap);
+    };
+    QMenu trayMenu;
+    QAction *showAction = trayMenu.addAction(QObject::tr("Afficher LocaLink"));
+    QAction *quitAction = trayMenu.addAction(QObject::tr("Quitter"));
+    trayIcon.setContextMenu(&trayMenu);
+    trayIcon.setToolTip(QObject::tr("LocaLink"));
+
+    const bool trayAvailable = QSystemTrayIcon::isSystemTrayAvailable();
+    window->setProperty("backgroundModeAvailable", trayAvailable);
+
+    QObject::connect(showAction, &QAction::triggered, window, [window]() {
+        window->show();
+        window->raise();
+        window->requestActivate();
+    });
+    QObject::connect(&trayIcon, &QSystemTrayIcon::activated, window,
+                     [window](QSystemTrayIcon::ActivationReason reason) {
+        if (reason == QSystemTrayIcon::Trigger ||
+            reason == QSystemTrayIcon::DoubleClick) {
+            window->show();
+            window->raise();
+            window->requestActivate();
+        }
+    });
+    QObject::connect(&trayIcon, &QSystemTrayIcon::messageClicked, window, [window]() {
+        window->show();
+        window->raise();
+        window->requestActivate();
+    });
+    QObject::connect(application.notificationManager(),
+                     &core::NotificationManager::notificationRequested,
+                     window,
+                     [&trayIcon, window, notificationIcon, applicationIcon](
+                         const QString &title, const QString &message,
+                         const QString &category, qint64) {
+        if (!window->isVisible()) {
+            const QIcon icon = notificationIcon(category);
+            trayIcon.setIcon(icon);
+            // Surcharge QIcon (et non l'enum QSystemTrayIcon::Information) :
+            // c'est cette version qui transmet reellement notre icone dessinee
+            // au toast Windows. Avec l'enum, Windows affiche systematiquement
+            // son icone "info" generique et ignore l'icone du tray, ce qui
+            // rendait le correctif precedent invisible malgre une recompilation.
+            trayIcon.showMessage(title, message, icon, 5000);
+            QTimer::singleShot(750, window, [&trayIcon, applicationIcon]() {
+                trayIcon.setIcon(applicationIcon);
+            });
+        }
+        Q_UNUSED(category);
+    });
+    QObject::connect(application.voiceService(), &network::VoiceService::incomingCall,
+                     window, [&trayIcon, window, notificationIcon, applicationIcon](
+                         const QHostAddress &callerAddress) {
+        if (!window->isVisible()) {
+            const QIcon icon = notificationIcon(QStringLiteral("call"));
+            trayIcon.setIcon(icon);
+            trayIcon.showMessage(QObject::tr("Appel entrant"),
+                                 QObject::tr("Appel de %1").arg(callerAddress.toString()),
+                                 icon, 10000);
+            QTimer::singleShot(750, window, [&trayIcon, applicationIcon]() {
+                trayIcon.setIcon(applicationIcon);
+            });
+        }
+    });
+    QObject::connect(quitAction, &QAction::triggered, &app, [window, &app]() {
+        window->setProperty("allowApplicationQuit", true);
+        app.quit();
+    });
+
+    if (trayAvailable) {
+        trayIcon.show();
+    } else {
+        qWarning() << "System tray indisponible : l'application restera active en arriere-plan";
+    }
 
     return app.exec();
 }

@@ -235,11 +235,19 @@ void AudioService::setCallSound(const QString &variantId)
 void AudioService::playSound(services::AudioService::EventType type)
 {
     if (!m_soundEnabled) {
+        qDebug() << "[AudioService] playSound ignore : sons desactives";
         return;
     }
 
     QSoundEffect *effect = m_sounds.value(soundKey(type, currentVariant(type)));
-    if (!effect || effect->status() == QSoundEffect::Error) {
+    if (!effect) {
+        qWarning() << "[AudioService] playSound : aucun QSoundEffect trouve pour"
+                   << soundKey(type, currentVariant(type));
+        return;
+    }
+    if (effect->status() == QSoundEffect::Error) {
+        qWarning() << "[AudioService] playSound : QSoundEffect en erreur pour"
+                   << soundKey(type, currentVariant(type)) << "source:" << effect->source();
         return;
     }
 
@@ -248,6 +256,10 @@ void AudioService::playSound(services::AudioService::EventType type)
     // effet lors d'une ecoute prealable, donc on le reimpose explicitement
     // ici a chaque lecture reelle plutot qu'une seule fois a la creation.
     effect->setLoopCount(type == EventType::Call ? QSoundEffect::Infinite : 1);
+
+    qDebug() << "[AudioService] playSound : lecture de" << soundKey(type, currentVariant(type))
+             << "status:" << effect->status() << "volume:" << effect->volume()
+             << "isPlaying (avant play):" << effect->isPlaying();
 
     // QSoundEffect::play() est asynchrone : la lecture est geree par le
     // backend audio de Qt et ne bloque jamais le thread appelant (donc

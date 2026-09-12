@@ -611,6 +611,8 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             m_audioService, [this](const QString &title, const QString &message, const QString &category) {
                 Q_UNUSED(title);
                 Q_UNUSED(message);
+                qDebug() << "[Application] notificationRequested recu pour le son, categorie:" << category
+                         << "soundEnabled:" << m_audioService->isSoundEnabled();
                 if (category == QStringLiteral("message")) {
                     m_audioService->playMessageSound();
                 } else if (category == QStringLiteral("transfer")) {

@@ -34,6 +34,15 @@ ApplicationWindow {
     visible: false
     title: qsTr("LocaLink")
     color: Theme.background
+    property bool allowApplicationQuit: false
+    property bool backgroundModeAvailable: false
+
+    onClosing: function(close) {
+        if (!window.allowApplicationQuit && window.backgroundModeAvailable) {
+            close.accepted = false
+            window.hide()
+        }
+    }
 
     // Chargement global de la police Inter (issue design) : chargee une
     // seule fois ici plutot que localement dans chaque vue, pour que

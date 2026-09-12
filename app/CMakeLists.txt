@@ -41,6 +41,7 @@ endif()
 target_link_libraries(LocaLink PRIVATE
     Qt6::Quick
     Qt6::Qml
+    Qt6::Widgets
     Qt6::QuickControls2
     app_core
 )

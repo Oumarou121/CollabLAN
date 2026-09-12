@@ -91,13 +91,18 @@ Rectangle {
 
     readonly property string iconGlyph: {
         switch (category) {
-        case "transfer": return "\u21C5"       // fleches haut/bas (transfert)
-        case "connection": return "\u25CF"      // point plein (en ligne)
-        case "disconnection": return "\u25CB"   // point vide (hors ligne)
-        case "group": return "\u2637"           // symbole groupe/postes
-        case "folder": return "\u25A1"          // dossier
-        default: return "\u2709"                // enveloppe (message)
+        case "transfer": return "\uf019"       // telechargement
+        case "connection": return "\uf234"      // utilisateur connecte
+        case "disconnection": return "\uf235"   // utilisateur deconnecte
+        case "group": return "\uf0c0"           // groupe d'utilisateurs
+        case "folder": return "\uf07b"          // dossier
+        default: return "\uf0e0"                // enveloppe
         }
+    }
+
+    FontLoader {
+        id: iconFont
+        source: "qrc:/ui/Assets/fonts/fontawesome-webfont.ttf"
     }
 
     function initials(name) {
@@ -206,6 +211,7 @@ Rectangle {
                 color: "#FFFFFF"
                 font.pixelSize: root.isMessageCategory ? Theme.fontSizeSmall : Theme.fontSizeBody
                 font.bold: true
+                font.family: root.isMessageCategory ? Theme.fontFamily : iconFont.name
             }
         }
 
@@ -373,6 +379,7 @@ Rectangle {
                     text: root.iconGlyph
                     color: root.accentColor
                     font.pixelSize: Theme.fontSizeBody
+                    font.family: iconFont.name
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
