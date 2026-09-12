@@ -74,7 +74,8 @@ bool configureTls(QSslSocket *socket, SecurityService *security, bool server)
 // decodeHeader() (pas de compression).
 QByteArray encodeHeader(const QString &fileName, qint64 fileSize, const QString &senderUuid,
                          const QString &recipientUuid, const QString &senderMachineId,
-                         quint8 compressionFlags = 0, bool isFolderTransfer = false)
+                         quint8 compressionFlags = 0, bool isFolderTransfer = false,
+                         const QString &relativeDirPath = QString())
 {
     QByteArray payload;
     QDataStream stream(&payload, QIODevice::WriteOnly);
@@ -83,13 +84,15 @@ QByteArray encodeHeader(const QString &fileName, qint64 fileSize, const QString 
            << senderUuid << recipientUuid
            << senderMachineId
            << compressionFlags
-           << isFolderTransfer;
+           << isFolderTransfer
+           << relativeDirPath;
     return payload;
 }
 
 bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize,
                    QString *senderUuid, QString *recipientUuid, QString *senderMachineId,
-                   quint8 *compressionFlags = nullptr, bool *isFolderTransfer = nullptr)
+                   quint8 *compressionFlags = nullptr, bool *isFolderTransfer = nullptr,
+                   QString *relativeDirPath = nullptr)
 {
     QDataStream stream(payload);
     stream.setVersion(QDataStream::Qt_6_0);
@@ -98,6 +101,7 @@ bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize
         senderMachineId->clear();
         if (compressionFlags) *compressionFlags = 0;
         if (isFolderTransfer) *isFolderTransfer = false;
+        if (relativeDirPath) relativeDirPath->clear();
         return false;
     }
     // senderMachineId : champ optionnel ajoute apres la v1 du protocole.
@@ -106,6 +110,7 @@ bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize
         senderMachineId->clear();
         if (compressionFlags) *compressionFlags = 0;
         if (isFolderTransfer) *isFolderTransfer = false;
+        if (relativeDirPath) relativeDirPath->clear();
         return true; // champs obligatoires presents, optionnels absents = OK
     }
     // compressionFlags : champ optionnel ajoute apres senderMachineId.
@@ -120,6 +125,20 @@ bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize
         stream >> *isFolderTransfer;
         if (stream.status() != QDataStream::Ok) {
             *isFolderTransfer = false;
+        }
+    }
+    // relativeDirPath : champ optionnel ajoute apres isFolderTransfer, pour
+    // le partage ponctuel d'un dossier depuis l'ecran Transfert de fichiers
+    // (distinct du mecanisme de FolderSyncService) : sous-chemin (sans le
+    // nom du fichier) a recreer sous le repertoire de reception du pair,
+    // ex. "Vacances/sous-dossier". Vide = fichier isole, comportement
+    // inchange. Un ancien pair qui n'emet pas ce champ est traite comme
+    // vide par un recepteur plus recent (meme principe que les champs
+    // optionnels precedents).
+    if (relativeDirPath) {
+        stream >> *relativeDirPath;
+        if (stream.status() != QDataStream::Ok) {
+            relativeDirPath->clear();
         }
     }
     return true;
@@ -327,7 +346,8 @@ QString TransferService::destKeyFor(const QHostAddress &host, quint16 port)
 
 bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
                                 const QString &senderUuid, const QString &recipientUuid,
-                                const QString &transferFileName, bool isFolderTransfer)
+                                const QString &transferFileName, bool isFolderTransfer,
+                                const QString &relativeDirPath)
 {
     // Verification rapide et synchrone : un fichier absent/illisible des
     // l'appel doit echouer immediatement (contrat historique de sendFile(),
@@ -350,7 +370,7 @@ bool TransferService::sendFile(const QHostAddress &host, quint16 port, const QSt
     const QString destKey = destKeyFor(host, port);
     m_destInfo[destKey] = DestInfo{host, port};
     m_sendQueues[destKey].enqueue(PendingSendJob{filePath, senderUuid, recipientUuid,
-                                                 transferFileName, isFolderTransfer});
+                                                 transferFileName, isFolderTransfer, relativeDirPath});
     dispatchSendQueue(destKey);
     return true;
 }
@@ -455,7 +475,7 @@ bool TransferService::startSendOnSocket(QTcpSocket *socket, const PendingSendJob
     const quint8 compressionFlags = m_compressionEnabled ? 0x01 : 0x00;
     const QByteArray header = encodeHeader(announcedFileName, state.fileSize, state.senderUuid,
                                             state.recipientUuid, m_localMachineId,
-                                            compressionFlags, job.isFolderTransfer);
+                                            compressionFlags, job.isFolderTransfer, job.relativeDirPath);
     socket->write(frameOf(header));
     // La reponse (resumeOffset) arrive de facon asynchrone dans
     // onClientSocketReadyRead ; voir state.resumeOffsetReceived.
@@ -870,7 +890,8 @@ void TransferService::onServerSocketReadyRead()
             QString senderMachineId;
             quint8 compressionFlags = 0;
             bool isFolderTransfer = false;
-            if (!decodeHeader(payload, &fileName, &fileSize, &senderUuid, &recipientUuid, &senderMachineId, &compressionFlags, &isFolderTransfer)
+            QString relativeDirPath;
+            if (!decodeHeader(payload, &fileName, &fileSize, &senderUuid, &recipientUuid, &senderMachineId, &compressionFlags, &isFolderTransfer, &relativeDirPath)
                 || fileSize < 0) {
                 finishReceive(socket, false, QStringLiteral("En-tete de transfert invalide"));
                 return;
@@ -884,6 +905,15 @@ void TransferService::onServerSocketReadyRead()
             state.recipientUuid = recipientUuid;
             state.senderMachineId = senderMachineId;
             state.isFolderTransfer = isFolderTransfer;
+            // Meme precaution que pour state.fileName : on ne garde de
+            // relativeDirPath que des sous-dossiers relatifs (".."/chemins
+            // absolus neutralises) pour ne jamais ecrire en dehors du
+            // repertoire de reception du pair.
+            state.relativeDirPath = QDir::cleanPath(relativeDirPath);
+            if (state.relativeDirPath == QLatin1String(".") || QDir::isAbsolutePath(state.relativeDirPath)
+                || state.relativeDirPath.startsWith(QStringLiteral(".."))) {
+                state.relativeDirPath.clear();
+            }
             state.compressionEnabled = (compressionFlags & 0x01) != 0;
             state.headerParsed = true;
             // CORRECTIF (pool de connexions -- cote reception) : une
@@ -921,8 +951,14 @@ void TransferService::onServerSocketReadyRead()
             const QString destDir = peerFolderName.isEmpty()
                 ? dir
                 : QDir(dir).filePath(peerFolderName);
-            QDir().mkpath(destDir);
-            state.destinationPath = QDir(destDir).filePath(state.fileName);
+            // Reconstitue le sous-dossier d'origine (partage ponctuel d'un
+            // dossier depuis l'ecran Transfert de fichiers) sous le
+            // repertoire du pair, ex. <destDir>/Vacances/sous-dossier/.
+            const QString finalDir = state.relativeDirPath.isEmpty()
+                ? destDir
+                : QDir(destDir).filePath(state.relativeDirPath);
+            QDir().mkpath(finalDir);
+            state.destinationPath = QDir(finalDir).filePath(state.fileName);
             state.partialPath = state.destinationPath + QStringLiteral(".part");
 
             // Reprise (issue #54) : si un fichier partiel de meme nom

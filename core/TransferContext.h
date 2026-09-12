@@ -8,6 +8,8 @@
 #include <QHash>
 #include <QSet>
 #include <QStringList>
+#include <QDir>
+#include <QDirIterator>
 
 #include "TransferManager.h"
 #include "UserManager.h"
@@ -87,6 +89,25 @@ public:
                               const QString &peerMachineId = QString());
 
     /**
+     * @brief Envoie tout le contenu d'un dossier (recursivement) vers le
+     * poste dont l'adresse IP est address.
+     *
+     * Chaque fichier du dossier est envoye individuellement (un appel
+     * sendFile() interne par fichier, mis en file cote TransferService
+     * comme n'importe quel envoi multi-fichiers), mais avec son
+     * sous-chemin d'origine (relatif au dossier choisi, nom du dossier
+     * inclus) afin que l'arborescence soit recreee a l'identique cote
+     * reception plutot que de deverser tous les fichiers en vrac.
+     *
+     * @return false immediatement si folderPath n'est pas un dossier
+     * lisible, ou si aucun fichier n'a pu etre mis en file (dossier
+     * vide ou tous les envois ont echoue immediatement) ; true des
+     * qu'au moins un fichier a ete mis en file avec succes.
+     */
+    Q_INVOKABLE bool sendFolder(const QString &folderPath, const QString &address, int portHint = -1,
+                                const QString &peerMachineId = QString());
+
+    /**
      * @brief Relance un envoi precedemment echoue (transferKey issu de
      * activeTransfers), en reutilisant le meme fichier local et le meme
      * destinataire.
@@ -142,6 +163,13 @@ private slots:
 private:
     int indexOfTransfer(const QString &transferKey) const;
     static int percentOf(qint64 bytesTransferred, qint64 totalBytes);
+
+    /// Implementation commune de sendFile()/sendFolder() : relativeDirPath
+    /// (vide pour un envoi de fichier isole) est transmis tel quel a
+    /// TransferManager::sendFile() pour que le destinataire recree
+    /// l'arborescence d'origine (voir sendFolder()).
+    bool sendFileWithRelativeDir(const QString &filePath, const QString &address, int portHint,
+                                  const QString &peerMachineId, const QString &relativeDirPath);
 
     /// Resout le nom affichable d'un correspondant. Priorite a
     /// peerMachineId (UUID DiscoveryService::localId(), transmis dans

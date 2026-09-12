@@ -141,7 +141,7 @@ QString TransferManager::resolvePeerMachineId(const QHostAddress &peerAddress) c
 
 bool TransferManager::sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
                                 const QString &senderUuid, const QString &recipientUuid,
-                                const QString &knownPeerMachineId)
+                                const QString &knownPeerMachineId, const QString &relativeDirPath)
 {
     if (!m_transferService) {
         qWarning() << "TransferManager: no TransferService configured";
@@ -161,7 +161,8 @@ bool TransferManager::sendFile(const QHostAddress &host, quint16 port, const QSt
     // differents (voir onNetworkTransferStarted()).
     m_pendingPeerMachineIds[fileName].append(knownPeerMachineId);
 
-    const bool started = m_transferService->sendFile(host, port, filePath, senderUuid, recipientUuid);
+    const bool started = m_transferService->sendFile(host, port, filePath, senderUuid, recipientUuid,
+                                                       QString(), false, relativeDirPath);
     if (!started) {
         // La connexion n'a jamais demarre : retirer le chemin (et le
         // peerMachineId associe) mis en attente pour ne pas polluer un

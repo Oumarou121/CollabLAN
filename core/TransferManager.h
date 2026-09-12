@@ -65,7 +65,8 @@ public:
     /// envoi, voir son commentaire dans onClientSocketConnected()).
     bool sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
                   const QString &senderUuid, const QString &recipientUuid,
-                  const QString &knownPeerMachineId = QString());
+                  const QString &knownPeerMachineId = QString(),
+                  const QString &relativeDirPath = QString());
 
     /// Historique complet des transferts (tous utilisateurs), le plus recent en premier.
     std::vector<models::Transfer> allTransfers() const;

@@ -123,7 +123,8 @@ public:
      */
     bool sendFile(const QHostAddress &host, quint16 port, const QString &filePath,
                   const QString &senderUuid, const QString &recipientUuid,
-                  const QString &transferFileName = QString(), bool isFolderTransfer = false);
+                  const QString &transferFileName = QString(), bool isFolderTransfer = false,
+                  const QString &relativeDirPath = QString());
 
 signals:
     /// Emis quand un transfert (entrant ou sortant) demarre. resumeOffset
@@ -191,6 +192,7 @@ private:
         QString senderMachineId;    ///< UUID DiscoveryService::localId() de l'expediteur (voir encodeHeader()).
         bool compressionEnabled = false; ///< true si l'expediteur a active la compression zlib (compressionFlags & 0x01).
         bool isFolderTransfer = false; ///< true si le transfert provient de FolderSyncService (ne doit pas etre enregistre dans la table Transfers).
+        QString relativeDirPath; ///< Sous-chemin a recreer sous le repertoire de reception (partage ponctuel de dossier, voir encodeHeader()). Vide = fichier isole a la racine.
         QFile *file = nullptr;
         QString destinationPath;    ///< Chemin final (une fois le transfert termine).
         QString partialPath;        ///< Fichier temporaire "<nom>.part" pendant le transfert.
@@ -209,6 +211,7 @@ private:
         QString recipientUuid;
         QString transferFileName; ///< Nom annonce au destinataire (vide = basename de filePath).
         bool isFolderTransfer = false; ///< true si le transfert provient de FolderSyncService.
+        QString relativeDirPath; ///< Sous-chemin (sans le nom du fichier) a recreer sous le repertoire de reception -- partage ponctuel de dossier depuis l'ecran Transfert de fichiers (vide = fichier isole).
     };
 
     /// Adresse/port d'une destination, retrouvee par sa cle (voir

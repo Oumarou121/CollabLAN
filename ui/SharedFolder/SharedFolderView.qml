@@ -533,7 +533,16 @@ Item {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 160
+                    // Hauteur adaptative au nombre d'utilisateurs (au lieu
+                    // d'une hauteur fixe de 160px) : avec peu d'utilisateurs,
+                    // une boite toujours haute de 160px laissait un grand
+                    // espace vide entre le contenu et les boutons Suivant/
+                    // Créer. On garde 160px comme MAXIMUM (scroll au-dela),
+                    // et un minimum de 56px pour rester lisible/cliquable
+                    // meme a 1 seul utilisateur ou aucun ("Aucun autre
+                    // utilisateur").
+                    Layout.preferredHeight: Math.max(56, Math.min(
+                        usersListView.contentHeight + Theme.spacingSmall * 2, 160))
                     radius: Theme.radiusMedium
                     color: Theme.surfaceAlt
                     border.width: 1
@@ -944,7 +953,11 @@ Item {
         title: qsTr("Nouveau dossier partagé — %1").arg(shareConfirmDialog.targetFolderName)
         headerIcon: "\uf07b"
         dialogWidth: 440
-        dialogHeight: 300
+        // Hauteur calculee sur le contenu reel (au lieu d'une hauteur fixe
+        // de 300px) : avec une hauteur fixe et un Item{Layout.fillHeight}
+        // pour pousser les boutons en bas, un message court laissait un
+        // grand espace vide entre le texte et les boutons Refuser/Accepter.
+        dialogHeight: shareConfirmColumn.implicitHeight + Theme.spacingMedium * 2
         standardButtons: Dialog.NoButton
         closePolicy: Popup.NoAutoClose
         showCloseButton: false
@@ -962,7 +975,8 @@ Item {
         property bool allowWrite: false
 
         ColumnLayout {
-            anchors.fill: parent
+            id: shareConfirmColumn
+            width: parent.width
             spacing: Theme.spacingMedium
 
             RowLayout {
@@ -1038,10 +1052,9 @@ Item {
                 Layout.fillWidth: true
             }
 
-            Item { Layout.fillHeight: true }
-
             RowLayout {
                 Layout.fillWidth: true
+                Layout.topMargin: Theme.spacingSmall
                 spacing: Theme.spacingSmall
 
                 AppButton {

@@ -171,6 +171,52 @@ QVariantList TransferContext::availableRecipients() const
 bool TransferContext::sendFile(const QString &filePath, const QString &address, int portHint,
                                 const QString &peerMachineId)
 {
+    return sendFileWithRelativeDir(filePath, address, portHint, peerMachineId, QString());
+}
+
+bool TransferContext::sendFolder(const QString &folderPath, const QString &address, int portHint,
+                                  const QString &peerMachineId)
+{
+    const QUrl url(folderPath);
+    const QString localPath = url.isLocalFile() ? url.toLocalFile() : folderPath;
+
+    const QFileInfo rootInfo(localPath);
+    if (!rootInfo.exists() || !rootInfo.isDir()) {
+        emit transferRejected(tr("Dossier introuvable : %1").arg(localPath));
+        return false;
+    }
+
+    // Le nom du dossier choisi devient la racine recreee cote reception
+    // (voir relativeDirPath dans TransferService::encodeHeader()), pour
+    // que le destinataire retrouve la meme arborescence que celle
+    // envoyee plutot que son seul contenu deverse a plat.
+    const QString rootName = rootInfo.fileName();
+    const QDir rootDir(localPath);
+
+    QDirIterator it(localPath, QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    bool anyQueued = false;
+    while (it.hasNext()) {
+        const QString absoluteFilePath = it.next();
+        const QString relativeFromRoot = rootDir.relativeFilePath(absoluteFilePath);
+        const QString relativeDirOfFile = QFileInfo(relativeFromRoot).path();
+        const QString relativeDirPath = (relativeDirOfFile == QLatin1String("."))
+            ? rootName
+            : rootName + QLatin1Char('/') + relativeDirOfFile;
+
+        if (sendFileWithRelativeDir(absoluteFilePath, address, portHint, peerMachineId, relativeDirPath)) {
+            anyQueued = true;
+        }
+    }
+
+    if (!anyQueued) {
+        emit transferRejected(tr("Aucun fichier n'a pu être envoyé depuis %1").arg(rootName));
+    }
+    return anyQueued;
+}
+
+bool TransferContext::sendFileWithRelativeDir(const QString &filePath, const QString &address, int portHint,
+                                               const QString &peerMachineId, const QString &relativeDirPath)
+{
     if (!m_transferManager) {
         emit transferRejected(tr("Le service de transfert n'est pas disponible."));
         return false;
@@ -229,7 +275,7 @@ bool TransferContext::sendFile(const QString &filePath, const QString &address, 
     m_pendingSendPorts[fileName].append(static_cast<int>(port));
 
     const bool started = m_transferManager->sendFile(host, port, localPath, senderUuid, recipientUuid,
-                                                       peerMachineId);
+                                                       peerMachineId, relativeDirPath);
     if (!started) {
         QStringList &pending = m_pendingSendFilePaths[fileName];
         pending.removeOne(localPath);

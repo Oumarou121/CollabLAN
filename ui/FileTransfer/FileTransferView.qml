@@ -69,6 +69,7 @@ Item {
     property var context: (typeof transferContext !== "undefined") ? transferContext : null
 
     property var selectedFilePaths: []
+    property string selectedFolderPath: ""
     property var selectedRecipients: []
 
     function isRecipientSelected(machineId) {
@@ -393,6 +394,16 @@ Item {
                         paths.push(selectedFiles[i].toString())
                     }
                     root.selectedFilePaths = paths
+                    root.selectedFolderPath = ""
+                }
+            }
+
+            FolderDialog {
+                id: sendFolderDialog
+                title: qsTr("Choisir un dossier à envoyer")
+                onAccepted: {
+                    root.selectedFolderPath = selectedFolder.toString()
+                    root.selectedFilePaths = []
                 }
             }
 
@@ -636,6 +647,7 @@ Item {
                             paths.push(drop.urls[i].toString())
                         }
                         root.selectedFilePaths = paths
+                        root.selectedFolderPath = ""
                     }
                 }
             }
@@ -672,13 +684,15 @@ Item {
                             Layout.fillWidth: true
                             text: sendDropArea.containsDrag
                                   ? qsTr("Déposez le(s) fichier(s) ici")
-                                  : (root.selectedFilePaths.length === 1
-                                     ? root.fileNameFromPath(root.selectedFilePaths[0])
-                                     : (root.selectedFilePaths.length > 1
-                                        ? qsTr("%1 fichiers sélectionnés").arg(root.selectedFilePaths.length)
-                                        : qsTr("Sélectionner ou déposer un ou plusieurs fichiers...")))
+                                  : (root.selectedFolderPath.length > 0
+                                     ? qsTr("Dossier : %1").arg(root.fileNameFromPath(root.selectedFolderPath))
+                                     : (root.selectedFilePaths.length === 1
+                                        ? root.fileNameFromPath(root.selectedFilePaths[0])
+                                        : (root.selectedFilePaths.length > 1
+                                           ? qsTr("%1 fichiers sélectionnés").arg(root.selectedFilePaths.length)
+                                           : qsTr("Sélectionner ou déposer un ou plusieurs fichiers..."))))
                             color: sendDropArea.containsDrag ? Theme.primary
-                                   : (root.selectedFilePaths.length > 0 ? Theme.text : Theme.textTertiary)
+                                   : (root.selectedFilePaths.length > 0 || root.selectedFolderPath.length > 0 ? Theme.text : Theme.textTertiary)
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: Theme.fontFamily
                             elide: Text.ElideMiddle
@@ -692,6 +706,22 @@ Item {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 acceptedButtons: Qt.NoButton
+                            }
+                        }
+
+                        Label {
+                            text: qsTr("DOSSIER")
+                            color: Theme.primary
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.weight: Font.Medium
+                            font.family: Theme.fontFamily
+                            font.letterSpacing: 0.3
+
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.margins: -6
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: sendFolderDialog.open()
                             }
                         }
 
@@ -850,7 +880,7 @@ Item {
                     Layout.preferredWidth: 104
                     Layout.preferredHeight: 34
                     radius: Theme.radiusSmall
-                    readonly property bool sendEnabled: root.selectedFilePaths.length > 0
+                    readonly property bool sendEnabled: (root.selectedFilePaths.length > 0 || root.selectedFolderPath.length > 0)
                                                          && root.selectedRecipients.length > 0 && root.context !== null
                     color: sendEnabled ? (sendButtonArea.containsMouse ? Theme.primaryHover : Theme.primary)
                                         : Theme.surface
@@ -884,30 +914,40 @@ Item {
                         onClicked: {
                             if (!root.context || root.selectedRecipients.length === 0) return
 
-                            // Boucle destinataires x fichiers : chaque
-                            // combinaison est un appel sendFile() distinct,
-                            // chacun mis en file cote TransferService pour
-                            // sa propre destination -- aucun changement
-                            // backend necessaire pour le multi-destinataires,
-                            // comme pour le multi-fichiers.
+                            // Boucle destinataires x (fichiers ou dossier) :
+                            // chaque combinaison est un appel sendFile()/
+                            // sendFolder() distinct, chacun mis en file cote
+                            // TransferService pour sa propre destination --
+                            // aucun changement backend necessaire pour le
+                            // multi-destinataires, comme pour le multi-fichiers.
                             let failedCount = 0
                             let totalAttempts = 0
+
                             for (let r = 0; r < root.selectedRecipients.length; ++r) {
                                 const recipient = root.selectedRecipients[r]
-                                for (let i = 0; i < root.selectedFilePaths.length; ++i) {
+
+                                if (root.selectedFolderPath.length > 0) {
                                     totalAttempts++
-                                    const ok = root.context.sendFile(root.selectedFilePaths[i], recipient.address, recipient.port, recipient.machineId)
+                                    const ok = root.context.sendFolder(root.selectedFolderPath, recipient.address, recipient.port, recipient.machineId)
                                     if (!ok) failedCount++
+                                } else {
+                                    for (let i = 0; i < root.selectedFilePaths.length; ++i) {
+                                        totalAttempts++
+                                        const ok = root.context.sendFile(root.selectedFilePaths[i], recipient.address, recipient.port, recipient.machineId)
+                                        if (!ok) failedCount++
+                                    }
                                 }
                             }
 
                             if (failedCount === 0) {
                                 root.selectedFilePaths = []
+                                root.selectedFolderPath = ""
                             } else if (failedCount === totalAttempts) {
                                 errorBanner.show(qsTr("Impossible d'envoyer le(s) fichier(s)."))
                             } else {
                                 errorBanner.show(qsTr("%1 envoi(s) sur %2 ont échoué.").arg(failedCount).arg(totalAttempts))
                                 root.selectedFilePaths = []
+                                root.selectedFolderPath = ""
                             }
                         }
                     }
