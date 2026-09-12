@@ -1,7 +1,13 @@
 <RCC>
     <qresource prefix="/sounds">
-        <file alias="message.wav">Sounds/message.wav</file>
-        <file alias="transfer.wav">Sounds/transfer.wav</file>
-        <file alias="call.wav">Sounds/call.wav</file>
+        <file alias="message_soft.wav">Sounds/message_soft.wav</file>
+        <file alias="message_pop.wav">Sounds/message_pop.wav</file>
+        <file alias="message_bell.wav">Sounds/message_bell.wav</file>
+        <file alias="transfer_rising.wav">Sounds/transfer_rising.wav</file>
+        <file alias="transfer_ding.wav">Sounds/transfer_ding.wav</file>
+        <file alias="transfer_done.wav">Sounds/transfer_done.wav</file>
+        <file alias="call_classic.wav">Sounds/call_classic.wav</file>
+        <file alias="call_soft.wav">Sounds/call_soft.wav</file>
+        <file alias="call_upbeat.wav">Sounds/call_upbeat.wav</file>
     </qresource>
 </RCC>

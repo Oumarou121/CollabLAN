@@ -11,6 +11,70 @@
 
 namespace services {
 
+namespace {
+// Identifiants de variantes disponibles par categorie, dans l'ordre
+// d'affichage voulu pour SettingsView. Le premier de chaque liste est la
+// valeur par defaut utilisee si aucun reglage n'est encore enregistre (ou
+// si une valeur invalide/obsolete est trouvee dans QSettings).
+QStringList variantsFor(AudioService::EventType type)
+{
+    switch (type) {
+    case AudioService::EventType::Message:
+        return {QStringLiteral("soft"), QStringLiteral("pop"), QStringLiteral("bell")};
+    case AudioService::EventType::Transfer:
+        return {QStringLiteral("rising"), QStringLiteral("ding"), QStringLiteral("done")};
+    case AudioService::EventType::Call:
+        return {QStringLiteral("classic"), QStringLiteral("soft"), QStringLiteral("upbeat")};
+    }
+    return {};
+}
+
+QString prefixFor(AudioService::EventType type)
+{
+    switch (type) {
+    case AudioService::EventType::Message:  return QStringLiteral("message");
+    case AudioService::EventType::Transfer: return QStringLiteral("transfer");
+    case AudioService::EventType::Call:     return QStringLiteral("call");
+    }
+    return QString();
+}
+
+QString settingsKeyFor(AudioService::EventType type)
+{
+    switch (type) {
+    case AudioService::EventType::Message:  return QStringLiteral("audio/messageSound");
+    case AudioService::EventType::Transfer: return QStringLiteral("audio/transferSound");
+    case AudioService::EventType::Call:     return QStringLiteral("audio/callSound");
+    }
+    return QString();
+}
+} // namespace
+
+QString AudioService::resourcePathFor(EventType type, const QString &variantId)
+{
+    return QStringLiteral(":/sounds/%1_%2.wav").arg(prefixFor(type), variantId);
+}
+
+QString AudioService::soundKey(EventType type, const QString &variantId)
+{
+    return prefixFor(type) + QLatin1Char(':') + variantId;
+}
+
+QString AudioService::currentVariant(EventType type) const
+{
+    switch (type) {
+    case EventType::Message:  return m_messageSound;
+    case EventType::Transfer: return m_transferSound;
+    case EventType::Call:     return m_callSound;
+    }
+    return QString();
+}
+
+QStringList AudioService::soundVariants(services::AudioService::EventType type) const
+{
+    return variantsFor(type);
+}
+
 AudioService::AudioService(QObject *parent)
     : QObject(parent)
 {
@@ -23,24 +87,29 @@ AudioService::AudioService(QObject *parent)
         QSettings settings;
         m_soundEnabled = settings.value(QStringLiteral("audio/soundEnabled"), true).toBool();
         m_volume = qBound(0.0, settings.value(QStringLiteral("audio/volume"), 1.0).toReal(), 1.0);
+
+        // Chaque categorie propose 3 variantes de son au choix (issue
+        // "choix du son") ; on valide la valeur enregistree contre la
+        // liste actuelle pour ne jamais se retrouver avec un identifiant
+        // obsolete (ex. ancien reglage d'une version anterieure) qui ne
+        // correspondrait a aucun son charge.
+        auto loadVariant = [&settings](EventType type) {
+            const QStringList valid = variantsFor(type);
+            const QString stored = settings.value(settingsKeyFor(type), valid.first()).toString();
+            return valid.contains(stored) ? stored : valid.first();
+        };
+        m_messageSound = loadVariant(EventType::Message);
+        m_transferSound = loadVariant(EventType::Transfer);
+        m_callSound = loadVariant(EventType::Call);
     }
 
-    // Chargement des sons par type d'evenement (issue #56). Chaque
-    // QSoundEffect est preload() des la construction pour que la
-    // premiere lecture ne subisse pas le cout du decodage.
-    loadSound(EventType::Message, QStringLiteral(":/sounds/message.wav"));
-    loadSound(EventType::Transfer, QStringLiteral(":/sounds/transfer.wav"));
-    loadSound(EventType::Call, QStringLiteral(":/sounds/call.wav"));
-
-    // Contrairement aux sons message/transfert (notifications ponctuelles,
-    // une seule lecture), la sonnerie d'appel entrant doit se repeter tant
-    // que l'appel n'a pas ete traite (decroche/refuse/raccroche par
-    // l'appelant) - sinon elle ne sonne qu'une fois et l'appel devient
-    // silencieux alors qu'il continue de sonner a l'ecran. La lecture est
-    // arretee explicitement par stopCallSound() (cf. Application.cpp, des
-    // que l'etat de l'appel quitte "Ringing").
-    if (QSoundEffect *callEffect = m_sounds.value(EventType::Call)) {
-        callEffect->setLoopCount(QSoundEffect::Infinite);
+    // Precharge les 3 variantes de chaque categorie (issue #56 + choix du
+    // son) : previewSound() doit pouvoir jouer n'importe laquelle
+    // immediatement, pas seulement celle actuellement selectionnee.
+    for (EventType type : {EventType::Message, EventType::Transfer, EventType::Call}) {
+        for (const QString &variantId : variantsFor(type)) {
+            loadSound(type, variantId, resourcePathFor(type, variantId));
+        }
     }
 }
 
@@ -61,27 +130,40 @@ QString AudioService::extractToLocalFile(const QString &resourcePath)
     const QString fileName = QFileInfo(resourcePath).fileName();
     const QString localPath = cacheDir + QLatin1Char('/') + fileName;
 
-    // Ne recopie pas si deja present (evite une ecriture disque a chaque
-    // demarrage) : le contenu embarque dans le binaire ne change pas hors
-    // mise a jour de l'application.
-    if (!QFile::exists(localPath)) {
-        QFile resourceFile(resourcePath);
-        if (!resourceFile.open(QIODevice::ReadOnly)) {
-            qWarning() << "AudioService : ressource introuvable" << resourcePath;
-            return QString();
+    // Ne recopie que si absent OU si le contenu embarque a change (mise a
+    // jour de l'application avec de nouveaux sons) : comparer uniquement
+    // l'existence du fichier local faisait qu'un son mis a jour dans les
+    // ressources restait invisible indefiniment pour une installation
+    // existante, puisque le cache d'une version precedente gardait
+    // toujours la priorite.
+    QFile resourceFile(resourcePath);
+    if (!resourceFile.open(QIODevice::ReadOnly)) {
+        qWarning() << "AudioService : ressource introuvable" << resourcePath;
+        return QString();
+    }
+    const QByteArray resourceData = resourceFile.readAll();
+
+    bool needsWrite = true;
+    if (QFile::exists(localPath)) {
+        QFile existingFile(localPath);
+        if (existingFile.open(QIODevice::ReadOnly)) {
+            needsWrite = existingFile.readAll() != resourceData;
         }
+    }
+
+    if (needsWrite) {
         QFile localFile(localPath);
         if (!localFile.open(QIODevice::WriteOnly)) {
             qWarning() << "AudioService : impossible d'ecrire" << localPath;
             return QString();
         }
-        localFile.write(resourceFile.readAll());
+        localFile.write(resourceData);
     }
 
     return localPath;
 }
 
-void AudioService::loadSound(EventType type, const QString &resourcePath)
+void AudioService::loadSound(EventType type, const QString &variantId, const QString &resourcePath)
 {
     const QString localPath = extractToLocalFile(resourcePath);
     const QUrl source = localPath.isEmpty() ? QUrl(resourcePath) : QUrl::fromLocalFile(localPath);
@@ -98,7 +180,7 @@ void AudioService::loadSound(EventType type, const QString &resourcePath)
         }
     });
 
-    m_sounds.insert(type, effect);
+    m_sounds.insert(soundKey(type, variantId), effect);
 }
 
 void AudioService::setSoundEnabled(bool enabled)
@@ -123,26 +205,67 @@ void AudioService::setVolume(qreal volume)
     emit volumeChanged();
 }
 
+void AudioService::setMessageSound(const QString &variantId)
+{
+    if (m_messageSound == variantId || !variantsFor(EventType::Message).contains(variantId))
+        return;
+    m_messageSound = variantId;
+    QSettings().setValue(settingsKeyFor(EventType::Message), m_messageSound);
+    emit messageSoundChanged();
+}
+
+void AudioService::setTransferSound(const QString &variantId)
+{
+    if (m_transferSound == variantId || !variantsFor(EventType::Transfer).contains(variantId))
+        return;
+    m_transferSound = variantId;
+    QSettings().setValue(settingsKeyFor(EventType::Transfer), m_transferSound);
+    emit transferSoundChanged();
+}
+
+void AudioService::setCallSound(const QString &variantId)
+{
+    if (m_callSound == variantId || !variantsFor(EventType::Call).contains(variantId))
+        return;
+    m_callSound = variantId;
+    QSettings().setValue(settingsKeyFor(EventType::Call), m_callSound);
+    emit callSoundChanged();
+}
+
 void AudioService::playSound(services::AudioService::EventType type)
 {
     if (!m_soundEnabled) {
         return;
     }
 
-    auto it = m_sounds.constFind(type);
-    if (it == m_sounds.constEnd()) {
-        qWarning() << "AudioService : aucun son enregistre pour ce type d'evenement";
+    QSoundEffect *effect = m_sounds.value(soundKey(type, currentVariant(type)));
+    if (!effect || effect->status() == QSoundEffect::Error) {
         return;
     }
 
-    QSoundEffect *effect = it.value();
-    if (effect->status() == QSoundEffect::Error) {
-        return;
-    }
+    // Seule la sonnerie d'appel doit boucler tant que l'appel n'est pas
+    // traite ; previewSound() peut avoir laisse loopCount a 1 sur ce meme
+    // effet lors d'une ecoute prealable, donc on le reimpose explicitement
+    // ici a chaque lecture reelle plutot qu'une seule fois a la creation.
+    effect->setLoopCount(type == EventType::Call ? QSoundEffect::Infinite : 1);
 
     // QSoundEffect::play() est asynchrone : la lecture est geree par le
     // backend audio de Qt et ne bloque jamais le thread appelant (donc
     // pas de gel de l'UI, cf. criteres d'acceptation de l'issue #56).
+    effect->play();
+}
+
+void AudioService::previewSound(services::AudioService::EventType type, const QString &variantId)
+{
+    // Ecoute volontaire d'une variante avant de la choisir : jouee une
+    // seule fois (jamais en boucle, meme pour "call") et sans tenir
+    // compte de soundEnabled, pour qu'on puisse comparer les sons meme
+    // interrupteur "Sons actives" desactive.
+    QSoundEffect *effect = m_sounds.value(soundKey(type, variantId));
+    if (!effect || effect->status() == QSoundEffect::Error) {
+        return;
+    }
+    effect->setLoopCount(1);
     effect->play();
 }
 
@@ -163,9 +286,9 @@ void AudioService::playCallSound()
 
 void AudioService::stopCallSound()
 {
-    auto it = m_sounds.constFind(EventType::Call);
-    if (it != m_sounds.constEnd()) {
-        it.value()->stop();
+    QSoundEffect *effect = m_sounds.value(soundKey(EventType::Call, currentVariant(EventType::Call)));
+    if (effect) {
+        effect->stop();
     }
 }
 

@@ -615,10 +615,13 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                     m_audioService->playMessageSound();
                 } else if (category == QStringLiteral("transfer")) {
                     m_audioService->playTransferSound();
-                } else if (category == QStringLiteral("folder")) {
-                    // Partage de dossier ET revocation d'acces : meme son que
-                    // "message" (aucun son dedie "folder" n'existe dans
-                    // AudioService pour l'instant).
+                } else if (category == QStringLiteral("folder") || category == QStringLiteral("group")) {
+                    // Partage/revocation de dossier ET creation de groupe : meme
+                    // son que "message" (aucun son dedie n'existe pour ces
+                    // categories dans AudioService pour l'instant). CORRECTIF :
+                    // "group" n'etait rattache a aucune branche ici, donc les
+                    // notifications "Nouveau groupe" affichaient un toast mais
+                    // ne jouaient jamais aucun son.
                     m_audioService->playMessageSound();
                 }
                 // "connection"/"disconnection" : toast silencieux (pas de son

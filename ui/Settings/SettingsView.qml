@@ -195,12 +195,15 @@ Item {
                     }
                 }
 
-                // --- Notifications & sons -----------------------------------
+                // --- Notifications -------------------------------------------
+                // Reorganisation : une carte par sujet (Notifications / Sons /
+                // Son par categorie) plutot qu'une seule carte melangeant les
+                // trois, pour rester scannable en un coup d'oeil.
                 SettingsSectionCard {
                     Layout.fillWidth: true
                     icon: "\uf0f3"
-                    title: qsTr("Notifications & sons")
-                    subtitle: qsTr("Contrôlez les alertes affichées et les sons joués lors des événements (messages, transferts, appels...).")
+                    title: qsTr("Notifications")
+                    subtitle: qsTr("Contrôlez les alertes affichées pour les nouveaux messages, transferts et connexions.")
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -230,16 +233,18 @@ Item {
                             onCheckedChanged: settingsModel.enableNotifications = checked
                         }
                     }
+                }
 
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 1
-                        color: Theme.border
-                    }
+                // --- Sons : activation + volume --------------------------------
+                SettingsSectionCard {
+                    Layout.fillWidth: true
+                    icon: "\uf028"
+                    title: qsTr("Sons")
+                    subtitle: qsTr("Activez les sons et réglez leur volume.")
 
-                    // --- Sons (audioService : switch + volume, seule source
-                    // de verite - anciennement dupliquee avec une case a
-                    // cocher settingsModel.enableSounds qui ne pilotait rien) --
+                    // (audioService : switch + volume, seule source de verite -
+                    // anciennement dupliquee avec une case a cocher
+                    // settingsModel.enableSounds qui ne pilotait rien)
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: Theme.spacingMedium
@@ -316,8 +321,239 @@ Item {
                                 }
                             }
                         }
+
                     }
                 }
+
+                // --- Son par categorie (3 variantes chacune) --------------------
+                // Sa propre carte : c'est un choix (quel son) distinct de
+                // l'interrupteur general "Sons actives" de la carte precedente,
+                // donc plus facile a retrouver separement. Design maquette
+                // validee : icone + selecteur segmente "pilule" + bouton
+                // d'ecoute separe. Un clic sur une option selectionne la
+                // variante (persistee via audioService.set*Sound, cf.
+                // AudioService.cpp) ; le bouton lecteur joue un apercu sans
+                // changer la selection courante (previewSound, ignore
+                // soundEnabled pour permettre l'ecoute meme interrupteur
+                // desactive).
+                SettingsSectionCard {
+                    Layout.fillWidth: true
+                    icon: "\uf001"
+                    title: qsTr("Son par catégorie")
+                    subtitle: qsTr("Choisissez le son joué pour chaque type d'événement, et écoutez-le avant de valider.")
+
+                    // Regroupes dans un Item neutre : SettingsSectionCard expose
+                    // sa propriete par defaut via ".children" (Item uniquement),
+                    // alors que FontLoader et Component ne sont pas des Item -
+                    // en enfants directs de la carte ca fait planter le
+                    // chargement QML ("Cannot assign ... to list property
+                    // content"). Un Item wrapper utilise "data" (accepte tout
+                    // QObject) et n'affecte pas la mise en page (taille 0x0).
+                    Item {
+                        FontLoader {
+                            id: soundIconFont
+                            source: "../Assets/fonts/fontawesome-webfont.ttf"
+                        }
+
+                        Component {
+                            id: soundCategoryRow
+
+                            RowLayout {
+                                property string categoryIcon: ""
+                                property string categoryLabel: ""
+                                property var eventType
+                                property var variantLabels: ({})
+                                property string currentValue: ""
+                                property var onSelect: function(id) {}
+
+                                Layout.fillWidth: true
+                                Layout.topMargin: Theme.spacingXs
+                                Layout.bottomMargin: Theme.spacingXs
+                                spacing: Theme.spacingMedium
+
+                                Rectangle {
+                                    Layout.preferredWidth: 32
+                                    Layout.preferredHeight: 32
+                                    radius: Theme.radiusSmall
+                                    color: Theme.surfaceAlt
+
+                                    Label {
+                                        anchors.centerIn: parent
+                                        text: categoryIcon
+                                        font.family: soundIconFont.name
+                                        font.pixelSize: 14
+                                        color: Theme.textSecondary
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Theme.spacingXs
+
+                                    Label {
+                                        text: categoryLabel
+                                        color: Theme.text
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.family: Theme.fontFamily
+                                    }
+
+                                    // Selecteur segmente "pilule" : un seul fond
+                                    // arrondi contenant les 3 options, l'option
+                                    // active se detache avec la couleur d'accent.
+                                    Rectangle {
+                                        Layout.preferredHeight: 30
+                                        Layout.preferredWidth: pillRow.implicitWidth + 4
+                                        radius: Theme.radiusPill
+                                        color: Theme.surfaceAlt
+
+                                        RowLayout {
+                                            id: pillRow
+                                            anchors.centerIn: parent
+                                            spacing: 2
+
+                                            Repeater {
+                                                model: (typeof audioService !== "undefined") ? audioService.soundVariants(eventType) : []
+
+                                                Rectangle {
+                                                    id: segment
+                                                    readonly property bool selected: modelData === currentValue
+                                                    Layout.preferredHeight: 26
+                                                    Layout.preferredWidth: segmentLabel.implicitWidth + 20
+                                                    radius: Theme.radiusPill
+                                                    color: selected ? Theme.primary : "transparent"
+
+                                                    Label {
+                                                        id: segmentLabel
+                                                        anchors.centerIn: parent
+                                                        text: variantLabels[modelData] || modelData
+                                                        font.pixelSize: Theme.fontSizeCaption
+                                                        font.family: Theme.fontFamily
+                                                        font.weight: segment.selected ? Font.Medium : Font.Normal
+                                                        color: segment.selected ? Theme.primaryText : Theme.textSecondary
+                                                    }
+
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: onSelect(modelData)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.preferredWidth: 30
+                                    Layout.preferredHeight: 30
+                                    radius: 15
+                                    color: Theme.surface
+                                    border.width: 1
+                                    border.color: Theme.border
+
+                                    Label {
+                                        anchors.centerIn: parent
+                                        anchors.horizontalCenterOffset: 1
+                                        text: "\u25B6"
+                                        font.pixelSize: Theme.fontSizeCaption
+                                        color: Theme.text
+                                    }
+
+                                    MouseArea {
+                                        id: previewArea
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        hoverEnabled: true
+                                        onClicked: {
+                                            if (typeof audioService !== "undefined")
+                                                audioService.previewSound(eventType, currentValue)
+                                        }
+                                    }
+                                    ToolTip.visible: previewArea.containsMouse
+                                    ToolTip.text: qsTr("Écouter")
+                                }
+                            }
+                        }
+                    }
+
+                        Loader {
+                            sourceComponent: soundCategoryRow
+                            Layout.fillWidth: true
+                            onLoaded: {
+                                item.categoryIcon = "\uf075" /* fa-comment */
+                                item.categoryLabel = qsTr("Message")
+                                item.eventType = 0 /* AudioService.EventType.Message */
+                                item.variantLabels = ({
+                                    "soft": qsTr("Douce"),
+                                    "pop": qsTr("Pop"),
+                                    "bell": qsTr("Clochette")
+                                })
+                                item.currentValue = Qt.binding(function() {
+                                    return (typeof audioService !== "undefined") ? audioService.messageSound : ""
+                                })
+                                item.onSelect = function(id) {
+                                    if (typeof audioService !== "undefined")
+                                        audioService.messageSound = id
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 1
+                            color: Theme.background
+                        }
+
+                        Loader {
+                            sourceComponent: soundCategoryRow
+                            Layout.fillWidth: true
+                            onLoaded: {
+                                item.categoryIcon = "\uf0ec" /* fa-exchange */
+                                item.categoryLabel = qsTr("Transfert")
+                                item.eventType = 1 /* AudioService.EventType.Transfer */
+                                item.variantLabels = ({
+                                    "rising": qsTr("Montant"),
+                                    "ding": qsTr("Ding"),
+                                    "done": qsTr("Terminé")
+                                })
+                                item.currentValue = Qt.binding(function() {
+                                    return (typeof audioService !== "undefined") ? audioService.transferSound : ""
+                                })
+                                item.onSelect = function(id) {
+                                    if (typeof audioService !== "undefined")
+                                        audioService.transferSound = id
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 1
+                            color: Theme.background
+                        }
+
+                        Loader {
+                            sourceComponent: soundCategoryRow
+                            Layout.fillWidth: true
+                            onLoaded: {
+                                item.categoryIcon = "\uf095" /* fa-phone */
+                                item.categoryLabel = qsTr("Appel")
+                                item.eventType = 2 /* AudioService.EventType.Call */
+                                item.variantLabels = ({
+                                    "classic": qsTr("Classique"),
+                                    "soft": qsTr("Douce"),
+                                    "upbeat": qsTr("Rythmée")
+                                })
+                                item.currentValue = Qt.binding(function() {
+                                    return (typeof audioService !== "undefined") ? audioService.callSound : ""
+                                })
+                                item.onSelect = function(id) {
+                                    if (typeof audioService !== "undefined")
+                                        audioService.callSound = id
+                                }
+                            }
+                        }
+                    }
 
                 // --- Ports reseau (reserve aux administrateurs) -------------
                 SettingsSectionCard {
