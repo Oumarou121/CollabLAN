@@ -447,11 +447,9 @@ Item {
         onOpened: {
             nameField.text = ""
             createDialog.step = 1
-            // Propose le repertoire de partage par defaut configure dans
-            // Parametres (settingsModel.defaultSharedFolderPath), sinon
-            // aucune selection (comportement precedent).
-            localPath = (typeof settingsModel !== "undefined" && settingsModel && settingsModel.defaultSharedFolderPath.length > 0)
-                        ? settingsModel.defaultSharedFolderPath : ""
+            // Le champ localPath reste vide par defaut : l'utilisateur doit
+            // choisir explicitement un dossier via le selecteur.
+            localPath = ""
             allowWriteCheckBox.checked = true
             excludePatternsField.text = ""
             reloadUsers()
