@@ -10,7 +10,7 @@ on:
       target:
         description: "Plateforme(s) à builder"
         required: true
-        default: windows
+        default: all
         type: choice
         options:
           - all
@@ -104,10 +104,13 @@ jobs:
         run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
 
       # --- Déploiement des dépendances Qt à côté de l'exécutable ---
+      # --qmldir permet à windeployqt de scanner les imports QML réellement
+      # utilisés (ex: QtQuick.Controls) et de déployer les bons plugins,
+      # sinon l'appli plante au lancement avec "plugin ... non trouvé".
       - name: Deploy Qt runtime (Windows)
         if: runner.os == 'Windows'
         shell: bash
-        run: windeployqt --release build/app/LocaLink.exe
+        run: windeployqt --release --qmldir ui build/app/LocaLink.exe
 
       # windeployqt ne copie que les DLL Qt : il faut copier les DLL
       # OpenSSL (installées par choco) à côté de l'exécutable, sinon
@@ -146,7 +149,7 @@ jobs:
       - name: Deploy Qt runtime (macOS)
         if: runner.os == 'macOS'
         shell: bash
-        run: macdeployqt build/app/LocaLink.app -dmg
+        run: macdeployqt build/app/LocaLink.app -qmldir=ui -dmg
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
