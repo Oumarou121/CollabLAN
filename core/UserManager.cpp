@@ -311,6 +311,32 @@ bool UserManager::setStatus(int userId, models::UserStatus status)
     return ok;
 }
 
+bool UserManager::resetPassword(int userId, const QString &newPassword)
+{
+    if (newPassword.size() < kMinPasswordLength) {
+        m_lastError = UserManagerError::InvalidPassword;
+        return false;
+    }
+
+    auto user = m_userRepository.findById(userId);
+    if (!user.has_value()) {
+        m_lastError = UserManagerError::UserNotFound;
+        return false;
+    }
+
+    const QString salt = PasswordHasher::generateSalt();
+    user->setPasswordSalt(salt);
+    user->setPasswordHash(PasswordHasher::hash(newPassword, salt));
+    user->setUpdatedAt(QDateTime::currentDateTimeUtc());
+
+    const bool ok = m_userRepository.update(*user);
+    m_lastError = ok ? UserManagerError::None : UserManagerError::DatabaseError;
+    if (ok) {
+        emit userUpdated(*user);
+    }
+    return ok;
+}
+
 std::optional<models::UserStatus> UserManager::status(int userId) const
 {
     const auto user = m_userRepository.findById(userId);

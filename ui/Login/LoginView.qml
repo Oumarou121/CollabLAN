@@ -302,9 +302,9 @@ Item {
             Rectangle {
                 id: formCard
                 anchors.centerIn: parent
-                width: Math.min(420, parent.width - Theme.spacingXl * 2)
+                width: Math.min(460, parent.width - Theme.spacingXl * 2)
                 height: formColumn.implicitHeight + Theme.spacingXl * 2.2
-                radius: Theme.radiusMedium + 4
+                radius: Theme.radiusLarge
                 color: Theme.darkMode ? "#1C232D" : "#FFFFFF"
                 border.width: 1
                 border.color: root.borderCol
@@ -424,9 +424,17 @@ Item {
                 }
 
                 RowLayout {
-                    visible: errorLabel.text.length > 0
-                    Layout.topMargin: Theme.spacingSmall
+                    id: errorRow
+
                     Layout.fillWidth: true
+                    Layout.topMargin: errorLabel.text.length > 0
+                                    ? Theme.spacingSmall
+                                    : 0
+                    Layout.preferredHeight: errorLabel.text.length > 0
+                                            ? implicitHeight
+                                            : 0
+                    visible: errorLabel.text.length > 0
+
                     spacing: Theme.spacingXs
 
                     Rectangle {
@@ -455,7 +463,7 @@ Item {
 
                 Rectangle {
                     id: loginButton
-                    Layout.topMargin: Theme.spacingMedium
+                    Layout.topMargin: Theme.spacingSmall
                     Layout.fillWidth: true
                     Layout.preferredHeight: 44
                     radius: Theme.radiusSmall
@@ -515,19 +523,6 @@ Item {
                     }
                 }
 
-                Label {
-                    Layout.topMargin: Theme.spacingSmall
-                    Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("Mot de passe oublié ?")
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.family: Theme.fontFamily
-                    color: root.blue700
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                    }
-                }
                 }
             }
         }

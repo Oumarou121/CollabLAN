@@ -55,6 +55,33 @@ Item {
     // pendant que l'onglet est actif) plutot que de tout faire reposer sur
     // le binding reactif comme pour electionService.
     property var electionHistoryEntries: []
+    property int passwordResetUserId: -1
+    property string passwordResetUsername: ""
+
+    function liveUserStatus(userName, userUuid) {
+        if (typeof userManager !== "undefined"
+                && userManager.authenticated
+                && userManager.currentUsername === userName) {
+            return "online"
+        }
+
+        if (typeof peersModel !== "undefined" && peersModel) {
+            for (let i = 0; i < peersModel.count; ++i) {
+                const index = peersModel.index(i, 0)
+                const peerUserUuid = peersModel.data(index, Qt.UserRole + 3)
+                if (peerUserUuid === userUuid)
+                    return peersModel.data(index, Qt.UserRole + 4) || "offline"
+            }
+        }
+        return "offline"
+    }
+
+    Timer {
+        interval: 2000
+        running: root.currentTab === 2
+        repeat: true
+        onTriggered: usersGrid.forceLayout()
+    }
 
     function refreshElectionHistory() {
         if (typeof application !== "undefined" && application)
@@ -907,7 +934,7 @@ Item {
 
                         readonly property int columns: width > 900 ? 3 : (width > 560 ? 2 : 1)
                         cellWidth: width / columns
-                        cellHeight: 200
+                        cellHeight: 300
 
                         delegate: Item {
                             width: usersGrid.cellWidth
@@ -978,7 +1005,7 @@ Item {
                                     }
 
                                     Label {
-                                        text: qsTr("Statut : %1").arg(model.status)
+                                        text: qsTr("Statut : %1").arg(root.liveUserStatus(model.name, model.uuid))
                                         font.pixelSize: Theme.fontSizeCaption
                                         font.family: Theme.fontFamily
                                         color: Theme.textTertiary
@@ -986,7 +1013,7 @@ Item {
 
                                     Item { Layout.fillHeight: true }
 
-                                    RowLayout {
+                                    ColumnLayout {
                                         Layout.fillWidth: true
                                         spacing: Theme.spacingSmall
 
@@ -998,7 +1025,19 @@ Item {
                                         }
 
                                         AppButton {
+                                            variant: "secondary"
+                                            fullWidth: true
+                                            text: qsTr("Réinitialiser le mot de passe")
+                                            onClicked: {
+                                                root.passwordResetUserId = model.id
+                                                root.passwordResetUsername = model.name
+                                                resetPasswordDialog.open()
+                                            }
+                                        }
+
+                                        AppButton {
                                             variant: "danger"
+                                            fullWidth: true
                                             text: qsTr("Supprimer")
                                             onClicked: userManagementModel.deleteUser(model.id)
                                         }
@@ -1190,6 +1229,82 @@ ColumnLayout {
                 console.log("Export réussi:", result)
             } else {
                 console.log("Export échoué")
+            }
+        }
+    }
+
+    AppDialog {
+        id: resetPasswordDialog
+        title: qsTr("Réinitialiser le mot de passe")
+        headerIcon: "\uf084"
+        dialogWidth: 400
+        dialogHeight: resetPasswordColumn.implicitHeight + Theme.spacingMedium * 2
+        standardButtons: Dialog.NoButton
+
+        onOpened: {
+            resetPasswordField.text = ""
+            confirmPasswordField.text = ""
+        }
+
+        ColumnLayout {
+            id: resetPasswordColumn
+            width: parent.width
+            spacing: Theme.spacingMedium
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Définir un nouveau mot de passe pour « %1 ». L'ancien mot de passe ne peut pas être affiché.").arg(root.passwordResetUsername)
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeSmall
+                wrapMode: Text.WordWrap
+            }
+
+            AppPasswordField {
+                id: resetPasswordField
+                Layout.fillWidth: true
+                label: qsTr("Nouveau mot de passe")
+                placeholderText: qsTr("4 caractères minimum")
+            }
+
+            AppPasswordField {
+                id: confirmPasswordField
+                Layout.fillWidth: true
+                label: qsTr("Confirmer le mot de passe")
+                placeholderText: qsTr("Répétez le nouveau mot de passe")
+            }
+
+            Label {
+                visible: resetPasswordField.text.length > 0
+                         && resetPasswordField.text !== confirmPasswordField.text
+                text: qsTr("Les mots de passe ne correspondent pas.")
+                color: Theme.error
+                font.pixelSize: Theme.fontSizeCaption
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacingSmall
+
+                Item { Layout.fillWidth: true }
+
+                AppButton {
+                    variant: "ghost"
+                    text: qsTr("Annuler")
+                    onClicked: resetPasswordDialog.close()
+                }
+
+                AppButton {
+                    variant: "primary"
+                    text: qsTr("Réinitialiser")
+                    enabled: resetPasswordField.text.length >= 4
+                             && resetPasswordField.text === confirmPasswordField.text
+                    onClicked: {
+                        if (userManagementModel.resetPassword(root.passwordResetUserId,
+                                                              resetPasswordField.text)) {
+                            resetPasswordDialog.close()
+                        }
+                    }
+                }
             }
         }
     }

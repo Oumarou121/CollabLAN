@@ -132,6 +132,11 @@ public:
     bool changeRole(int userId, bool isAdmin);
 
     /**
+     * @brief Remplace le mot de passe d'un utilisateur sans exposer l'ancien.
+     */
+    bool resetPassword(int userId, const QString &newPassword);
+
+    /**
      * @brief Supprime definitivement un utilisateur (administration).
      */
     bool deleteUser(int userId);

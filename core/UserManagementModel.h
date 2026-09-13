@@ -18,6 +18,7 @@ public:
     enum Roles {
         IdRole = Qt::UserRole + 1,
         NameRole,
+        UuidRole,
         IpAddressRole,
         StatusRole,
         RoleRole,
@@ -36,6 +37,7 @@ public:
     Q_INVOKABLE bool createUser(const QString &name, const QString &password, bool isAdmin);
     Q_INVOKABLE bool deleteUser(int id);
     Q_INVOKABLE bool changeRole(int id, bool isAdmin);
+    Q_INVOKABLE bool resetPassword(int id, const QString &newPassword);
     Q_INVOKABLE bool changeStatus(int id, const QString &status);
 
     /// Noms de tous les utilisateurs charges, dans l'ordre du modele.

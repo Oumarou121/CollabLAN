@@ -30,6 +30,8 @@ QVariant UserManagementModel::data(const QModelIndex &index, int role) const
         return user.id();
     case NameRole:
         return user.name();
+    case UuidRole:
+        return user.uuid();
     case IpAddressRole:
         return user.ipAddress();
     case StatusRole:
@@ -50,6 +52,7 @@ QHash<int, QByteArray> UserManagementModel::roleNames() const
     QHash<int, QByteArray> roles;
     roles[IdRole] = "id";
     roles[NameRole] = "name";
+    roles[UuidRole] = "uuid";
     roles[IpAddressRole] = "ipAddress";
     roles[StatusRole] = "status";
     roles[RoleRole] = "role";
@@ -117,6 +120,17 @@ bool UserManagementModel::changeRole(int id, bool isAdmin)
     }
 
     if (!manager->changeRole(id, isAdmin)) {
+        return false;
+    }
+
+    refresh();
+    return true;
+}
+
+bool UserManagementModel::resetPassword(int id, const QString &newPassword)
+{
+    auto *manager = qobject_cast<UserManager *>(m_userManager);
+    if (!manager || !manager->resetPassword(id, newPassword)) {
         return false;
     }
 
