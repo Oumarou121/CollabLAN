@@ -1,0 +1,123 @@
+name: Build
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+env:
+  QT_VERSION: "6.7.2"
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: LocaLink-windows
+          - os: ubuntu-latest
+            artifact_name: LocaLink-linux
+          - os: macos-latest
+            artifact_name: LocaLink-macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # --- Qt ---
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: qtwebsockets qtmultimedia
+          cache: true
+
+      # --- OpenSSL ---
+      - name: Install OpenSSL (Windows)
+        if: runner.os == 'Windows'
+        run: choco install openssl -y --no-progress
+
+      - name: Install OpenSSL (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+
+      - name: Install OpenSSL (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install openssl@3
+          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      # --- Ninja pour un build homogène sur les 3 OS ---
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@master
+
+      - name: Configure MSVC dev environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # --- Configuration CMake ---
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_TESTS=OFF \
+            ${{ runner.os == 'Windows' && '-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl' || '' }}
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+
+      # --- Déploiement des dépendances Qt à côté de l'exécutable ---
+      - name: Deploy Qt runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: windeployqt --release build/app/LocaLink.exe
+
+      - name: Deploy Qt runtime (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: macdeployqt build/app/LocaLink.app -dmg
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p package
+          cp build/app/LocaLink package/
+          cp -r resources/linux package/ 2>/dev/null || true
+
+      # --- Upload des artefacts ---
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: build/app/*.exe
+
+      - name: Upload full deployed folder (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-full
+          path: build/app/
+
+      - name: Upload artifact (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: package/
+
+      - name: Upload artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: build/app/*.dmg
