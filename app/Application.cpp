@@ -666,7 +666,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             });
     connect(m_transferService, &network::TransferService::transferCompleted,
             this, [this, folderTransferKeys](const QString &transferKey, const QString &filePath) {
-                const bool isFolder = folderTransferKeys->remove(transferKey) > 0;
+                const bool isFolder = folderTransferKeys->remove(transferKey);
                 qDebug() << "[Application] transferCompleted pour transferKey:" << transferKey
                          << "isFolderTransfer (flag fiable transferStarted):" << isFolder
                          << "-- filePath:" << filePath;
@@ -677,7 +677,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             });
     connect(m_transferService, &network::TransferService::transferFailed,
             this, [this, folderTransferKeys](const QString &transferKey, const QString &reason) {
-                if (folderTransferKeys->remove(transferKey) > 0) {
+                if (folderTransferKeys->remove(transferKey)) {
                     return;
                 }
                 m_notificationManager->onTransferFailed(transferKey, reason);

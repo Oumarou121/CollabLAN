@@ -188,14 +188,36 @@ bool VoiceSignalingChannel::isConnected() const
 }
 
 bool VoiceSignalingChannel::sendJson(const QString &type, const QString &sdp, const QString &candidate,
-                                      const QString &mid, const QString &callId)
+                                      const QString &mid, const QString &callId,
+                                      const QString &reason)
 {
+    QWebSocket *targetSocket = nullptr;
+    if (m_outgoingConnected) {
+        targetSocket = m_outgoingSocket;
+    } else if (m_incomingSocket) {
+        targetSocket = m_incomingSocket;
+    }
+
+    return sendJsonToSocket(targetSocket, type, sdp, candidate, mid, callId, reason);
+}
+
+bool VoiceSignalingChannel::sendJsonToSocket(QWebSocket *socket, const QString &type,
+                                              const QString &sdp, const QString &candidate,
+                                              const QString &mid, const QString &callId,
+                                              const QString &reason)
+{
+    if (!socket) {
+        qWarning() << "VoiceSignalingChannel: aucun canal ouvert pour envoyer" << type;
+        return false;
+    }
+
     QJsonObject obj;
     obj[QStringLiteral("type")] = type;
     if (!sdp.isEmpty())       obj[QStringLiteral("sdp")] = sdp;
     if (!candidate.isEmpty()) obj[QStringLiteral("candidate")] = candidate;
     if (!mid.isEmpty())       obj[QStringLiteral("mid")] = mid;
     obj[QStringLiteral("callId")] = callId;
+    if (!reason.isEmpty())    obj[QStringLiteral("reason")] = reason;
     if (m_securityService && m_securityService->isReady()) {
         const QString localFingerprint = m_securityService->identity().fingerprintSha256.toLower();
         if (!localFingerprint.isEmpty()) {
@@ -205,17 +227,7 @@ bool VoiceSignalingChannel::sendJson(const QString &type, const QString &sdp, co
 
     const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 
-    // Priorite au socket sortant s'il est connecte (nous sommes l'appelant),
-    // sinon on repond sur le socket entrant accepte (nous sommes l'appele).
-    if (m_outgoingConnected) {
-        return m_outgoingSocket->sendTextMessage(json) >= 0;
-    }
-    if (m_incomingSocket) {
-        return m_incomingSocket->sendTextMessage(json) >= 0;
-    }
-
-    qWarning() << "VoiceSignalingChannel: aucun canal ouvert pour envoyer" << type;
-    return false;
+    return socket->sendTextMessage(json) >= 0;
 }
 
 bool VoiceSignalingChannel::sendOffer(const QString &sdp, const QString &callId)
@@ -233,9 +245,29 @@ bool VoiceSignalingChannel::sendIceCandidate(const QString &candidate, const QSt
     return sendJson(typeToString(SignalingMessageType::IceCandidate), QString(), candidate, mid, callId);
 }
 
-bool VoiceSignalingChannel::sendHangup(const QString &callId)
+bool VoiceSignalingChannel::sendHangup(const QString &callId, const QString &reason)
 {
-    return sendJson(typeToString(SignalingMessageType::Hangup), QString(), QString(), QString(), callId);
+    return sendJson(typeToString(SignalingMessageType::Hangup), QString(), QString(), QString(), callId, reason);
+}
+
+bool VoiceSignalingChannel::sendHangupToPeer(const QHostAddress &peerAddress,
+                                              const QString &callId, const QString &reason)
+{
+    QWebSocket *targetSocket = nullptr;
+    if (m_incomingSocket && m_incomingSocket->peerAddress().isEqual(peerAddress,
+                                                                      QHostAddress::TolerantConversion)) {
+        targetSocket = m_incomingSocket;
+    } else if (m_outgoingConnected && m_outgoingSocket->peerAddress().isEqual(
+                   peerAddress, QHostAddress::TolerantConversion)) {
+        targetSocket = m_outgoingSocket;
+    }
+
+    if (targetSocket == m_incomingSocket && reason == QStringLiteral("busy")) {
+        targetSocket->setProperty("voiceBusyRejected", true);
+    }
+
+    return sendJsonToSocket(targetSocket, typeToString(SignalingMessageType::Hangup),
+                            QString(), QString(), QString(), callId, reason);
 }
 
 void VoiceSignalingChannel::onServerNewConnection()
@@ -274,6 +306,11 @@ void VoiceSignalingChannel::onServerNewConnection()
     if (m_incomingSocket) {
         // Un seul appel entrant gere a la fois : on refuse les suivants.
         qWarning() << "VoiceSignalingChannel: appel entrant refuse (session deja active)";
+        QJsonObject busyMessage;
+        busyMessage[QStringLiteral("type")] = typeToString(SignalingMessageType::Hangup);
+        busyMessage[QStringLiteral("reason")] = QStringLiteral("busy");
+        socket->sendTextMessage(QString::fromUtf8(
+            QJsonDocument(busyMessage).toJson(QJsonDocument::Compact)));
         socket->close();
         socket->deleteLater();
         return;
@@ -283,18 +320,24 @@ void VoiceSignalingChannel::onServerNewConnection()
     m_incomingSocket->setProperty("voiceAuthorized", tlsAuthorized);
     m_incomingSocket->setProperty("voicePeerConnectedEmitted", tlsAuthorized);
     connect(m_incomingSocket, &QWebSocket::textMessageReceived, this, &VoiceSignalingChannel::onTextMessageReceived);
-    connect(m_incomingSocket, &QWebSocket::disconnected, this, [this]() {
-        qDebug() << "VoiceSignalingChannel: socket entrant deconnecte, erreur:" << m_incomingSocket->errorString();
-        emit peerDisconnected();
-        if (m_incomingSocket) {
-            m_incomingSocket->deleteLater();
+    QWebSocket *incomingSocket = m_incomingSocket;
+    connect(incomingSocket, &QWebSocket::disconnected, this, [this, incomingSocket]() {
+        const bool busyRejected = incomingSocket->property("voiceBusyRejected").toBool();
+        qDebug() << "VoiceSignalingChannel: socket entrant deconnecte, erreur:"
+                 << incomingSocket->errorString()
+                 << "busyRejected:" << busyRejected;
+        if (!busyRejected) {
+            emit peerDisconnected();
+        }
+        if (m_incomingSocket == incomingSocket) {
+            incomingSocket->deleteLater();
             m_incomingSocket = nullptr;
         }
     });
-    connect(m_incomingSocket, &QWebSocket::errorOccurred, this, [this](QAbstractSocket::SocketError error) {
-        qDebug() << "VoiceSignalingChannel: erreur socket entrant:" << error << m_incomingSocket->errorString();
+    connect(incomingSocket, &QWebSocket::errorOccurred, this, [incomingSocket](QAbstractSocket::SocketError error) {
+        qDebug() << "VoiceSignalingChannel: erreur socket entrant:" << error << incomingSocket->errorString();
     });
-    connect(m_incomingSocket, &QWebSocket::sslErrors, this, [this](const QList<QSslError> &errors) {
+    connect(incomingSocket, &QWebSocket::sslErrors, this, [this](const QList<QSslError> &errors) {
         qDebug() << "VoiceSignalingChannel: erreurs SSL sur socket entrant (" << errors.size() << "):";
         for (const QSslError &e : errors) {
             qDebug() << "  -" << e.errorString();
@@ -445,6 +488,7 @@ SignalingMessage VoiceSignalingChannel::parseMessage(const QString &json)
     msg.candidate = obj.value(QStringLiteral("candidate")).toString();
     msg.mid = obj.value(QStringLiteral("mid")).toString();
     msg.callId = obj.value(QStringLiteral("callId")).toString();
+    msg.reason = obj.value(QStringLiteral("reason")).toString();
     msg.certificateFingerprint = obj.value(QStringLiteral("certificate_fingerprint")).toString().toLower();
 
     return msg;

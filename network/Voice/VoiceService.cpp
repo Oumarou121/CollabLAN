@@ -356,7 +356,7 @@ void VoiceService::onSignalingMessage(const SignalingMessage &message, const QHo
         if (m_state != CallState::Idle) {
             // Deja en communication : on ignore les offres concurrentes.
             qDebug() << "VoiceService: offre ignoree (deja en communication)";
-            m_signaling->sendHangup(message.callId);
+            m_signaling->sendHangupToPeer(peerAddress, message.callId, QStringLiteral("busy"));
             return;
         }
         qDebug() << "VoiceService: offre SDP recue, taille:" << message.sdp.length();
@@ -397,6 +397,9 @@ void VoiceService::onSignalingMessage(const SignalingMessage &message, const QHo
         break;
     }
     case SignalingMessageType::Hangup:
+        if (message.reason == QStringLiteral("busy")) {
+            emit errorOccurred(QStringLiteral("La personne est deja en ligne."));
+        }
         teardownSession(QStringLiteral("remote-hangup"));
         break;
     case SignalingMessageType::Unknown:

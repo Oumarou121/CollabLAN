@@ -30,6 +30,7 @@ struct SignalingMessage {
     QString candidate;      ///< Rempli pour IceCandidate (ligne "a=candidate:...").
     QString mid;            ///< Media stream identification, pour IceCandidate.
     QString callId;         ///< Identifiant de session d'appel.
+    QString reason;         ///< Raison d'un Hangup (ex. "busy").
     QString certificateFingerprint; ///< Empreinte SHA-256 annoncee par le pair.
 };
 
@@ -77,7 +78,9 @@ public:
     bool sendOffer(const QString &sdp, const QString &callId);
     bool sendAnswer(const QString &sdp, const QString &callId);
     bool sendIceCandidate(const QString &candidate, const QString &mid, const QString &callId);
-    bool sendHangup(const QString &callId);
+    bool sendHangup(const QString &callId, const QString &reason = QString());
+    bool sendHangupToPeer(const QHostAddress &peerAddress, const QString &callId,
+                          const QString &reason = QString());
 
 signals:
     /// Emis a la reception d'un message de signalisation, quel que soit
@@ -100,7 +103,10 @@ private slots:
 private:
     void configureClientSsl();
     bool sendJson(const QString &type, const QString &sdp, const QString &candidate,
-                  const QString &mid, const QString &callId);
+                  const QString &mid, const QString &callId, const QString &reason = QString());
+    bool sendJsonToSocket(QWebSocket *socket, const QString &type, const QString &sdp,
+                          const QString &candidate, const QString &mid,
+                          const QString &callId, const QString &reason);
     static SignalingMessage parseMessage(const QString &json);
 
     SecurityService *m_securityService = nullptr;
