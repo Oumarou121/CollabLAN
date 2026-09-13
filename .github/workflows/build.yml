@@ -109,6 +109,17 @@ jobs:
         shell: bash
         run: windeployqt --release build/app/LocaLink.exe
 
+      # windeployqt ne copie que les DLL Qt : il faut copier les DLL
+      # OpenSSL (installées par choco) à côté de l'exécutable, sinon
+      # LocaLink.exe échoue au lancement avec "libssl-3-x64.dll introuvable".
+      - name: Copy OpenSSL DLLs (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $opensslBin = "C:\Program Files\OpenSSL-Win64\bin"
+          Get-ChildItem -Path $opensslBin -Filter "libssl-*.dll" | Copy-Item -Destination "build/app"
+          Get-ChildItem -Path $opensslBin -Filter "libcrypto-*.dll" | Copy-Item -Destination "build/app"
+
       - name: Deploy Qt runtime (macOS)
         if: runner.os == 'macOS'
         shell: bash
