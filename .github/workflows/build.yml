@@ -10,7 +10,7 @@ on:
       target:
         description: "Plateforme(s) à builder"
         required: true
-        default: all
+        default: windows
         type: choice
         options:
           - all
@@ -112,13 +112,36 @@ jobs:
       # windeployqt ne copie que les DLL Qt : il faut copier les DLL
       # OpenSSL (installées par choco) à côté de l'exécutable, sinon
       # LocaLink.exe échoue au lancement avec "libssl-3-x64.dll introuvable".
+      # Le chemin d'installation choco varie selon la version du paquet,
+      # donc on cherche les DLL plutôt que de supposer un chemin fixe.
       - name: Copy OpenSSL DLLs (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $opensslBin = "C:\Program Files\OpenSSL-Win64\bin"
-          Get-ChildItem -Path $opensslBin -Filter "libssl-*.dll" | Copy-Item -Destination "build/app"
-          Get-ChildItem -Path $opensslBin -Filter "libcrypto-*.dll" | Copy-Item -Destination "build/app"
+          $searchRoots = @(
+            "C:\Program Files\OpenSSL-Win64",
+            "C:\Program Files\OpenSSL",
+            "C:\ProgramData\chocolatey\lib\openssl",
+            "C:\ProgramData\chocolatey\lib\openssl.light"
+          ) | Where-Object { Test-Path $_ }
+
+          $dlls = Get-ChildItem -Path $searchRoots -Recurse -ErrorAction SilentlyContinue `
+            -Include "libssl-*.dll", "libcrypto-*.dll" |
+            Sort-Object FullName -Unique
+
+          if (-not $dlls) {
+            Write-Error "Aucune DLL OpenSSL (libssl-*/libcrypto-*) trouvée sur le runner."
+            exit 1
+          }
+
+          $seen = @{}
+          foreach ($dll in $dlls) {
+            if (-not $seen.ContainsKey($dll.Name)) {
+              Copy-Item $dll.FullName -Destination "build/app" -Force
+              $seen[$dll.Name] = $true
+              Write-Host "Copié : $($dll.FullName)"
+            }
+          }
 
       - name: Deploy Qt runtime (macOS)
         if: runner.os == 'macOS'
