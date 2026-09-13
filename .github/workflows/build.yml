@@ -96,7 +96,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DBUILD_TESTS=OFF \
-            ${{ runner.os == 'macOS' && '-DCMAKE_MODULE_PATH=${{ github.workspace }}/cmake' || '' }} \
+            ${{ runner.os == 'macOS' && format('-DCMAKE_MODULE_PATH={0}/cmake', github.workspace) || '' }} \
             ${{ runner.os == 'Windows' && '-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl' || '' }}
 
       - name: Build
