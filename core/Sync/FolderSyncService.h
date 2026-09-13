@@ -614,7 +614,17 @@ private:
     // Release 8 — suivi des demandes de fichiers en attente.
     // Clé : "<ownerMachineId>::<fileName>" → PendingFileTransfer
     // (indexé par le basename du fichier tel qu'annoncé par TransferService).
-    QHash<QString, PendingFileTransfer> m_pendingByKey;
+    // CORRECTIF (collision de corrélation) : QMultiHash plutôt que QHash --
+    // un rejeu d'historique (retryPendingBroadcasts() après redémarrage
+    // serveur, cf. m_lastBroadcastOpIdByFolder) peut redemander le MEME
+    // fichier plusieurs fois avant que la première réponse n'arrive. Avec un
+    // QHash simple, la première corrélation (onTransferStarted) effaçait
+    // l'unique entrée de la clé, laissant les demandes suivantes du même
+    // fichier sans correspondance : leur transfert n'était alors jamais
+    // reconnu par isFolderTransfer(), et la notification generique
+    // "Transfert termine" (+ son) s'affichait a tort pour un transfert de
+    // synchronisation de dossier.
+    QMultiHash<QString, PendingFileTransfer> m_pendingByKey;
 
     // Clé : transferKey (UUID) → PendingFileTransfer
     // (construit lors de onTransferStarted pour une corrélation O(1)).
@@ -635,7 +645,11 @@ private:
     // (recipientUuid porte ici le machineId du demandeur, cf. sendFile() appelé
     // avec requesterMachineId en 5e argument -- pas de peerMachineId disponible
     // côté envoi, voir TransferService::onClientSocketConnected().)
-    QHash<QString, QString> m_pendingOutgoingByKey;
+    // CORRECTIF (meme collision que m_pendingByKey ci-dessus, cote sortant) :
+    // QMultiHash pour permettre plusieurs requetes en attente pour le meme
+    // fichier (ex: rejeu d'historique cote demandeur) sans que la premiere
+    // corrélation n'efface la place des suivantes.
+    QMultiHash<QString, QString> m_pendingOutgoingByKey;
     // Clé : transferKey (UUID) → folderUuid, construit lors de onTransferStarted()
     // une fois le transfert sortant corrélé à sa demande.
     QHash<QString, QString> m_activeOutgoingByTransferKey;

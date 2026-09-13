@@ -515,6 +515,7 @@ void FolderSyncService::announceAccessRevoked(qint64 folderId, qint64 userId)
 
 void FolderSyncService::onConnectedToServer()
 {
+    qDebug() << "[FolderSync] ==== Connexion au serveur : envoi folder_hello (debut cycle catchup) ====";
     // Les identifiants SQLite des operations et des acces sont locaux a
     // chaque machine. Ils ne peuvent donc pas servir de curseurs partages
     // entre un client et un serveur : un id local plus eleve ferait ignorer
@@ -744,22 +745,51 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
                 qDebug() << "[FolderSync] folder_op ignoré (motif d'exclusion local) :" << relativePath;
                 break;
             }
+            // CORRECTIF (dossier partagé mais jamais accepté = sans
+            // localPath) : ce garde-fou existait déjà côté catchup
+            // (handleFolderCatchupBatch, "dossier distant sans localPath,
+            // métadonnée seule") mais PAS ici, dans le traitement temps réel
+            // d'un folder_op individuel. Résultat : un dossier simplement
+            // partagé (jamais accepté par l'utilisateur, donc sans
+            // localPath) déclenchait quand même un VRAI telechargement
+            // (requestRemoteFile envoie le folder_file_request sur le
+            // réseau sans condition) dès qu'un pair diffusait un
+            // changement en temps réel sur ce dossier -- notamment au
+            // redémarrage du propriétaire, qui rejoue tout son historique
+            // (cf. m_lastBroadcastOpIdByFolder non persisté). Le problème
+            // n'aurait donc jamais dû se produire pour ce cas précis : un
+            // dossier non accepté ne doit jamais déclencher de transfert
+            // reseau, seulement une mise a jour de metadonnee locale.
             bool needsUpdate = true;
             if (!fileHash.isEmpty()) {
                 const auto files = m_folderManager->getFiles(folder.id());
                 for (const auto &f : files) {
                     if (f.relativePath() == relativePath && f.hash() == fileHash
                         && f.version() >= version) {
-                        needsUpdate = false;
+                        if (folder.localPath().isEmpty()) {
+                            needsUpdate = false;
+                        } else {
+                            const QString expectedAbsPath = QDir::cleanPath(
+                                folder.localPath() + QDir::separator() + relativePath);
+                            needsUpdate = !QFile::exists(expectedAbsPath);
+                        }
                         break;
                     }
                 }
             }
-            if (needsUpdate) {
-                requestRemoteFile(folderUuid, relativePath, machineId,
-                                  folder.id(), folder.localPath(),
-                                  fileHash, version);
+            if (!needsUpdate) {
+                break;
             }
+            if (folder.localPath().isEmpty()) {
+                qDebug() << "[FolderSync] folder_op" << opType << relativePath
+                         << ": dossier partagé mais non accepté (pas de localPath) --"
+                         << "métadonnée seule, aucun telechargement reseau";
+                registerCatchupPlaceholder(folder, relativePath, fileHash, version, machineId);
+                break;
+            }
+            requestRemoteFile(folderUuid, relativePath, machineId,
+                              folder.id(), folder.localPath(),
+                              fileHash, version);
             break;
         }
         // CORRECTIF (course folder_op / folder_access_granted) : un partage
@@ -1046,8 +1076,13 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
                     }
                 }
                 if (!needsUpdate) {
+                    qDebug() << "[FolderSync] catchup : fichier déjà à jour, aucun retéléchargement pour"
+                             << relativePath << "(hash/version identiques, présent sur disque)";
                     break;
                 }
+                qDebug() << "[FolderSync] catchup : retéléchargement déclenché pour" << relativePath
+                         << "-- fileHash annoncé:" << fileHash << "version annoncée:" << version
+                         << "(vide ou absent localement => needsUpdate force a true par defaut)";
                 // Pour les dossiers distants (localPath vide), on ne peut pas
                 // télécharger les fichiers tant qu'un chemin local n'est pas défini.
                 // On crée juste la métadonnée dans SharedFiles (+ l'entrée
@@ -1218,7 +1253,12 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
             targetAddress, requesterPort, absPath, m_machineId, requesterMachineId,
             transferFileName, true);
         if (!ok) {
-            m_pendingOutgoingByKey.remove(pendingKey);
+            // remove(key, value) et non remove(key) : avec QMultiHash,
+            // remove(key) supprimerait TOUTES les demandes en attente pour ce
+            // fichier (y compris d'autres requetes legitimes en file), alors
+            // qu'on ne veut retirer que celle qu'on vient d'inserer juste
+            // au-dessus suite a cet echec d'envoi precis.
+            m_pendingOutgoingByKey.remove(pendingKey, folderUuid);
             auto progressIt = m_sentProgress.find(folderUuid);
             if (progressIt != m_sentProgress.end()) {
                 progressIt.value().filesExpected = qMax(0, progressIt.value().filesExpected - 1);
@@ -1823,6 +1863,8 @@ void FolderSyncService::emitBatchProgress(const QString &folderUuid, bool incomi
 void FolderSyncService::scheduleFolderNotification(const QString &folderUuid)
 {
     m_pendingNotifyCounts[folderUuid] = m_pendingNotifyCounts.value(folderUuid, 0) + 1;
+    qDebug() << "[FolderSync] scheduleFolderNotification pour" << folderUuid
+             << "-- compteur en attente:" << m_pendingNotifyCounts[folderUuid];
 
     QTimer *timer = m_notifyTimers.value(folderUuid, nullptr);
     if (!timer) {

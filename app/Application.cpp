@@ -633,22 +633,55 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // Un transfert termine ou en echec declenche une notification
     // (toast + son "transfert"). Exception : un transfert declenche par la
     // synchronisation d'un dossier partage -- que ce soit une reception ou
-    // un envoi en reponse a un folder_file_request d'un pair, dans les deux
-    // cas m_folderSyncService le sait via isFolderTransfer() -- n'affiche
+    // un envoi en reponse a un folder_file_request d'un pair -- n'affiche
     // PAS sa propre notification, sinon partager un dossier de N fichiers
     // afficherait N toasts (cote destinataire ET cote expediteur). Ces
     // transferts sont regroupes en une seule notification "N fichiers
     // recus" (folderFilesReceived) ou "N fichiers envoyes" (folderFilesSent)
     // via FolderSyncService (cf. plus bas, une fois m_folderSyncService cree).
+    //
+    // CORRECTIF (notifications parasites persistantes malgre le fix
+    // QMultiHash de m_pendingOutgoingByKey) : on utilise ici DIRECTEMENT le
+    // flag isFolderTransfer transmis par TransferService::transferStarted
+    // (connu de maniere fiable a la source, cf. PendingSendJob::
+    // isFolderTransfer / SendState::isFolderTransfer / TransferService.h)
+    // plutot que FolderSyncService::isFolderTransfer(), qui ne fait que
+    // RECONSTRUIRE cette meme information en devinant a partir d'une
+    // correlation "<requesterUuid>::<fileName>" -- fragile par nature
+    // (plusieurs demandes concurrentes pour un meme fichier lors d'un rejeu
+    // d'historique, cf. m_lastBroadcastOpIdByFolder non persiste). Le flag
+    // du fil reseau ne peut jamais se tromper : on le capture ici au
+    // demarrage du transfert et on le consulte/consomme a la fin, sans
+    // dependre d'aucune reconstruction par nom de fichier.
+    auto folderTransferKeys = std::make_shared<QSet<QString>>();
+    connect(m_transferService, &network::TransferService::transferStarted,
+            this, [folderTransferKeys](const QString &transferKey, const QString &/*fileName*/,
+                                        qint64 /*fileSize*/, bool /*incoming*/, qint64 /*resumeOffset*/,
+                                        const QString &/*senderUuid*/, const QString &/*recipientUuid*/,
+                                        const QHostAddress &/*peerAddress*/, const QString &/*peerMachineId*/,
+                                        bool isFolderTransfer) {
+                if (isFolderTransfer) {
+                    folderTransferKeys->insert(transferKey);
+                }
+            });
     connect(m_transferService, &network::TransferService::transferCompleted,
-            this, [this](const QString &transferKey, const QString &filePath) {
-                if (m_folderSyncService && m_folderSyncService->isFolderTransfer(transferKey)) {
+            this, [this, folderTransferKeys](const QString &transferKey, const QString &filePath) {
+                const bool isFolder = folderTransferKeys->remove(transferKey) > 0;
+                qDebug() << "[Application] transferCompleted pour transferKey:" << transferKey
+                         << "isFolderTransfer (flag fiable transferStarted):" << isFolder
+                         << "-- filePath:" << filePath;
+                if (isFolder) {
                     return;
                 }
                 m_notificationManager->onTransferCompleted(transferKey, filePath);
             });
     connect(m_transferService, &network::TransferService::transferFailed,
-            m_notificationManager, &core::NotificationManager::onTransferFailed);
+            this, [this, folderTransferKeys](const QString &transferKey, const QString &reason) {
+                if (folderTransferKeys->remove(transferKey) > 0) {
+                    return;
+                }
+                m_notificationManager->onTransferFailed(transferKey, reason);
+            });
 
     // Initialiser le VoiceService pour les appels vocaux P2P (issues #60/
     // #61/#64) : signalisation WebRTC sur le port de messagerie + 2 (meme
