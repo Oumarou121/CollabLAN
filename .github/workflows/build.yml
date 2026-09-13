@@ -23,7 +23,7 @@ jobs:
             artifact_name: LocaLink-windows
           - os: ubuntu-latest
             artifact_name: LocaLink-linux
-          - os: macos-latest
+          - os: macos-13
             artifact_name: LocaLink-macos
 
     steps:
