@@ -23,23 +23,36 @@ env:
   BUILD_TYPE: Release
 
 jobs:
+  set-matrix:
+    name: Compute build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        run: |
+          WINDOWS='{"os":"windows-latest","key":"windows","artifact_name":"LocaLink-windows"}'
+          LINUX='{"os":"ubuntu-latest","key":"linux","artifact_name":"LocaLink-linux"}'
+          MACOS='{"os":"macos-latest","key":"macos","artifact_name":"LocaLink-macos"}'
+
+          TARGET="${{ github.event.inputs.target }}"
+
+          case "$TARGET" in
+            windows) INCLUDE="[$WINDOWS]" ;;
+            linux)   INCLUDE="[$LINUX]" ;;
+            macos)   INCLUDE="[$MACOS]" ;;
+            *)       INCLUDE="[$WINDOWS,$LINUX,$MACOS]" ;;
+          esac
+
+          echo "matrix={\"include\":$INCLUDE}" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build (${{ matrix.os }})
+    needs: set-matrix
     runs-on: ${{ matrix.os }}
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'all' || github.event.inputs.target == matrix.key
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            key: windows
-            artifact_name: LocaLink-windows
-          - os: ubuntu-latest
-            key: linux
-            artifact_name: LocaLink-linux
-          - os: macos-latest
-            key: macos
-            artifact_name: LocaLink-macos
+      matrix: ${{ fromJson(needs.set-matrix.outputs.matrix) }}
 
     steps:
       - name: Checkout
