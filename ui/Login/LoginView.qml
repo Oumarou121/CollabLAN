@@ -91,8 +91,8 @@ Item {
     // Panneau de marque : bleu profond institutionnel, quasi noir en dark mode.
     readonly property color brandBg: Theme.darkMode ? "#0F1720" : "#1E3A5F"
     readonly property color brandInk: "#F5F7FA"
-    readonly property color brandInkMuted: "#AEC2D4"
-    readonly property color accentSky: "#4FC3F7"
+    readonly property color brandInkMuted: Theme.darkMode ? "#B8B9D6" : "#AEC2D4"
+    readonly property color accentSky: Theme.primary
 
     // Police d'accent embarquee (evite les alea de resolution de "serif"
     // selon les postes / OS constate en test).
@@ -312,7 +312,7 @@ Item {
                 ColumnLayout {
                 id: formColumn
                 anchors.centerIn: parent
-                width: Math.min(380, parent.width - Theme.spacingXl * 2)
+                width: Math.min(360, parent.width - Theme.spacingXl * 2)
                 spacing: Theme.spacingMedium
 
                 // En-tete visible uniquement quand le panneau de marque est
@@ -423,44 +423,7 @@ Item {
                     }
                 }
 
-                RowLayout {
-                    id: errorRow
-
-                    Layout.fillWidth: true
-                    Layout.topMargin: errorLabel.text.length > 0
-                                    ? Theme.spacingSmall
-                                    : 0
-                    Layout.preferredHeight: errorLabel.text.length > 0
-                                            ? implicitHeight
-                                            : 0
-                    visible: errorLabel.text.length > 0
-
-                    spacing: Theme.spacingXs
-
-                    Rectangle {
-                        Layout.preferredWidth: 4
-                        Layout.preferredHeight: errorLabel.implicitHeight
-                        radius: 2
-                        color: root.errorText
-                    }
-
-                    Label {
-                        id: errorLabel
-                        text: ""
-                        color: root.errorText
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: Theme.fontFamily
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
-                    }
-                }
-
-                Label {
-                    visible: errorLabel.text.length === 0
-                    Layout.topMargin: Theme.spacingSmall
-                    Layout.preferredHeight: errorLabel.implicitHeight
-                }
-
+                
                 Rectangle {
                     id: loginButton
                     Layout.topMargin: Theme.spacingSmall
@@ -521,6 +484,45 @@ Item {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: root.attemptLogin()
                     }
+                }
+
+
+                RowLayout {
+                    id: errorRow
+
+                    Layout.fillWidth: true
+                    Layout.topMargin: errorLabel.text.length > 0
+                                    ? Theme.spacingSmall
+                                    : 0
+                    Layout.preferredHeight: errorLabel.text.length > 0
+                                            ? implicitHeight
+                                            : 0
+                    visible: errorLabel.text.length > 0
+
+                    spacing: Theme.spacingXs
+
+                    Rectangle {
+                        Layout.preferredWidth: 4
+                        Layout.preferredHeight: errorLabel.implicitHeight
+                        radius: 2
+                        color: root.errorText
+                    }
+
+                    Label {
+                        id: errorLabel
+                        text: ""
+                        color: root.errorText
+                        font.pixelSize: Theme.fontSizeSmall
+                        font.family: Theme.fontFamily
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                }
+
+                Label {
+                    visible: errorLabel.text.length === 0
+                    Layout.topMargin: Theme.spacingSmall
+                    Layout.preferredHeight: errorLabel.implicitHeight
                 }
 
                 }

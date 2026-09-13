@@ -654,6 +654,76 @@ Item {
                     }
                 }
 
+                // --- Rôle de ce poste (promotion manuelle en serveur) ------
+                SettingsSectionCard {
+                    Layout.fillWidth: true
+                    icon: "\uf233"
+                    title: qsTr("Rôle de ce poste")
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingXs
+
+                        Label {
+                            text: qsTr("Détermine si ce poste fait autorité (Server) ou se connecte à un autre poste (Client).")
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontSizeSmall
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+
+                        RowLayout {
+                            spacing: Theme.spacingSmall
+                            Label { text: qsTr("Rôle actuel :"); color: Theme.textSecondary }
+                            Label {
+                                text: root.election ? root.election.roleLabel : ""
+                                color: Theme.text
+                                font.bold: true
+                            }
+                        }
+
+                        Button {
+                            text: qsTr("Faire de ce poste le serveur")
+                            Layout.preferredHeight: 32
+                            enabled: root.election && root.election.roleLabel !== "SERVER"
+
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: parent.hovered ? Theme.primaryHover : Theme.primary
+                                opacity: parent.enabled ? 1.0 : 0.5
+                            }
+                            contentItem: Text {
+                                text: qsTr("Faire de ce poste le serveur")
+                                color: Theme.primaryText
+                                font.pixelSize: Theme.fontSizeSmall
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            onClicked: promoteToServerDialog.open()
+                        }
+
+                        Label {
+                            text: qsTr("Un seul poste devrait avoir ce rôle. Les autres postes doivent rester en Client.")
+                            color: Theme.textTertiary
+                            font.pixelSize: Theme.fontSizeSmall
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+                    }
+                }
+
+                MessageDialog {
+                    id: promoteToServerDialog
+                    title: qsTr("Faire de ce poste le serveur ?")
+                    text: qsTr("Ce poste va commencer à écouter les connexions des autres. Assure-toi qu'aucun autre poste n'a déjà ce rôle sur le réseau.")
+                    buttons: MessageDialog.Yes | MessageDialog.No
+                    onAccepted: {
+                        if (root.app)
+                            root.app.promoteToServer()
+                    }
+                }
+
                 // --- Etat courant (lecture seule, temps reel) ---------------
                 // Masque : la bascule automatique de serveur ne s'affiche plus
                 // dans les Parametres (demande explicite). Conserve en place,

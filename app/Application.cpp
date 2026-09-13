@@ -1517,6 +1517,23 @@ bool Application::setElectionPriorityWeight(int weight)
     return true;
 }
 
+bool Application::promoteToServer()
+{
+    if (!m_electionService)
+        return false;
+
+    if (m_electionService->role() == models::ServerRole::Server) {
+        return false; // deja serveur officiel : rien a faire
+    }
+
+    // Reutilise le mecanisme existant (nouvel epoch + diffusion
+    // server_promoted(temporary=false)) ; le handler roleChanged deja
+    // branche dans initialize() persiste le role en base et demarre
+    // MessagingServer automatiquement.
+    m_electionService->reclaimAsOfficialServer();
+    return true;
+}
+
 core::NotificationManager *Application::notificationManager() const
 {
     return m_notificationManager;

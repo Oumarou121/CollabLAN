@@ -23,7 +23,7 @@ elseif(APPLE)
     )
 endif()
 
-add_executable(LocaLink
+add_executable(LocaLink WIN32
     main.cpp
     ../ui/qml.qrc
     ${APP_ICON_RESOURCE}

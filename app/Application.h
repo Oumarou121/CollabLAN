@@ -152,6 +152,15 @@ public:
     /// pour qu'elle survive a un redemarrage.
     Q_INVOKABLE bool setElectionPriorityWeight(int weight);
 
+    /// A appeler depuis SettingsView.qml pour faire de CE poste le serveur
+    /// officiel (role Server, non temporaire). Reutilise le meme mecanisme
+    /// que la reprise de main post-panne (ElectionService::reclaimAsOfficialServer,
+    /// section 7.3) : nouvel epoch, diffusion server_promoted(temporary=false).
+    /// electionService()::roleChanged (deja cable dans initialize()) se charge
+    /// ensuite de persister le role en base et de demarrer MessagingServer.
+    /// Ne fait rien si ce poste est deja Server (retourne false).
+    Q_INVOKABLE bool promoteToServer();
+
     // Expose au bootstrap QML le NotificationManager pour les notifications.
     core::NotificationManager *notificationManager() const;
 
