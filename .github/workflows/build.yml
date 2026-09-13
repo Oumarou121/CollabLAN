@@ -6,24 +6,39 @@ on:
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Plateforme(s) à builder"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - windows
+          - linux
+          - macos
 
 env:
-  QT_VERSION: "6.7.2"
+  QT_VERSION: "6.9.1"
   BUILD_TYPE: Release
 
 jobs:
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'all' || github.event.inputs.target == matrix.key
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
+            key: windows
             artifact_name: LocaLink-windows
           - os: ubuntu-latest
+            key: linux
             artifact_name: LocaLink-linux
-          - os: macos-13
+          - os: macos-latest
+            key: macos
             artifact_name: LocaLink-macos
 
     steps:
