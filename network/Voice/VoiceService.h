@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QHostAddress>
+#include <QTimer>
 #include <QString>
 #include <atomic>
 #include <memory>
@@ -106,12 +107,17 @@ private slots:
     void onSignalingPeerDisconnected();
     void onSignalingPeerConnected();
     void onCapturedAudioFrame(const QByteArray &pcm16);
+    void onCallTimeout();
 
 private:
     void setState(CallState newState);
     void createPeerConnection();
     void teardownSession(const QString &reason);
     void wireTrackCallbacks();
+
+    static constexpr int kCallingTimeoutMs = 30'000;
+    static constexpr int kRingingTimeoutMs = 30'000;
+    static constexpr int kConnectingTimeoutMs = 20'000;
 
     SecurityService *m_securityService = nullptr;
     std::unique_ptr<VoiceSignalingChannel> m_signaling;
@@ -121,6 +127,7 @@ private:
     std::shared_ptr<rtc::Track> m_audioTrack;
 
     CallState m_state = CallState::Idle;
+    QTimer m_callTimeout;
     QString m_currentCallId;
     QHostAddress m_peerAddress;
     quint16 m_peerSignalingPort = 0;

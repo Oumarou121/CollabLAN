@@ -56,6 +56,10 @@ VoiceService::VoiceService(SecurityService *securityService, QObject *parent)
     connect(m_audioIo.get(), &VoiceAudioIO::capturedFrame,
             this, &VoiceService::onCapturedAudioFrame);
 
+    m_callTimeout.setSingleShot(true);
+    connect(&m_callTimeout, &QTimer::timeout,
+            this, &VoiceService::onCallTimeout);
+
     m_rtpSsrc = QRandomGenerator::global()->generate();
 }
 
@@ -91,7 +95,35 @@ void VoiceService::setState(CallState newState)
         return;
     }
     m_state = newState;
+
+    switch (newState) {
+    case CallState::Calling:
+        m_callTimeout.start(kCallingTimeoutMs);
+        break;
+    case CallState::Ringing:
+        m_callTimeout.start(kRingingTimeoutMs);
+        break;
+    case CallState::Connecting:
+        m_callTimeout.start(kConnectingTimeoutMs);
+        break;
+    case CallState::Idle:
+    case CallState::Connected:
+    case CallState::Ending:
+        m_callTimeout.stop();
+        break;
+    }
+
     emit stateChanged(m_state);
+}
+
+void VoiceService::onCallTimeout()
+{
+    if (m_state == CallState::Idle || m_state == CallState::Connected) {
+        return;
+    }
+
+    emit errorOccurred(QStringLiteral("L'appel a expire avant d'etre etabli."));
+    teardownSession(QStringLiteral("timeout"));
 }
 
 void VoiceService::createPeerConnection()
