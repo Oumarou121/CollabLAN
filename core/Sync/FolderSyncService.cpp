@@ -761,7 +761,19 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
             // dossier non accepté ne doit jamais déclencher de transfert
             // reseau, seulement une mise a jour de metadonnee locale.
             bool needsUpdate = true;
-            if (!fileHash.isEmpty()) {
+            if (!folder.localPath().isEmpty() && !fileHash.isEmpty()) {
+                const QString expectedAbsPath = QDir::cleanPath(
+                    folder.localPath() + QDir::separator() + relativePath);
+                // La base peut conserver une version/hash historique après
+                // une réindexation locale ou un ancien téléchargement. Le
+                // contenu présent sur disque est la source de vérité pour
+                // décider si un transfert est réellement nécessaire.
+                if (QFile::exists(expectedAbsPath)
+                    && computeHash(expectedAbsPath) == fileHash) {
+                    needsUpdate = false;
+                }
+            }
+            if (needsUpdate && !fileHash.isEmpty()) {
                 const auto files = m_folderManager->getFiles(folder.id());
                 for (const auto &f : files) {
                     if (f.relativePath() == relativePath && f.hash() == fileHash
@@ -1059,7 +1071,18 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
                 // sans localPath, aucun contenu réel n'est de toute façon possible
                 // (le hash connu ne peut provenir que d'un placeholder).
                 bool needsUpdate = true;
-                if (!fileHash.isEmpty()) {
+                if (!folder.localPath().isEmpty() && !fileHash.isEmpty()) {
+                    const QString expectedAbsPath = QDir::cleanPath(
+                        folder.localPath() + QDir::separator() + relativePath);
+                    // Priorité au contenu réel : des métadonnées locales
+                    // périmées ne doivent pas provoquer un téléchargement
+                    // d'un fichier déjà identique sur disque.
+                    if (QFile::exists(expectedAbsPath)
+                        && computeHash(expectedAbsPath) == fileHash) {
+                        needsUpdate = false;
+                    }
+                }
+                if (needsUpdate && !fileHash.isEmpty()) {
                     const auto files = m_folderManager->getFiles(folder.id());
                     for (const auto &f : files) {
                         if (f.relativePath() == relativePath && f.hash() == fileHash
@@ -1643,12 +1666,30 @@ void FolderSyncService::requestRemoteFile(const QString &folderUuid,
     req[QStringLiteral("owner_machine_id")]        = ownerMachineId;
 
     const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
-    broadcastMessage(json);
-
-    // Enregistre la demande en attente pour corréler avec TransferService.
     if (folderId > 0 && !localFolderPath.isEmpty()) {
         const QString transferFileName = folderTransferFileName(folderUuid, relativePath);
         const QString pendingKey = ownerMachineId + QStringLiteral("::") + transferFileName;
+
+        // Un resync force peut croiser un folder_op temps réel ou un catchup
+        // et demander le meme fichier plusieurs fois avant que le premier
+        // transfert ne soit integre. La cle de correlation identifie ici le
+        // fichier logique (proprietaire + dossier/chemin), pas le socket :
+        // une demande deja en attente ou active suffit donc.
+        if (m_pendingByKey.contains(pendingKey)) {
+            qDebug() << "[FolderSync] Demande ignoree (deja en attente) :" << relativePath
+                     << "de" << ownerMachineId;
+            return;
+        }
+        for (auto it = m_activeByTransferKey.cbegin(); it != m_activeByTransferKey.cend(); ++it) {
+            const PendingFileTransfer &active = it.value();
+            if (active.folderUuid == folderUuid
+                && active.relativePath == relativePath
+                && active.ownerMachineId == ownerMachineId) {
+                qDebug() << "[FolderSync] Demande ignoree (transfert actif) :" << relativePath
+                         << "de" << ownerMachineId;
+                return;
+            }
+        }
 
         PendingFileTransfer pending;
         pending.folderUuid       = folderUuid;
@@ -1665,6 +1706,8 @@ void FolderSyncService::requestRemoteFile(const QString &folderUuid,
         // à onTransferCompleted() de détecter la fin exacte d'une rafale.
         m_receiveProgress[folderUuid].filesExpected++;
     }
+
+    broadcastMessage(json);
 
     qDebug() << "[FolderSync] Demande de fichier :" << relativePath << "de" << ownerMachineId;
 }

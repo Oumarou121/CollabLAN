@@ -2021,7 +2021,7 @@ Item {
                     visible: root.viewMode === "grid"
                     readonly property int columns: Math.max(2, Math.floor(width / 160))
                     cellWidth: Math.floor(width / columns)
-                    cellHeight: 148
+                    cellHeight: 132
                     model: root.context ? root.context.folderFilterProxy : null
                     clip: true
 
@@ -2056,15 +2056,15 @@ Item {
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: Theme.spacingSmall
-                            spacing: 6
+                            spacing: 4
 
                             // ---- Icone de dossier, style FolderTile ----
                             Item {
                                 id: iconArea
                                 Layout.alignment: Qt.AlignHCenter
-                                Layout.preferredWidth: 76
-                                Layout.preferredHeight: 62
-                                Layout.topMargin: 8
+                                Layout.preferredWidth: 64
+                                Layout.preferredHeight: 52
+                                Layout.topMargin: 6
 
                                 // Elevation discrete au survol.
                                 Rectangle {
@@ -2642,7 +2642,7 @@ Item {
                     visible: root.viewMode === "grid"
                     readonly property int columns: Math.max(3, Math.min(8, Math.floor(width / 104)))
                     cellWidth: Math.floor(width / columns)
-                    cellHeight: 176
+                    cellHeight: 148
                     clip: true
                     model: root.browserItems
 
@@ -2668,14 +2668,14 @@ Item {
                             z: 1
                             anchors.fill: parent
                             anchors.topMargin: 12
-                            anchors.bottomMargin: 4
-                            spacing: 6
+                            anchors.bottomMargin: 8
+                            spacing: 4
 
                             Item {
                                 id: subfolderIconArea
                                 Layout.alignment: Qt.AlignHCenter
-                                Layout.preferredWidth: fileTile.isFolder ? 76 : 44
-                                Layout.preferredHeight: fileTile.isFolder ? 62 : 34
+                                Layout.preferredWidth: fileTile.isFolder ? 64 : 40
+                                Layout.preferredHeight: fileTile.isFolder ? 52 : 30
 
                                 Item {
                                     visible: fileTile.isFolder
@@ -2779,7 +2779,7 @@ Item {
                                 Layout.rightMargin: 4
                                 text: modelData.name
                                 color: Theme.text
-                                font.pixelSize: Theme.fontSizeCaption
+                                font.pixelSize: Theme.fontSizeSmall
                                 font.weight: Font.Medium
                                 font.family: Theme.fontFamily
                                 horizontalAlignment: Text.AlignHCenter
@@ -2799,7 +2799,7 @@ Item {
                                       ? (modelData.count === 1 ? qsTr("1 fichier") : qsTr("%1 fichiers").arg(modelData.count))
                                       : root.formatBytes(modelData.size)
                                 color: Theme.textTertiary
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.fontSizeCaption
                                 font.family: Theme.fontFamily
                                 horizontalAlignment: Text.AlignHCenter
                                 elide: Text.ElideRight

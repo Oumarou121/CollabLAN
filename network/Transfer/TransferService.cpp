@@ -959,7 +959,12 @@ void TransferService::onServerSocketReadyRead()
                 : QDir(destDir).filePath(state.relativeDirPath);
             QDir().mkpath(finalDir);
             state.destinationPath = QDir(finalDir).filePath(state.fileName);
-            state.partialPath = state.destinationPath + QStringLiteral(".part");
+            // Plusieurs demandes identiques peuvent arriver en parallèle
+            // (resync force + folder_op/catchup). Un .part partagé par nom
+            // logique permettait à ces réceptions de s'écraser mutuellement
+            // avant la promotion vers le fichier final.
+            state.partialPath = state.destinationPath
+                + QStringLiteral(".part-") + state.transferKey;
 
             // Reprise (issue #54) : si un fichier partiel de meme nom
             // existe deja et n'est pas plus grand que la taille finale
@@ -1083,7 +1088,13 @@ void TransferService::finishReceive(QTcpSocket *socket, bool success, const QStr
         // vers son nom final.
         if (!state.partialPath.isEmpty() && state.partialPath != state.destinationPath) {
             QFile::remove(state.destinationPath); // Ecrase un fichier final precedent le cas echeant.
-            QFile::rename(state.partialPath, state.destinationPath);
+            if (!QFile::rename(state.partialPath, state.destinationPath)) {
+                qWarning() << "TransferService: impossible de promouvoir le fichier temporaire :"
+                           << state.partialPath << "->" << state.destinationPath;
+                finishReceive(socket, false,
+                              QStringLiteral("Impossible de finaliser le fichier reçu"));
+                return;
+            }
         }
         emit transferCompleted(state.transferKey, state.destinationPath);
 
