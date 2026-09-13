@@ -103,6 +103,27 @@ jobs:
         shell: bash
         run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
 
+      # DatabaseManager cherche les migrations SQL à
+      # <dossier de l'exécutable>/database/Migrations/*.sql au runtime
+      # (avec un repli sur le chemin source, valable uniquement en dev).
+      # Sans cette copie, la base livrée ne contient aucune table (à part
+      # schema_migrations) et toutes les opérations échouent en silence.
+      - name: Bundle DB migrations (Windows/Linux)
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          DEST="build/app/database/Migrations"
+          mkdir -p "$DEST"
+          cp database/Migrations/*.sql "$DEST/"
+
+      - name: Bundle DB migrations (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          DEST="build/app/LocaLink.app/Contents/MacOS/database/Migrations"
+          mkdir -p "$DEST"
+          cp database/Migrations/*.sql "$DEST/"
+
       # --- Déploiement des dépendances Qt à côté de l'exécutable ---
       # --qmldir permet à windeployqt de scanner les imports QML réellement
       # utilisés (ex: QtQuick.Controls) et de déployer les bons plugins,
@@ -157,6 +178,7 @@ jobs:
         run: |
           mkdir -p package
           cp build/app/LocaLink package/
+          cp -r build/app/database package/
           cp -r resources/linux package/ 2>/dev/null || true
 
       # --- Upload des artefacts ---
