@@ -82,18 +82,38 @@ jobs:
           # Le paquet Homebrew précompilé (bottle) cible la dernière version
           # de macOS du runner (ex: 26.0), ce qui rend l'app incompatible
           # avec des Mac plus anciens même si LocaLink lui-même vise macOS 12.
-          # On compile donc OpenSSL depuis les sources avec la bonne cible.
+          # Le runner GitHub est en arm64 : on compile donc OpenSSL en
+          # binaire universel (arm64 + x86_64) pour supporter aussi les
+          # Mac Intel, avec la bonne cible de version macOS.
           OPENSSL_VERSION="3.3.2"
           curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" -o openssl.tar.gz
           tar xzf openssl.tar.gz
-          cd "openssl-${OPENSSL_VERSION}"
           export MACOSX_DEPLOYMENT_TARGET=12.0
-          ./Configure darwin64-arm64-cc shared no-tests \
-            -mmacosx-version-min=12.0 \
-            --prefix="$HOME/openssl-macos12" \
-            --openssldir="$HOME/openssl-macos12"
-          make -j"$(sysctl -n hw.ncpu)"
-          make install_sw
+
+          for ARCH in arm64 x86_64; do
+            cp -r "openssl-${OPENSSL_VERSION}" "openssl-${OPENSSL_VERSION}-${ARCH}"
+            cd "openssl-${OPENSSL_VERSION}-${ARCH}"
+            ./Configure "darwin64-${ARCH}-cc" shared no-tests \
+              -mmacosx-version-min=12.0 \
+              --prefix="$HOME/openssl-macos12-${ARCH}" \
+              --openssldir="$HOME/openssl-macos12-${ARCH}"
+            make -j"$(sysctl -n hw.ncpu)"
+            make install_sw
+            cd ..
+          done
+
+          # Fusion des deux architectures en binaires universels
+          mkdir -p "$HOME/openssl-macos12/lib" "$HOME/openssl-macos12/include"
+          cp -r "$HOME/openssl-macos12-arm64/include/." "$HOME/openssl-macos12/include/"
+          for LIB in libssl.3.dylib libcrypto.3.dylib libssl.a libcrypto.a; do
+            lipo -create \
+              "$HOME/openssl-macos12-arm64/lib/$LIB" \
+              "$HOME/openssl-macos12-x86_64/lib/$LIB" \
+              -output "$HOME/openssl-macos12/lib/$LIB"
+          done
+          ln -sf libssl.3.dylib "$HOME/openssl-macos12/lib/libssl.dylib"
+          ln -sf libcrypto.3.dylib "$HOME/openssl-macos12/lib/libcrypto.dylib"
+
           echo "OPENSSL_ROOT_DIR=$HOME/openssl-macos12" >> "$GITHUB_ENV"
 
       # --- Ninja pour un build homogène sur les 3 OS ---
@@ -112,6 +132,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DBUILD_TESTS=OFF \
             ${{ runner.os == 'macOS' && '-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0' || '' }} \
+            ${{ runner.os == 'macOS' && '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64' || '' }} \
             ${{ runner.os == 'macOS' && format('-DCMAKE_MODULE_PATH={0}/cmake', github.workspace) || '' }} \
             ${{ runner.os == 'Windows' && '-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl' || '' }}
 
