@@ -77,9 +77,24 @@ jobs:
 
       - name: Install OpenSSL (macOS)
         if: runner.os == 'macOS'
+        shell: bash
         run: |
-          brew install openssl@3
-          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          # Le paquet Homebrew précompilé (bottle) cible la dernière version
+          # de macOS du runner (ex: 26.0), ce qui rend l'app incompatible
+          # avec des Mac plus anciens même si LocaLink lui-même vise macOS 12.
+          # On compile donc OpenSSL depuis les sources avec la bonne cible.
+          OPENSSL_VERSION="3.3.2"
+          curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" -o openssl.tar.gz
+          tar xzf openssl.tar.gz
+          cd "openssl-${OPENSSL_VERSION}"
+          export MACOSX_DEPLOYMENT_TARGET=12.0
+          ./Configure darwin64-arm64-cc shared no-tests \
+            -mmacosx-version-min=12.0 \
+            --prefix="$HOME/openssl-macos12" \
+            --openssldir="$HOME/openssl-macos12"
+          make -j"$(sysctl -n hw.ncpu)"
+          make install_sw
+          echo "OPENSSL_ROOT_DIR=$HOME/openssl-macos12" >> "$GITHUB_ENV"
 
       # --- Ninja pour un build homogène sur les 3 OS ---
       - name: Install Ninja
