@@ -228,6 +228,8 @@ void MessagingServer::onTextMessageReceived(const QString &message)
                                           Q_ARG(QString, m_clientFingerprints.value(client)));
             }
             m_clientAuthorized.insert(client, authorized);
+            if (!userUuid.isEmpty())
+                emit clientIdentified(userUuid, authorized);
             return;
         }
     }

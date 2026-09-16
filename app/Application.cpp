@@ -1361,6 +1361,15 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_messagingService, &network::MessagingService::connected,
             m_folderSyncService, &core::sync::FolderSyncService::retryPendingBroadcasts);
 
+    // Rattrapage Users (cf. Application::sendUsersCatchupTo) : un poste qui
+    // rejoint le reseau APRES la creation d'un compte ne le recevait jamais
+    // (le "user_event" temps reel de broadcastUserEvent n'atteint que les
+    // postes deja connectes au moment de la creation). On envoie donc a
+    // CHAQUE client qui s'identifie l'integralite des comptes existants,
+    // meme principe que folder_catchup_batch pour les dossiers partages.
+    connect(m_messagingServer, &network::MessagingServer::clientIdentified,
+            this, &Application::sendUsersCatchupTo);
+
     // Release 8 : intégration des fichiers reçus dans les dossiers partagés.
     // transferStarted permet de corréler le transferKey avec la demande en attente ;
     // transferCompleted déclenche la copie, l'upsert SharedFile et la SyncOperation.
@@ -1801,6 +1810,51 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         return;
     }
 
+    // Rattrapage Users (type "users_catchup_batch", cf.
+    // Application::sendUsersCatchupTo) : envoye UNIQUEMENT au client qui
+    // vient de s'identifier (sendToUuids, jamais relaye/broadcast), donc
+    // pas de garde "relay" ici contrairement a user_event. Reutilise le
+    // meme chemin d'application (SyncLogRepository::applyUserEntry, deja
+    // idempotent et LWW) qu'un "user_event" individuel : chaque entree du
+    // batch a exactement la meme forme de payload.
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("users_catchup_batch")) {
+        const QJsonArray entriesArray = document.object().value(QStringLiteral("entries")).toArray();
+        bool anyApplied = false;
+        for (const QJsonValue &value : entriesArray) {
+            if (!value.isObject())
+                continue;
+            const QJsonObject object = value.toObject();
+
+            models::SyncLogEntry entry;
+            entry.setTableName(QStringLiteral("Users"));
+            entry.setRecordUuid(object.value(QStringLiteral("recordUuid")).toString());
+            entry.setOperation(object.value(QStringLiteral("operation")).toString());
+            entry.setOriginMachineId(object.value(QStringLiteral("originMachineId")).toString());
+
+            QJsonObject payload = object;
+            payload.remove(QStringLiteral("recordUuid"));
+            payload.remove(QStringLiteral("operation"));
+            payload.remove(QStringLiteral("originMachineId"));
+            entry.setPayloadJson(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+
+            if (m_syncLogRepository && m_syncLogRepository->applyUserEntry(entry)) {
+                anyApplied = true;
+            } else if (m_syncLogRepository) {
+                qWarning() << "handleIncomingPayload: echec application entree de users_catchup_batch"
+                           << m_syncLogRepository->lastError();
+            }
+        }
+        if (anyApplied && m_userManager) {
+            // Qt::QueuedConnection : meme precaution que pour user_event,
+            // applyUserEntry() peut etre appele depuis le thread reseau.
+            QMetaObject::invokeMethod(m_userManager, [this]() {
+                m_userManager->emitUsersChanged();
+            }, Qt::QueuedConnection);
+        }
+        return;
+    }
+
     // Diffusion temps reel de la creation/mise a jour d'un utilisateur (type
     // "user_event", cf. Application::broadcastUserEvent) : sans ce relais,
     // un nouvel utilisateur cree sur un poste n'apparaissait chez les pairs
@@ -2111,6 +2165,71 @@ void Application::broadcastUserEvent(const models::User &user, const QString &op
     if (m_messagingServer) {
         m_messagingServer->broadcastMessage(jsonMessage);
     }
+}
+
+void Application::sendUsersCatchupTo(const QString &userUuid, bool authorized)
+{
+    // Seul un poste qui ecoute reellement (Server/TempServer, donc dote
+    // d'un MessagingServer actif) peut recevoir ce signal : un simple
+    // Client n'a jamais de MessagingServer demarre (cf. shouldListen dans
+    // le handler roleChanged de initialize()).
+    if (!m_messagingServer || !m_userManager)
+        return;
+    if (userUuid.isEmpty() || !authorized)
+        return; // machine pas encore autorisee : rien a lui envoyer
+
+    const std::vector<models::User> users = m_userManager->allUsers();
+    if (users.empty())
+        return;
+
+    QJsonArray entries;
+    for (const models::User &user : users) {
+        if (user.uuid().isEmpty())
+            continue; // meme garde que broadcastUserEvent/appendUserSyncLog
+
+        // Meme forme de payload que broadcastUserEvent, afin que
+        // handleIncomingPayload() applique chaque entree via exactement le
+        // meme chemin ("user_event") deja idempotent et LWW (cf.
+        // SyncLogRepository::applyUserEntry).
+        QJsonObject entry;
+        entry.insert(QStringLiteral("recordUuid"), user.uuid());
+        // "UPDATE" et non un "upsert" inexistant : models::SyncOperation ne
+        // connait que INSERT/UPDATE/DELETE (models/SyncLogEntry.h). Avec
+        // "upsert", applyUserEntry() tombait dans sa branche "operation
+        // inconnue" et ne faisait RIEN (tout en retournant true), rendant ce
+        // rattrapage silencieusement inoperant. "UPDATE" convient ici car
+        // applyUserEntry() retombe deja tout seul sur un INSERT quand le
+        // compte n'existe pas encore localement (cf. SyncLogRepository.cpp),
+        // exactement la semantique upsert voulue pour un catchup.
+        entry.insert(QStringLiteral("operation"), models::SyncOperation::Update);
+        entry.insert(QStringLiteral("originMachineId"),
+                     m_electionService ? m_electionService->localMachineUuid() : QString());
+        entry.insert(QStringLiteral("name"), user.name());
+        entry.insert(QStringLiteral("ipAddress"), user.ipAddress());
+        entry.insert(QStringLiteral("status"), models::userStatusToString(user.status()));
+        entry.insert(QStringLiteral("role"), models::userRoleToString(user.role()));
+        entry.insert(QStringLiteral("passwordHash"), user.passwordHash());
+        entry.insert(QStringLiteral("passwordSalt"), user.passwordSalt());
+        entry.insert(QStringLiteral("updatedAt"),
+                     user.updatedAt().isValid()
+                         ? user.updatedAt().toUTC().toString(Qt::ISODate)
+                         : QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+        entries.append(entry);
+    }
+
+    if (entries.isEmpty())
+        return;
+
+    QJsonObject batch;
+    batch.insert(QStringLiteral("type"), QStringLiteral("users_catchup_batch"));
+    batch.insert(QStringLiteral("entries"), entries);
+
+    const QString jsonMessage = QString::fromUtf8(QJsonDocument(batch).toJson(QJsonDocument::Compact));
+
+    // Cible uniquement le client qui vient de s'identifier (sendToUuids),
+    // jamais un broadcast a tous : les autres postes deja connectes ont
+    // deja leur propre copie a jour, pas besoin de la leur renvoyer.
+    m_messagingServer->sendToUuids(jsonMessage, {userUuid});
 }
 
 void Application::broadcastServerElectionEvent(const QString &logUuid, const QString &event, int epoch,

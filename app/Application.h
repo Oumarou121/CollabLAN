@@ -220,6 +220,22 @@ private:
     /// createur pouvant etre SERVER ou simple CLIENT.
     void broadcastUserEvent(const models::User &user, const QString &operation);
 
+    /// Rattrapage cible : envoie a UN client qui vient de s'identifier
+    /// (cf. MessagingServer::clientIdentified) l'integralite des comptes
+    /// utilisateurs existants sous forme de "users_catchup_batch", meme
+    /// format de payload que broadcastUserEvent afin de reutiliser
+    /// exactement le meme chemin de reception (handleIncomingPayload ->
+    /// SyncLogRepository::applyUserEntry, deja idempotent et LWW).
+    /// Sans cela, un poste qui rejoint le reseau APRES la creation d'un
+    /// compte ne le voit jamais : le "user_event" temps reel de
+    /// broadcastUserEvent n'atteint que les postes deja connectes au
+    /// moment de la creation (meme lacune que celle deja comblee pour les
+    /// dossiers partages via folder_catchup_batch, cf. FolderSyncService).
+    /// Ne s'applique que si CE poste ecoute reellement (Server/TempServer) :
+    /// un simple Client n'a pas de MessagingServer actif et ne peut donc
+    /// jamais recevoir ce signal.
+    void sendUsersCatchupTo(const QString &userUuid, bool authorized);
+
     /// Diffuse en temps reel (type "server_election_event") une entree
     /// d'historique ServerElectionLog (log_uuid, event, epoch, machineUuid)
     /// a tous les postes actuellement connectes, afin que ServerElection/

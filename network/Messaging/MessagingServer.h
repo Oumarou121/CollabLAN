@@ -83,6 +83,14 @@ signals:
     /// Émis lorsqu'une connexion est refusée (machine non autorisée, issue #70).
     void connectionRefused(const QHostAddress &clientAddress, const QString &reason);
 
+    /// Émis juste après qu'un client a envoyé son handshake "identify" et a
+    /// été associé à un userUuid (cf. onTextMessageReceived). Point
+    /// d'accroche pour le rattrapage ciblé (ex: users_catchup_batch,
+    /// cf. Application::sendUsersCatchupTo) : contrairement à
+    /// clientConnected(), on connaît ici le userUuid pour cibler via
+    /// sendToUuids() plutôt que de diffuser à tous.
+    void clientIdentified(const QString &userUuid, bool authorized);
+
 private slots:
     void onNewConnection();
     void onTextMessageReceived(const QString &message);
