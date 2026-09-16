@@ -65,6 +65,40 @@ if(WIN32)
             ${CMAKE_CURRENT_SOURCE_DIR}/../resources/win/app.ico
             $<TARGET_FILE_DIR:LocaLink>/app.ico
     )
+
+    # CORRECTIF (TLS Schannel sur Windows) : sans les DLL OpenSSL a cote de
+    # l'executable, Qt ne trouve pas le plugin TLS "openssl" au runtime et
+    # retombe silencieusement sur le backend natif Schannel, qui n'honore
+    # pas ignoreSslErrors() de la meme facon pour les certificats auto-signes
+    # -- d'ou le rejet des connexions WebSocket securisees en production.
+    get_filename_component(_openssl_bin_dir "${OPENSSL_INCLUDE_DIR}/../bin" ABSOLUTE)
+
+    find_file(OPENSSL_SSL_DLL
+        NAMES libssl-3-x64.dll libssl-3.dll libssl-1_1-x64.dll libssl-1_1.dll
+        PATHS "${_openssl_bin_dir}"
+        NO_DEFAULT_PATH
+    )
+    find_file(OPENSSL_CRYPTO_DLL
+        NAMES libcrypto-3-x64.dll libcrypto-3.dll libcrypto-1_1-x64.dll libcrypto-1_1.dll
+        PATHS "${_openssl_bin_dir}"
+        NO_DEFAULT_PATH
+    )
+
+    if(OPENSSL_SSL_DLL AND OPENSSL_CRYPTO_DLL)
+        add_custom_command(TARGET LocaLink POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${OPENSSL_SSL_DLL}" "${OPENSSL_CRYPTO_DLL}"
+                $<TARGET_FILE_DIR:LocaLink>
+            COMMENT "Copie des DLL OpenSSL (necessaires au backend TLS 'openssl' de Qt)"
+        )
+    else()
+        message(WARNING
+            "DLL OpenSSL introuvables pres de ${_openssl_bin_dir} -- "
+            "Qt risque de retomber sur Schannel au runtime sur Windows, "
+            "ce qui casse les connexions TLS avec certificats auto-signes. "
+            "Verifiez OPENSSL_ROOT_DIR / OPENSSL_INCLUDE_DIR."
+        )
+    endif()
 endif()
 
 if(UNIX AND NOT APPLE)

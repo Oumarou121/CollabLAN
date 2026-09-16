@@ -14,6 +14,7 @@
 #include <QSettings>
 #include <QDir>
 #include <QDebug>
+#include <QSslConfiguration>
 
 #include "Application.h"
 #include "UserManager.h"
@@ -87,6 +88,28 @@ static void fileMessageHandler(QtMsgType type, const QMessageLogContext &context
 int main(int argc, char *argv[])
 {
     qInstallMessageHandler(fileMessageHandler);
+
+    // Garde-fou backend TLS : sur Windows, meme avec les DLL OpenSSL presentes
+    // a cote de l'executable, Qt 6.5+ peut par defaut utiliser le backend natif
+    // Schannel plutot qu'OpenSSL -- il faut le demander explicitement. Schannel
+    // n'honore pas ignoreSslErrors() de la meme facon pour les certificats
+    // auto-signes, d'ou l'echec silencieux des connexions WebSocket securisees
+    // observe en production malgre un deploiement correct des DLL.
+#ifdef Q_OS_WIN
+    qDebug() << "[TLS] backends disponibles:" << QSslConfiguration::availableBackends()
+             << "- backend actif avant selection:" << QSslConfiguration::activeBackend();
+
+    if (QSslConfiguration::availableBackends().contains(QLatin1String("openssl"))) {
+        QSslConfiguration::setActiveBackend(QLatin1String("openssl"));
+    } else {
+        qWarning() << "[TLS] Backend 'openssl' indisponible (DLL manquantes ?) --"
+                   << "repli sur" << QSslConfiguration::activeBackend()
+                   << ": les connexions securisees vers des certificats"
+                   << "auto-signes vont probablement echouer.";
+    }
+
+    qDebug() << "[TLS] backend actif apres selection:" << QSslConfiguration::activeBackend();
+#endif
 
     // Sans cet appel, toute la journalisation interne de libdatachannel
     // (gathering ICE, negociation DTLS, erreurs de certificat...) est
