@@ -42,8 +42,52 @@
 #include <shobjidl.h>
 #endif
 
+#include <QFile>
+#include <QTextStream>
+#include <QDateTime>
+#include <QStandardPaths>
+#include <QCoreApplication>
+
+// DEBUG TEMPORAIRE (a retirer une fois le diagnostic sync termine) :
+// l'executable est en subsystem WIN32 (cf. app/CMakeLists.txt,
+// add_executable(LocaLink WIN32 ...)) -- volontaire pour ne pas avoir de
+// fenetre console en usage normal, mais ca veut dire que qDebug()/qWarning()
+// ne vont nulle part de visible sur un poste sans Visual Studio attache.
+// Ce handler redirige tout vers un fichier texte a cote de l'executable
+// (writable meme installe dans Program Files, contrairement a certains
+// dossiers systeme) pour pouvoir recuperer les logs sur les PC de test.
+static void fileMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
+{
+    static QFile logFile(QCoreApplication::applicationDirPath() + "/localink_debug.log");
+    static bool opened = logFile.open(QIODevice::Append | QIODevice::Text);
+    if (!opened)
+        return;
+
+    const char *levelStr = "DEBUG";
+    switch (type) {
+        case QtDebugMsg:    levelStr = "DEBUG";   break;
+        case QtInfoMsg:     levelStr = "INFO";    break;
+        case QtWarningMsg:  levelStr = "WARN";    break;
+        case QtCriticalMsg: levelStr = "CRITICAL";break;
+        case QtFatalMsg:    levelStr = "FATAL";   break;
+    }
+
+    QTextStream out(&logFile);
+    out << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
+        << " [" << levelStr << "] " << msg;
+    if (context.file)
+        out << " (" << context.file << ":" << context.line << ")";
+    out << Qt::endl;
+    out.flush();
+
+    if (type == QtFatalMsg)
+        abort();
+}
+
 int main(int argc, char *argv[])
 {
+    qInstallMessageHandler(fileMessageHandler);
+
     // Sans cet appel, toute la journalisation interne de libdatachannel
     // (gathering ICE, negociation DTLS, erreurs de certificat...) est
     // totalement silencieuse : impossible de diagnostiquer un appel qui
