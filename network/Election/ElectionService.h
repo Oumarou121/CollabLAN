@@ -123,6 +123,20 @@ public:
      */
     void reclaimAsOfficialServer();
 
+    /**
+     * @brief Démission volontaire du rôle Server/TempServer, déclenchée par
+     *        l'admin (contrairement à reconciliationRequired qui gère le
+     *        retour automatique du Server officiel après panne, ceci est un
+     *        choix manuel : "je veux céder la main maintenant").
+     *        Ne fait rien si ce poste est déjà Client. N'incrémente pas
+     *        l'epoch et ne diffuse rien : le nouveau serveur actif (promu
+     *        via promoteToServer() ailleurs) a déjà diffusé son propre
+     *        server_promoted, que ce poste a déjà reçu et adopté
+     *        (m_activeServerUuid/m_activeServerPort à jour) avant même
+     *        l'appel à cette méthode.
+     */
+    void stepDownToClient();
+
 signals:
     void started();
     void stopped();

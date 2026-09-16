@@ -231,6 +231,19 @@ void ElectionService::reclaimAsOfficialServer()
     enterServerRole(m_epoch + 1, /*temporary=*/false);
 }
 
+void ElectionService::stepDownToClient()
+{
+    if (m_role != models::ServerRole::Server && m_role != models::ServerRole::TempServer)
+        return; // deja Client : rien a faire
+
+    // Contrairement au cas reconciliationRequired (server_promoted recu avec
+    // epoch superieur pendant que ce poste croit encore etre Server), ici
+    // c'est une demission deliberee : on applique la transition vers Client
+    // sans passer par la reconciliation ni attendre reclaimAsOfficialServer().
+    m_heartbeatTimer->stop();
+    applyRole(models::ServerRole::Client);
+}
+
 void ElectionService::sendHeartbeat()
 {
     if (!m_running)

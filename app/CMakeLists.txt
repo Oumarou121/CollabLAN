@@ -35,6 +35,7 @@ if(APPLE)
         MACOSX_BUNDLE_ICON_FILE app.icns
         MACOSX_BUNDLE_BUNDLE_NAME "LocaLink"
         MACOSX_BUNDLE_GUI_IDENTIFIER "${APP_BUNDLE_IDENTIFIER}"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/../resources/mac/Info.plist"
     )
 endif()
 

@@ -703,6 +703,27 @@ Item {
                             onClicked: promoteToServerDialog.open()
                         }
 
+                        Button {
+                            text: qsTr("Redevenir client")
+                            Layout.preferredHeight: 32
+                            enabled: root.election && root.election.roleLabel !== "CLIENT"
+
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: parent.hovered ? Theme.error : Theme.errorMuted
+                                opacity: parent.enabled ? 1.0 : 0.5
+                            }
+                            contentItem: Text {
+                                text: qsTr("Redevenir client")
+                                color: parent.hovered ? Theme.primaryText : Theme.error
+                                font.pixelSize: Theme.fontSizeSmall
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            onClicked: demoteToClientDialog.open()
+                        }
+
                         Label {
                             text: qsTr("Un seul poste devrait avoir ce rôle. Les autres postes doivent rester en Client.")
                             color: Theme.textTertiary
@@ -721,6 +742,17 @@ Item {
                     onAccepted: {
                         if (root.app)
                             root.app.promoteToServer()
+                    }
+                }
+
+                MessageDialog {
+                    id: demoteToClientDialog
+                    title: qsTr("Redevenir client ?")
+                    text: qsTr("Ce poste va cesser d'écouter les connexions des autres. Assure-toi qu'un autre poste a bien été désigné serveur avant de continuer, sinon plus aucun poste n'écoutera sur le réseau.")
+                    buttons: MessageDialog.Yes | MessageDialog.No
+                    onAccepted: {
+                        if (root.app)
+                            root.app.demoteToClient()
                     }
                 }
 

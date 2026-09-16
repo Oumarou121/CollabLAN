@@ -1534,6 +1534,23 @@ bool Application::promoteToServer()
     return true;
 }
 
+bool Application::demoteToClient()
+{
+    if (!m_electionService)
+        return false;
+
+    const models::ServerRole current = m_electionService->role();
+    if (current != models::ServerRole::Server && current != models::ServerRole::TempServer) {
+        return false; // deja Client : rien a faire
+    }
+
+    // Demission volontaire : le handler roleChanged deja branche dans
+    // initialize() persiste le nouveau role en base et arrete
+    // MessagingServer automatiquement (voir shouldListen ci-dessus).
+    m_electionService->stepDownToClient();
+    return true;
+}
+
 core::NotificationManager *Application::notificationManager() const
 {
     return m_notificationManager;

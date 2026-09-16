@@ -160,6 +160,7 @@ public:
     /// ensuite de persister le role en base et de demarrer MessagingServer.
     /// Ne fait rien si ce poste est deja Server (retourne false).
     Q_INVOKABLE bool promoteToServer();
+    Q_INVOKABLE bool demoteToClient();
 
     // Expose au bootstrap QML le NotificationManager pour les notifications.
     core::NotificationManager *notificationManager() const;
