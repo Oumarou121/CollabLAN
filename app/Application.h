@@ -234,7 +234,13 @@ private:
     /// Ne s'applique que si CE poste ecoute reellement (Server/TempServer) :
     /// un simple Client n'a pas de MessagingServer actif et ne peut donc
     /// jamais recevoir ce signal.
-    void sendUsersCatchupTo(const QString &userUuid, bool authorized);
+    /// @p userUuid peut etre vide (poste tout neuf sans aucun compte local,
+    /// cf. MessagingServer::clientIdentified) : dans ce cas le batch est
+    /// cible via @p fingerprint (sendToFingerprint) plutot que via
+    /// sendToUuids, seul moyen d'atteindre une machine qui ne peut par
+    /// definition jamais s'identifier par userUuid avant d'avoir recu ce
+    /// meme batch (cf. debrief "chicken-and-egg" login/rattrapage).
+    void sendUsersCatchupTo(const QString &userUuid, const QString &fingerprint, bool authorized);
 
     /// Diffuse en temps reel (type "server_election_event") une entree
     /// d'historique ServerElectionLog (log_uuid, event, epoch, machineUuid)

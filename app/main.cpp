@@ -58,6 +58,7 @@
 // Ce handler redirige tout vers un fichier texte a cote de l'executable
 // (writable meme installe dans Program Files, contrairement a certains
 // dossiers systeme) pour pouvoir recuperer les logs sur les PC de test.
+#ifdef Q_OS_WIN
 static void fileMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
 {
     static QFile logFile(QCoreApplication::applicationDirPath() + "/localink_debug.log");
@@ -85,10 +86,21 @@ static void fileMessageHandler(QtMsgType type, const QMessageLogContext &context
     if (type == QtFatalMsg)
         abort();
 }
+#endif
 
 int main(int argc, char *argv[])
 {
+#ifdef Q_OS_WIN
+    // Necessaire uniquement sur Windows : l'executable est en subsystem
+    // WIN32 (cf. app/CMakeLists.txt, add_executable(LocaLink WIN32 ...)),
+    // volontaire pour ne pas avoir de fenetre console en usage normal, mais
+    // ca veut dire que qDebug()/qWarning() ne vont nulle part de visible
+    // sur un poste sans Visual Studio attache -- d'ou ce fichier de log.
+    // Sur macOS/Linux, l'executable n'a PAS ce subsystem : le handler par
+    // defaut de Qt (stderr) suffit et reste visible dans le Terminal --
+    // installer ce handler ici aussi les en privait silencieusement.
     qInstallMessageHandler(fileMessageHandler);
+#endif
 
     // Garde-fou backend TLS : sur Windows, meme avec les DLL OpenSSL presentes
     // a cote de l'executable, Qt 6.5+ peut par defaut utiliser le backend natif

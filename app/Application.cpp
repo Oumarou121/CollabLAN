@@ -1365,8 +1365,12 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // rejoint le reseau APRES la creation d'un compte ne le recevait jamais
     // (le "user_event" temps reel de broadcastUserEvent n'atteint que les
     // postes deja connectes au moment de la creation). On envoie donc a
-    // CHAQUE client qui s'identifie l'integralite des comptes existants,
-    // meme principe que folder_catchup_batch pour les dossiers partages.
+    // CHAQUE machine autorisee qui s'identifie l'integralite des comptes
+    // existants, meme principe que folder_catchup_batch pour les dossiers
+    // partages -- y compris une machine toute neuve sans aucun compte
+    // local (userUuid vide), le cas qui bloquait tout le monde sauf le
+    // poste seede en premier (cf. debrief "chicken-and-egg" login/
+    // rattrapage : sendUsersCatchupTo cible alors via le certificat).
     connect(m_messagingServer, &network::MessagingServer::clientIdentified,
             this, &Application::sendUsersCatchupTo);
 
@@ -2167,7 +2171,7 @@ void Application::broadcastUserEvent(const models::User &user, const QString &op
     }
 }
 
-void Application::sendUsersCatchupTo(const QString &userUuid, bool authorized)
+void Application::sendUsersCatchupTo(const QString &userUuid, const QString &fingerprint, bool authorized)
 {
     // Seul un poste qui ecoute reellement (Server/TempServer, donc dote
     // d'un MessagingServer actif) peut recevoir ce signal : un simple
@@ -2175,8 +2179,10 @@ void Application::sendUsersCatchupTo(const QString &userUuid, bool authorized)
     // le handler roleChanged de initialize()).
     if (!m_messagingServer || !m_userManager)
         return;
-    if (userUuid.isEmpty() || !authorized)
+    if (!authorized)
         return; // machine pas encore autorisee : rien a lui envoyer
+    if (userUuid.isEmpty() && fingerprint.isEmpty())
+        return; // rien pour cibler cette connexion
 
     const std::vector<models::User> users = m_userManager->allUsers();
     if (users.empty())
@@ -2226,10 +2232,17 @@ void Application::sendUsersCatchupTo(const QString &userUuid, bool authorized)
 
     const QString jsonMessage = QString::fromUtf8(QJsonDocument(batch).toJson(QJsonDocument::Compact));
 
-    // Cible uniquement le client qui vient de s'identifier (sendToUuids),
-    // jamais un broadcast a tous : les autres postes deja connectes ont
-    // deja leur propre copie a jour, pas besoin de la leur renvoyer.
-    m_messagingServer->sendToUuids(jsonMessage, {userUuid});
+    // Cible uniquement le client qui vient de s'identifier, jamais un
+    // broadcast a tous : les autres postes deja connectes ont deja leur
+    // propre copie a jour, pas besoin de la leur renvoyer. Un poste tout
+    // neuf (userUuid vide, cf. commentaire de la fonction) ne peut etre
+    // atteint que par son certificat, seul identifiant connu du serveur
+    // avant tout login reussi.
+    if (!userUuid.isEmpty()) {
+        m_messagingServer->sendToUuids(jsonMessage, {userUuid});
+    } else {
+        m_messagingServer->sendToFingerprint(jsonMessage, fingerprint);
+    }
 }
 
 void Application::broadcastServerElectionEvent(const QString &logUuid, const QString &event, int epoch,

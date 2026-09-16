@@ -10,7 +10,7 @@ on:
       target:
         description: "Plateforme(s) à builder"
         required: true
-        default: macos
+        default: all
         type: choice
         options:
           - all

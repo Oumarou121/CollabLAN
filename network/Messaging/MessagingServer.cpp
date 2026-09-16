@@ -145,6 +145,30 @@ int MessagingServer::sendToUuids(const QString &message, const QStringList &uuid
     return sentCount;
 }
 
+int MessagingServer::sendToFingerprint(const QString &message, const QString &fingerprint)
+{
+    // Cible une connexion via son certificat (deja verifie par
+    // PermissionManager au moment du handshake "identify"), independamment
+    // de tout userUuid. Necessaire pour le rattrapage Users (cf.
+    // Application::sendUsersCatchupTo) : une machine toute neuve, sans
+    // AUCUN compte local, ne peut jamais se logger et donc jamais envoyer
+    // d'identify avec un userUuid non-vide -- sendToUuids() ne peut alors
+    // jamais l'atteindre. Le certificat, lui, est deja connu des la
+    // connexion, avant meme tout login.
+    if (fingerprint.isEmpty()) {
+        return 0;
+    }
+
+    int sentCount = 0;
+    for (auto it = m_clientFingerprints.constBegin(); it != m_clientFingerprints.constEnd(); ++it) {
+        if (it.value() == fingerprint) {
+            it.key()->sendTextMessage(message);
+            ++sentCount;
+        }
+    }
+    return sentCount;
+}
+
 void MessagingServer::setPermissionManager(QObject *manager)
 {
     m_permissionManager = manager;
@@ -228,8 +252,16 @@ void MessagingServer::onTextMessageReceived(const QString &message)
                                           Q_ARG(QString, m_clientFingerprints.value(client)));
             }
             m_clientAuthorized.insert(client, authorized);
-            if (!userUuid.isEmpty())
-                emit clientIdentified(userUuid, authorized);
+            // Emis des que la machine est autorisee au niveau reseau, meme
+            // si userUuid est vide (poste tout neuf, sans aucun compte
+            // local -- cf. commentaire de clientIdentified). Gater ce
+            // signal sur un userUuid non-vide recreait exactement le
+            // cercle vicieux "il faut etre logge pour recevoir les
+            // comptes, mais il faut recevoir les comptes pour pouvoir se
+            // logger" : ce poste n'aurait alors jamais pu declencher son
+            // propre rattrapage.
+            if (authorized)
+                emit clientIdentified(userUuid, claimedFingerprint, authorized);
             return;
         }
     }

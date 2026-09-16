@@ -61,6 +61,15 @@ public:
     /// ne peut pas etre cible par uuid.
     int sendToUuids(const QString &message, const QStringList &uuids);
 
+    /// Envoie un message texte au(x) client(s) dont le certificat
+    /// (fingerprint SHA-256, deja verifie par PermissionManager au moment
+    /// du handshake "identify") correspond a @p fingerprint. Cible ainsi
+    /// une connexion authentifiee independamment de tout userUuid/login --
+    /// necessaire pour le rattrapage Users (cf. Application::
+    /// sendUsersCatchupTo), une machine sans aucun compte local ne pouvant
+    /// jamais envoyer d'identify avec un userUuid non-vide.
+    int sendToFingerprint(const QString &message, const QString &fingerprint);
+
     /// Port d'écoute.
     quint16 port() const;
 
@@ -83,13 +92,18 @@ signals:
     /// Émis lorsqu'une connexion est refusée (machine non autorisée, issue #70).
     void connectionRefused(const QHostAddress &clientAddress, const QString &reason);
 
-    /// Émis juste après qu'un client a envoyé son handshake "identify" et a
-    /// été associé à un userUuid (cf. onTextMessageReceived). Point
-    /// d'accroche pour le rattrapage ciblé (ex: users_catchup_batch,
-    /// cf. Application::sendUsersCatchupTo) : contrairement à
-    /// clientConnected(), on connaît ici le userUuid pour cibler via
-    /// sendToUuids() plutôt que de diffuser à tous.
-    void clientIdentified(const QString &userUuid, bool authorized);
+    /// Émis juste après qu'un client a envoyé son handshake "identify" et
+    /// que la machine s'est révélée autorisée (cf. onTextMessageReceived).
+    /// Point d'accroche pour le rattrapage ciblé (ex: users_catchup_batch,
+    /// cf. Application::sendUsersCatchupTo). @p userUuid peut être VIDE --
+    /// une machine toute neuve, sans aucun compte local, ne peut jamais se
+    /// logger et donc jamais envoyer d'identify avec un userUuid non-vide
+    /// (cf. sendIdentifyIfReady) ; c'est justement le cas qui a besoin du
+    /// rattrapage. @p fingerprint est TOUJOURS renseigne (deja connu des la
+    /// connexion TLS, avant meme tout login) et permet de cibler cette
+    /// machine via sendToFingerprint() quand userUuid est vide ; sinon
+    /// sendToUuids() reste utilisable normalement.
+    void clientIdentified(const QString &userUuid, const QString &fingerprint, bool authorized);
 
 private slots:
     void onNewConnection();
