@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QDebug>
 #include <QSslConfiguration>
+#include <QSslSocket>
 
 #include "Application.h"
 #include "UserManager.h"
@@ -96,19 +97,19 @@ int main(int argc, char *argv[])
     // auto-signes, d'ou l'echec silencieux des connexions WebSocket securisees
     // observe en production malgre un deploiement correct des DLL.
 #ifdef Q_OS_WIN
-    qDebug() << "[TLS] backends disponibles:" << QSslConfiguration::availableBackends()
-             << "- backend actif avant selection:" << QSslConfiguration::activeBackend();
+    qDebug() << "[TLS] backends disponibles:" << QSslSocket::availableBackends()
+             << "- backend actif avant selection:" << QSslSocket::activeBackend();
 
-    if (QSslConfiguration::availableBackends().contains(QLatin1String("openssl"))) {
-        QSslConfiguration::setActiveBackend(QLatin1String("openssl"));
+    if (QSslSocket::availableBackends().contains(QLatin1String("openssl"))) {
+        QSslSocket::setActiveBackend(QLatin1String("openssl"));
     } else {
         qWarning() << "[TLS] Backend 'openssl' indisponible (DLL manquantes ?) --"
-                   << "repli sur" << QSslConfiguration::activeBackend()
+                   << "repli sur" << QSslSocket::activeBackend()
                    << ": les connexions securisees vers des certificats"
                    << "auto-signes vont probablement echouer.";
     }
 
-    qDebug() << "[TLS] backend actif apres selection:" << QSslConfiguration::activeBackend();
+    qDebug() << "[TLS] backend actif apres selection:" << QSslSocket::activeBackend();
 #endif
 
     // Sans cet appel, toute la journalisation interne de libdatachannel

@@ -36,6 +36,9 @@ jobs:
           MACOS='{"os":"macos-latest","key":"macos","artifact_name":"LocaLink-macos"}'
 
           TARGET="${{ github.event.inputs.target }}"
+          if [ -z "$TARGET" ]; then
+            TARGET="windows"
+          fi
 
           case "$TARGET" in
             windows) INCLUDE="[$WINDOWS]" ;;
