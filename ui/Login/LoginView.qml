@@ -232,13 +232,14 @@ Item {
                 text: qsTr("Adresse : %1:%2").arg(application.pendingServerAddress).arg(application.pendingServerPort)
                 color: Theme.text
             }
-            Label {
+            TextEdit {
                 Layout.fillWidth: true
                 text: application.pendingServerFingerprint
-                wrapMode: Text.WrapAnywhere
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.WrapAnywhere
                 font.family: "monospace"
                 color: Theme.text
-                selectByMouse: true
             }
             Label {
                 id: trustError
