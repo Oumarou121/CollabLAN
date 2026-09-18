@@ -45,6 +45,7 @@
 #endif
 
 #include <QFile>
+#include <QFileInfo>
 #include <QTextStream>
 #include <QDateTime>
 #include <QStandardPaths>
@@ -58,10 +59,21 @@
 // Ce handler redirige tout vers un fichier texte a cote de l'executable
 // (writable meme installe dans Program Files, contrairement a certains
 // dossiers systeme) pour pouvoir recuperer les logs sur les PC de test.
+// DEBUG TEMPORAIRE : dossier de l'executable calcule via argv[0], PAS via
+// QCoreApplication::applicationDirPath(). Le tout premier qDebug() (le
+// diagnostic TLS juste apres qInstallMessageHandler) s'execute avant que
+// QApplication app(argc, argv) soit construit plus bas dans main() ;
+// applicationDirPath() sans instance QCoreApplication vivante declenche un
+// Q_ASSERT fatal ("the application static was used without a
+// QCoreApplication instance"), pas une simple exception recuperable.
+#ifdef Q_OS_WIN
+static QString g_exeDir;
+#endif
+
 #ifdef Q_OS_WIN
 static void fileMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
 {
-    static QFile logFile(QCoreApplication::applicationDirPath() + "/localink_debug.log");
+    static QFile logFile(g_exeDir + "/localink_debug.log");
     static bool opened = logFile.open(QIODevice::Append | QIODevice::Text);
     if (!opened)
         return;
@@ -75,13 +87,19 @@ static void fileMessageHandler(QtMsgType type, const QMessageLogContext &context
         case QtFatalMsg:    levelStr = "FATAL";   break;
     }
 
+    const QString line = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
+        + " [" + levelStr + "] " + msg
+        + (context.file ? QString(" (%1:%2)").arg(context.file).arg(context.line) : QString());
+
     QTextStream out(&logFile);
-    out << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz")
-        << " [" << levelStr << "] " << msg;
-    if (context.file)
-        out << " (" << context.file << ":" << context.line << ")";
-    out << Qt::endl;
+    out << line << Qt::endl;
     out.flush();
+
+    // DEBUG TEMPORAIRE : sans WIN32 (cf. CMakeLists.txt), une fenetre cmd
+    // s'ouvre desormais au lancement -- il faut aussi y ecrire, sinon elle
+    // reste vide (qInstallMessageHandler remplace le handler par defaut de
+    // Qt qui aurait ecrit sur stderr tout seul).
+    QTextStream(stderr) << line << Qt::endl;
 
     if (type == QtFatalMsg)
         abort();
@@ -91,38 +109,18 @@ static void fileMessageHandler(QtMsgType type, const QMessageLogContext &context
 int main(int argc, char *argv[])
 {
 #ifdef Q_OS_WIN
-    // Necessaire uniquement sur Windows : l'executable est en subsystem
-    // WIN32 (cf. app/CMakeLists.txt, add_executable(LocaLink WIN32 ...)),
-    // volontaire pour ne pas avoir de fenetre console en usage normal, mais
-    // ca veut dire que qDebug()/qWarning() ne vont nulle part de visible
-    // sur un poste sans Visual Studio attache -- d'ou ce fichier de log.
-    // Sur macOS/Linux, l'executable n'a PAS ce subsystem : le handler par
-    // defaut de Qt (stderr) suffit et reste visible dans le Terminal --
-    // installer ce handler ici aussi les en privait silencieusement.
+    // Doit etre fait AVANT qInstallMessageHandler : le handler s'en sert
+    // des le tout premier message, potentiellement avant toute instance
+    // QCoreApplication (cf. commentaire sur g_exeDir plus haut).
+    g_exeDir = QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath();
     qInstallMessageHandler(fileMessageHandler);
 #endif
 
-    // Garde-fou backend TLS : sur Windows, meme avec les DLL OpenSSL presentes
-    // a cote de l'executable, Qt 6.5+ peut par defaut utiliser le backend natif
-    // Schannel plutot qu'OpenSSL -- il faut le demander explicitement. Schannel
-    // n'honore pas ignoreSslErrors() de la meme facon pour les certificats
-    // auto-signes, d'ou l'echec silencieux des connexions WebSocket securisees
-    // observe en production malgre un deploiement correct des DLL.
-#ifdef Q_OS_WIN
-    qDebug() << "[TLS] backends disponibles:" << QSslSocket::availableBackends()
-             << "- backend actif avant selection:" << QSslSocket::activeBackend();
-
-    if (QSslSocket::availableBackends().contains(QLatin1String("openssl"))) {
-        QSslSocket::setActiveBackend(QLatin1String("openssl"));
-    } else {
-        qWarning() << "[TLS] Backend 'openssl' indisponible (DLL manquantes ?) --"
-                   << "repli sur" << QSslSocket::activeBackend()
-                   << ": les connexions securisees vers des certificats"
-                   << "auto-signes vont probablement echouer.";
-    }
-
-    qDebug() << "[TLS] backend actif apres selection:" << QSslSocket::activeBackend();
-#endif
+    // Garde-fou backend TLS : deplace apres QApplication app(argc, argv)
+    // plus bas (cf. commentaire a cet endroit) -- QSslSocket::availableBackends()
+    // / setActiveBackend() reposent en interne sur un chargeur de plugins TLS
+    // qui est lui aussi un "application static" Qt exigeant une instance
+    // QCoreApplication vivante, exactement comme applicationDirPath() plus haut.
 
     // Sans cet appel, toute la journalisation interne de libdatachannel
     // (gathering ICE, negociation DTLS, erreurs de certificat...) est
@@ -167,6 +165,32 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
+
+    // Garde-fou backend TLS : sur Windows, meme avec les DLL OpenSSL presentes
+    // a cote de l'executable, Qt 6.5+ peut par defaut utiliser le backend natif
+    // Schannel plutot qu'OpenSSL -- il faut le demander explicitement. Schannel
+    // n'honore pas ignoreSslErrors() de la meme facon pour les certificats
+    // auto-signes, d'ou l'echec silencieux des connexions WebSocket securisees
+    // observe en production malgre un deploiement correct des DLL.
+    // Doit venir APRES QApplication app(argc, argv) : QSslSocket::
+    // availableBackends()/setActiveBackend() reposent sur un chargeur de
+    // plugins TLS qui est lui-meme un "application static" Qt (cf. crash
+    // QFactoryLoader/Q_QAS_qtlsbLoader sans instance QCoreApplication).
+#ifdef Q_OS_WIN
+    qDebug() << "[TLS] backends disponibles:" << QSslSocket::availableBackends()
+             << "- backend actif avant selection:" << QSslSocket::activeBackend();
+
+    if (QSslSocket::availableBackends().contains(QLatin1String("openssl"))) {
+        QSslSocket::setActiveBackend(QLatin1String("openssl"));
+    } else {
+        qWarning() << "[TLS] Backend 'openssl' indisponible (DLL manquantes ?) --"
+                   << "repli sur" << QSslSocket::activeBackend()
+                   << ": les connexions securisees vers des certificats"
+                   << "auto-signes vont probablement echouer.";
+    }
+
+    qDebug() << "[TLS] backend actif apres selection:" << QSslSocket::activeBackend();
+#endif
 
 #ifdef Q_OS_WIN
     // CORRECTIF (suite) : SetCurrentProcessExplicitAppUserModelID() dit a

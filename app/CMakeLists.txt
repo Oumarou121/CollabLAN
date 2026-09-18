@@ -23,7 +23,12 @@ elseif(APPLE)
     )
 endif()
 
-add_executable(LocaLink WIN32
+# DEBUG TEMPORAIRE : WIN32 retire pour forcer le subsystem "console" sur
+# Windows (une fenetre cmd s'ouvre au lancement et affiche qDebug()/
+# qWarning() en direct). A remettre ("add_executable(LocaLink WIN32" avec
+# le fichier .ico/AUMID intacts) une fois le diagnostic sync termine, sinon
+# une fenetre cmd noire s'ouvrira aussi chez les utilisateurs finaux.
+add_executable(LocaLink
     main.cpp
     ../ui/qml.qrc
     ${APP_ICON_RESOURCE}
