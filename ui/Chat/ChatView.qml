@@ -78,6 +78,7 @@ Item {
     Connections {
         target: messagingContext
         function onAvailableUsersChanged() { root.refreshPresence() }
+        function onPresenceChanged() { root.refreshPresence() }
     }
 
     onConversationIdChanged: {

@@ -10,6 +10,10 @@
 #include "../models/MessageModel.h"
 #include "../models/GroupModel.h"
 
+namespace network {
+class PeersModel;
+}
+
 namespace core {
 
 /**
@@ -42,6 +46,10 @@ public:
 
     /// Configure le UserManager (necessaire a userName() ci-dessous).
     void setUserManager(UserManager *manager);
+
+    /// Configure la presence LAN, source de verite pour l'etat visible des
+    /// correspondants (le statut Users persiste peut etre obsolete).
+    void setPeersModel(network::PeersModel *model);
 
     /// Définit la conversation active. Marque au passage les messages
     /// reçus de cette conversation comme lus (issue : is_read n'était
@@ -95,9 +103,7 @@ public:
     /// pour savoir de quel utilisateur suivre le statut de presence.
     Q_INVOKABLE qint64 otherParticipantId(qint64 conversationId) const;
 
-    /// Statut de connexion d'un utilisateur ("online", "away" ou
-    /// "offline"), tel que suivi par UserManager. Retourne "offline" si
-    /// l'utilisateur est inconnu ou si aucun UserManager n'est configure.
+    /// Statut de connexion d'un utilisateur derive de la decouverte LAN.
     Q_INVOKABLE QString userStatus(qint64 userId) const;
 
     /// Id de l'utilisateur actuellement authentifie (depuis UserManager).
@@ -107,6 +113,7 @@ signals:
     void messagingManagerChanged();
     void groupManagerChanged();
     void availableUsersChanged();
+    void presenceChanged();
 
     /// Emis chaque fois que la liste des conversations (individuelles ou
     /// de groupe) de l'utilisateur courant a pu changer : nouveau message
@@ -137,6 +144,7 @@ private:
     GroupManager *m_groupManager = nullptr;
     models::GroupModel *m_groupModel;
     UserManager *m_userManager = nullptr;
+    network::PeersModel *m_peersModel = nullptr;
 };
 
 } // namespace core

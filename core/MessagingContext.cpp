@@ -1,7 +1,11 @@
 #include "MessagingContext.h"
 
+#include <QDateTime>
 #include <QDebug>
+#include <QHash>
 #include <QVariantMap>
+
+#include "Discovery/PeersModel.h"
 
 namespace core {
 
@@ -91,6 +95,29 @@ void MessagingContext::setUserManager(UserManager *manager)
     }
 }
 
+void MessagingContext::setPeersModel(network::PeersModel *model)
+{
+    if (m_peersModel == model)
+        return;
+    if (m_peersModel)
+        disconnect(m_peersModel, nullptr, this, nullptr);
+
+    m_peersModel = model;
+    if (!m_peersModel)
+        return;
+
+    // Chaque annonce, changement d'identite ou perte de pair reevalue
+    // immediatement l'indicateur de presence dans les conversations.
+    connect(m_peersModel, &QAbstractItemModel::dataChanged,
+            this, &MessagingContext::presenceChanged);
+    connect(m_peersModel, &QAbstractItemModel::rowsInserted,
+            this, &MessagingContext::presenceChanged);
+    connect(m_peersModel, &QAbstractItemModel::rowsRemoved,
+            this, &MessagingContext::presenceChanged);
+    connect(m_peersModel, &QAbstractItemModel::modelReset,
+            this, &MessagingContext::presenceChanged);
+}
+
 QVariantList MessagingContext::availableUsers() const
 {
     QVariantList list;
@@ -152,11 +179,26 @@ qint64 MessagingContext::otherParticipantId(qint64 conversationId) const
 
 QString MessagingContext::userStatus(qint64 userId) const
 {
-    if (m_userManager) {
-        const auto status = m_userManager->status(static_cast<int>(userId));
-        if (status.has_value()) {
-            return models::userStatusToString(*status);
+    if (!m_userManager || !m_peersModel)
+        return QStringLiteral("offline");
+
+    QString userUuid;
+    for (const auto &user : m_userManager->allUsers()) {
+        if (user.id() == userId) {
+            userUuid = user.uuid();
+            break;
         }
+    }
+    if (userUuid.isEmpty())
+        return QStringLiteral("offline");
+
+    for (int row = 0; row < m_peersModel->rowCount(); ++row) {
+        const QModelIndex index = m_peersModel->index(row, 0);
+        if (m_peersModel->data(index, network::PeersModel::UserUuidRole).toString() != userUuid)
+            continue;
+        const QString status = m_peersModel->data(index, network::PeersModel::StatusRole)
+                                   .toString().toLower();
+        return status == QStringLiteral("away") ? status : QStringLiteral("online");
     }
     return QStringLiteral("offline");
 }
@@ -182,6 +224,11 @@ QVariantList MessagingContext::conversationsList()
 
     // Conversations individuelles.
     const auto conversations = m_messagingManager->getUserConversations(currentId);
+    // Les anciennes versions pouvaient deja avoir cree plusieurs UUID pour
+    // la meme paire. On n'affiche qu'une carte par correspondant, en gardant
+    // celle qui porte le message le plus recent. Les conversations de groupe
+    // ne passent pas par ce filtre.
+    QHash<qint64, int> individualEntryByOtherUser;
     for (const auto &conv : conversations) {
         QVariantMap entry;
         entry[QStringLiteral("conversationId")] = conv.id();
@@ -205,7 +252,22 @@ QVariantList MessagingContext::conversationsList()
             entry[QStringLiteral("timestamp")] = QVariant();
         }
         entry[QStringLiteral("unreadCount")] = m_messagingManager->getUnreadCount(conv.id(), currentId);
-        list.append(entry);
+
+        const auto existingIt = individualEntryByOtherUser.constFind(otherId);
+        if (existingIt == individualEntryByOtherUser.constEnd()) {
+            individualEntryByOtherUser.insert(otherId, list.size());
+            list.append(entry);
+            continue;
+        }
+
+        const int existingIndex = existingIt.value();
+        const QVariantMap existing = list.at(existingIndex).toMap();
+        const QDateTime existingTimestamp = existing.value(QStringLiteral("timestamp")).toDateTime();
+        const QDateTime candidateTimestamp = entry.value(QStringLiteral("timestamp")).toDateTime();
+        if (!existingTimestamp.isValid()
+            || (candidateTimestamp.isValid() && candidateTimestamp >= existingTimestamp)) {
+            list[existingIndex] = entry;
+        }
     }
 
     // Conversations de groupe (chaque groupe est lie a une Conversation,

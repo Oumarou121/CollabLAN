@@ -16,6 +16,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QDebug>
+#include <QCryptographicHash>
 
 namespace core {
 
@@ -98,10 +99,25 @@ std::optional<models::Conversation> MessagingManager::getOrCreateConversation(qi
         return conv;
     }
 
-    // Creer une nouvelle conversation. uuid : identifiant stable
-    // inter-postes indispensable a la reconciliation (cf. migration 011,
-    // SyncLogRepository::ensureConversationByUuid).
-    const QString conversationUuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    // Creer une nouvelle conversation. Son UUID doit etre le meme sur tous
+    // les postes pour cette paire d'utilisateurs : un UUID aleatoire creait
+    // deux conversations distinctes si les deux personnes ouvraient leur
+    // discussion avant la premiere synchronisation.
+    database::UserRepository users(db);
+    const auto firstUser = users.findById(static_cast<int>(userId1));
+    const auto secondUser = users.findById(static_cast<int>(userId2));
+    QString conversationUuid;
+    if (firstUser.has_value() && secondUser.has_value()
+        && !firstUser->uuid().isEmpty() && !secondUser->uuid().isEmpty()) {
+        QStringList participantUuids{firstUser->uuid(), secondUser->uuid()};
+        participantUuids.sort();
+        conversationUuid = QString::fromLatin1(
+            QCryptographicHash::hash(participantUuids.join(QLatin1Char(':')).toUtf8(),
+                                     QCryptographicHash::Sha256).toHex());
+    } else {
+        // Repli de compatibilite pour une base legacy sans UUID utilisateur.
+        conversationUuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    }
     query.prepare(QStringLiteral(
         "INSERT INTO Conversations (type, name, participant1_id, participant2_id, uuid) "
         "VALUES ('individual', ?, ?, ?, ?)"

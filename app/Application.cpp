@@ -343,10 +343,11 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                     // Cas du tout premier poste seul sur le réseau : il démarre
                     // Client par défaut (aucun --role forcé) puis n'est promu
                     // Server/TempServer qu'après le délai d'élection, donc le
-                    // seed initial (initialize(), gardé par le même rôle) a été
-                    // sauté. On le retente ici ; seedDefaultAdminIfNeeded() est
-                    // un no-op si la base a entre-temps été remplie par sync.
-                    seedDefaultAdminIfNeeded();
+                    // seed initial a été sauté. Seul le serveur principal
+                    // peut alors initialiser le compte admin ; un TempServer
+                    // attend les comptes synchronisés.
+                    if (newRole == models::ServerRole::Server)
+                        seedDefaultAdminIfNeeded();
                 } else {
                     if (m_messagingServer->isRunning()) {
                         m_messagingServer->stop();
@@ -878,13 +879,11 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // qui renommait alors l'entrant en "admin*conflict*<uuid8>". Ce n'etait
     // pas un vrai conflit concurrent, juste un artefact du bootstrap.
     //
-    // On ne seed donc plus que si ce poste est (ou devient, cf. roleChanged
-    // plus bas) Server/TempServer : un Client recupere toujours ses comptes
-    // via synchronisation et ne doit jamais en fabriquer un localement.
-    if (effectiveElectionState.currentRole() == models::ServerRole::Server
-        || effectiveElectionState.currentRole() == models::ServerRole::TempServer) {
+    // Le seed est reserve au serveur principal. Un TempServer peut coexister
+    // avec le serveur officiel pendant une partition : le laisser creer un
+    // admin vide recreerait une collision a la reconciliation.
+    if (effectiveElectionState.currentRole() == models::ServerRole::Server)
         seedDefaultAdminIfNeeded();
-    }
 
     // Demarre la decouverte reseau (issue #9) et branche le modele QML
     // (PeersModel) qui alimentera UsersView.qml en temps reel (issue #17).
@@ -1551,6 +1550,11 @@ core::sync::FolderSyncService *Application::folderSyncService() const
 
 void Application::seedDefaultAdminIfNeeded()
 {
+    // Garde interne : un futur appelant ne doit pas pouvoir creer un admin
+    // depuis un Client ou un TempServer avant la synchronisation.
+    if (!m_electionService || m_electionService->role() != models::ServerRole::Server)
+        return;
+
     if (!m_userManager->allUsers().empty()) {
         return; // deja des comptes (soit le seed a deja eu lieu, soit une
                 // synchronisation a deja rempli la base) : rien a faire.

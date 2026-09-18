@@ -362,6 +362,7 @@ int main(int argc, char *argv[])
     messagingContext->setMessagingManager(application.messagingManager());
     messagingContext->setGroupManager(application.groupManager());
     messagingContext->setUserManager(application.userManager());
+    messagingContext->setPeersModel(application.peersModel());
     engine.rootContext()->setContextProperty("messagingContext", messagingContext);
 
     // Créer et exposer le contexte de transfert de fichiers (issue #57) :
