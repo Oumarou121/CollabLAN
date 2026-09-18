@@ -1335,7 +1335,13 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             });
 
     connect(m_folderSyncService, &core::sync::FolderSyncService::fileIntegrated,
-            this, [](const QString &folderUuid, const QString &relativePath, bool wasConflict) {
+            this, [this](const QString &folderUuid, const QString &relativePath, bool wasConflict) {
+                if (m_syncEngine && m_sharedFolderManager) {
+                    const auto folder = m_sharedFolderManager->getFolderByUuid(folderUuid);
+                    if (folder.has_value()) {
+                        m_syncEngine->suppressWatcherChanges(folder->id());
+                    }
+                }
                 qDebug() << "[App] Fichier intégré :" << relativePath
                          << "dans" << folderUuid
                          << (wasConflict ? "(conflit renommé)" : "");

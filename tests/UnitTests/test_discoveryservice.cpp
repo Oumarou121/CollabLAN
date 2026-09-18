@@ -127,7 +127,7 @@ private slots:
 
         // Aucun appel a setAnnounceIntervalMs()/setPeerTimeoutMs() : on
         // conserve les valeurs par defaut (2000 ms / 8000 ms).
-        QCOMPARE(serviceA.peerTimeoutMs(), 8000);
+        QCOMPARE(serviceA.peerTimeoutMs(), 20000);
         QCOMPARE(serviceA.announceIntervalMs(), 2000);
 
         serviceB.setLocalName("MachineB-Default");

@@ -1,6 +1,7 @@
 #include "SyncEngine.h"
 
 #include "database/DatabaseManager.h"
+#include <QDateTime>
 #include <QDebug>
 
 namespace core::sync {
@@ -45,6 +46,14 @@ void SyncEngine::refreshWatchedFolders()
     for (const models::SharedFolder &folder : m_folderManager->getFolders()) {
         watchFolder(folder.id());
     }
+}
+
+void SyncEngine::suppressWatcherChanges(qint64 folderId, int durationMs)
+{
+    if (folderId <= 0)
+        return;
+    const qint64 until = QDateTime::currentMSecsSinceEpoch() + qMax(0, durationMs);
+    m_ignoreWatcherUntilMs[folderId] = qMax(m_ignoreWatcherUntilMs.value(folderId), until);
 }
 
 bool SyncEngine::canWatchFolder(const models::SharedFolder &folder) const
@@ -175,6 +184,12 @@ void SyncEngine::onFolderRemoved(qint64 folderId)
 
 void SyncEngine::onWatcherChangesDetected(qint64 folderId)
 {
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (now < m_ignoreWatcherUntilMs.value(folderId)) {
+        qDebug() << "[SyncEngine] notification watcher ignoree apres integration distante pour dossier" << folderId;
+        return;
+    }
+    m_ignoreWatcherUntilMs.remove(folderId);
     reindexFolder(folderId);
 }
 

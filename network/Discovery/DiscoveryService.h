@@ -118,7 +118,7 @@ public:
     int announceIntervalMs() const;
     void setAnnounceIntervalMs(int ms);
 
-    /// Delai au-dela duquel un poste sans nouvelle annonce est considere perdu (8000 ms par defaut).
+    /// Delai au-dela duquel un poste sans nouvelle annonce est considere perdu (20000 ms par defaut).
     int peerTimeoutMs() const;
     void setPeerTimeoutMs(int ms);
 
@@ -175,7 +175,9 @@ private:
     quint16 m_transferPort = 12346; ///< Port TCP par défaut pour TransferService
     quint16 m_signalingPort = 12347; ///< Port TCP par défaut pour VoiceService
     int m_announceIntervalMs = 2000;
-    int m_peerTimeoutMs = 8000;
+    // Les transferts de dossier peuvent mobiliser le poste quelques secondes;
+    // 20 s evite de fausses deconnexions visuelles tout en restant reactif.
+    int m_peerTimeoutMs = 20000;
 
     bool m_running = false;
 

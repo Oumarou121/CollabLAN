@@ -827,14 +827,10 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
         if (!folderKnownLocally) {
             qWarning() << "[FolderSync] folder_op" << opType << relativePath
                        << "reçu pour un dossier encore inconnu localement ("
-                       << folderUuid << ") -- demande de rattrapage ciblé";
-            QJsonObject req;
-            req[QStringLiteral("type")]                = QString::fromLatin1(kTypeResyncRequest);
-            req[QStringLiteral("folder_uuid")]          = folderUuid;
-            req[QStringLiteral("requester_machine_id")] = m_machineId;
-            req[QStringLiteral("since_op_id")]          = 0;
-            const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
-            broadcastMessage(json);
+                       << folderUuid << ") -- attente de folder_access_granted";
+            // L'annonce d'acces qui suit cree le dossier et declenche UNE
+            // demande de rattrapage. En envoyer une par folder_op avant cela
+            // produisait une rafale de batches identiques et saturait le pair.
         }
     } else if (opType == QStringLiteral("Delete")) {
         for (const auto &folder : m_folderManager->getFolders()) {

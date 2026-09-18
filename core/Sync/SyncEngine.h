@@ -96,6 +96,12 @@ public:
     /// identifiant utilisateur local desormais connu).
     void refreshWatchedFolders();
 
+    /// Ignore temporairement les notifications du watcher apres l'ecriture
+    /// d'un fichier recu du reseau. La metadata est deja enregistree par
+    /// FolderSyncService : un reindex immediat le rediffuserait comme une
+    /// fausse modification locale.
+    void suppressWatcherChanges(qint64 folderId, int durationMs = 3000);
+
 public slots:
     /// Appelé quand un dossier partagé est créé (pour démarrer la surveillance)
     void onFolderCreated(const models::SharedFolder &folder);
@@ -135,6 +141,7 @@ private:
     database::UserRepository m_userRepository;
     QString m_machineId;
     qint64 m_localUserId = -1;
+    QHash<qint64, qint64> m_ignoreWatcherUntilMs;
 };
 
 } // namespace core::sync
