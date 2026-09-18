@@ -495,8 +495,25 @@ void ElectionService::handlePacket(const QByteArray &data, const QHostAddress &s
             return;
 
         // Regle anti split-brain (section 7) : tout server_promoted avec un
-        // epoch <= epoch local est ignore.
-        if (remoteEpoch <= m_epoch) {
+        // epoch strictement inferieur a l'epoch local est ignore.
+        //
+        // CORRECTIF (epoch a egalite) : la regle d'origine ignorait aussi
+        // les epochs EGAUX ("<="), ce qui cree un vrai deadlock quand deux
+        // postes sont promus independamment sans s'etre jamais entendus
+        // (ex: l'un s'auto-elit faute d'avoir entendu l'autre a temps,
+        // l'autre est promu manuellement) : partant tous deux d'un epoch a
+        // 0, ils arrivent chacun a epoch=1 et aucun des deux ne cede jamais
+        // a l'autre, meme une fois la connexion reseau retablie -- constate
+        // en conditions reelles (poste reste bloque en TempServer malgre
+        // une vraie connexion, necessitant un passage manuel en Client).
+        // A epoch strictement egal, on depart de facon deterministe par
+        // machine_uuid : le plus grand (au sens chaine) gagne. La
+        // comparaison etant symetrique, un seul des deux cotes voit le
+        // "remote" gagnant et cede -- l'autre ignore simplement le message
+        // et reste tel quel, sans qu'aucune coordination supplementaire ne
+        // soit necessaire.
+        if (remoteEpoch < m_epoch
+            || (remoteEpoch == m_epoch && machineUuid <= m_localMachineUuid)) {
             emit splitBrainAttemptIgnored(remoteEpoch, machineUuid);
             return;
         }
