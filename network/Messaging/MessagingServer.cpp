@@ -210,6 +210,11 @@ void MessagingServer::onNewConnection()
     }
     m_clientAuthorized.insert(client, authorized);
 
+    if (!authorized) {
+        emit connectionRefused(clientAddress,
+            QStringLiteral("Client en attente d'autorisation administrateur"));
+    }
+
     connect(client, &QWebSocket::textMessageReceived, this, &MessagingServer::onTextMessageReceived);
     connect(client, &QWebSocket::disconnected, this, &MessagingServer::onSocketDisconnected);
 
@@ -266,12 +271,7 @@ void MessagingServer::onTextMessageReceived(const QString &message)
         }
     }
 
-    const QString messageType = (parseError.error == QJsonParseError::NoError && doc.isObject())
-        ? doc.object().value(QStringLiteral("type")).toString()
-        : QString();
-
-    if (!m_clientAuthorized.value(client, false)
-        && messageType != QStringLiteral("authorized_machine_event")) {
+    if (!m_clientAuthorized.value(client, false)) {
         qWarning() << "Message ignored from pending machine" << client->peerAddress();
         return;
     }

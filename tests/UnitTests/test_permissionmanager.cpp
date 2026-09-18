@@ -57,16 +57,14 @@ private slots:
     {
         freshDatabase();
 
-        QSignalSpy spy(m_manager.get(), &PermissionManager::machineChanged);
         const bool trusted = m_manager->trustRemoteServerCertificate(
             QStringLiteral("srv-fp"), QStringLiteral("192.168.1.1"));
 
         QVERIFY(!trusted);
-        QCOMPARE(spy.count(), 1);
+        // Un serveur inconnu ne doit jamais apparaitre dans la politique
+        // AuthorizedClients ni emettre machineChanged (signal serveur).
+        QVERIFY(!m_manager->findMachineByCertificateFingerprint(QStringLiteral("srv-fp")).has_value());
 
-        const auto machine = m_manager->findMachineByCertificateFingerprint(QStringLiteral("srv-fp"));
-        QVERIFY(machine.has_value());
-        QCOMPARE(machine->status(), models::MachineStatus::Pending);
         QVERIFY(!m_manager->isMachineAuthorizedByCertificate(QStringLiteral("srv-fp")));
     }
 
@@ -74,23 +72,22 @@ private slots:
     {
         freshDatabase();
 
-        // Enregistre puis autorise manuellement, comme le ferait un admin
-        // depuis une machine deja autorisee.
-        m_manager->registerPendingMachineByCertificate(QStringLiteral("srv-fp"), QStringLiteral("10.0.0.1"));
-        QVERIFY(m_manager->authorizeExistingMachineByCertificate(
-            QStringLiteral("srv-fp"), 1, QStringLiteral("Autorise par admin")));
+        // La confiance envers un serveur est une decision locale du client,
+        // independante de la liste AuthorizedClients du serveur.
+        QVERIFY(m_manager->approveServerCertificate(
+            QStringLiteral("srv-fp"), QStringLiteral("10.0.0.1"), QStringLiteral("srv")));
 
         QVERIFY(m_manager->trustRemoteServerCertificate(QStringLiteral("srv-fp"), QStringLiteral("10.0.0.1")));
-        QVERIFY(m_manager->isMachineAuthorizedByCertificate(QStringLiteral("srv-fp")));
+        QVERIFY(!m_manager->isMachineAuthorizedByCertificate(QStringLiteral("srv-fp")));
     }
 
     void trustRemoteServerCertificate_revokedCertificateIsRefused()
     {
         freshDatabase();
 
-        m_manager->registerPendingMachineByCertificate(QStringLiteral("srv-fp"), QStringLiteral("10.0.0.1"));
-        QVERIFY(m_manager->authorizeExistingMachineByCertificate(QStringLiteral("srv-fp"), 1, QString()));
-        QVERIFY(m_manager->revokeMachineByCertificate(QStringLiteral("srv-fp"), 1, QStringLiteral("Revoque")));
+        QVERIFY(m_manager->approveServerCertificate(
+            QStringLiteral("srv-fp"), QStringLiteral("10.0.0.1"), QStringLiteral("srv")));
+        QVERIFY(m_manager->revokeServerCertificate(QStringLiteral("srv-fp"), QStringLiteral("Revoque")));
 
         QVERIFY(!m_manager->trustRemoteServerCertificate(QStringLiteral("srv-fp"), QStringLiteral("10.0.0.1")));
         QVERIFY(!m_manager->isMachineAuthorizedByCertificate(QStringLiteral("srv-fp")));
@@ -111,37 +108,6 @@ private slots:
         QCOMPARE(spy.count(), 1);
     }
 
-    void bootstrapLocalAdminMachineIfNeeded_authorizesLocalMachineOnEmptyDatabase()
-    {
-        freshDatabase();
-
-        QVERIFY(m_manager->bootstrapLocalAdminMachineIfNeeded(
-            QStringLiteral("local-fp"), QStringLiteral("local-uuid"),
-            QStringLiteral("my-pc"), QStringLiteral("127.0.0.1"), 1));
-
-        QVERIFY(m_manager->isMachineAuthorizedByCertificate(QStringLiteral("local-fp")));
-    }
-
-    void bootstrapLocalAdminMachineIfNeeded_doesNothingWhenAnAuthorizedMachineAlreadyExists()
-    {
-        freshDatabase();
-
-        QVERIFY(m_manager->bootstrapLocalAdminMachineIfNeeded(
-            QStringLiteral("first-admin-fp"), QStringLiteral("uuid-1"),
-            QStringLiteral("pc-1"), QStringLiteral("127.0.0.1"), 1));
-
-        // Une deuxieme machine (meme un admin) ne doit jamais s'auto-autoriser
-        // une fois le bootstrap initial effectue : elle doit passer par la
-        // validation normale depuis une machine deja autorisee.
-        const bool secondBootstrap = m_manager->bootstrapLocalAdminMachineIfNeeded(
-            QStringLiteral("second-admin-fp"), QStringLiteral("uuid-2"),
-            QStringLiteral("pc-2"), QStringLiteral("127.0.0.1"), 2);
-
-        QVERIFY(!secondBootstrap);
-        QVERIFY(!m_manager->isMachineAuthorizedByCertificate(QStringLiteral("second-admin-fp")));
-        // La premiere machine bootstrappee reste autorisee.
-        QVERIFY(m_manager->isMachineAuthorizedByCertificate(QStringLiteral("first-admin-fp")));
-    }
 };
 
 QTEST_MAIN(TestPermissionManager)

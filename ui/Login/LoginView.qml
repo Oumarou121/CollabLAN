@@ -132,6 +132,136 @@ Item {
         z: 10
     }
 
+    // Accessible sans session : la confiance envers le certificat d'un
+    // serveur est une decision locale de connexion, pas une action d'admin.
+    Button {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: Theme.spacingLarge
+        anchors.rightMargin: Theme.spacingLarge + 54
+        z: 10
+        visible: application.pendingServerFingerprint.length > 0
+        text: qsTr("Connexion réseau")
+        onClicked: serverTrustDialog.open()
+    }
+
+    Button {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: Theme.spacingLarge
+        anchors.rightMargin: Theme.spacingLarge + 202
+        z: 10
+        text: qsTr("Mode réseau")
+        onClicked: networkModeDialog.open()
+    }
+
+    Dialog {
+        id: networkModeDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(parent.width - 40, 460)
+        title: qsTr("Mode réseau de ce poste")
+        standardButtons: Dialog.Close
+
+        contentItem: ColumnLayout {
+            spacing: Theme.spacingMedium
+            implicitWidth: 400
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Rôle actuel : %1").arg(electionService ? electionService.roleLabel : qsTr("inconnu"))
+                color: Theme.text
+                font.bold: true
+            }
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Choisis Server pour que ce poste écoute les autres machines. Choisis Client pour qu’il se connecte au serveur détecté sur le réseau.")
+                wrapMode: Text.WordWrap
+                color: Theme.textSecondary
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: application.pendingClientCount > 0
+                text: qsTr("%1 client(s) en attente d’autorisation. Connecte-toi avec un compte administrateur pour les valider.").arg(application.pendingClientCount)
+                wrapMode: Text.WordWrap
+                color: Theme.primary
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacingSmall
+                Button {
+                    Layout.fillWidth: true
+                    text: qsTr("Devenir serveur")
+                    enabled: electionService && electionService.roleLabel !== "SERVER"
+                    onClicked: application.promoteToServer()
+                }
+                Button {
+                    Layout.fillWidth: true
+                    text: qsTr("Devenir client")
+                    enabled: electionService && electionService.roleLabel !== "CLIENT"
+                    onClicked: application.demoteToClient()
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: serverTrustDialog
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(parent.width - 40, 520)
+        title: qsTr("Approbation du serveur")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        onAccepted: {
+            if (!application.approvePendingServerCertificate())
+                trustError.text = qsTr("Impossible d’approuver ce certificat. Réessaie la connexion.")
+        }
+
+        contentItem: ColumnLayout {
+            spacing: Theme.spacingMedium
+            implicitWidth: 460
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Ce serveur présente un certificat encore inconnu sur ce poste. Vérifie son empreinte avec la personne qui administre le serveur avant de l’approuver.")
+                wrapMode: Text.WordWrap
+                color: Theme.textSecondary
+            }
+            Label {
+                text: qsTr("Adresse : %1:%2").arg(application.pendingServerAddress).arg(application.pendingServerPort)
+                color: Theme.text
+            }
+            Label {
+                Layout.fillWidth: true
+                text: application.pendingServerFingerprint
+                wrapMode: Text.WrapAnywhere
+                font.family: "monospace"
+                color: Theme.text
+                selectByMouse: true
+            }
+            Label {
+                id: trustError
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: ""
+                color: root.errorText
+                wrapMode: Text.WordWrap
+            }
+        }
+    }
+
+    Connections {
+        target: application
+
+        function onPendingServerChanged() {
+            if (application.pendingServerFingerprint.length > 0) {
+                trustError.text = ""
+                serverTrustDialog.open()
+            }
+        }
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0

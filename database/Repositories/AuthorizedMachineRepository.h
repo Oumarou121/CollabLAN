@@ -13,9 +13,9 @@ class QSqlQuery;
 namespace database {
 
 /**
- * @brief Accès aux données de la table AuthorizedMachines (issue #68).
+ * @brief Accès aux données de la table AuthorizedClients.
  *
- * Gère la liste blanche/noire des machines pouvant rejoindre le réseau LocaLink.
+ * Gère la liste des clients admis par CE serveur LocaLink.
  */
 class AuthorizedMachineRepository
 {
@@ -38,15 +38,12 @@ public:
      * @brief Supprime une machine par son id.
      */
     bool remove(int id);
-    bool removeByUuidOrCertificate(const QString &uuid, const QString &fingerprint);
 
     /**
      * @brief Recherche une machine par son adresse IP.
      */
     std::optional<models::AuthorizedMachine> findByIpAddress(const QString &ipAddress) const;
-    std::optional<models::AuthorizedMachine> findByUuid(const QString &uuid) const;
     std::optional<models::AuthorizedMachine> findByCertificateFingerprint(const QString &fingerprint) const;
-    bool upsertRemote(const models::AuthorizedMachine &machine);
     bool updateLastSeen(const QString &fingerprint, const QString &ipAddress);
 
     /**

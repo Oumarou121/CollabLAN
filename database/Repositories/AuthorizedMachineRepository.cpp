@@ -51,7 +51,7 @@ int AuthorizedMachineRepository::create(const models::AuthorizedMachine &machine
 {
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
-        "INSERT INTO AuthorizedMachines (machine_uuid, certificate_fingerprint, ip_address, last_ip_address, hostname, authorized, status, added_by, added_at, reason) "
+        "INSERT INTO AuthorizedClients (machine_uuid, certificate_fingerprint, ip_address, last_ip_address, hostname, authorized, status, added_by, added_at, reason) "
         "VALUES (:machine_uuid, :certificate_fingerprint, :ip_address, :last_ip_address, :hostname, :authorized, :status, :added_by, :added_at, :reason)"));
     query.bindValue(QStringLiteral(":machine_uuid"), machine.uuid().isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces) : machine.uuid());
     query.bindValue(QStringLiteral(":ip_address"), notNull(machine.ipAddress()));
@@ -81,7 +81,7 @@ bool AuthorizedMachineRepository::update(const models::AuthorizedMachine &machin
 {
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
-        "UPDATE AuthorizedMachines SET machine_uuid = :machine_uuid, certificate_fingerprint = :certificate_fingerprint, ip_address = :ip_address, last_ip_address = :last_ip_address, hostname = :hostname, "
+        "UPDATE AuthorizedClients SET machine_uuid = :machine_uuid, certificate_fingerprint = :certificate_fingerprint, ip_address = :ip_address, last_ip_address = :last_ip_address, hostname = :hostname, "
         "authorized = :authorized, status = :status, added_by = :added_by, added_at = :added_at, reason = :reason "
         "WHERE id = :id"));
     query.bindValue(QStringLiteral(":machine_uuid"), machine.uuid());
@@ -112,32 +112,8 @@ bool AuthorizedMachineRepository::update(const models::AuthorizedMachine &machin
 bool AuthorizedMachineRepository::remove(int id)
 {
     QSqlQuery query(m_db);
-    query.prepare(QStringLiteral("DELETE FROM AuthorizedMachines WHERE id = :id"));
+    query.prepare(QStringLiteral("DELETE FROM AuthorizedClients WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), id);
-
-    if (!query.exec()) {
-        m_lastError = query.lastError().text();
-        return false;
-    }
-    return query.numRowsAffected() > 0;
-}
-
-bool AuthorizedMachineRepository::removeByUuidOrCertificate(const QString &uuid, const QString &fingerprint)
-{
-    const QString normalizedUuid = uuid.trimmed();
-    const QString normalizedFingerprint = fingerprint.trimmed().toLower();
-    if (normalizedUuid.isEmpty() && normalizedFingerprint.isEmpty()) {
-        m_lastError = QStringLiteral("Suppression impossible : UUID et empreinte absents");
-        return false;
-    }
-
-    QSqlQuery query(m_db);
-    query.prepare(QStringLiteral(
-        "DELETE FROM AuthorizedMachines "
-        "WHERE (:uuid <> '' AND machine_uuid = :uuid) "
-        "   OR (:fingerprint <> '' AND certificate_fingerprint = :fingerprint)"));
-    query.bindValue(QStringLiteral(":uuid"), normalizedUuid);
-    query.bindValue(QStringLiteral(":fingerprint"), normalizedFingerprint);
 
     if (!query.exec()) {
         m_lastError = query.lastError().text();
@@ -149,7 +125,7 @@ bool AuthorizedMachineRepository::removeByUuidOrCertificate(const QString &uuid,
 std::optional<models::AuthorizedMachine> AuthorizedMachineRepository::findByIpAddress(const QString &ipAddress) const
 {
     QSqlQuery query(m_db);
-    query.prepare(QStringLiteral("SELECT * FROM AuthorizedMachines WHERE ip_address = :ip_address"));
+    query.prepare(QStringLiteral("SELECT * FROM AuthorizedClients WHERE ip_address = :ip_address"));
     query.bindValue(QStringLiteral(":ip_address"), ipAddress);
 
     if (!query.exec()) {
@@ -162,20 +138,10 @@ std::optional<models::AuthorizedMachine> AuthorizedMachineRepository::findByIpAd
     return machineFromQuery(query);
 }
 
-std::optional<models::AuthorizedMachine> AuthorizedMachineRepository::findByUuid(const QString &uuid) const
-{
-    QSqlQuery query(m_db);
-    query.prepare(QStringLiteral("SELECT * FROM AuthorizedMachines WHERE machine_uuid = :uuid"));
-    query.bindValue(QStringLiteral(":uuid"), uuid);
-    if (!query.exec()) { m_lastError = query.lastError().text(); return std::nullopt; }
-    if (!query.next()) return std::nullopt;
-    return machineFromQuery(query);
-}
-
 std::optional<models::AuthorizedMachine> AuthorizedMachineRepository::findByCertificateFingerprint(const QString &fingerprint) const
 {
     QSqlQuery query(m_db);
-    query.prepare(QStringLiteral("SELECT * FROM AuthorizedMachines WHERE certificate_fingerprint = :fingerprint"));
+    query.prepare(QStringLiteral("SELECT * FROM AuthorizedClients WHERE certificate_fingerprint = :fingerprint"));
     query.bindValue(QStringLiteral(":fingerprint"), fingerprint.toLower());
     if (!query.exec()) { m_lastError = query.lastError().text(); return std::nullopt; }
     if (!query.next()) return std::nullopt;
@@ -185,34 +151,11 @@ std::optional<models::AuthorizedMachine> AuthorizedMachineRepository::findByCert
 bool AuthorizedMachineRepository::updateLastSeen(const QString &fingerprint, const QString &ipAddress)
 {
     QSqlQuery query(m_db);
-    query.prepare(QStringLiteral("UPDATE AuthorizedMachines SET last_ip_address = :ip, ip_address = :ip WHERE certificate_fingerprint = :fingerprint"));
+    query.prepare(QStringLiteral("UPDATE AuthorizedClients SET last_ip_address = :ip, ip_address = :ip WHERE certificate_fingerprint = :fingerprint"));
     query.bindValue(QStringLiteral(":ip"), ipAddress);
     query.bindValue(QStringLiteral(":fingerprint"), fingerprint.toLower());
     if (!query.exec()) { m_lastError = query.lastError().text(); return false; }
     return query.numRowsAffected() > 0;
-}
-
-bool AuthorizedMachineRepository::upsertRemote(const models::AuthorizedMachine &machine)
-{
-    const QString uuid = machine.uuid().trimmed();
-    const QString fingerprint = machine.certificateFingerprint().trimmed().toLower();
-    if (uuid.isEmpty() && fingerprint.isEmpty()) return false;
-
-    std::optional<models::AuthorizedMachine> existing;
-    if (!uuid.isEmpty()) existing = findByUuid(uuid);
-    if (!existing.has_value() && !fingerprint.isEmpty())
-        existing = findByCertificateFingerprint(fingerprint);
-
-    if (existing.has_value()) {
-        models::AuthorizedMachine updated = machine;
-        updated.setId(existing->id());
-        if (updated.uuid().trimmed().isEmpty()) updated.setUuid(existing->uuid());
-        if (updated.certificateFingerprint().trimmed().isEmpty())
-            updated.setCertificateFingerprint(existing->certificateFingerprint());
-        return update(updated);
-    }
-
-    return create(machine) >= 0;
 }
 
 bool AuthorizedMachineRepository::setAuthorizationByCertificate(const QString &fingerprint,
@@ -236,7 +179,7 @@ bool AuthorizedMachineRepository::hasAnyAuthorizedMachine() const
 {
     QSqlQuery query(m_db);
     if (!query.exec(QStringLiteral(
-            "SELECT 1 FROM AuthorizedMachines WHERE status = 'authorized' LIMIT 1"))) {
+            "SELECT 1 FROM AuthorizedClients WHERE status = 'authorized' LIMIT 1"))) {
         m_lastError = query.lastError().text();
         return false;
     }
@@ -279,7 +222,7 @@ std::vector<models::AuthorizedMachine> AuthorizedMachineRepository::findAll() co
     std::vector<models::AuthorizedMachine> machines;
 
     QSqlQuery query(m_db);
-    if (!query.exec(QStringLiteral("SELECT * FROM AuthorizedMachines ORDER BY added_at DESC"))) {
+    if (!query.exec(QStringLiteral("SELECT * FROM AuthorizedClients ORDER BY added_at DESC"))) {
         m_lastError = query.lastError().text();
         return machines;
     }
@@ -294,7 +237,7 @@ std::vector<models::AuthorizedMachine> AuthorizedMachineRepository::findAuthoriz
     std::vector<models::AuthorizedMachine> machines;
 
     QSqlQuery query(m_db);
-    if (!query.exec(QStringLiteral("SELECT * FROM AuthorizedMachines WHERE status = 'authorized' ORDER BY added_at DESC"))) {
+    if (!query.exec(QStringLiteral("SELECT * FROM AuthorizedClients WHERE status = 'authorized' ORDER BY added_at DESC"))) {
         m_lastError = query.lastError().text();
         return machines;
     }
@@ -309,7 +252,7 @@ std::vector<models::AuthorizedMachine> AuthorizedMachineRepository::findRevoked(
     std::vector<models::AuthorizedMachine> machines;
 
     QSqlQuery query(m_db);
-    if (!query.exec(QStringLiteral("SELECT * FROM AuthorizedMachines WHERE status = 'revoked' ORDER BY added_at DESC"))) {
+    if (!query.exec(QStringLiteral("SELECT * FROM AuthorizedClients WHERE status = 'revoked' ORDER BY added_at DESC"))) {
         m_lastError = query.lastError().text();
         return machines;
     }

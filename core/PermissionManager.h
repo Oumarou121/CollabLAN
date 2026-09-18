@@ -11,6 +11,7 @@
 namespace database {
 class DatabaseManager;
 class AuthorizedMachineRepository;
+class TrustedServerRepository;
 }
 
 namespace models {
@@ -73,28 +74,25 @@ public:
     Q_INVOKABLE bool isMachineAuthorized(const QString &ipAddress) const;
     Q_INVOKABLE bool isMachineAuthorizedByCertificate(const QString &fingerprint) const;
     Q_INVOKABLE void recordMachineSeen(const QString &fingerprint, const QString &ipAddress);
+    /// Verifie la confiance LOCALE envers le certificat du serveur. Cette
+    /// decision ne quitte jamais ce poste.
     Q_INVOKABLE bool trustRemoteServerCertificate(const QString &fingerprint,
                                                   const QString &ipAddress);
+    Q_INVOKABLE bool approveServerCertificate(const QString &fingerprint,
+                                              const QString &ipAddress,
+                                              const QString &hostname = QString());
+    Q_INVOKABLE bool revokeServerCertificate(const QString &fingerprint,
+                                             const QString &reason = QString());
 
-    /// Enregistre une machine inconnue en statut 'pending' (jamais autorisee
-    /// automatiquement). Sans effet si l'empreinte est deja connue.
+    /// Enregistre un CLIENT inconnu cote serveur. Cette liste ne represente
+    /// jamais les certificats de serveurs approuves par le poste local.
     Q_INVOKABLE bool registerPendingMachineByCertificate(const QString &fingerprint,
                                                          const QString &ipAddress,
                                                          const QString &hostname = QString());
 
-    /// A appeler apres un login admin reussi. Si la base ne contient encore
-    /// aucune machine 'authorized', autorise automatiquement la machine
-    /// locale (bootstrap). Sans effet si une machine autorisee existe deja.
-    Q_INVOKABLE bool bootstrapLocalAdminMachineIfNeeded(const QString &fingerprint,
-                                                        const QString &machineUuid,
-                                                        const QString &hostname,
-                                                        const QString &ipAddress,
-                                                        int adminUserId);
-
     std::optional<models::AuthorizedMachine> findMachineByCertificateFingerprint(const QString &fingerprint) const;
 
     bool removeMachine(int id);
-    bool applyRemoteMachineRemoval(const QString &machineUuid, const QString &fingerprint);
 
     /// Révoque une machine par son adresse IP (issue #68).
     bool revokeMachine(const QString &ipAddress, int revokedBy, const QString &reason = QString());
@@ -104,8 +102,6 @@ public:
     bool authorizeMachineByCertificate(const QString &fingerprint, const QString &machineUuid,
                                        const QString &hostname, const QString &ipAddress,
                                        int authorizedBy, const QString &reason = QString());
-    bool applyRemoteMachine(const models::AuthorizedMachine &machine);
-
     bool revokeMachineByCertificate(const QString &fingerprint, int revokedBy,
                                 const QString &reason = QString());
     bool authorizeExistingMachineByCertificate(const QString &fingerprint, int authorizedBy,
@@ -113,19 +109,21 @@ public:
 
     /// Retourne toutes les machines (pour AuthorizedMachineModel)
     std::vector<models::AuthorizedMachine> getAllMachines() const;
+    Q_INVOKABLE int pendingClientCount() const;
 
     /// Retourne le DatabaseManager (pour AuthorizedMachineModel)
     database::DatabaseManager* databaseManager() const;
 
 signals:
     void machineChanged(const models::AuthorizedMachine &machine);
-    void machineRemoved(const QString &machineUuid, const QString &certificateFingerprint);
-    void machineSynchronized();
 
 
 private:
     database::DatabaseManager *m_dbManager = nullptr;
+    /// Politique d'admission appliquee par le serveur aux clients entrants.
     std::unique_ptr<database::AuthorizedMachineRepository> m_repository;
+    /// Magasin de pinning TLS du client, strictement local et non replique.
+    std::unique_ptr<database::TrustedServerRepository> m_trustedServers;
 };
 
 } // namespace core

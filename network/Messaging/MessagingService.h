@@ -47,6 +47,10 @@ public:
     /// Définit le PermissionManager pour vérifier les machines autorisées (issue #68).
     void setPermissionManager(QObject *manager);
 
+    /// Rejoue la derniere tentative de connexion. Utilise apres validation
+    /// locale du certificat depuis l'ecran pre-login.
+    bool retryLastHost();
+
 signals:
     /// Emis lors de la connexion reussie.
     void connected();
@@ -59,6 +63,12 @@ signals:
 
     /// Emis en cas d'erreur de connexion.
     void error(const QString &errorString);
+
+    /// Le handshake TLS a fourni un certificat, mais ce poste ne l'a pas
+    /// encore approuve localement. Aucune donnee metier n'a ete echangee.
+    void serverCertificateTrustRequired(const QString &fingerprint,
+                                        const QString &address,
+                                        quint16 port);
 
 private slots:
     void onConnected();
@@ -74,6 +84,8 @@ private:
     SecurityService *m_securityService = nullptr;
     QObject *m_permissionManager = nullptr;
     bool m_connected = false;
+    QHostAddress m_lastRequestedAddress;
+    quint16 m_lastRequestedPort = 0;
 };
 
 } // namespace network

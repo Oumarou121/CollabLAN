@@ -7,6 +7,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+#include <QTimer>
 #include <QSqlQuery>
 #include <QVariantMap>
 #include <QVariantList>
@@ -124,6 +125,22 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
 
     // Initialiser le MessagingService pour la messagerie réseau
     m_messagingService = new network::MessagingService(m_securityService, this);
+    connect(m_messagingService, &network::MessagingService::serverCertificateTrustRequired,
+            this, [this](const QString &fingerprint, const QString &address, quint16 port) {
+        m_pendingServerFingerprint = fingerprint;
+        m_pendingServerAddress = address;
+        m_pendingServerPort = port;
+        qWarning() << "Certificat serveur a approuver localement:" << fingerprint
+                   << "pour" << address << ':' << port;
+        emit pendingServerChanged();
+    });
+    connect(m_messagingService, &network::MessagingService::connected, this, [this]() {
+        if (m_pendingServerFingerprint.isEmpty()) return;
+        m_pendingServerFingerprint.clear();
+        m_pendingServerAddress.clear();
+        m_pendingServerPort = 0;
+        emit pendingServerChanged();
+    });
 
     // Initialiser le MessagingServer pour recevoir les messages.
     // Le démarrage effectif (start/stop) est désormais piloté par le rôle
@@ -778,42 +795,13 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // Initialiser le PermissionManager pour la gestion des rôles (issue #67)
     // et des machines autorisées (issue #68).
     m_permissionManager = new core::PermissionManager(m_databaseManager.get(), this);
-
-    // Les règles de machines sont des données distribuées : l'identifiant
-    // SQL reste local, tandis que machine_uuid est propagé entre bases.
     connect(m_permissionManager, &core::PermissionManager::machineChanged,
-            this, [this](const models::AuthorizedMachine &machine) {
-        if ((!m_messagingService || !m_messagingService->isConnected()) && !m_messagingServer) return;
-        QJsonObject payload;
-        payload[QStringLiteral("type")] = QStringLiteral("authorized_machine_event");
-        payload[QStringLiteral("machine_uuid")] = machine.uuid();
-        payload[QStringLiteral("certificate_fingerprint")] = machine.certificateFingerprint();
-        payload[QStringLiteral("ip_address")] = machine.ipAddress();
-        payload[QStringLiteral("last_ip_address")] = machine.lastIpAddress();
-        payload[QStringLiteral("hostname")] = machine.hostname();
-        payload[QStringLiteral("authorized")] = machine.isAuthorized();
-        payload[QStringLiteral("status")] = machine.status();
-        payload[QStringLiteral("reason")] = machine.reason();
-        payload[QStringLiteral("added_at")] = machine.addedAt().toUTC().toString(Qt::ISODateWithMs);
-                const QString serialized = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
-                if (m_messagingService && m_messagingService->isConnected())
-                    m_messagingService->sendMessage(serialized);
-                if (m_messagingServer) m_messagingServer->broadcastMessage(serialized);
-    });
-    connect(m_permissionManager, &core::PermissionManager::machineRemoved,
-            this, [this](const QString &machineUuid, const QString &certificateFingerprint) {
-        if ((!m_messagingService || !m_messagingService->isConnected()) && !m_messagingServer) return;
-        QJsonObject payload;
-        payload[QStringLiteral("type")] = QStringLiteral("authorized_machine_event");
-        payload[QStringLiteral("machine_uuid")] = machineUuid;
-        payload[QStringLiteral("certificate_fingerprint")] = certificateFingerprint;
-        payload[QStringLiteral("deleted")] = true;
-        payload[QStringLiteral("added_at")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
-        const QString serialized = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
-        if (m_messagingService && m_messagingService->isConnected())
-            m_messagingService->sendMessage(serialized);
-        if (m_messagingServer) m_messagingServer->broadcastMessage(serialized);
-    });
+            this, &Application::pendingClientCountChanged);
+
+    // Les politiques TLS sont volontairement LOCALES : TrustedServers porte
+    // la confiance du client envers un serveur, AuthorizedClients porte la
+    // decision du serveur envers ses clients. Elles ne sont jamais envoyees
+    // via MessagingService ni repliquees avec les donnees metier.
 
     // Connecter les services au MessagingManager
     m_messagingManager->setMessagingService(m_messagingService);
@@ -834,47 +822,6 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     m_transferService->setSecurityService(m_securityService);
     m_voiceService->setPermissionManager(m_permissionManager);
 
-    // Réconciliation initiale des règles d'accès. Un client peut avoir été
-    // hors ligne au moment où authorized_machine_event a été diffusé ; on lui
-    // renvoie donc l'état complet dès qu'une connexion TLS est établie.
-    connect(m_messagingServer, &network::MessagingServer::clientConnected,
-            this, [this](const QHostAddress &) {
-        if (!m_permissionManager || !m_messagingServer) return;
-        for (const models::AuthorizedMachine &machine : m_permissionManager->getAllMachines()) {
-            QJsonObject payload;
-            payload[QStringLiteral("type")] = QStringLiteral("authorized_machine_event");
-            payload[QStringLiteral("machine_uuid")] = machine.uuid();
-            payload[QStringLiteral("certificate_fingerprint")] = machine.certificateFingerprint();
-            payload[QStringLiteral("ip_address")] = machine.ipAddress();
-            payload[QStringLiteral("last_ip_address")] = machine.lastIpAddress();
-            payload[QStringLiteral("hostname")] = machine.hostname();
-            payload[QStringLiteral("authorized")] = machine.isAuthorized();
-            payload[QStringLiteral("status")] = machine.status();
-            payload[QStringLiteral("reason")] = machine.reason();
-            payload[QStringLiteral("added_at")] = machine.addedAt().toUTC().toString(Qt::ISODateWithMs);
-            m_messagingServer->broadcastMessage(
-                QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
-        }
-    });
-    connect(m_messagingService, &network::MessagingService::connected,
-            this, [this]() {
-        if (!m_permissionManager || !m_messagingService || !m_messagingService->isConnected()) return;
-        for (const models::AuthorizedMachine &machine : m_permissionManager->getAllMachines()) {
-            QJsonObject payload;
-            payload[QStringLiteral("type")] = QStringLiteral("authorized_machine_event");
-            payload[QStringLiteral("machine_uuid")] = machine.uuid();
-            payload[QStringLiteral("certificate_fingerprint")] = machine.certificateFingerprint();
-            payload[QStringLiteral("ip_address")] = machine.ipAddress();
-            payload[QStringLiteral("last_ip_address")] = machine.lastIpAddress();
-            payload[QStringLiteral("hostname")] = machine.hostname();
-            payload[QStringLiteral("authorized")] = machine.isAuthorized();
-            payload[QStringLiteral("status")] = machine.status();
-            payload[QStringLiteral("reason")] = machine.reason();
-            payload[QStringLiteral("added_at")] = machine.addedAt().toUTC().toString(Qt::ISODateWithMs);
-            m_messagingService->sendMessage(
-                QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
-        }
-    });
 
     // Connecter MessagingServer à MessagingManager pour traiter les messages reçus.
     // Ce poste agit ici en tant que SERVER (connexions entrantes) : relay=true,
@@ -1042,25 +989,8 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
         qWarning() << "Impossible de demarrer DiscoveryService (port deja utilise ?)";
     }
 
-    // Bootstrap admin (plan #71) : au premier login admin reussi sur une
-    // base ne contenant encore aucune machine 'authorized', la machine
-    // locale s'auto-autorise. Sans ce mecanisme, une base neuve serait
-    // bloquee : aucune machine ne serait autorisee a administrer les autres.
-    // Sans effet si une machine autorisee existe deja (pas d'auto-autorisation
-    // silencieuse d'une machine supplementaire).
-    if (m_userManager && m_permissionManager) {
-        connect(m_userManager, &core::UserManager::loginSucceeded, this, [this]() {
-            if (!m_userManager->isCurrentUserAdmin()) return;
-            const QString fingerprint = m_securityService
-                ? m_securityService->identity().fingerprintSha256 : QString();
-            if (fingerprint.trimmed().isEmpty()) return;
-            const QString machineUuid = m_discoveryService ? m_discoveryService->localId() : QString();
-            const auto adminUserId = m_userManager->currentUserId();
-            m_permissionManager->bootstrapLocalAdminMachineIfNeeded(
-                fingerprint, machineUuid, QSysInfo::machineHostName(),
-                QStringLiteral("127.0.0.1"), adminUserId.value_or(-1));
-        });
-    }
+    // AuthorizedClients ne contient que les clients entrants du serveur :
+    // le serveur local ne s'y inscrit jamais lui-meme.
 
     // Initialiser le CallHistoryManager : persiste chaque appel (emis ou
     // recu) et son issue finale dans la table CallHistory (migration 013),
@@ -1767,40 +1697,6 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
     }
 
     if (document.isObject()
-        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("authorized_machine_event")) {
-        const QJsonObject object = document.object();
-        if (object.value(QStringLiteral("deleted")).toBool()) {
-            const QString machineUuid = object.value(QStringLiteral("machine_uuid")).toString();
-            const QString fingerprint = object.value(QStringLiteral("certificate_fingerprint")).toString();
-            const bool applied = m_permissionManager
-                && m_permissionManager->applyRemoteMachineRemoval(machineUuid, fingerprint);
-            qInfo() << "[AuthorizedMachines] suppression reçue" << fingerprint
-                    << "uuid=" << machineUuid << "applied=" << applied;
-            if (!relay) sendIdentifyIfReady();
-            if (relay && m_messagingServer) m_messagingServer->broadcastMessage(message);
-            return;
-        }
-        models::AuthorizedMachine machine;
-        machine.setUuid(object.value(QStringLiteral("machine_uuid")).toString());
-        machine.setCertificateFingerprint(object.value(QStringLiteral("certificate_fingerprint")).toString());
-        machine.setIpAddress(object.value(QStringLiteral("ip_address")).toString());
-        machine.setLastIpAddress(object.value(QStringLiteral("last_ip_address")).toString());
-        machine.setHostname(object.value(QStringLiteral("hostname")).toString());
-        machine.setAuthorized(object.value(QStringLiteral("authorized")).toBool());
-        const QString remoteStatus = object.value(QStringLiteral("status")).toString();
-        machine.setStatus(remoteStatus.isEmpty()
-            ? (machine.isAuthorized() ? models::MachineStatus::Authorized : models::MachineStatus::Revoked)
-            : remoteStatus);
-        machine.setReason(object.value(QStringLiteral("reason")).toString());
-        machine.setAddedAt(QDateTime::fromString(object.value(QStringLiteral("added_at")).toString(), Qt::ISODateWithMs));
-        const bool applied = m_permissionManager && m_permissionManager->applyRemoteMachine(machine);
-        qInfo() << "[AuthorizedMachines] événement reçu" << machine.certificateFingerprint()
-                << "authorized=" << machine.isAuthorized() << "applied=" << applied;
-        if (!relay) sendIdentifyIfReady();
-        if (relay && m_messagingServer) m_messagingServer->broadcastMessage(message);
-        return;
-    }
-    if (document.isObject()
         && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("audit_event")) {
         const QJsonObject object = document.object();
         models::AuditLog entry;
@@ -2289,4 +2185,30 @@ void Application::broadcastServerElectionEvent(const QString &logUuid, const QSt
 network::DiscoveryService *Application::discoveryService() const
 {
     return m_discoveryService;
+}
+
+QString Application::pendingServerFingerprint() const { return m_pendingServerFingerprint; }
+QString Application::pendingServerAddress() const { return m_pendingServerAddress; }
+int Application::pendingServerPort() const { return m_pendingServerPort; }
+int Application::pendingClientCount() const
+{
+    return m_permissionManager ? m_permissionManager->pendingClientCount() : 0;
+}
+
+bool Application::approvePendingServerCertificate()
+{
+    if (!m_permissionManager || !m_messagingService
+        || m_pendingServerFingerprint.isEmpty() || m_pendingServerAddress.isEmpty())
+        return false;
+
+    const bool approved = m_permissionManager->approveServerCertificate(
+        m_pendingServerFingerprint, m_pendingServerAddress, QStringLiteral("Serveur détecté"));
+    if (approved) {
+        // La QWebSocket precedente peut encore etre en fermeture au moment
+        // du clic. Une reprise differee evite d'ouvrir pendant ClosingState.
+        QTimer::singleShot(100, m_messagingService, [service = m_messagingService]() {
+            service->retryLastHost();
+        });
+    }
+    return approved;
 }

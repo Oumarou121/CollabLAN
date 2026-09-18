@@ -60,6 +60,10 @@ class AudioService;
 class Application : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QString pendingServerFingerprint READ pendingServerFingerprint NOTIFY pendingServerChanged)
+    Q_PROPERTY(QString pendingServerAddress READ pendingServerAddress NOTIFY pendingServerChanged)
+    Q_PROPERTY(int pendingServerPort READ pendingServerPort NOTIFY pendingServerChanged)
+    Q_PROPERTY(int pendingClientCount READ pendingClientCount NOTIFY pendingClientCountChanged)
 
 public:
     explicit Application(QObject *parent = nullptr);
@@ -162,6 +166,12 @@ public:
     Q_INVOKABLE bool promoteToServer();
     Q_INVOKABLE bool demoteToClient();
 
+    QString pendingServerFingerprint() const;
+    QString pendingServerAddress() const;
+    int pendingServerPort() const;
+    int pendingClientCount() const;
+    Q_INVOKABLE bool approvePendingServerCertificate();
+
     // Expose au bootstrap QML le NotificationManager pour les notifications.
     core::NotificationManager *notificationManager() const;
 
@@ -199,6 +209,10 @@ public:
 
     // Expose le DatabaseManager pour les services qui en ont besoin (ex: SettingsService).
     database::DatabaseManager *databaseManager() const;
+
+signals:
+    void pendingServerChanged();
+    void pendingClientCountChanged();
 
 private:
     /// Cree le compte "admin" par defaut (dev/demo) si la base est vide et
@@ -334,6 +348,9 @@ private:
     network::PeersModel *m_peersModel = nullptr;               // parente = this (QObject)
     network::SecurityService *m_securityService = nullptr;    // parente = this (QObject)
     network::MessagingService *m_messagingService = nullptr;  // parente = this (QObject)
+    QString m_pendingServerFingerprint;
+    QString m_pendingServerAddress;
+    quint16 m_pendingServerPort = 0;
     network::MessagingServer *m_messagingServer = nullptr;    // parente = this (QObject)
     network::TransferService *m_transferService = nullptr;    // parente = this (QObject)
     network::ElectionService *m_electionService = nullptr;      // parente = this (QObject)

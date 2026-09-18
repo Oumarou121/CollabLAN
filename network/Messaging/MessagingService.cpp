@@ -94,8 +94,17 @@ bool MessagingService::connectToHost(const QHostAddress &address, quint16 port)
     // Utiliser wss:// pour WebSocket sécurisé (TLS)
     const QString url = QStringLiteral("wss://%1:%2").arg(address.toString()).arg(port);
     qDebug() << "Connecting to secure WebSocket:" << url;
+    m_lastRequestedAddress = address;
+    m_lastRequestedPort = port;
     m_socket->open(QUrl(url));
     return true;
+}
+
+bool MessagingService::retryLastHost()
+{
+    if (m_lastRequestedAddress.isNull() || m_lastRequestedPort == 0)
+        return false;
+    return connectToHost(m_lastRequestedAddress, m_lastRequestedPort);
 }
 
 void MessagingService::disconnectFromHost()
@@ -159,8 +168,11 @@ void MessagingService::onConnected()
                                   Q_ARG(QString, fingerprint),
                                   Q_ARG(QString, m_socket->peerAddress().toString()));
         if (!trusted) {
+            const QHostAddress peerAddress = m_socket->peerAddress();
+            const quint16 peerPort = m_socket->peerPort();
             m_connected = false;
             m_socket->close();
+            emit serverCertificateTrustRequired(fingerprint, peerAddress.toString(), peerPort);
             emit error(QStringLiteral("Certificat du serveur distant non autorisé"));
             return;
         }

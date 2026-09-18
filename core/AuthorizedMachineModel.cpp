@@ -150,8 +150,6 @@ void AuthorizedMachineModel::setPermissionManager(core::PermissionManager *manag
     if (m_permissionManager) {
         connect(m_permissionManager, &PermissionManager::machineChanged,
                 this, [this](const models::AuthorizedMachine &) { refresh(); });
-        connect(m_permissionManager, &PermissionManager::machineSynchronized,
-        this, &AuthorizedMachineModel::refresh);
         refresh();
     }
 }
