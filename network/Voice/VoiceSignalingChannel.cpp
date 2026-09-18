@@ -360,24 +360,18 @@ void VoiceSignalingChannel::onClientConnected()
     const QString verifiedFingerprint = SecurityService::certificateFingerprint(
         m_outgoingSocket->sslConfiguration().peerCertificate());
     if (m_permissionManager) {
-        bool trusted = false;
-        QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
-                                  Qt::DirectConnection, Q_RETURN_ARG(bool, trusted),
-                                  Q_ARG(QString, verifiedFingerprint),
-                                  Q_ARG(QString, m_outgoingSocket->peerAddress().toString()));
-        if (!trusted) {
-            m_outgoingSocket->close();
-            emit error(QStringLiteral("Appel refusé : certificat distant non autorisé"));
-            return;
-        }
-    }
-    const QString verifiedFingerprint2 = SecurityService::certificateFingerprint(
-        m_outgoingSocket->sslConfiguration().peerCertificate());
-    if (m_permissionManager) {
         bool authorized = false;
         QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
                                   Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
-                                  Q_ARG(QString, verifiedFingerprint2));
+                                  Q_ARG(QString, verifiedFingerprint));
+        // Un appel direct peut viser un client autorise ou le serveur deja
+        // approuve localement ; ne consulte TrustedServers qu'en repli.
+        if (!authorized) {
+            QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
+                                      Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                      Q_ARG(QString, verifiedFingerprint),
+                                      Q_ARG(QString, m_outgoingSocket->peerAddress().toString()));
+        }
         if (!authorized) {
             m_outgoingSocket->close();
             emit error(QStringLiteral("Appel refusé : certificat distant non autorisé"));
@@ -419,6 +413,12 @@ void VoiceSignalingChannel::onTextMessageReceived(const QString &message)
             QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
                                       Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                       Q_ARG(QString, announcedFingerprint));
+            if (!authorized) {
+                QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
+                                          Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                          Q_ARG(QString, announcedFingerprint),
+                                          Q_ARG(QString, peerAddress.toString()));
+            }
             if (authorized) {
                 QMetaObject::invokeMethod(m_permissionManager, "recordMachineSeen",
                                           Qt::DirectConnection,

@@ -493,19 +493,19 @@ void TransferService::onClientSocketConnected()
         auto *sslSocket = qobject_cast<QSslSocket *>(socket);
         const QString fingerprint = sslSocket
             ? SecurityService::certificateFingerprint(sslSocket->peerCertificate()) : QString();
-        bool trusted = false;
-        QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
-                                  Qt::DirectConnection, Q_RETURN_ARG(bool, trusted),
-                                  Q_ARG(QString, fingerprint),
-                                  Q_ARG(QString, socket->peerAddress().toString()));
-        if (!trusted) {
-            finishSend(socket, false, QStringLiteral("Certificat distant non autorisé"));
-            return;
-        }
         bool authorized = false;
         QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
                                   Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                   Q_ARG(QString, fingerprint));
+        // Un transfert est P2P : le pair peut etre un client ou le serveur
+        // deja approuve localement. On ne traite donc le certificat comme un
+        // serveur qu'en repli, si ce n'est pas une machine autorisee.
+        if (!authorized) {
+            QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
+                                      Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                      Q_ARG(QString, fingerprint),
+                                      Q_ARG(QString, socket->peerAddress().toString()));
+        }
         if (!authorized) {
             finishSend(socket, false, QStringLiteral("Certificat distant non autorisé"));
             return;
@@ -803,6 +803,12 @@ void TransferService::onServerSocketReadyRead()
                                       Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                       Q_ARG(QString, fingerprint));
             if (!authorized) {
+                QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
+                                          Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                          Q_ARG(QString, fingerprint),
+                                          Q_ARG(QString, socket->peerAddress().toString()));
+            }
+            if (!authorized) {
                 qWarning() << "TransferService: active transfer interrupted for unauthorized machine"
                            << socket->peerAddress() << fingerprint;
                 socket->disconnectFromHost();
@@ -846,6 +852,12 @@ void TransferService::onServerSocketReadyRead()
                 QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
                                           Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                           Q_ARG(QString, announcedFingerprint));
+                if (!authorized) {
+                    QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
+                                              Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                              Q_ARG(QString, announcedFingerprint),
+                                              Q_ARG(QString, socket->peerAddress().toString()));
+                }
             }
             if (!authorized) {
                 qWarning() << "TransferService: transfer refused for unauthorized certificate"
