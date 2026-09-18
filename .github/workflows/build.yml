@@ -204,6 +204,35 @@ jobs:
             }
           }
 
+      # windeployqt copie les DLL Qt "classiques" (celles liees statiquement
+      # a l'exe) mais PAS qopensslbackend.dll : ce plugin TLS est charge
+      # dynamiquement au runtime par QSslSocket, donc invisible au scan de
+      # dependances de windeployqt. Sans lui dans tls/ a cote de l'exe,
+      # QSslSocket::availableBackends() ne liste jamais "openssl" -- meme
+      # avec libssl/libcrypto presentes -- et Qt retombe silencieusement sur
+      # Schannel (cf. debrief "backend actif avant selection: schannel").
+      - name: Copy Qt TLS backend plugin (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $windeployqt = Get-Command windeployqt -ErrorAction SilentlyContinue
+          if (-not $windeployqt) {
+            Write-Error "windeployqt introuvable dans le PATH -- impossible de localiser l'installation Qt."
+            exit 1
+          }
+          # windeployqt.exe vit dans <qtroot>/bin ; les plugins TLS dans <qtroot>/plugins/tls
+          $qtRoot = Split-Path -Parent (Split-Path -Parent $windeployqt.Source)
+          $pluginSrc = Join-Path $qtRoot "plugins\tls\qopensslbackend.dll"
+
+          if (-not (Test-Path $pluginSrc)) {
+            Write-Error "qopensslbackend.dll introuvable a $pluginSrc -- ce build Qt n'inclut peut-etre pas le backend TLS openssl."
+            exit 1
+          }
+
+          New-Item -ItemType Directory -Force -Path "build/app/tls" | Out-Null
+          Copy-Item $pluginSrc -Destination "build/app/tls" -Force
+          Write-Host "Copié : $pluginSrc"
+
       - name: Deploy Qt runtime (macOS)
         if: runner.os == 'macOS'
         shell: bash
