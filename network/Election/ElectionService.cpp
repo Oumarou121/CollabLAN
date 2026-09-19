@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDateTime>
+#include <QDebug>
 #include <QUuid>
 #include <QNetworkInterface>
 #include <algorithm>
@@ -257,6 +258,11 @@ void ElectionService::sendHeartbeat()
     packet["msg"] = QString::fromLatin1(kMsgHeartbeat);
     packet["server_uuid"] = m_localMachineUuid;
     packet["epoch"] = m_epoch;
+    // Un heartbeat ne portait jusqu'ici que l'epoch. Un serveur officiel
+    // redemarre avec un epoch persiste plus grand ignorait alors le heartbeat
+    // d'un TEMP_SERVER plus ancien, sans savoir qu'il devait tout de meme
+    // effectuer la reconciliation avant de reprendre la main.
+    packet["temporary"] = (m_role == models::ServerRole::TempServer);
     packet["messaging_port"] = m_messagingPort;
 
     broadcastPacket(QJsonDocument(packet).toJson(QJsonDocument::Compact));
@@ -428,10 +434,34 @@ void ElectionService::handlePacket(const QByteArray &data, const QHostAddress &s
             return;
 
         const int remoteEpoch = obj.value("epoch").toInt();
-        // Un heartbeat perime (epoch inferieur) est ignore : le serveur
-        // legitime courant a deja une vue plus recente.
-        if (remoteEpoch < m_epoch)
+        const bool remoteTemporary = obj.value("temporary").toBool(false);
+
+        // Cas de retour du SERVER officiel : son epoch persiste peut etre
+        // superieur a celui du TEMP_SERVER elu pendant son absence. Ce
+        // heartbeat est pourtant l'unique signal qui permet de retrouver le
+        // temporaire et de lancer la fusion. L'ancien "return" sur epoch
+        // inferieur creait un deadlock : le Server n'entamait jamais la
+        // reconciliation, et le TempServer ne pouvait donc jamais redevenir
+        // Client. On conserve l'epoch local (jamais de retour en arriere),
+        // mais on adopte l'adresse/port du temporaire pour le joindre.
+        if (remoteEpoch < m_epoch) {
+            if (m_role == models::ServerRole::Server && remoteTemporary) {
+                const bool activeServerChangedFlag = (m_activeServerUuid != serverUuid);
+                m_activeServerUuid = serverUuid;
+                m_activeServerAddress = senderAddress;
+                m_activeServerPort = static_cast<quint16>(obj.value("messaging_port").toInt(0));
+                m_lastHeartbeatSeenMs = QDateTime::currentMSecsSinceEpoch();
+                m_heartbeatEverSeen = true;
+                if (activeServerChangedFlag)
+                    emit activeServerUuidChanged();
+
+                qInfo() << "ElectionService: TEMP_SERVER detecte avec epoch inferieur"
+                        << remoteEpoch << "(serveur officiel:" << m_epoch
+                        << ") - reconciliation requise avant reprise";
+                emit reconciliationRequired(serverUuid);
+            }
             return;
+        }
 
         // Le client adopte l'epoch du serveur legitime : c'est ce qui permet
         // ensuite a startElection()/enterServerRole() de repartir de la bonne

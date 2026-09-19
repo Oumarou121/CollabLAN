@@ -102,6 +102,52 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(peer.electionService()->role(), models::ServerRole::Client, 5000);
         QTRY_VERIFY_WITH_TIMEOUT(!peer.messagingServer()->isRunning(), 5000);
     }
+
+    void officialServerReclaimsFromOlderTempServerEpoch()
+    {
+        const quint16 electionPort = nextPort();
+        const quint16 serverMessagingPort = nextPort();
+        const quint16 peerMessagingPort = nextPort();
+
+        QTemporaryDir serverDir;
+        QTemporaryDir peerDir;
+        QVERIFY(serverDir.isValid());
+        QVERIFY(peerDir.isValid());
+
+        // Simule le redemarrage d'un serveur officiel dont l'epoch persiste
+        // est deja plus eleve que celui du client qui sera promu temporaire.
+        // C'est le cas qui etait bloque par le filtrage remoteEpoch < m_epoch.
+        Application server;
+        server.initialize(serverMessagingPort, serverDir.filePath(QStringLiteral("server.db")),
+                          QStringLiteral("SERVER"), -1, electionPort);
+        server.electionService()->setInitialState(models::ServerRole::Server, 10);
+        server.electionService()->setHeartbeatIntervalMs(3600000);
+
+        QSignalSpy reconciliationRequiredSpy(server.electionService(),
+                                              &network::ElectionService::reconciliationRequired);
+        QSignalSpy reconciliationCompletedSpy(server.syncService(),
+                                               &network::SyncService::reconciliationCompleted);
+
+        Application peer;
+        peer.initialize(peerMessagingPort, peerDir.filePath(QStringLiteral("peer.db")),
+                        QStringLiteral("CLIENT"), -1, electionPort);
+        peer.electionService()->setHeartbeatTimeoutMs(300);
+        peer.electionService()->setElectionWindowMs(150);
+
+        QTRY_COMPARE_WITH_TIMEOUT(peer.electionService()->role(), models::ServerRole::TempServer, 5000);
+        QCOMPARE(peer.electionService()->epoch(), 1);
+
+        if (reconciliationRequiredSpy.isEmpty())
+            QVERIFY(reconciliationRequiredSpy.wait(5000));
+        if (reconciliationCompletedSpy.isEmpty())
+            QVERIFY(reconciliationCompletedSpy.wait(5000));
+
+        // Le reclaim doit prendre un epoch strictement superieur aux deux
+        // valeurs, et forcer le TEMP_SERVER a revenir Client.
+        QTRY_VERIFY_WITH_TIMEOUT(server.electionService()->epoch() > 10, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(peer.electionService()->role(), models::ServerRole::Client, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!peer.messagingServer()->isRunning(), 5000);
+    }
 };
 
 QTEST_MAIN(TestApplicationReconciliationWiring)
