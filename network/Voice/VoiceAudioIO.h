@@ -69,14 +69,17 @@ public:
     explicit VoiceAudioIO(QObject *parent = nullptr);
     ~VoiceAudioIO() override;
 
-    /// Demarre la capture microphone et la lecture haut-parleur/casque.
-    /// Retourne false si aucun peripherique audio par defaut n'est disponible.
+    /// Demarre independamment la capture et la lecture. Retourne true
+    /// seulement si les deux sens sont disponibles.
     bool start();
 
     /// Arrete la capture et la lecture, libere les peripheriques audio.
     void stop();
 
     bool isActive() const { return m_active; }
+    bool hasCapture() const { return m_captureDevice != nullptr; }
+    bool hasPlayback() const { return m_playbackDevice != nullptr; }
+    bool isFullyActive() const { return hasCapture() && hasPlayback(); }
 
     /// Coupe/reactive l'envoi du micro sans arreter la capture (mute local).
     void setMuted(bool muted) { m_muted = muted; }

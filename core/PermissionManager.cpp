@@ -77,6 +77,16 @@ bool PermissionManager::isMachineAuthorizedByCertificate(const QString &fingerpr
     return machine.has_value() && machine->status() == models::MachineStatus::Authorized;
 }
 
+bool PermissionManager::isMachineAuthorizedOrTrustedServer(const QString &fingerprint) const
+{
+    if (fingerprint.trimmed().isEmpty()) return false;
+    // Ce certificat a deja ete accepte lors d'une connexion sortante vers
+    // ce serveur. Il ne devient donc pas un client inconnu lorsque le poste
+    // local est promu temporairement et que le serveur officiel revient.
+    return isMachineAuthorizedByCertificate(fingerprint)
+        || (m_trustedServers && m_trustedServers->isTrusted(fingerprint));
+}
+
 void PermissionManager::recordMachineSeen(const QString &fingerprint, const QString &ipAddress)
 {
     if (!m_repository || fingerprint.trimmed().isEmpty()) return;

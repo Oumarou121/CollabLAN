@@ -133,7 +133,7 @@ void VoiceService::onCallTimeout()
 
 void VoiceService::startAudioWithRetry()
 {
-    if (m_state != CallState::Connected || m_audioIo->isActive()) {
+    if (m_state != CallState::Connected || m_audioIo->isFullyActive()) {
         return;
     }
 
@@ -144,9 +144,9 @@ void VoiceService::startAudioWithRetry()
         return;
     }
 
-    // start() peut avoir ouvert l'un des deux peripheriques avant que l'autre
-    // echoue. Le relacher ici rend chaque tentative independante.
-    m_audioIo->stop();
+    // Conserver le sens deja fonctionnel : un poste sans microphone doit
+    // toujours pouvoir entendre son correspondant pendant que le service
+    // signale clairement l'indisponibilite persistante de l'autre sens.
     scheduleAudioRetry();
 }
 
@@ -159,8 +159,16 @@ void VoiceService::scheduleAudioRetry()
     if (m_audioRetryAttempts >= kMaxAudioRetryAttempts) {
         qWarning() << "VoiceService: echec definitif de l'initialisation audio apres"
                    << m_audioRetryAttempts << "tentatives";
-        emit errorOccurred(QStringLiteral(
-            "Microphone ou haut-parleur indisponible sur ce poste : l'appel est connecte mais sans son."));
+        if (m_audioIo->hasPlayback() && !m_audioIo->hasCapture()) {
+            emit errorOccurred(QStringLiteral(
+                "Microphone indisponible : vous pouvez toujours entendre votre correspondant."));
+        } else if (m_audioIo->hasCapture() && !m_audioIo->hasPlayback()) {
+            emit errorOccurred(QStringLiteral(
+                "Haut-parleur ou casque indisponible : votre correspondant peut toujours vous entendre."));
+        } else {
+            emit errorOccurred(QStringLiteral(
+                "Microphone ou haut-parleur indisponible sur ce poste : l'appel est connecte mais sans son."));
+        }
         return;
     }
 

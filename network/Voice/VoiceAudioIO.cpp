@@ -345,8 +345,13 @@ VoiceAudioIO::~VoiceAudioIO()
 
 bool VoiceAudioIO::start()
 {
-    if (m_active) {
+    if (isFullyActive()) {
         return true;
+    }
+    // Un sens est deja actif. Le conserver pendant les tentatives de
+    // VoiceService plutot que de recreer le peripherique restant.
+    if (m_active) {
+        return false;
     }
 
     QAudioFormat telephonyFormat;
@@ -366,6 +371,48 @@ bool VoiceAudioIO::start()
             qWarning() << "VoiceAudioIO: aucun peripherique d'entree (microphone) disponible";
         if (outputDevice.isNull())
             qWarning() << "VoiceAudioIO: aucun peripherique de sortie (haut-parleur) disponible";
+        if (inputDevice.isNull() && outputDevice.isNull())
+            return false;
+
+        // Ne jamais couper l'autre sens : l'absence de microphone sur un
+        // poste ne doit pas l'empecher d'entendre son correspondant.
+        if (inputDevice.isNull()) {
+            m_playbackFormat = outputDevice.isFormatSupported(telephonyFormat)
+                ? telephonyFormat : outputDevice.preferredFormat();
+            if (outputDevice.isFormatSupported(m_playbackFormat)) {
+                m_audioSink = new QAudioSink(outputDevice, m_playbackFormat, this);
+                m_playbackDevice = m_audioSink->start();
+                if (m_playbackDevice) {
+                    connect(m_audioSink, &QAudioSink::stateChanged, this, [this](QtAudio::State state) {
+                        if (state == QtAudio::StoppedState && m_audioSink
+                            && m_audioSink->error() != QtAudio::NoError)
+                            emit audioFault(QStringLiteral("Le haut-parleur ou casque est devenu indisponible."));
+                    });
+                } else {
+                    m_audioSink->deleteLater();
+                    m_audioSink = nullptr;
+                }
+            }
+        } else {
+            m_captureFormat = inputDevice.isFormatSupported(telephonyFormat)
+                ? telephonyFormat : inputDevice.preferredFormat();
+            if (inputDevice.isFormatSupported(m_captureFormat)) {
+                m_audioSource = new QAudioSource(inputDevice, m_captureFormat, this);
+                m_captureDevice = m_audioSource->start();
+                if (m_captureDevice) {
+                    connect(m_captureDevice, &QIODevice::readyRead, this, &VoiceAudioIO::onCaptureReadyRead);
+                    connect(m_audioSource, &QAudioSource::stateChanged, this, [this](QtAudio::State state) {
+                        if (state == QtAudio::StoppedState && m_audioSource
+                            && m_audioSource->error() != QtAudio::NoError)
+                            emit audioFault(QStringLiteral("Le microphone est devenu indisponible."));
+                    });
+                } else {
+                    m_audioSource->deleteLater();
+                    m_audioSource = nullptr;
+                }
+            }
+        }
+        m_active = hasCapture() || hasPlayback();
         return false;
     }
 

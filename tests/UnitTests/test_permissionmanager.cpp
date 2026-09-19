@@ -79,6 +79,15 @@ private slots:
 
         QVERIFY(m_manager->trustRemoteServerCertificate(QStringLiteral("srv-fp"), QStringLiteral("10.0.0.1")));
         QVERIFY(!m_manager->isMachineAuthorizedByCertificate(QStringLiteral("srv-fp")));
+        QVERIFY(m_manager->isMachineAuthorizedOrTrustedServer(QStringLiteral("srv-fp")));
+    }
+
+    void pendingCertificateIsNotAcceptedForTemporaryServerRecovery()
+    {
+        freshDatabase();
+        QVERIFY(!m_manager->trustRemoteServerCertificate(
+            QStringLiteral("pending-fp"), QStringLiteral("10.0.0.2")));
+        QVERIFY(!m_manager->isMachineAuthorizedOrTrustedServer(QStringLiteral("pending-fp")));
     }
 
     void trustRemoteServerCertificate_revokedCertificateIsRefused()

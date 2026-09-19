@@ -190,7 +190,7 @@ void MessagingServer::onNewConnection()
     // Vérifier si la machine est autorisée (issue #70)
     bool authorized = false;
     if (m_permissionManager) {
-        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedOrTrustedServer",
                                    Qt::DirectConnection,
                                    Q_RETURN_ARG(bool, authorized),
                                    Q_ARG(QString, fingerprint));
@@ -252,7 +252,7 @@ void MessagingServer::onTextMessageReceived(const QString &message)
             }
             bool authorized = false;
             if (m_permissionManager) {
-                QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+                QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedOrTrustedServer",
                                           Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                           Q_ARG(QString, m_clientFingerprints.value(client)));
             }

@@ -73,6 +73,9 @@ public:
     /// se retrouve fail-open (authorized reste a sa valeur par defaut true).
     Q_INVOKABLE bool isMachineAuthorized(const QString &ipAddress) const;
     Q_INVOKABLE bool isMachineAuthorizedByCertificate(const QString &fingerprint) const;
+    /// Accepte aussi un certificat de serveur deja epingle localement. Cela
+    /// couvre le retour du serveur officiel vers un pair devenu TEMP_SERVER.
+    Q_INVOKABLE bool isMachineAuthorizedOrTrustedServer(const QString &fingerprint) const;
     Q_INVOKABLE void recordMachineSeen(const QString &fingerprint, const QString &ipAddress);
     /// Verifie la confiance LOCALE envers le certificat du serveur. Cette
     /// decision ne quitte jamais ce poste.
