@@ -55,10 +55,15 @@ VoiceService::VoiceService(SecurityService *securityService, QObject *parent)
 
     connect(m_audioIo.get(), &VoiceAudioIO::capturedFrame,
             this, &VoiceService::onCapturedAudioFrame);
+    connect(m_audioIo.get(), &VoiceAudioIO::audioFault,
+            this, &VoiceService::onAudioFault);
 
     m_callTimeout.setSingleShot(true);
     connect(&m_callTimeout, &QTimer::timeout,
             this, &VoiceService::onCallTimeout);
+    m_audioRetryTimer.setSingleShot(true);
+    connect(&m_audioRetryTimer, &QTimer::timeout,
+            this, &VoiceService::onAudioRetryTimeout);
 
     m_rtpSsrc = QRandomGenerator::global()->generate();
 }
@@ -126,6 +131,62 @@ void VoiceService::onCallTimeout()
     teardownSession(QStringLiteral("timeout"));
 }
 
+void VoiceService::startAudioWithRetry()
+{
+    if (m_state != CallState::Connected || m_audioIo->isActive()) {
+        return;
+    }
+
+    if (m_audioIo->start()) {
+        m_audioRetryTimer.stop();
+        m_audioRetryAttempts = 0;
+        qInfo() << "VoiceService: audio local initialise";
+        return;
+    }
+
+    // start() peut avoir ouvert l'un des deux peripheriques avant que l'autre
+    // echoue. Le relacher ici rend chaque tentative independante.
+    m_audioIo->stop();
+    scheduleAudioRetry();
+}
+
+void VoiceService::scheduleAudioRetry()
+{
+    if (m_state != CallState::Connected || m_audioRetryTimer.isActive()) {
+        return;
+    }
+
+    if (m_audioRetryAttempts >= kMaxAudioRetryAttempts) {
+        qWarning() << "VoiceService: echec definitif de l'initialisation audio apres"
+                   << m_audioRetryAttempts << "tentatives";
+        emit errorOccurred(QStringLiteral(
+            "Microphone ou haut-parleur indisponible sur ce poste : l'appel est connecte mais sans son."));
+        return;
+    }
+
+    ++m_audioRetryAttempts;
+    qWarning() << "VoiceService: peripherique audio indisponible, nouvelle tentative"
+               << m_audioRetryAttempts << "/" << kMaxAudioRetryAttempts;
+    m_audioRetryTimer.start(kAudioRetryIntervalMs);
+}
+
+void VoiceService::onAudioRetryTimeout()
+{
+    startAudioWithRetry();
+}
+
+void VoiceService::onAudioFault(const QString &reason)
+{
+    if (m_state != CallState::Connected) {
+        return;
+    }
+
+    qWarning() << "VoiceService:" << reason << "Reinitialisation audio demandee.";
+    m_audioIo->stop();
+    m_audioRetryAttempts = 0;
+    scheduleAudioRetry();
+}
+
 void VoiceService::createPeerConnection()
 {
     m_peerConnection = std::make_shared<rtc::PeerConnection>(lanOnlyConfiguration());
@@ -163,26 +224,11 @@ void VoiceService::createPeerConnection()
             switch (state) {
             case State::Connected:
                 setState(CallState::Connected);
-                // CORRECTIF (appel "connecte" mais totalement muet) : la
-                // valeur de retour de start() etait jusqu'ici ignoree.
-                // VoiceAudioIO::start() renvoie pourtant explicitement false
-                // si aucun peripherique audio par defaut n'est disponible
-                // (entree/sortie nulle) ou si aucun format audio n'est
-                // supporte -- ce qui arrive sur certains postes (peripherique
-                // par defaut mal resolu par l'OS, casque deconnecte, etc.).
-                // Dans ce cas, la connexion WebRTC/ICE reussissait quand meme
-                // (d'ou l'appel affiche comme "connecte" des deux cotes),
-                // mais ni le micro ni le haut-parleur n'etaient jamais
-                // demarres sur CE poste : aucune trame capturee (donc rien
-                // envoye), et playFrame() jetait silencieusement toute trame
-                // recue faute de m_playbackDevice. Rien n'etait logue ni
-                // remonte a l'utilisateur.
-                if (!m_audioIo->start()) {
-                    qWarning() << "VoiceService: echec demarrage audio (microphone/haut-parleur) "
-                                  "- appel connecte mais sans transmission audio sur ce poste";
-                    emit errorOccurred(QStringLiteral(
-                        "Microphone ou haut-parleur indisponible sur ce poste : l'appel est connecte mais sans son."));
-                }
+                // Windows peut repondre temporairement sans peripherique par
+                // defaut pendant un changement de casque ou au reveil. Ne pas
+                // laisser une session WebRTC etablie devenir muette pour tout
+                // le reste de l'appel : startAudioWithRetry() reessaie.
+                startAudioWithRetry();
                 emit callConnected();
                 break;
             case State::Disconnected:
@@ -329,6 +375,8 @@ void VoiceService::teardownSession(const QString &reason)
         return;
     }
 
+    m_audioRetryTimer.stop();
+    m_audioRetryAttempts = 0;
     m_audioIo->stop();
 
     if (m_peerConnection) {

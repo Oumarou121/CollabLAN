@@ -35,6 +35,29 @@ Item {
     signal newConversationRequested()
     signal createGroupRequested()
 
+    // Le contexte de messagerie est global, alors que cette page peut rester
+    // cachee dans le StackView quand l'utilisateur consulte un appel, les
+    // reglages, etc. En retirant la conversation active des que cette page
+    // n'est plus Active, un message recu en arriere-plan conserve is_read=0
+    // et le badge non-lu est correctement calcule.
+    function syncActiveConversation() {
+        if (!messagingContext)
+            return
+
+        const hasSelection = root.currentConversationId !== null
+                && root.currentConversationId !== undefined
+                && root.currentConversationId !== 0
+        if (StackView.status === StackView.Active && hasSelection)
+            messagingContext.setConversation(root.currentConversationId)
+        else
+            messagingContext.setConversation(0)
+    }
+
+    onCurrentConversationIdChanged: root.syncActiveConversation()
+    onMessagingContextChanged: root.syncActiveConversation()
+    StackView.onStatusChanged: root.syncActiveConversation()
+    Component.onCompleted: root.syncActiveConversation()
+
     // Permet a Main.qml de rediriger vers une conversation fraichement
     // creee (nouvelle discussion / nouveau groupe) sans repasser par la
     // liste : ces ecrans restent des etapes separees dans le StackView,
@@ -125,6 +148,7 @@ Item {
                 conversationId: root.currentConversationId || 0
                 name: root.currentConversationName
                 showBackButton: false
+                conversationActive: root.StackView.status === StackView.Active && chatPanel.visible
             }
 
             // Etat vide : invite a choisir une conversation, plutot qu'un

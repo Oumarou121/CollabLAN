@@ -87,6 +87,11 @@ signals:
     /// (vide si mute), prete a etre encodee et envoyee en RTP.
     void capturedFrame(const QByteArray &pcm16);
 
+    /// Le backend audio a perdu le peripherique ou n'a pas pu le demarrer.
+    /// VoiceService peut alors reinitialiser les peripheriques sans couper la
+    /// session WebRTC, qui reste valide independamment de l'audio local.
+    void audioFault(const QString &reason);
+
 public slots:
     /// Fournit une trame PCM 16 bits (deja decodee) a jouer sur le
     /// haut-parleur/casque local.

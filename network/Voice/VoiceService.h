@@ -108,16 +108,22 @@ private slots:
     void onSignalingPeerConnected();
     void onCapturedAudioFrame(const QByteArray &pcm16);
     void onCallTimeout();
+    void onAudioRetryTimeout();
+    void onAudioFault(const QString &reason);
 
 private:
     void setState(CallState newState);
     void createPeerConnection();
     void teardownSession(const QString &reason);
     void wireTrackCallbacks();
+    void startAudioWithRetry();
+    void scheduleAudioRetry();
 
     static constexpr int kCallingTimeoutMs = 30'000;
     static constexpr int kRingingTimeoutMs = 30'000;
     static constexpr int kConnectingTimeoutMs = 20'000;
+    static constexpr int kAudioRetryIntervalMs = 1'000;
+    static constexpr int kMaxAudioRetryAttempts = 5;
 
     SecurityService *m_securityService = nullptr;
     std::unique_ptr<VoiceSignalingChannel> m_signaling;
@@ -128,6 +134,8 @@ private:
 
     CallState m_state = CallState::Idle;
     QTimer m_callTimeout;
+    QTimer m_audioRetryTimer;
+    int m_audioRetryAttempts = 0;
     QString m_currentCallId;
     QHostAddress m_peerAddress;
     quint16 m_peerSignalingPort = 0;

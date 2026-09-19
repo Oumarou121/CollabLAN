@@ -412,6 +412,14 @@ void AudioService::startPlayback(EventType type, const QString &variantId, bool 
         channel.sink->stop();
     ensureSink(channel);
     channel.sink->setVolume(m_volume);
+    // Limite la quantite de donnees que Qt pousse a l'avance vers la carte :
+    // sans ca, stop() change l'etat Qt immediatement mais le buffer deja
+    // envoye (potentiellement plusieurs secondes pour un son qui boucle)
+    // continue de jouer sur le materiel -- percu comme "la sonnerie ne
+    // s'arrete jamais" alors que le code a bien arrete la lecture.
+    const qint64 bufferBytes = m_outputFormat.bytesForDuration(100000); // 100 ms
+    if (bufferBytes > 0)
+        channel.sink->setBufferSize(static_cast<int>(bufferBytes));
     connect(channel.sink, &QAudioSink::stateChanged, this, [sink = channel.sink, key](QtAudio::State state) {
         qDebug() << "[AudioService] etat du lecteur pour" << key << ":" << static_cast<int>(state);
         if (sink->error() != QtAudio::NoError) {
@@ -531,8 +539,13 @@ void AudioService::stopCallSound()
 {
     m_callRinging = false;
     Channel &channel = m_channels[channelIndex(EventType::Call)];
-    if (channel.sink)
+    if (channel.sink) {
+        // reset() purge immediatement les donnees deja mises en file vers
+        // la carte, contrairement a stop() seul qui laisse le buffer en
+        // cours se vider a son rythme (cf. commentaire dans startPlayback).
+        channel.sink->reset();
         channel.sink->stop();
+    }
 }
 
 } // namespace services

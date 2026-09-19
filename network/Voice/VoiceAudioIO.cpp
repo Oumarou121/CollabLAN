@@ -415,17 +415,30 @@ bool VoiceAudioIO::start()
     m_captureDevice = m_audioSource->start();
     if (!m_captureDevice) {
         qWarning() << "VoiceAudioIO: impossible de demarrer la capture microphone";
+        stop();
         return false;
     }
     connect(m_captureDevice, &QIODevice::readyRead, this, &VoiceAudioIO::onCaptureReadyRead);
+    connect(m_audioSource, &QAudioSource::stateChanged, this, [this](QtAudio::State state) {
+        if (state == QtAudio::StoppedState && m_audioSource
+            && m_audioSource->error() != QtAudio::NoError) {
+            emit audioFault(QStringLiteral("Le microphone est devenu indisponible."));
+        }
+    });
 
     m_audioSink = new QAudioSink(outputDevice, m_playbackFormat, this);
     m_playbackDevice = m_audioSink->start();
     if (!m_playbackDevice) {
         qWarning() << "VoiceAudioIO: impossible de demarrer la lecture haut-parleur";
-        m_audioSource->stop();
+        stop();
         return false;
     }
+    connect(m_audioSink, &QAudioSink::stateChanged, this, [this](QtAudio::State state) {
+        if (state == QtAudio::StoppedState && m_audioSink
+            && m_audioSink->error() != QtAudio::NoError) {
+            emit audioFault(QStringLiteral("Le haut-parleur ou casque est devenu indisponible."));
+        }
+    });
 
     m_captureBuffer.clear();
     m_active = true;

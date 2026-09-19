@@ -21,6 +21,10 @@ Item {
     property var messagingContext: null
     property var conversationId: 0
     property string name: ""
+    // Une instance de ChatView peut rester vivante sous une autre page du
+    // StackView. Dans ce cas elle ne doit surtout pas faire croire au modele
+    // que l'utilisateur lit encore la conversation.
+    property bool conversationActive: true
     property int currentUserId: messagingContext ? messagingContext.currentUserId() : 0
     readonly property bool isGroup: messagingContext ? messagingContext.isGroupConversation(conversationId) : false
 
@@ -37,6 +41,11 @@ Item {
         : (messagingContext ? messagingContext.conversationDisplayName(conversationId) : qsTr("Conversation"))
 
     signal backRequested()
+
+    function activateConversationIfVisible() {
+        if (conversationActive && messagingContext && conversationId > 0)
+            messagingContext.setConversation(conversationId)
+    }
 
     // Statut de presence de l'autre participant (conversation individuelle
     // uniquement -- une conversation de groupe n'a pas de statut unique).
@@ -83,9 +92,9 @@ Item {
 
     onConversationIdChanged: {
         root.refreshPresence()
-        if (messagingContext && conversationId > 0)
-            messagingContext.setConversation(conversationId)
+        root.activateConversationIfVisible()
     }
+    onConversationActiveChanged: root.activateConversationIfVisible()
     onIsGroupChanged: root.refreshPresence()
 
     // Police d'icones Font Awesome 4.7.0 pour l'illustration de l'etat vide
@@ -541,9 +550,7 @@ Item {
 
     // Charger la conversation au demarrage
     Component.onCompleted: {
-        if (messagingContext && conversationId > 0) {
-            messagingContext.setConversation(conversationId)
-        }
+        root.activateConversationIfVisible()
         root.refreshPresence()
     }
 }
