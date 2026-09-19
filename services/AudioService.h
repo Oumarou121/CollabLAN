@@ -6,6 +6,7 @@
 #include <QStringList>
 
 class QSoundEffect;
+class QMediaDevices;
 
 namespace services {
 
@@ -99,6 +100,14 @@ signals:
     void transferSoundChanged();
     void callSoundChanged();
 
+private slots:
+    /// Relie chaque QSoundEffect precharge au nouveau peripherique de
+    /// sortie par defaut lorsque l'OS en signale le changement (casque
+    /// deconnecte, nouvelle sortie par defaut, etc.). Sans quoi un effet
+    /// peut rester silencieusement lie a un peripherique qui n'est plus
+    /// celui utilise par le systeme.
+    void rebindAudioDevice();
+
 private:
     void loadSound(EventType type, const QString &variantId, const QString &resourcePath);
     QString currentVariant(EventType type) const;
@@ -111,6 +120,7 @@ private:
     static QString extractToLocalFile(const QString &resourcePath);
 
     QHash<QString, QSoundEffect *> m_sounds;
+    QMediaDevices *m_mediaDevices = nullptr;
     bool m_soundEnabled = true;
     qreal m_volume = 1.0;
     QString m_messageSound;

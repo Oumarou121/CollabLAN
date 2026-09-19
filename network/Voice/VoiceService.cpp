@@ -163,7 +163,26 @@ void VoiceService::createPeerConnection()
             switch (state) {
             case State::Connected:
                 setState(CallState::Connected);
-                m_audioIo->start();
+                // CORRECTIF (appel "connecte" mais totalement muet) : la
+                // valeur de retour de start() etait jusqu'ici ignoree.
+                // VoiceAudioIO::start() renvoie pourtant explicitement false
+                // si aucun peripherique audio par defaut n'est disponible
+                // (entree/sortie nulle) ou si aucun format audio n'est
+                // supporte -- ce qui arrive sur certains postes (peripherique
+                // par defaut mal resolu par l'OS, casque deconnecte, etc.).
+                // Dans ce cas, la connexion WebRTC/ICE reussissait quand meme
+                // (d'ou l'appel affiche comme "connecte" des deux cotes),
+                // mais ni le micro ni le haut-parleur n'etaient jamais
+                // demarres sur CE poste : aucune trame capturee (donc rien
+                // envoye), et playFrame() jetait silencieusement toute trame
+                // recue faute de m_playbackDevice. Rien n'etait logue ni
+                // remonte a l'utilisateur.
+                if (!m_audioIo->start()) {
+                    qWarning() << "VoiceService: echec demarrage audio (microphone/haut-parleur) "
+                                  "- appel connecte mais sans transmission audio sur ce poste";
+                    emit errorOccurred(QStringLiteral(
+                        "Microphone ou haut-parleur indisponible sur ce poste : l'appel est connecte mais sans son."));
+                }
                 emit callConnected();
                 break;
             case State::Disconnected:

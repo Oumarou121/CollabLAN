@@ -317,6 +317,16 @@ void DiscoveryService::handleAnnouncePacket(const QByteArray &data, const QHostA
 
     m_peers.insert(peerId, peer);
 
+    // DIAGNOSTIC (poste detecte alors qu'il est cense etre hors reseau) :
+    // la liste des postes est purement pilotee par la reception reelle de
+    // ces paquets, sans aucune autre source -- si un poste apparait a tort,
+    // ce log permet d'identifier immediatement PAR QUELLE INTERFACE/IP
+    // source ses annonces arrivent (carte Ethernet oubliee, carte virtuelle
+    // Hyper-V/WSL/Docker/VirtualBox, hotspot, Wi-Fi "associe sans Internet"...).
+    if (isNewPeer)
+        qInfo() << "[Discovery] Nouveau poste detecte:" << peer.name << "id:" << peerId
+                << "depuis" << senderAddress.toString() << ":" << peer.port;
+
     if (isNewPeer)
         emit peerDiscovered(peer);
     else if (hasChanged)

@@ -4,6 +4,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QMediaDevices>
+#include <QAudioDevice>
 #include <QSettings>
 #include <QSoundEffect>
 #include <QStandardPaths>
@@ -111,6 +113,33 @@ AudioService::AudioService(QObject *parent)
             loadSound(type, variantId, resourcePathFor(type, variantId));
         }
     }
+
+    // DIAGNOSTIC (postes ou aucun son de notification ne s'entend malgre
+    // "Sons actives" coche) : QSoundEffect est cense suivre automatiquement
+    // le peripherique de sortie par defaut du systeme, mais rien dans ce
+    // code ne le forcait explicitement ni ne reagissait a un changement de
+    // peripherique par defaut (casque deconnecte, sortie HDMI/Bluetooth
+    // devenue "par defaut" alors qu'elle est eteinte, etc.) -- un scenario
+    // ou QSoundEffect reste en status() Ready et "joue" sans jamais lever
+    // d'erreur, tout en ne produisant aucun son audible. On lie
+    // explicitement chaque effet au peripherique de sortie par defaut
+    // courant (loadSound()), et on refait cette liaison sur tous les
+    // effets a chaque changement de peripherique de sortie signale par
+    // l'OS.
+    m_mediaDevices = new QMediaDevices(this);
+    connect(m_mediaDevices, &QMediaDevices::audioOutputsChanged, this, &AudioService::rebindAudioDevice);
+}
+
+void AudioService::rebindAudioDevice()
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    const QAudioDevice outputDevice = QMediaDevices::defaultAudioOutput();
+    qInfo() << "[AudioService] Peripherique de sortie par defaut change :"
+             << outputDevice.description() << (outputDevice.isNull() ? "(aucun peripherique !)" : "");
+    for (auto *effect : std::as_const(m_sounds)) {
+        effect->setAudioDevice(outputDevice);
+    }
+#endif
 }
 
 AudioService::~AudioService() = default;
@@ -169,6 +198,13 @@ void AudioService::loadSound(EventType type, const QString &variantId, const QSt
     const QUrl source = localPath.isEmpty() ? QUrl(resourcePath) : QUrl::fromLocalFile(localPath);
 
     auto *effect = new QSoundEffect(this);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    // Liaison explicite au peripherique de sortie par defaut courant (cf.
+    // rebindAudioDevice()) plutot que de compter sur une resolution
+    // implicite qui peut ne pas suivre un changement de peripherique par
+    // defaut sur certains postes.
+    effect->setAudioDevice(QMediaDevices::defaultAudioOutput());
+#endif
     effect->setSource(source);
     effect->setVolume(m_volume);
     effect->setLoopCount(1);
@@ -259,7 +295,12 @@ void AudioService::playSound(services::AudioService::EventType type)
 
     qDebug() << "[AudioService] playSound : lecture de" << soundKey(type, currentVariant(type))
              << "status:" << effect->status() << "volume:" << effect->volume()
-             << "isPlaying (avant play):" << effect->isPlaying();
+             << "isPlaying (avant play):" << effect->isPlaying()
+             << "isMuted:" << effect->isMuted()
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+             << "peripherique:" << effect->audioDevice().description()
+#endif
+             ;
 
     // QSoundEffect::play() est asynchrone : la lecture est geree par le
     // backend audio de Qt et ne bloque jamais le thread appelant (donc

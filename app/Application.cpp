@@ -523,8 +523,53 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 m_reconciliationInFlight = true;
 
                 const QString localUuid = m_electionService->localMachineUuid();
-                connect(m_messagingService, &network::MessagingService::connected,
-                        m_syncService, [this, fromEpoch, localUuid]() {
+
+                // CORRECTIF (Server officiel bloque indefiniment en attente de
+                // reconciliation) : connectToHost() renvoie true des qu'il
+                // INITIE la connexion TLS ; l'echec reel (certificat du
+                // TEMP_SERVER non approuve, handshake TLS refuse, timeout
+                // socket) n'arrive que plus tard, de facon asynchrone, via
+                // MessagingService::disconnected()/error(). Ces deux signaux
+                // n'etaient ecoutes nulle part ici : en cas d'echec async,
+                // m_reconciliationInFlight restait bloque a "true" pour
+                // toujours, et TOUT reconciliationRequired suivant (a chaque
+                // heartbeat du TEMP_SERVER, donc en continu) etait alors
+                // ignore en silence (garde ligne ci-dessus) -- le Server
+                // officiel ne reclamait alors plus jamais son role, laissant
+                // le TEMP_SERVER en place jusqu'a un passage manuel en
+                // Client depuis Parametres. On arme donc ici aussi une garde
+                // sur disconnected()/error(), a usage unique et qui se
+                // desarme mutuellement des que l'un des trois signaux
+                // (connected/disconnected/error) se declenche.
+                auto connConn = std::make_shared<QMetaObject::Connection>();
+                auto discConn = std::make_shared<QMetaObject::Connection>();
+                auto errConn = std::make_shared<QMetaObject::Connection>();
+
+                *discConn = connect(m_messagingService, &network::MessagingService::disconnected,
+                        m_syncService, [this, connConn, errConn, discConn]() {
+                            if (m_reconciliationInFlight) {
+                                qWarning() << "Reconciliation impossible: deconnecte du TEMP_SERVER avant reponse";
+                                m_reconciliationInFlight = false;
+                            }
+                            QObject::disconnect(*connConn);
+                            QObject::disconnect(*errConn);
+                        }, Qt::SingleShotConnection);
+
+                *errConn = connect(m_messagingService, &network::MessagingService::error,
+                        m_syncService, [this, connConn, errConn, discConn](const QString &errorString) {
+                            if (m_reconciliationInFlight) {
+                                qWarning() << "Reconciliation impossible: erreur de connexion au TEMP_SERVER -"
+                                           << errorString;
+                                m_reconciliationInFlight = false;
+                            }
+                            QObject::disconnect(*connConn);
+                            QObject::disconnect(*discConn);
+                        }, Qt::SingleShotConnection);
+
+                *connConn = connect(m_messagingService, &network::MessagingService::connected,
+                        m_syncService, [this, fromEpoch, localUuid, errConn, discConn]() {
+                            QObject::disconnect(*errConn);
+                            QObject::disconnect(*discConn);
                             m_syncService->requestReconciliation(fromEpoch, localUuid);
                         }, Qt::SingleShotConnection);
 
@@ -532,6 +577,9 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                     qWarning() << "Reconciliation impossible: connexion au TEMP_SERVER refusee"
                                << tempServerAddress << tempServerPort;
                     m_reconciliationInFlight = false;
+                    QObject::disconnect(*connConn);
+                    QObject::disconnect(*discConn);
+                    QObject::disconnect(*errConn);
                 }
             });
 
