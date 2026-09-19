@@ -3,8 +3,28 @@
 #include "database/DatabaseManager.h"
 #include <QDateTime>
 #include <QDebug>
+#include <QMetaObject>
 
 namespace core::sync {
+
+namespace {
+// QVector<models::SharedFileChange> traverse une connexion inter-thread
+// (SharedFolderIndexWorker::finished() est livre via une file d'attente
+// automatique, le worker vivant sur un QThread distinct) : Qt a besoin
+// que le type soit enregistre au meta-systeme pour pouvoir le copier dans
+// la queue d'evenements. models::SharedFolder l'est deja implicitement
+// via les connexions directes existantes (meme thread), mais jamais eu
+// besoin d'etre enregistre au meta-type avant -- premiere connexion
+// reellement inter-thread du projet.
+void registerIndexWorkerMetaTypes()
+{
+    static const bool registered = [] {
+        qRegisterMetaType<QVector<models::SharedFileChange>>("QVector<models::SharedFileChange>");
+        return true;
+    }();
+    Q_UNUSED(registered);
+}
+}
 
 SyncEngine::SyncEngine(core::SharedFolderManager *folderManager,
                         database::DatabaseManager *dbManager,
@@ -25,9 +45,30 @@ SyncEngine::SyncEngine(core::SharedFolderManager *folderManager,
         connect(m_folderManager, &core::SharedFolderManager::folderLocalPathProvisioned,
                 this, &SyncEngine::onFolderLocalPathProvisioned);
     }
+
+    // Thread + worker d'indexation asynchrone (reindexFolderAsync()).
+    // Cree meme si dbManager est nul (ex: certains tests) -- dans ce cas
+    // le worker echouera simplement a ouvrir sa connexion et
+    // reindexFolderAsync() rapportera l'echec via finished(ok=false),
+    // sans jamais planter.
+    registerIndexWorkerMetaTypes();
+    const QString dbFilePath = dbManager ? dbManager->databaseFilePath() : QString();
+    m_indexThread = new QThread(this);
+    m_indexThread->setObjectName(QStringLiteral("SharedFolderIndexWorkerThread"));
+    m_indexWorker = new SharedFolderIndexWorker(dbFilePath);
+    m_indexWorker->moveToThread(m_indexThread);
+    connect(m_indexThread, &QThread::finished, m_indexWorker, &QObject::deleteLater);
+    connect(m_indexWorker, &SharedFolderIndexWorker::finished, this, &SyncEngine::onIndexWorkerFinished);
+    m_indexThread->start();
 }
 
-SyncEngine::~SyncEngine() = default;
+SyncEngine::~SyncEngine()
+{
+    if (m_indexThread) {
+        m_indexThread->quit();
+        m_indexThread->wait();
+    }
+}
 
 void SyncEngine::setLocalUserId(qint64 userId)
 {
@@ -220,8 +261,55 @@ int SyncEngine::reindexFolder(qint64 folderId)
         return -1;
     }
 
+    const int persistedCount = persistIndexChanges(folderId, *changes);
+    emit folderReindexed(folderId, persistedCount);
+    return persistedCount;
+}
+
+void SyncEngine::reindexFolderAsync(qint64 folderId)
+{
+    if (!m_folderManager || !m_indexWorker) {
+        return;
+    }
+
+    const auto folder = m_folderManager->getFolder(folderId);
+    if (!folder.has_value() || !canWatchFolder(*folder)) {
+        // Memes conditions de garde que reindexFolder() : pas de contenu
+        // local, ou membre Read seul -- rien a indexer/journaliser.
+        qDebug() << "[SyncEngine] reindexFolderAsync ignoré : pas de localPath ou pas de permission Write";
+        return;
+    }
+
+    emit reindexingStarted(folderId);
+    // QueuedConnection implicite : m_indexWorker vit sur m_indexThread,
+    // pas sur le thread appelant. L'appel retourne immediatement --
+    // c'est tout le point de cette methode.
+    QMetaObject::invokeMethod(m_indexWorker, "indexFolder", Qt::QueuedConnection, Q_ARG(qint64, folderId));
+}
+
+void SyncEngine::onIndexWorkerFinished(qint64 folderId, bool ok, QVector<models::SharedFileChange> changes,
+                                        QString errorString)
+{
+    if (!ok) {
+        qWarning() << "[SyncEngine] Indexation asynchrone échouée pour le dossier" << folderId << ":" << errorString;
+        emit folderReindexed(folderId, -1);
+        return;
+    }
+
+    // Le folderManager du thread UI (m_folderManager) n'a pas vu les
+    // ecritures faites par le worker sur SA propre connexion SQLite --
+    // rien a refaire ici cote lecture, SQLite persistant deja tout sur
+    // disque des le COMMIT de l'upsert (chaque upsert() est sa propre
+    // transaction implicite) : un getFiles()/getFolder() ulterieur sur la
+    // connexion du thread UI relit donc bien l'etat a jour.
+    const int persistedCount = persistIndexChanges(folderId, changes);
+    emit folderReindexed(folderId, persistedCount);
+}
+
+int SyncEngine::persistIndexChanges(qint64 folderId, const QVector<models::SharedFileChange> &changes)
+{
     int persistedCount = 0;
-    for (const models::SharedFileChange &change : *changes) {
+    for (const models::SharedFileChange &change : changes) {
         models::FileSyncOperation operation;
         operation.setType(change.type());
         operation.setFileId(change.file().id());
@@ -250,7 +338,6 @@ int SyncEngine::reindexFolder(qint64 folderId)
         m_watcher.refreshWatchedFiles(folderId, relativePaths);
     }
 
-    emit folderReindexed(folderId, persistedCount);
     return persistedCount;
 }
 

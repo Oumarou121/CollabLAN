@@ -35,6 +35,14 @@ Item {
     property var currentSyncHistory: []
     property bool showHistory: false
 
+    // Ids des dossiers actuellement en cours d'indexation en arrière-plan
+    // (cf. SyncEngine::reindexFolderAsync() / SharedFolderContext::
+    // indexingStarted()) -- alimente l'indicateur "Indexation…" affiché
+    // dans l'en-tête pendant que l'appli reste réactive. Un dossier est
+    // retiré de cette liste dès que folderReindexed() arrive pour lui
+    // (succès ou échec), cf. les deux Connections ci-dessous.
+    property var indexingFolderIds: []
+
     // Ensemble des chemins relatifs en conflit pour le dossier actuellement ouvert.
     // Clé: relativePath  Valeur: chemin du fichier de conflit renommé.
     // Réinitialisé à l'ouverture d'un nouveau dossier.
@@ -257,9 +265,23 @@ Item {
     Connections {
         target: root.context
         function onFolderReindexed(folderId, changeCount) {
+            var idx = root.indexingFolderIds.indexOf(folderId)
+            if (idx !== -1) {
+                var stillIndexing = root.indexingFolderIds.slice()
+                stillIndexing.splice(idx, 1)
+                root.indexingFolderIds = stillIndexing
+            }
             if (folderId === root.openedFolderId) {
                 root.refreshFiles()
                 root.refreshHistory()
+            }
+        }
+        // Émis dès que l'indexation démarre en arrière-plan (avant que le
+        // résultat ne soit connu) : ajoute folderId à la liste des
+        // dossiers en cours d'indexation pour afficher l'indicateur.
+        function onIndexingStarted(folderId) {
+            if (root.indexingFolderIds.indexOf(folderId) === -1) {
+                root.indexingFolderIds = root.indexingFolderIds.concat([folderId])
             }
         }
         // Un fichier reçu via le réseau (synchronisation d'un dossier
@@ -1549,6 +1571,31 @@ Item {
                             }
                         }
 
+                        // CORRECTIF PERF : retour visuel pendant l'indexation
+                        // asynchrone (cf. SyncEngine::reindexFolderAsync()) --
+                        // avant, le clic "Réindexer"/le partage semblait figer
+                        // l'appli sur un poste peu performant ; maintenant
+                        // l'indexation tourne en arrière-plan et ce petit
+                        // indicateur montre qu'elle est en cours, sans bloquer
+                        // le reste de l'écran.
+                        RowLayout {
+                            visible: root.openedFolderId >= 0 && root.indexingFolderIds.indexOf(root.openedFolderId) !== -1
+                            spacing: 6
+
+                            BusyIndicator {
+                                implicitWidth: 14
+                                implicitHeight: 14
+                                running: parent.visible
+                            }
+
+                            Label {
+                                text: qsTr("Indexation…")
+                                font.pixelSize: Theme.fontSizeCaption
+                                font.family: Theme.fontFamily
+                                color: Theme.textTertiary
+                            }
+                        }
+
                         Repeater {
                             model: root.openedFolderId >= 0 && root.browsedRelativePath.length > 0
                                    ? root.browsedRelativePath.split("/") : []
@@ -1761,6 +1808,34 @@ Item {
                                     root.context.shareFolder(root.openedFolderId)
                                     root.refreshFiles()
                                     root.refreshHistory()
+                                }
+                            }
+                        }
+                        MenuItem {
+                            width: parent.width - 2 * Theme.spacingXs
+                            height: 40
+                            enabled: true
+                            contentItem: Label {
+                                text: parent.text
+                                color: parent.enabled ? Theme.text : Theme.textTertiary
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeSmall
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: Theme.spacingSmall
+                            }
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: parent.highlighted ? Theme.primaryMuted : "transparent"
+                            }
+                            // CORRECTIF : l'écran "Dossiers partagés" n'offrait
+                            // jusqu'ici aucun moyen d'accéder au contenu réel
+                            // sur le disque (contrairement à FileTransferView,
+                            // qui a "Ouvrir l'emplacement" sur chaque fichier
+                            // transféré, cf. TransferContext::openFileLocation()).
+                            text: qsTr("Ouvrir dans l'explorateur")
+                            onTriggered: {
+                                if (root.context && !root.context.openFolderLocation(root.openedFolderId)) {
+                                    errorBanner.show(qsTr("Impossible d'ouvrir l'emplacement du dossier."))
                                 }
                             }
                         }

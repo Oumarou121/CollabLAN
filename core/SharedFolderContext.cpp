@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <QHash>
 #include <QVariantMap>
-#include <QFile>
+#include <QDesktopServices>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QUrl>
 #include "models/SharedFolderPermission.h"
 
 namespace core {
@@ -100,6 +102,8 @@ void SharedFolderContext::setSyncEngine(core::sync::SyncEngine *engine)
     if (m_syncEngine) {
         connect(m_syncEngine, &core::sync::SyncEngine::folderReindexed,
                 this, &SharedFolderContext::folderReindexed);
+        connect(m_syncEngine, &core::sync::SyncEngine::reindexingStarted,
+                this, &SharedFolderContext::indexingStarted);
     }
 }
 
@@ -258,15 +262,29 @@ bool SharedFolderContext::shareFolder(qint64 folderId)
         return false;
     }
 
-    int changeCount = -1;
+    // CORRECTIF PERF (debrief : "l'app ne repond plus" pendant le partage
+    // d'un dossier sur un poste peu performant) : le parcours recursif +
+    // hash SHA-256 + upserts SQLite (le vrai cout, cf. SharedFolderManager::
+    // shareFolder()) est desormais effectue sur un thread dedie via
+    // SyncEngine::reindexFolderAsync() -- cet appel retourne IMMEDIATEMENT,
+    // avant que l'indexation ne soit terminee. Le resultat (nombre de
+    // changements, erreurs eventuelles) arrive plus tard via les signaux
+    // deja relayes vers QML : indexingStarted() tout de suite (pour
+    // afficher un indicateur "indexation en cours..."), puis
+    // folderReindexed() a la fin (pour rafraichir la liste des fichiers --
+    // cf. le connect sur SharedFolderManager::folderShared dans
+    // setSharedFolderManager(), qui appelle deja refresh()).
+    //
+    // Sans SyncEngine assigne (cas degrade, ex: certains tests), on
+    // retombe sur l'appel synchrone direct a SharedFolderManager --
+    // comportement inchange dans ce cas precis.
     if (m_syncEngine) {
-        changeCount = m_syncEngine->reindexFolder(folderId);
-    } else {
-        const auto changes = m_manager->shareFolder(folderId);
-        changeCount = changes.has_value() ? changes->size() : -1;
+        m_syncEngine->reindexFolderAsync(folderId);
+        return true;
     }
 
-    if (changeCount < 0) {
+    const auto changes = m_manager->shareFolder(folderId);
+    if (!changes.has_value()) {
         m_lastErrorString = m_manager->lastErrorString();
         emit errorOccurred(m_lastErrorString);
         return false;
@@ -274,6 +292,41 @@ bool SharedFolderContext::shareFolder(qint64 folderId)
 
     refresh();
     return true;
+}
+
+bool SharedFolderContext::openFolderLocation(qint64 folderId)
+{
+    if (!m_manager) {
+        m_lastErrorString = QStringLiteral("Module Shared Folder non disponible");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    const auto folder = m_manager->getFolder(folderId);
+    if (!folder.has_value()) {
+        m_lastErrorString = QStringLiteral("Dossier partagé introuvable");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    // Dossier distant reçu mais pas encore accepté/provisionné (cf.
+    // acceptFolderShare()/provisionDefaultLocalPath()) : rien sur le
+    // disque a montrer pour l'instant.
+    if (folder->localPath().isEmpty()) {
+        m_lastErrorString = QStringLiteral("Ce dossier n'a pas encore d'emplacement local (acceptez le partage d'abord)");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    const QDir dir(folder->localPath());
+    if (!dir.exists()) {
+        // Deplace/supprime manuellement depuis le dernier partage/reindex.
+        m_lastErrorString = QStringLiteral("Le chemin local '%1' n'existe plus").arg(folder->localPath());
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
+
+    return QDesktopServices::openUrl(QUrl::fromLocalFile(dir.absolutePath()));
 }
 
 QVariantList SharedFolderContext::filesForFolder(qint64 folderId) const

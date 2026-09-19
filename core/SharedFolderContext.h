@@ -97,6 +97,20 @@ public:
     /// modification manuelle des fichiers hors LocaLink).
     Q_INVOKABLE bool shareFolder(qint64 folderId);
 
+    /// Ouvre le dossier local (localPath()) d'un dossier partage dans
+    /// l'explorateur de fichiers du systeme (Explorateur Windows, Finder,
+    /// Nautilus...), meme principe que TransferContext::openFileLocation()
+    /// deja utilise dans FileTransferView -- absent jusqu'ici de l'ecran
+    /// "Dossiers partages", qui n'offrait aucun moyen d'acceder rapidement
+    /// au contenu reel sur le disque.
+    ///
+    /// Retourne false (et emet errorOccurred()) si le dossier est
+    /// introuvable, si c'est un dossier distant pas encore provisionne
+    /// (localPath() vide -- rien a montrer avant que l'utilisateur
+    /// n'accepte le partage, cf. acceptFolderShare()), ou si le chemin
+    /// n'existe plus sur le disque (deplace/supprime manuellement).
+    Q_INVOKABLE bool openFolderLocation(qint64 folderId);
+
     /// Contenu (fichiers non supprimes) d'un dossier partage, pret a
     /// servir de modele QML : chaque element est une QVariantMap
     /// relativePath/size/hash/version/lastModified.
@@ -224,6 +238,15 @@ signals:
     /// fichiers et le panneau d'historique sans que l'utilisateur ait a
     /// cliquer sur "Reindexer".
     void folderReindexed(qint64 folderId, int changeCount);
+
+    /// Retransmis depuis SyncEngine::reindexingStarted() : emis des que
+    /// shareFolder() lance l'indexation en arriere-plan (sur le thread
+    /// dedie, cf. core::sync::SharedFolderIndexWorker), AVANT que le
+    /// resultat ne soit connu -- permet a SharedFolderView.qml d'afficher
+    /// un indicateur "indexation en cours..." pendant que l'appli reste
+    /// pleinement reactive (bouton, clics, redraws), au lieu du "ne
+    /// repond plus" observe auparavant sur un poste peu performant.
+    void indexingStarted(qint64 folderId);
 
     /**
      * @brief Retransmis depuis FolderSyncService::fileIntegrated (Release 8).

@@ -143,7 +143,22 @@ void NotificationManager::onFolderFilesReceived(const QString &folderUuid, const
                ? QStringLiteral("\"%1\" synchronisé (1 fichier) dans %2").arg(folderName, localPath)
                : QStringLiteral("\"%1\" synchronisé (%2 fichiers) dans %3").arg(folderName).arg(fileCount).arg(localPath));
 
-    emit notificationRequested(title, message, QStringLiteral("transfer"));
+    // CORRECTIF (debrief : "le petit bilan récapitulatif de partage reste
+    // bloqué sans disparaître") : ce récapitulatif était émis avec la
+    // catégorie "transfer" -- la MÊME que chaque transfert de fichier
+    // individuel (cf. onTransferCompleted() ci-dessus). ToastHost::
+    // addToast() fusionne tout nouvel évènement de même catégorie dans le
+    // toast déjà affiché et relance son minuteur d'auto-disparition
+    // (Toast.qml, onCountChanged). Résultat : pendant toute la durée d'une
+    // synchronisation de dossier avec plusieurs fichiers, CHAQUE fichier
+    // individuel transféré repoussait la disparition de ce récapitulatif
+    // -- qui ne disparaissait donc jamais tant que la rafale de transferts
+    // ne s'arrêtait pas pendant plus de 4s (cf. Toast::duration). Catégorie
+    // "folder" (déjà utilisée par onFolderCreated()/onFolderAccessRevoked()
+    // ci-dessus, jamais en rafale rapide) : ce récapitulatif vit
+    // desormais sa propre vie, independante des transferts de fichiers
+    // individuels en cours.
+    emit notificationRequested(title, message, QStringLiteral("folder"));
 }
 
 void NotificationManager::onFolderFilesSent(const QString &folderUuid, const QString &folderName, int fileCount)
@@ -159,7 +174,10 @@ void NotificationManager::onFolderFilesSent(const QString &folderUuid, const QSt
         ? QStringLiteral("1 fichier envoyé depuis \"%1\"").arg(folderName)
         : QStringLiteral("%1 fichiers envoyés depuis \"%2\"").arg(fileCount).arg(folderName);
 
-    emit notificationRequested(title, message, QStringLiteral("transfer"));
+    // CORRECTIF : même raison que onFolderFilesReceived() ci-dessus --
+    // "folder" plutôt que "transfer", pour ne plus se faire perpétuellement
+    // repousser par chaque fichier individuel envoyé pendant la rafale.
+    emit notificationRequested(title, message, QStringLiteral("folder"));
 }
 
 } // namespace core

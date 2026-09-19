@@ -425,9 +425,27 @@ Rectangle {
         onTriggered: root.hide()
     }
 
+    // Filet de sécurité (debrief : "le récapitulatif reste bloqué sans
+    // disparaître") : quelle que soit la cause d'une fusion répétée d'un
+    // même toast groupé (cf. onCountChanged ci-dessous, ou ToastHost::
+    // addToast), ce toast ne doit jamais rester affiché indéfiniment.
+    // maxLifetimeTimer démarre UNE SEULE FOIS à la création (jamais
+    // relancé) et force la disparition passé ce délai, même si
+    // autoHideTimer continue d'être repoussé par de nouveaux évènements.
+    readonly property int maxLifetimeMs: 20000
+    Timer {
+        id: maxLifetimeTimer
+        interval: root.maxLifetimeMs
+        running: false
+        repeat: false
+        onTriggered: root.hide()
+    }
+
     // A chaque nouvel evenement regroupe (count incremente par
     // ToastHost::addToast), on repousse la disparition automatique : une
     // rafale en cours ne doit pas voir son toast disparaitre au milieu.
+    // maxLifetimeTimer n'est PAS relance ici -- c'est tout le point du
+    // filet de securite ci-dessus.
     onCountChanged: {
         if (count > 1) {
             autoHideTimer.restart()
@@ -438,6 +456,7 @@ Rectangle {
         opacity = 1
         scale = 1
         autoHideTimer.restart()
+        maxLifetimeTimer.restart()
         if (isCard) {
             progressBar.progressFraction = 1.0
             progressAnimation.restart()
@@ -456,6 +475,7 @@ Rectangle {
 
     function hide() {
         autoHideTimer.stop()
+        maxLifetimeTimer.stop()
         progressAnimation.stop()
         opacity = 0
         scale = 0.96
