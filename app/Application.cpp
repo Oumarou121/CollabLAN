@@ -139,6 +139,10 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
         m_pendingServerFingerprint.clear();
         m_pendingServerAddress.clear();
         m_pendingServerPort = 0;
+        // Le certificat vient d'etre approuve (ou une connexion a reussi
+        // entre-temps) : plus de raison d'attendre le reste du cooldown
+        // avant la prochaine reconciliation eventuelle.
+        m_lastReconciliationAttemptMs = 0;
         emit pendingServerChanged();
     });
 
@@ -519,6 +523,33 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                     qWarning() << "Reconciliation impossible: adresse/port TEMP_SERVER inconnu pour" << tempServerUuid;
                     return;
                 }
+
+                // CORRECTIF (boucle de reconnexion infinie, cf. commentaire sur
+                // m_lastReconciliationAttemptMs dans Application.h) : si ce
+                // TEMP_SERVER a DEJA un certificat en attente d'approbation
+                // (serverCertificateTrustRequired recu pour cette meme
+                // adresse:port et jamais valide via approveServerCertificate()),
+                // retenter maintenant echouera exactement de la meme facon --
+                // inutile de rouvrir une connexion TLS avant qu'un humain
+                // l'approuve depuis Parametres.
+                if (!m_pendingServerFingerprint.isEmpty()
+                    && m_pendingServerAddress == tempServerAddress.toString()
+                    && m_pendingServerPort == tempServerPort) {
+                    return;
+                }
+
+                // Filet de securite general : quelle qu'en soit la cause, ne
+                // jamais retenter une reconciliation plus d'une fois par
+                // cooldown -- le heartbeat (toutes les 3s) est bien plus
+                // frequent que ce dont une vraie tentative de connexion TLS a
+                // besoin pour echouer proprement, et marteler le reseau a ce
+                // rythme indefiniment est ce qui degradait/plantait le poste
+                // Server.
+                const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+                if (nowMs - m_lastReconciliationAttemptMs < kReconciliationRetryCooldownMs) {
+                    return;
+                }
+                m_lastReconciliationAttemptMs = nowMs;
 
                 m_reconciliationInFlight = true;
 
@@ -2286,6 +2317,10 @@ bool Application::approvePendingServerCertificate()
     const bool approved = m_permissionManager->approveServerCertificate(
         m_pendingServerFingerprint, m_pendingServerAddress, QStringLiteral("Serveur détecté"));
     if (approved) {
+        // Le certificat est desormais approuve : plus de raison d'attendre
+        // le reste du cooldown de reconciliation (cf. m_lastReconciliationAttemptMs
+        // dans Application.h) avant une eventuelle reconciliation a venir.
+        m_lastReconciliationAttemptMs = 0;
         // La QWebSocket precedente peut encore etre en fermeture au moment
         // du clic. Une reprise differee evite d'ouvrir pendant ClosingState.
         QTimer::singleShot(100, m_messagingService, [service = m_messagingService]() {

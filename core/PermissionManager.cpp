@@ -93,6 +93,26 @@ bool PermissionManager::trustRemoteServerCertificate(const QString &fingerprint,
         return true;
     }
 
+    // CORRECTIF (reconciliation TEMP_SERVER bloquee indefiniment sans
+    // action humaine) : TrustedServerRepository (liste "je fais confiance
+    // a ce serveur en tant que client") est une liste INDEPENDANTE de
+    // AuthorizedMachineRepository (liste "cette machine est autorisee sur
+    // le reseau", geree par l'admin). Un poste qui joue habituellement le
+    // role de Server officiel n'agit jamais comme client sortant, donc sa
+    // TrustedServerRepository locale reste vide -- jusqu'au jour ou il doit
+    // reconcilier avec un pair devenu TEMP_SERVER, ce qui exige alors une
+    // approbation manuelle que personne n'anticipe (l'echec initial se
+    // produit typiquement sans utilisateur present pour cliquer "approuver").
+    // Si la machine distante a deja franchi la porte de securite
+    // principale (autorisee par un admin dans AuthorizedMachineRepository),
+    // exiger une SECONDE approbation manuelle pour le meme role de
+    // confiance n'ajoute rien cote securite -- on l'approuve donc
+    // automatiquement ici, sans intervention humaine. Une machine non
+    // autorisee (inconnue du reseau) reste, elle, bloquee comme avant.
+    if (isMachineAuthorizedByCertificate(fingerprint)) {
+        return m_trustedServers->setTrusted(fingerprint, ipAddress, QStringLiteral("Machine deja autorisee"));
+    }
+
     // Le serveur inconnu est visible localement dans TrustedServers, sans
     // declencher machineChanged : ce signal concerne exclusivement la
     // politique d'admission du serveur et ne doit jamais etre diffuse.

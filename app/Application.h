@@ -328,6 +328,25 @@ private:
     int m_lastReconciledEpoch = -1;
     bool m_reconciliationInFlight = false;
 
+    /// CORRECTIF (boucle de reconnexion infinie -> instabilite/plantage du
+    /// poste Server) : sans garde, un certificat TEMP_SERVER jamais
+    /// approuve (cf. m_pendingServerFingerprint) faisait retenter une
+    /// connexion TLS complete a CHAQUE heartbeat (toutes les 3s, cf.
+    /// ElectionService::heartbeatIntervalMs), pour toujours -- la
+    /// connexion aboutissait puis etait fermee aussitot par
+    /// MessagingService::onConnected() des que trustRemoteServerCertificate()
+    /// echouait, sans jamais faire avancer m_lastReconciledEpoch (mis a jour
+    /// uniquement en cas de succes). A la longue, ce handshake TLS repete
+    /// toutes les 3 secondes epuise les ressources reseau (sockets en
+    /// TIME_WAIT, allocations OpenSSL) et peut geler/planter le poste. On
+    /// n'attend meme plus le prochain heartbeat pour retenter : si le
+    /// certificat en attente correspond exactement a ce TEMP_SERVER, on
+    /// n'a aucune raison de reessayer avant qu'un humain l'approuve
+    /// (Parametres > approveServerCertificate). Le cooldown ci-dessous est
+    /// un filet de securite general pour toute autre cause de blocage.
+    qint64 m_lastReconciliationAttemptMs = 0;
+    static constexpr qint64 kReconciliationRetryCooldownMs = 15000;
+
     /// Payloads JSON de messages temps reel dont l'expediteur (senderUuid)
     /// n'etait pas encore connu localement au moment de la reception (cf.
     /// MessagingManager::unresolvedSenderMessage) ; rejoues des qu'une

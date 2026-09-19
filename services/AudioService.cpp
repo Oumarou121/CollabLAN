@@ -6,8 +6,9 @@
 #include <QFileInfo>
 #include <QMediaDevices>
 #include <QAudioDevice>
+#include <QAudioOutput>
+#include <QMediaPlayer>
 #include <QSettings>
-#include <QSoundEffect>
 #include <QStandardPaths>
 #include <QUrl>
 
@@ -114,32 +115,25 @@ AudioService::AudioService(QObject *parent)
         }
     }
 
-    // DIAGNOSTIC (postes ou aucun son de notification ne s'entend malgre
-    // "Sons actives" coche) : QSoundEffect est cense suivre automatiquement
-    // le peripherique de sortie par defaut du systeme, mais rien dans ce
-    // code ne le forcait explicitement ni ne reagissait a un changement de
-    // peripherique par defaut (casque deconnecte, sortie HDMI/Bluetooth
-    // devenue "par defaut" alors qu'elle est eteinte, etc.) -- un scenario
-    // ou QSoundEffect reste en status() Ready et "joue" sans jamais lever
-    // d'erreur, tout en ne produisant aucun son audible. On lie
-    // explicitement chaque effet au peripherique de sortie par defaut
-    // courant (loadSound()), et on refait cette liaison sur tous les
-    // effets a chaque changement de peripherique de sortie signale par
-    // l'OS.
+    // Chaque QAudioOutput doit suivre le peripherique de sortie par
+    // defaut du systeme (casque deconnecte, sortie HDMI/Bluetooth
+    // devenue "par defaut" alors qu'elle est eteinte, etc.) -- sans quoi
+    // un son peut rester silencieusement lie a un peripherique qui n'est
+    // plus celui utilise par l'OS. On lie explicitement chaque sortie au
+    // peripherique par defaut courant (loadSound()), et on refait cette
+    // liaison sur toutes les sorties a chaque changement signale par l'OS.
     m_mediaDevices = new QMediaDevices(this);
     connect(m_mediaDevices, &QMediaDevices::audioOutputsChanged, this, &AudioService::rebindAudioDevice);
 }
 
 void AudioService::rebindAudioDevice()
 {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     const QAudioDevice outputDevice = QMediaDevices::defaultAudioOutput();
     qInfo() << "[AudioService] Peripherique de sortie par defaut change :"
              << outputDevice.description() << (outputDevice.isNull() ? "(aucun peripherique !)" : "");
-    for (auto *effect : std::as_const(m_sounds)) {
-        effect->setAudioDevice(outputDevice);
+    for (const NotificationSound &sound : std::as_const(m_sounds)) {
+        sound.output->setDevice(outputDevice);
     }
-#endif
 }
 
 AudioService::~AudioService() = default;
@@ -197,26 +191,30 @@ void AudioService::loadSound(EventType type, const QString &variantId, const QSt
     const QString localPath = extractToLocalFile(resourcePath);
     const QUrl source = localPath.isEmpty() ? QUrl(resourcePath) : QUrl::fromLocalFile(localPath);
 
-    auto *effect = new QSoundEffect(this);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    // QAudioOutput ne peut pas etre partage entre plusieurs QMediaPlayer :
+    // chaque son precharge a le sien, comme chaque QSoundEffect avait
+    // auparavant son propre backend.
+    auto *output = new QAudioOutput(this);
     // Liaison explicite au peripherique de sortie par defaut courant (cf.
     // rebindAudioDevice()) plutot que de compter sur une resolution
     // implicite qui peut ne pas suivre un changement de peripherique par
     // defaut sur certains postes.
-    effect->setAudioDevice(QMediaDevices::defaultAudioOutput());
-#endif
-    effect->setSource(source);
-    effect->setVolume(m_volume);
-    effect->setLoopCount(1);
+    output->setDevice(QMediaDevices::defaultAudioOutput());
+    output->setVolume(m_volume);
+
+    auto *player = new QMediaPlayer(this);
+    player->setAudioOutput(output);
+    player->setSource(source);
+    player->setLoops(QMediaPlayer::Once);
     // Precharge le fichier pour eviter toute latence lors du premier play().
 
-    connect(effect, &QSoundEffect::statusChanged, this, [effect, source]() {
-        if (effect->status() == QSoundEffect::Error) {
-            qWarning() << "AudioService : impossible de charger le son" << source;
-        }
-    });
+    connect(player, &QMediaPlayer::errorOccurred, this,
+            [source](QMediaPlayer::Error error, const QString &errorString) {
+                qWarning() << "AudioService : impossible de charger le son" << source
+                           << "erreur:" << error << errorString;
+            });
 
-    m_sounds.insert(soundKey(type, variantId), effect);
+    m_sounds.insert(soundKey(type, variantId), NotificationSound{player, output});
 }
 
 void AudioService::setSoundEnabled(bool enabled)
@@ -234,8 +232,8 @@ void AudioService::setVolume(qreal volume)
     if (qFuzzyCompare(m_volume, clamped))
         return;
     m_volume = clamped;
-    for (auto *effect : std::as_const(m_sounds)) {
-        effect->setVolume(m_volume);
+    for (const NotificationSound &sound : std::as_const(m_sounds)) {
+        sound.output->setVolume(m_volume);
     }
     QSettings().setValue(QStringLiteral("audio/volume"), m_volume);
     emit volumeChanged();
@@ -275,37 +273,38 @@ void AudioService::playSound(services::AudioService::EventType type)
         return;
     }
 
-    QSoundEffect *effect = m_sounds.value(soundKey(type, currentVariant(type)));
-    if (!effect) {
-        qWarning() << "[AudioService] playSound : aucun QSoundEffect trouve pour"
+    const NotificationSound sound = m_sounds.value(soundKey(type, currentVariant(type)));
+    if (!sound.player) {
+        qWarning() << "[AudioService] playSound : aucun son trouve pour"
                    << soundKey(type, currentVariant(type));
         return;
     }
-    if (effect->status() == QSoundEffect::Error) {
-        qWarning() << "[AudioService] playSound : QSoundEffect en erreur pour"
-                   << soundKey(type, currentVariant(type)) << "source:" << effect->source();
+    if (sound.player->error() != QMediaPlayer::NoError) {
+        qWarning() << "[AudioService] playSound : lecteur en erreur pour"
+                   << soundKey(type, currentVariant(type)) << "source:" << sound.player->source()
+                   << "erreur:" << sound.player->errorString();
         return;
     }
 
     // Seule la sonnerie d'appel doit boucler tant que l'appel n'est pas
-    // traite ; previewSound() peut avoir laisse loopCount a 1 sur ce meme
-    // effet lors d'une ecoute prealable, donc on le reimpose explicitement
+    // traite ; previewSound() peut avoir laisse loops a Once sur ce meme
+    // lecteur lors d'une ecoute prealable, donc on le reimpose explicitement
     // ici a chaque lecture reelle plutot qu'une seule fois a la creation.
-    effect->setLoopCount(type == EventType::Call ? QSoundEffect::Infinite : 1);
+    sound.player->setLoops(type == EventType::Call ? QMediaPlayer::Infinite : QMediaPlayer::Once);
+    // QMediaPlayer::play() repart de la position courante, pas du debut :
+    // sans ce reset, rejouer un son deja arrive a la fin ne produirait rien.
+    sound.player->setPosition(0);
 
     qDebug() << "[AudioService] playSound : lecture de" << soundKey(type, currentVariant(type))
-             << "status:" << effect->status() << "volume:" << effect->volume()
-             << "isPlaying (avant play):" << effect->isPlaying()
-             << "isMuted:" << effect->isMuted()
-#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
-             << "peripherique:" << effect->audioDevice().description()
-#endif
-             ;
+             << "mediaStatus:" << sound.player->mediaStatus() << "volume:" << sound.output->volume()
+             << "playbackState (avant play):" << sound.player->playbackState()
+             << "isMuted:" << sound.output->isMuted()
+             << "peripherique:" << sound.output->device().description();
 
-    // QSoundEffect::play() est asynchrone : la lecture est geree par le
+    // QMediaPlayer::play() est asynchrone : la lecture est geree par le
     // backend audio de Qt et ne bloque jamais le thread appelant (donc
     // pas de gel de l'UI, cf. criteres d'acceptation de l'issue #56).
-    effect->play();
+    sound.player->play();
 }
 
 void AudioService::previewSound(services::AudioService::EventType type, const QString &variantId)
@@ -314,12 +313,13 @@ void AudioService::previewSound(services::AudioService::EventType type, const QS
     // seule fois (jamais en boucle, meme pour "call") et sans tenir
     // compte de soundEnabled, pour qu'on puisse comparer les sons meme
     // interrupteur "Sons actives" desactive.
-    QSoundEffect *effect = m_sounds.value(soundKey(type, variantId));
-    if (!effect || effect->status() == QSoundEffect::Error) {
+    const NotificationSound sound = m_sounds.value(soundKey(type, variantId));
+    if (!sound.player || sound.player->error() != QMediaPlayer::NoError) {
         return;
     }
-    effect->setLoopCount(1);
-    effect->play();
+    sound.player->setLoops(QMediaPlayer::Once);
+    sound.player->setPosition(0);
+    sound.player->play();
 }
 
 void AudioService::playMessageSound()
@@ -339,9 +339,9 @@ void AudioService::playCallSound()
 
 void AudioService::stopCallSound()
 {
-    QSoundEffect *effect = m_sounds.value(soundKey(EventType::Call, currentVariant(EventType::Call)));
-    if (effect) {
-        effect->stop();
+    const NotificationSound sound = m_sounds.value(soundKey(EventType::Call, currentVariant(EventType::Call)));
+    if (sound.player) {
+        sound.player->stop();
     }
 }
 

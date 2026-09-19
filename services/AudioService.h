@@ -5,8 +5,9 @@
 #include <QHash>
 #include <QStringList>
 
-class QSoundEffect;
 class QMediaDevices;
+class QMediaPlayer;
+class QAudioOutput;
 
 namespace services {
 
@@ -20,8 +21,18 @@ namespace services {
  * categorie est jouee par playMessageSound()/playTransferSound()/
  * playCallSound(). previewSound() permet d'ecouter n'importe quelle
  * variante avant de la choisir, sans changer la selection courante.
- * La lecture s'appuie sur QSoundEffect (API asynchrone, ne bloque
- * jamais le thread de l'UI).
+ *
+ * CORRECTIF (sons de notification silencieux sur certaines cartes son,
+ * ex. Realtek en partage WASAPI) : la lecture s'appuyait auparavant sur
+ * QSoundEffect, qui exige que le peripherique de sortie accepte
+ * nativement le format du fichier -- sinon QAudioSink::start echoue
+ * ("QAudioFormat not supported by QAudioDevice"), silencieusement :
+ * QSoundEffect::status() reste Ready et aucune erreur n'est remontee.
+ * On utilise desormais QMediaPlayer (+ QAudioOutput), qui passe par le
+ * pipeline de decodage/conversion FFmpeg deja utilise ailleurs dans
+ * l'application (VoiceAudioIO) et convertit lui-meme vers le format
+ * accepte par le peripherique, au lieu d'exiger un match natif. Reste
+ * asynchrone, ne bloque jamais le thread de l'UI.
  */
 class AudioService : public QObject
 {
@@ -101,7 +112,7 @@ signals:
     void callSoundChanged();
 
 private slots:
-    /// Relie chaque QSoundEffect precharge au nouveau peripherique de
+    /// Relie chaque QAudioOutput precharge au nouveau peripherique de
     /// sortie par defaut lorsque l'OS en signale le changement (casque
     /// deconnecte, nouvelle sortie par defaut, etc.). Sans quoi un effet
     /// peut rester silencieusement lie a un peripherique qui n'est plus
@@ -109,6 +120,14 @@ private slots:
     void rebindAudioDevice();
 
 private:
+    /// Un son precharge = un QMediaPlayer + son QAudioOutput dedie (le
+    /// second ne peut pas etre partage entre plusieurs lecteurs). Les
+    /// deux sont parentes a l'AudioService (destruction automatique).
+    struct NotificationSound {
+        QMediaPlayer *player = nullptr;
+        QAudioOutput *output = nullptr;
+    };
+
     void loadSound(EventType type, const QString &variantId, const QString &resourcePath);
     QString currentVariant(EventType type) const;
     static QString soundKey(EventType type, const QString &variantId);
@@ -119,7 +138,7 @@ private:
     /// d'echec. Voir le commentaire dans loadSound() / le .cpp.
     static QString extractToLocalFile(const QString &resourcePath);
 
-    QHash<QString, QSoundEffect *> m_sounds;
+    QHash<QString, NotificationSound> m_sounds;
     QMediaDevices *m_mediaDevices = nullptr;
     bool m_soundEnabled = true;
     qreal m_volume = 1.0;
