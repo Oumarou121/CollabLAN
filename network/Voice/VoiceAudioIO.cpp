@@ -358,7 +358,14 @@ bool VoiceAudioIO::start()
     const QAudioDevice outputDevice = QMediaDevices::defaultAudioOutput();
 
     if (inputDevice.isNull() || outputDevice.isNull()) {
-        qWarning() << "VoiceAudioIO: aucun peripherique audio d'entree/sortie disponible";
+        // Diagnostic separe entree/sortie : le message combine ne permettait
+        // pas de savoir lequel des deux manquait (utile notamment si le
+        // probleme ne touche que l'entree -- pas de micro -- sur un poste
+        // donne).
+        if (inputDevice.isNull())
+            qWarning() << "VoiceAudioIO: aucun peripherique d'entree (microphone) disponible";
+        if (outputDevice.isNull())
+            qWarning() << "VoiceAudioIO: aucun peripherique de sortie (haut-parleur) disponible";
         return false;
     }
 

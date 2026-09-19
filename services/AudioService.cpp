@@ -316,8 +316,21 @@ void AudioService::destroySink(Channel &channel)
     // objet en cours de destruction.
     QObject::disconnect(channel.sink, nullptr, this, nullptr);
     channel.sink->stop();
-    delete channel.sink;
+    // deleteLater() et non delete : detruire un QAudioSink alors que son
+    // thread audio interne n'a peut-etre pas fini de se defaire du
+    // peripherique peut laisser le backend Windows (WASAPI) dans un etat
+    // instable, jusqu'a ce que QMediaDevices::defaultAudioInput/Output()
+    // renvoie un peripherique nul pour tout le monde (VoiceAudioIO inclus).
+    channel.sink->deleteLater();
     channel.sink = nullptr;
+}
+
+void AudioService::ensureSink(Channel &channel)
+{
+    if (channel.sink)
+        return;
+    channel.sink = new QAudioSink(m_outputDevice, m_outputFormat, this);
+    channel.sink->setVolume(m_volume);
 }
 
 void AudioService::releaseOutput()
@@ -386,10 +399,18 @@ void AudioService::startPlayback(EventType type, const QString &variantId, bool 
         channel.device->open(QIODevice::ReadOnly);
     }
 
-    // Un QAudioSink neuf a chaque lecture : les notifications sont rares, et
-    // cela evite tout etat residuel d'un sink arrive en fin de flux (Idle).
-    destroySink(channel);
-    channel.sink = new QAudioSink(m_outputDevice, m_outputFormat, this);
+    // CORRECTIF (VoiceAudioIO perdait le peripherique juste apres une
+    // sonnerie) : un QAudioSink neuf a chaque lecture ouvrait/fermait le
+    // peripherique en rafale et destabilisait le backend audio Windows sur
+    // certaines cartes (ex. Conexant). On reutilise desormais le meme
+    // QAudioSink par voie tant que le peripherique/format ne change pas
+    // (releaseOutput()/rebindAudioDevice() le detruisent alors) ; on se
+    // contente de l'arreter puis de le redemarrer avec le nouveau clip.
+    if (channel.sink)
+        QObject::disconnect(channel.sink, nullptr, this, nullptr);
+    if (channel.sink && channel.sink->state() != QtAudio::StoppedState)
+        channel.sink->stop();
+    ensureSink(channel);
     channel.sink->setVolume(m_volume);
     connect(channel.sink, &QAudioSink::stateChanged, this, [sink = channel.sink, key](QtAudio::State state) {
         qDebug() << "[AudioService] etat du lecteur pour" << key << ":" << static_cast<int>(state);

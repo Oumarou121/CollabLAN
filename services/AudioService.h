@@ -149,8 +149,17 @@ private:
     bool ensureOutput();
 
     /// Detruit proprement le QAudioSink d'une voie (deconnecte ses signaux
-    /// avant : il emet stateChanged pendant sa destruction).
+    /// avant : il emet stateChanged pendant sa destruction). Utilise
+    /// deleteLater() : ne jamais detruire immediatement un QAudioSink,
+    /// son thread audio interne peut ne pas etre completement arrete
+    /// (cf. correctif "VoiceAudioIO: aucun peripherique audio disponible"
+    /// juste apres une sonnerie -- ouvrir/detruire des QAudioSink en rafale
+    /// sur le meme peripherique semblait corrompre l'etat WASAPI cote Qt).
     void destroySink(Channel &channel);
+
+    /// Cree le QAudioSink d'une voie s'il n'existe pas encore pour le
+    /// peripherique/format courant.
+    void ensureSink(Channel &channel);
 
     /// Detruit les QAudioSink, oublie les conversions et le format : tout
     /// est recalcule paresseusement pour le nouveau peripherique.
