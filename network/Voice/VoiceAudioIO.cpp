@@ -7,8 +7,11 @@
 #include <QAudioFormat>
 #include <QIODevice>
 #include <QDebug>
+#include <QVector>
+#include <QtGlobal>
 
 #include <array>
+#include <cstring>
 
 namespace network {
 
@@ -53,6 +56,187 @@ std::int16_t muLawToLinearSample(std::uint8_t muLawByte)
     int sample = ((mantissa << 3) + kMuLawBias) << exponent;
     sample -= kMuLawBias;
     return static_cast<std::int16_t>(sign != 0 ? -sample : sample);
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------
+// Conversion de format audio (issue voix : "audio desactive" quand le
+// peripherique ne supporte pas nativement 8kHz/mono/16bits).
+//
+// Beaucoup de peripheriques Windows (WASAPI, ex: "Realtek(R) Audio" des
+// logs) refusent purement et simplement un format personnalise comme le
+// telephonique 8kHz/mono/16bits via isFormatSupported() -- meme un
+// fallback a 44.1/48kHz EN MONO peut echouer, la plupart des cartes son
+// grand public n'exposant qu'un flux stereo natif. Le code precedent
+// abandonnait alors completement l'audio de l'appel des que ces
+// tentatives echouaient.
+//
+// Plutot que d'exiger que le peripherique parle nativement notre format
+// telephonique, on capture/lit desormais le peripherique dans SON PROPRE
+// format prefere (preferredFormat(), quasi toujours accepte -- c'est le
+// format natif du mixeur), et on convertit nous-memes en logiciel :
+//   - a la capture : downmix vers mono, puis reechantillonnage vers 8kHz,
+//     puis conversion de l'echantillon vers Int16 si besoin (Float est
+//     frequent en partage WASAPI) -- exactement le format que le reste du
+//     pipeline (encodeMuLaw, RTP) attend deja, sans aucun changement cote
+//     VoiceService.
+//   - a la lecture : chemin inverse (Int16 mono 8kHz reçu/decode -> format
+//     du peripherique de sortie).
+namespace {
+
+QVector<float> toFloatSamples(const QByteArray &pcm, QAudioFormat::SampleFormat sampleFormat)
+{
+    QVector<float> out;
+    if (sampleFormat == QAudioFormat::Int16) {
+        const int count = pcm.size() / 2;
+        out.resize(count);
+        const auto *src = reinterpret_cast<const std::int16_t *>(pcm.constData());
+        for (int i = 0; i < count; ++i) {
+            out[i] = static_cast<float>(src[i]) / 32768.0f;
+        }
+    } else if (sampleFormat == QAudioFormat::Float) {
+        const int count = pcm.size() / 4;
+        out.resize(count);
+        std::memcpy(out.data(), pcm.constData(), static_cast<size_t>(count) * sizeof(float));
+    } else if (sampleFormat == QAudioFormat::UInt8) {
+        const int count = pcm.size();
+        out.resize(count);
+        const auto *src = reinterpret_cast<const std::uint8_t *>(pcm.constData());
+        for (int i = 0; i < count; ++i) {
+            out[i] = (static_cast<float>(src[i]) - 128.0f) / 128.0f;
+        }
+    } else if (sampleFormat == QAudioFormat::Int32) {
+        const int count = pcm.size() / 4;
+        out.resize(count);
+        const auto *src = reinterpret_cast<const std::int32_t *>(pcm.constData());
+        for (int i = 0; i < count; ++i) {
+            out[i] = static_cast<float>(src[i]) / 2147483648.0f;
+        }
+    }
+    return out;
+}
+
+QByteArray fromFloatSamplesInt16(const QVector<float> &samples)
+{
+    QByteArray out;
+    out.resize(samples.size() * 2);
+    auto *dst = reinterpret_cast<std::int16_t *>(out.data());
+    for (int i = 0; i < samples.size(); ++i) {
+        float v = samples[i] * 32768.0f;
+        v = qBound(-32768.0f, v, 32767.0f);
+        dst[i] = static_cast<std::int16_t>(v);
+    }
+    return out;
+}
+
+QByteArray fromFloatSamplesFormat(const QVector<float> &samples, QAudioFormat::SampleFormat sampleFormat)
+{
+    if (sampleFormat == QAudioFormat::Int16) {
+        return fromFloatSamplesInt16(samples);
+    }
+    if (sampleFormat == QAudioFormat::Float) {
+        QByteArray out;
+        out.resize(samples.size() * 4);
+        std::memcpy(out.data(), samples.constData(), static_cast<size_t>(samples.size()) * sizeof(float));
+        return out;
+    }
+    if (sampleFormat == QAudioFormat::UInt8) {
+        QByteArray out;
+        out.resize(samples.size());
+        auto *dst = reinterpret_cast<std::uint8_t *>(out.data());
+        for (int i = 0; i < samples.size(); ++i) {
+            const float v = qBound(-1.0f, samples[i], 1.0f);
+            dst[i] = static_cast<std::uint8_t>((v * 128.0f) + 128.0f);
+        }
+        return out;
+    }
+    if (sampleFormat == QAudioFormat::Int32) {
+        QByteArray out;
+        out.resize(samples.size() * 4);
+        auto *dst = reinterpret_cast<std::int32_t *>(out.data());
+        for (int i = 0; i < samples.size(); ++i) {
+            const float v = qBound(-1.0f, samples[i], 1.0f);
+            dst[i] = static_cast<std::int32_t>(v * 2147483647.0f);
+        }
+        return out;
+    }
+    return QByteArray();
+}
+
+QVector<float> downmixToMono(const QVector<float> &interleaved, int channelCount)
+{
+    if (channelCount <= 1) {
+        return interleaved;
+    }
+    const int frameCount = interleaved.size() / channelCount;
+    QVector<float> mono(frameCount);
+    for (int i = 0; i < frameCount; ++i) {
+        float sum = 0.0f;
+        for (int c = 0; c < channelCount; ++c) {
+            sum += interleaved[i * channelCount + c];
+        }
+        mono[i] = sum / static_cast<float>(channelCount);
+    }
+    return mono;
+}
+
+QVector<float> upmixFromMono(const QVector<float> &mono, int channelCount)
+{
+    if (channelCount <= 1) {
+        return mono;
+    }
+    QVector<float> interleaved(mono.size() * channelCount);
+    for (int i = 0; i < mono.size(); ++i) {
+        for (int c = 0; c < channelCount; ++c) {
+            interleaved[i * channelCount + c] = mono[i];
+        }
+    }
+    return interleaved;
+}
+
+// Reechantillonnage lineaire simple (suffisant pour de la voix telephonique
+// -- pas de qualite musicale requise ici, juste eviter le silence total).
+QVector<float> resampleLinear(const QVector<float> &input, int srcRate, int dstRate)
+{
+    if (input.isEmpty() || srcRate == dstRate || srcRate <= 0) {
+        return input;
+    }
+    const int outCount = static_cast<int>(static_cast<qint64>(input.size()) * dstRate / srcRate);
+    QVector<float> output(outCount);
+    const double ratio = static_cast<double>(srcRate) / static_cast<double>(dstRate);
+    for (int i = 0; i < outCount; ++i) {
+        const double srcPos = i * ratio;
+        const int idx0 = static_cast<int>(srcPos);
+        const int idx1 = qMin(idx0 + 1, input.size() - 1);
+        const double frac = srcPos - idx0;
+        output[i] = static_cast<float>(input[idx0] * (1.0 - frac) + input[idx1] * frac);
+    }
+    return output;
+}
+
+QByteArray convertCaptureToTelephony(const QByteArray &raw, const QAudioFormat &deviceFormat)
+{
+    if (deviceFormat.sampleRate() == kVoiceSampleRate && deviceFormat.channelCount() == kVoiceChannelCount
+        && deviceFormat.sampleFormat() == QAudioFormat::Int16) {
+        return raw; // deja dans le format cible, aucune conversion necessaire
+    }
+    QVector<float> samples = toFloatSamples(raw, deviceFormat.sampleFormat());
+    samples = downmixToMono(samples, deviceFormat.channelCount());
+    samples = resampleLinear(samples, deviceFormat.sampleRate(), kVoiceSampleRate);
+    return fromFloatSamplesInt16(samples);
+}
+
+QByteArray convertTelephonyToPlayback(const QByteArray &pcm16Mono8k, const QAudioFormat &deviceFormat)
+{
+    if (deviceFormat.sampleRate() == kVoiceSampleRate && deviceFormat.channelCount() == kVoiceChannelCount
+        && deviceFormat.sampleFormat() == QAudioFormat::Int16) {
+        return pcm16Mono8k;
+    }
+    QVector<float> samples = toFloatSamples(pcm16Mono8k, QAudioFormat::Int16);
+    samples = resampleLinear(samples, kVoiceSampleRate, deviceFormat.sampleRate());
+    samples = upmixFromMono(samples, deviceFormat.channelCount());
+    return fromFloatSamplesFormat(samples, deviceFormat.sampleFormat());
 }
 
 } // namespace
@@ -165,10 +349,10 @@ bool VoiceAudioIO::start()
         return true;
     }
 
-    QAudioFormat format;
-    format.setSampleRate(kVoiceSampleRate);
-    format.setChannelCount(kVoiceChannelCount);
-    format.setSampleFormat(QAudioFormat::Int16);
+    QAudioFormat telephonyFormat;
+    telephonyFormat.setSampleRate(kVoiceSampleRate);
+    telephonyFormat.setChannelCount(kVoiceChannelCount);
+    telephonyFormat.setSampleFormat(QAudioFormat::Int16);
 
     const QAudioDevice inputDevice = QMediaDevices::defaultAudioInput();
     const QAudioDevice outputDevice = QMediaDevices::defaultAudioOutput();
@@ -178,22 +362,49 @@ bool VoiceAudioIO::start()
         return false;
     }
 
-    // Si le format telephonique (8kHz/mono/16bits) n'est pas supporte, essayer
-    // un format plus standard (44.1kHz ou 48kHz) pour eviter le crash Qt Multimedia.
-    if (!inputDevice.isFormatSupported(format) || !outputDevice.isFormatSupported(format)) {
-        qWarning() << "VoiceAudioIO: format audio 8kHz/mono/16bits non supporte, tentative avec format standard";
-        format.setSampleRate(44100);
-        if (!inputDevice.isFormatSupported(format) || !outputDevice.isFormatSupported(format)) {
-            format.setSampleRate(48000);
-            if (!inputDevice.isFormatSupported(format) || !outputDevice.isFormatSupported(format)) {
-                qWarning() << "VoiceAudioIO: aucun format audio supporte, audio desactive";
-                return false;
-            }
+    // CORRECTIF (debrief : "micro/haut-parleur non disponible", appel
+    // connecte mais completement muet) : le format telephonique
+    // 8kHz/mono/16bits n'est accepte que par une minorite de peripheriques
+    // -- beaucoup de cartes son grand public (ex: "Realtek(R) Audio" en
+    // WASAPI partage sous Windows) rejettent aussi bien 8kHz que les
+    // anciens repli 44.1/48kHz DES QUE le format demande est mono, la
+    // plupart n'exposant qu'un flux stereo natif. L'ancien code abandonnait
+    // alors purement et simplement l'audio.
+    //
+    // Desormais, si le format telephonique n'est pas supporte tel quel, on
+    // utilise le format PREFERE de CHAQUE peripherique separement (entree
+    // et sortie peuvent differer) -- preferredFormat() reflete le format
+    // natif du mixeur du peripherique et est donc pratiquement toujours
+    // accepte -- et on convertit nous-memes en logiciel vers/depuis notre
+    // format telephonique (cf. convertCaptureToTelephony()/
+    // convertTelephonyToPlayback() ci-dessus : downmix/upmix + reechantillonnage
+    // + conversion Int16/Float/UInt8/Int32). m_captureFormat/m_playbackFormat
+    // retiennent le format REELLEMENT negocie avec chaque peripherique pour
+    // que onCaptureReadyRead()/playFrame() sachent quelle conversion appliquer.
+    m_captureFormat = telephonyFormat;
+    m_playbackFormat = telephonyFormat;
+
+    if (!inputDevice.isFormatSupported(telephonyFormat)) {
+        m_captureFormat = inputDevice.preferredFormat();
+        if (!inputDevice.isFormatSupported(m_captureFormat)) {
+            qWarning() << "VoiceAudioIO: aucun format audio supporte en entree (micro), audio desactive";
+            return false;
         }
-        qInfo() << "VoiceAudioIO: utilisation du format" << format.sampleRate() << "Hz au lieu de 8kHz";
+        qInfo() << "VoiceAudioIO: capture en" << m_captureFormat.sampleRate() << "Hz /"
+                << m_captureFormat.channelCount() << "canal(aux) au lieu de 8kHz mono (conversion logicielle)";
     }
 
-    m_audioSource = new QAudioSource(inputDevice, format, this);
+    if (!outputDevice.isFormatSupported(telephonyFormat)) {
+        m_playbackFormat = outputDevice.preferredFormat();
+        if (!outputDevice.isFormatSupported(m_playbackFormat)) {
+            qWarning() << "VoiceAudioIO: aucun format audio supporte en sortie (haut-parleur), audio desactive";
+            return false;
+        }
+        qInfo() << "VoiceAudioIO: lecture en" << m_playbackFormat.sampleRate() << "Hz /"
+                << m_playbackFormat.channelCount() << "canal(aux) au lieu de 8kHz mono (conversion logicielle)";
+    }
+
+    m_audioSource = new QAudioSource(inputDevice, m_captureFormat, this);
     m_captureDevice = m_audioSource->start();
     if (!m_captureDevice) {
         qWarning() << "VoiceAudioIO: impossible de demarrer la capture microphone";
@@ -201,7 +412,7 @@ bool VoiceAudioIO::start()
     }
     connect(m_captureDevice, &QIODevice::readyRead, this, &VoiceAudioIO::onCaptureReadyRead);
 
-    m_audioSink = new QAudioSink(outputDevice, format, this);
+    m_audioSink = new QAudioSink(outputDevice, m_playbackFormat, this);
     m_playbackDevice = m_audioSink->start();
     if (!m_playbackDevice) {
         qWarning() << "VoiceAudioIO: impossible de demarrer la lecture haut-parleur";
@@ -229,6 +440,8 @@ void VoiceAudioIO::stop()
     m_captureDevice = nullptr;
     m_playbackDevice = nullptr;
     m_captureBuffer.clear();
+    m_captureFormat = QAudioFormat();
+    m_playbackFormat = QAudioFormat();
     m_active = false;
 }
 
@@ -238,7 +451,12 @@ void VoiceAudioIO::onCaptureReadyRead()
         return;
     }
 
-    m_captureBuffer.append(m_captureDevice->readAll());
+    // Convertit d'abord le buffer brut du peripherique (son format reel,
+    // cf. m_captureFormat/start()) en mono 8kHz Int16 -- format telephonique
+    // que le reste du pipeline (encodage mu-law, RTP) attend. No-op si le
+    // peripherique parlait deja nativement ce format.
+    const QByteArray telephonyPcm = convertCaptureToTelephony(m_captureDevice->readAll(), m_captureFormat);
+    m_captureBuffer.append(telephonyPcm);
 
     // Regroupe la capture en trames fixes de 20 ms (issue #61) pour un
     // paquetage RTP regulier, quelle que soit la granularite de livraison
@@ -259,7 +477,11 @@ void VoiceAudioIO::playFrame(const QByteArray &pcm16)
     if (!m_playbackDevice || pcm16.isEmpty()) {
         return;
     }
-    m_playbackDevice->write(pcm16);
+    // pcm16 est mono 8kHz Int16 (contrat inchange de ce slot, cf. header) --
+    // converti ici vers le format REEL du peripherique de sortie
+    // (m_playbackFormat/start()) avant l'ecriture. No-op si le peripherique
+    // acceptait deja nativement le format telephonique.
+    m_playbackDevice->write(convertTelephonyToPlayback(pcm16, m_playbackFormat));
 }
 
 } // namespace network

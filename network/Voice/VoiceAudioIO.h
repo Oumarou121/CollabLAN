@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QByteArray>
+#include <QAudioFormat>
 #include <cstdint>
 
 class QAudioSource;
@@ -104,6 +105,13 @@ private:
     QByteArray m_captureBuffer;
     bool m_active = false;
     bool m_muted = false;
+
+    // Formats reellement negocies avec les peripheriques (peuvent differer
+    // du format telephonique cible 8kHz/mono/16bits, cf. conversion dans
+    // onCaptureReadyRead()/playFrame() ci-dessous -- voir le commentaire de
+    // start() pour le detail du pourquoi).
+    QAudioFormat m_captureFormat;
+    QAudioFormat m_playbackFormat;
 };
 
 } // namespace network

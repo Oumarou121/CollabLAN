@@ -524,6 +524,30 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
 
                 const QString localUuid = m_electionService->localMachineUuid();
 
+                // CORRECTIF (reconciliation refusee en boucle des que le TEMP_SERVER
+                // est aussi notre pair de messagerie habituel) : m_messagingService
+                // est une connexion WebSocket UNIQUE et partagee. Si elle est deja
+                // connectee a ce meme TEMP_SERVER (cas frequent : le TEMP_SERVER
+                // temporaire est souvent le pair avec lequel on discute deja),
+                // connectToHost() refusait immediatement et SYNCHRONE ("Already
+                // connected, disconnect first") avant meme la moindre tentative
+                // reseau -- ce qui declenchait a chaque heartbeat le message
+                // "Reconciliation impossible: connexion au TEMP_SERVER refusee" en
+                // boucle infinie, sans jamais aboutir. On reutilise ici directement
+                // la connexion existante quand elle pointe deja vers le TEMP_SERVER.
+                if (m_messagingService->isConnected()) {
+                    if (m_messagingService->peerAddress() == tempServerAddress
+                        && m_messagingService->peerPort() == tempServerPort) {
+                        m_syncService->requestReconciliation(fromEpoch, localUuid);
+                    } else {
+                        qWarning() << "Reconciliation impossible: deja connecte a un autre poste ("
+                                   << m_messagingService->peerAddress() << m_messagingService->peerPort()
+                                   << "), impossible de joindre le TEMP_SERVER" << tempServerAddress << tempServerPort;
+                        m_reconciliationInFlight = false;
+                    }
+                    return;
+                }
+
                 // CORRECTIF (Server officiel bloque indefiniment en attente de
                 // reconciliation) : connectToHost() renvoie true des qu'il
                 // INITIE la connexion TLS ; l'echec reel (certificat du
