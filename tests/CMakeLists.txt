@@ -93,6 +93,10 @@ add_executable(test_audioservice UnitTests/test_audioservice.cpp)
 target_link_libraries(test_audioservice PRIVATE Qt6::Test Qt6::Multimedia services)
 add_test(NAME test_audioservice COMMAND test_audioservice)
 
+add_executable(test_pcmconverter UnitTests/test_pcmconverter.cpp)
+target_link_libraries(test_pcmconverter PRIVATE services)
+add_test(NAME test_pcmconverter COMMAND test_pcmconverter)
+
 add_executable(test_electionservice UnitTests/test_electionservice.cpp)
 target_link_libraries(test_electionservice PRIVATE Qt6::Test Qt6::Network network models)
 add_test(NAME test_electionservice COMMAND test_electionservice)

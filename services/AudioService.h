@@ -1,15 +1,23 @@
 #ifndef SERVICES_AUDIOSERVICE_H
 #define SERVICES_AUDIOSERVICE_H
 
-#include <QObject>
+#include <QAudioDevice>
+#include <QAudioFormat>
+#include <QByteArray>
 #include <QHash>
+#include <QObject>
 #include <QStringList>
 
+#include <array>
+
+#include "PcmConverter.h"
+
+class QAudioSink;
 class QMediaDevices;
-class QMediaPlayer;
-class QAudioOutput;
 
 namespace services {
+
+class PcmPlaybackDevice;
 
 /**
  * @brief Lecture des sons de notification (message, transfert, appel).
@@ -17,22 +25,24 @@ namespace services {
  * Chaque categorie d'evenement propose plusieurs variantes de son que
  * l'utilisateur peut choisir depuis Parametres > Sons & notifications
  * (issue #56, extension "choix du son"). Toutes les variantes sont
- * prechargees au demarrage ; seule la variante selectionnee par
- * categorie est jouee par playMessageSound()/playTransferSound()/
- * playCallSound(). previewSound() permet d'ecouter n'importe quelle
- * variante avant de la choisir, sans changer la selection courante.
+ * decodees au demarrage ; seule la variante selectionnee par categorie est
+ * jouee par playMessageSound()/playTransferSound()/playCallSound().
+ * previewSound() permet d'ecouter n'importe quelle variante avant de la
+ * choisir, sans changer la selection courante.
  *
- * CORRECTIF (sons de notification silencieux sur certaines cartes son,
- * ex. Realtek en partage WASAPI) : la lecture s'appuyait auparavant sur
- * QSoundEffect, qui exige que le peripherique de sortie accepte
- * nativement le format du fichier -- sinon QAudioSink::start echoue
- * ("QAudioFormat not supported by QAudioDevice"), silencieusement :
- * QSoundEffect::status() reste Ready et aucune erreur n'est remontee.
- * On utilise desormais QMediaPlayer (+ QAudioOutput), qui passe par le
- * pipeline de decodage/conversion FFmpeg deja utilise ailleurs dans
- * l'application (VoiceAudioIO) et convertit lui-meme vers le format
- * accepte par le peripherique, au lieu d'exiger un match natif. Reste
- * asynchrone, ne bloque jamais le thread de l'UI.
+ * CORRECTIF (sons de notification muets sur certaines cartes son, ex.
+ * Realtek en partage WASAPI) : la lecture passait par QSoundEffect puis
+ * QMediaPlayer. Sur ce materiel, les deux echouent SILENCIEUSEMENT :
+ *   "QAudioSink::start: QAudioFormat not supported by QAudioDevice"
+ *   "[SWR] Output channel layout "" is invalid or unsupported"
+ * (le format prefere de la carte n'a pas de disposition de canaux que le
+ * convertisseur FFmpeg de QMediaPlayer sache utiliser) ; error() reste a
+ * NoError et rien ne sort. On decode donc les WAV nous-memes (PcmConverter)
+ * et on les joue avec un QAudioSink ouvert sur preferredFormat() du
+ * peripherique, apres conversion logicielle -- exactement la technique de
+ * VoiceAudioIO, qui fonctionne sur ces memes postes pour les appels.
+ * Reste asynchrone : QAudioSink tire les donnees dans son propre thread
+ * audio, sans jamais bloquer le thread de l'UI.
  */
 class AudioService : public QObject
 {
@@ -112,34 +122,63 @@ signals:
     void callSoundChanged();
 
 private slots:
-    /// Relie chaque QAudioOutput precharge au nouveau peripherique de
-    /// sortie par defaut lorsque l'OS en signale le changement (casque
-    /// deconnecte, nouvelle sortie par defaut, etc.). Sans quoi un effet
-    /// peut rester silencieusement lie a un peripherique qui n'est plus
-    /// celui utilise par le systeme.
+    /// Reconstruit la sortie audio quand l'OS signale un changement de
+    /// peripherique (casque deconnecte, nouvelle sortie par defaut, etc.) :
+    /// les QAudioSink sont detruits et recrees, au format du nouveau
+    /// peripherique, a la prochaine lecture. Une sonnerie d'appel en cours
+    /// est relancee sur la nouvelle sortie.
     void rebindAudioDevice();
 
 private:
-    /// Un son precharge = un QMediaPlayer + son QAudioOutput dedie (le
-    /// second ne peut pas etre partage entre plusieurs lecteurs). Les
-    /// deux sont parentes a l'AudioService (destruction automatique).
-    struct NotificationSound {
-        QMediaPlayer *player = nullptr;
-        QAudioOutput *output = nullptr;
+    /// Une "voie" de lecture par categorie (message / transfert / appel) :
+    /// un message peut ainsi arriver pendant que la sonnerie d'appel
+    /// boucle, sans la couper. Le QAudioSink est cree a la demande et
+    /// detruit quand le peripherique de sortie change.
+    struct Channel {
+        QAudioSink *sink = nullptr;
+        PcmPlaybackDevice *device = nullptr;
     };
 
+    /// Decode chaque WAV embarque (qrc) en memoire. Ne depend pas du
+    /// peripherique de sortie, donc fait une seule fois au demarrage.
     void loadSound(EventType type, const QString &variantId, const QString &resourcePath);
+
+    /// Resout le peripherique de sortie par defaut et le format a utiliser
+    /// (preferredFormat() si accepte, sinon un format courant accepte).
+    /// Retourne false s'il n'y a aucun peripherique exploitable.
+    bool ensureOutput();
+
+    /// Detruit proprement le QAudioSink d'une voie (deconnecte ses signaux
+    /// avant : il emet stateChanged pendant sa destruction).
+    void destroySink(Channel &channel);
+
+    /// Detruit les QAudioSink, oublie les conversions et le format : tout
+    /// est recalcule paresseusement pour le nouveau peripherique.
+    void releaseOutput();
+
+    /// Joue @p variantId sur la voie de @p type ; @p loop = boucle infinie
+    /// (sonnerie d'appel).
+    void startPlayback(EventType type, const QString &variantId, bool loop);
+
+    /// Donnees PCM d'une variante converties pour le peripherique courant
+    /// (mises en cache jusqu'au prochain changement de peripherique).
+    QByteArray convertedFor(const QString &key);
+
     QString currentVariant(EventType type) const;
     static QString soundKey(EventType type, const QString &variantId);
     static QString resourcePathFor(EventType type, const QString &variantId);
+    static QAudioFormat chooseOutputFormat(const QAudioDevice &device);
 
-    /// Copie une ressource embarquee (qrc) vers un fichier local (cache
-    /// applicatif) et retourne son chemin, ou une chaine vide en cas
-    /// d'echec. Voir le commentaire dans loadSound() / le .cpp.
-    static QString extractToLocalFile(const QString &resourcePath);
+    QHash<QString, pcm::Clip> m_clips;         ///< sons decodes, cle = soundKey()
+    QHash<QString, QByteArray> m_converted;    ///< PCM au format du peripherique courant
+    std::array<Channel, 3> m_channels;         ///< indexe par EventType
 
-    QHash<QString, NotificationSound> m_sounds;
     QMediaDevices *m_mediaDevices = nullptr;
+    QAudioDevice m_outputDevice;
+    QAudioFormat m_outputFormat;
+    bool m_outputReady = false;
+    bool m_callRinging = false;
+
     bool m_soundEnabled = true;
     qreal m_volume = 1.0;
     QString m_messageSound;

@@ -1,18 +1,85 @@
 #include "AudioService.h"
 
+#include <QAudioSink>
 #include <QDebug>
-#include <QDir>
 #include <QFile>
-#include <QFileInfo>
+#include <QIODevice>
 #include <QMediaDevices>
-#include <QAudioDevice>
-#include <QAudioOutput>
-#include <QMediaPlayer>
 #include <QSettings>
-#include <QStandardPaths>
-#include <QUrl>
+
+#include <cstddef>
+#include <cstring>
+#include <string>
+
+// QtAudio remplace QAudio a partir de Qt 6.6 : alias pour rester compilable
+// avec un Qt6 plus ancien.
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
+namespace QtAudio = QAudio;
+#endif
 
 namespace services {
+
+// Peripherique de lecture "tire" par QAudioSink : fournit les octets PCM
+// deja convertis au format de la sortie, en boucle infinie pour la
+// sonnerie d'appel. Utilise uniquement le thread principal pour l'ecriture
+// (setClip() n'est appele qu'apres QAudioSink::stop()).
+class PcmPlaybackDevice : public QIODevice
+{
+public:
+    explicit PcmPlaybackDevice(QObject *parent = nullptr)
+        : QIODevice(parent)
+    {
+    }
+
+    void setClip(const QByteArray &pcm, bool loop)
+    {
+        m_data = pcm;
+        m_pos = 0;
+        m_loop = loop;
+    }
+
+    bool atEnd() const override
+    {
+        return !m_loop && m_pos >= m_data.size();
+    }
+
+    qint64 bytesAvailable() const override
+    {
+        const qint64 remaining = m_data.isEmpty() ? 0 : (m_loop ? m_data.size() : m_data.size() - m_pos);
+        return remaining + QIODevice::bytesAvailable();
+    }
+
+protected:
+    qint64 readData(char *out, qint64 maxLen) override
+    {
+        if (m_data.isEmpty())
+            return 0;
+
+        qint64 written = 0;
+        while (written < maxLen) {
+            if (m_pos >= m_data.size()) {
+                if (!m_loop)
+                    break;
+                m_pos = 0;
+            }
+            const qint64 chunk = qMin(maxLen - written, static_cast<qint64>(m_data.size()) - m_pos);
+            std::memcpy(out + written, m_data.constData() + m_pos, static_cast<std::size_t>(chunk));
+            m_pos += chunk;
+            written += chunk;
+        }
+        return written;
+    }
+
+    qint64 writeData(const char *, qint64) override
+    {
+        return -1; // lecture seule
+    }
+
+private:
+    QByteArray m_data;
+    qint64 m_pos = 0;
+    bool m_loop = false;
+};
 
 namespace {
 // Identifiants de variantes disponibles par categorie, dans l'ordre
@@ -51,6 +118,37 @@ QString settingsKeyFor(AudioService::EventType type)
     }
     return QString();
 }
+
+std::size_t channelIndex(AudioService::EventType type)
+{
+    return static_cast<std::size_t>(type);
+}
+
+// Silence ajoute apres chaque son : evite que le peripherique tronque la
+// fin quand il vide son tampon.
+constexpr int kTailSilenceMs = 60;
+
+bool toPcmFormat(const QAudioFormat &format, pcm::OutputFormat &out)
+{
+    out.sampleRate = format.sampleRate();
+    out.channels = format.channelCount();
+    switch (format.sampleFormat()) {
+    case QAudioFormat::UInt8: out.sampleType = pcm::SampleType::UInt8; return true;
+    case QAudioFormat::Int16: out.sampleType = pcm::SampleType::Int16; return true;
+    case QAudioFormat::Int32: out.sampleType = pcm::SampleType::Int32; return true;
+    case QAudioFormat::Float: out.sampleType = pcm::SampleType::Float; return true;
+    default: return false;
+    }
+}
+
+QAudioFormat makeFormat(int sampleRate, int channels, QAudioFormat::SampleFormat sampleFormat)
+{
+    QAudioFormat format;
+    format.setSampleRate(sampleRate);
+    format.setChannelCount(channels);
+    format.setSampleFormat(sampleFormat);
+    return format;
+}
 } // namespace
 
 QString AudioService::resourcePathFor(EventType type, const QString &variantId)
@@ -81,11 +179,8 @@ QStringList AudioService::soundVariants(services::AudioService::EventType type) 
 AudioService::AudioService(QObject *parent)
     : QObject(parent)
 {
-    // CORRECTIF : soundEnabled/volume n'etaient jamais persistes -- reglages
-    // remis a true/1.0 a chaque redemarrage de l'application, meme apres
-    // que l'utilisateur les ait changes depuis Parametres > Sons &
-    // notifications. On charge les valeurs sauvegardees avant de creer les
-    // QSoundEffect (pour que le volume initial soit applique directement).
+    // soundEnabled/volume sont persistes : on charge les valeurs sauvegardees
+    // avant toute lecture pour que le volume initial soit applique directement.
     {
         QSettings settings;
         m_soundEnabled = settings.value(QStringLiteral("audio/soundEnabled"), true).toBool();
@@ -106,115 +201,222 @@ AudioService::AudioService(QObject *parent)
         m_callSound = loadVariant(EventType::Call);
     }
 
-    // Precharge les 3 variantes de chaque categorie (issue #56 + choix du
-    // son) : previewSound() doit pouvoir jouer n'importe laquelle
-    // immediatement, pas seulement celle actuellement selectionnee.
+    // Decode les 3 variantes de chaque categorie (issue #56 + choix du son) :
+    // previewSound() doit pouvoir jouer n'importe laquelle immediatement,
+    // pas seulement celle actuellement selectionnee.
     for (EventType type : {EventType::Message, EventType::Transfer, EventType::Call}) {
         for (const QString &variantId : variantsFor(type)) {
             loadSound(type, variantId, resourcePathFor(type, variantId));
         }
     }
 
-    // Chaque QAudioOutput doit suivre le peripherique de sortie par
-    // defaut du systeme (casque deconnecte, sortie HDMI/Bluetooth
-    // devenue "par defaut" alors qu'elle est eteinte, etc.) -- sans quoi
-    // un son peut rester silencieusement lie a un peripherique qui n'est
-    // plus celui utilise par l'OS. On lie explicitement chaque sortie au
-    // peripherique par defaut courant (loadSound()), et on refait cette
-    // liaison sur toutes les sorties a chaque changement signale par l'OS.
+    // La sortie doit suivre le peripherique par defaut du systeme (casque
+    // deconnecte, sortie HDMI/Bluetooth devenue "par defaut", etc.).
     m_mediaDevices = new QMediaDevices(this);
     connect(m_mediaDevices, &QMediaDevices::audioOutputsChanged, this, &AudioService::rebindAudioDevice);
+
+    // Resout tout de suite le peripherique et son format : le log de
+    // demarrage indique immediatement si la carte accepte son format prefere.
+    ensureOutput();
 }
 
-void AudioService::rebindAudioDevice()
+AudioService::~AudioService()
 {
-    const QAudioDevice outputDevice = QMediaDevices::defaultAudioOutput();
-    qInfo() << "[AudioService] Peripherique de sortie par defaut change :"
-             << outputDevice.description() << (outputDevice.isNull() ? "(aucun peripherique !)" : "");
-    for (const NotificationSound &sound : std::as_const(m_sounds)) {
-        sound.output->setDevice(outputDevice);
-    }
-}
-
-AudioService::~AudioService() = default;
-
-QString AudioService::extractToLocalFile(const QString &resourcePath)
-{
-    // Le backend FFmpeg de Qt Multimedia (utilise notamment sous Windows)
-    // echoue parfois a decoder un fichier lu directement depuis les
-    // ressources Qt (qrc:/...), meme quand le WAV source est parfaitement
-    // valide (QSoundEffect: Error decoding source). Contournement connu :
-    // extraire le son vers un vrai fichier sur disque une seule fois, puis
-    // charger QSoundEffect depuis ce chemin local plutot que depuis qrc.
-    const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-                              + QStringLiteral("/sounds");
-    QDir().mkpath(cacheDir);
-
-    const QString fileName = QFileInfo(resourcePath).fileName();
-    const QString localPath = cacheDir + QLatin1Char('/') + fileName;
-
-    // Ne recopie que si absent OU si le contenu embarque a change (mise a
-    // jour de l'application avec de nouveaux sons) : comparer uniquement
-    // l'existence du fichier local faisait qu'un son mis a jour dans les
-    // ressources restait invisible indefiniment pour une installation
-    // existante, puisque le cache d'une version precedente gardait
-    // toujours la priorite.
-    QFile resourceFile(resourcePath);
-    if (!resourceFile.open(QIODevice::ReadOnly)) {
-        qWarning() << "AudioService : ressource introuvable" << resourcePath;
-        return QString();
-    }
-    const QByteArray resourceData = resourceFile.readAll();
-
-    bool needsWrite = true;
-    if (QFile::exists(localPath)) {
-        QFile existingFile(localPath);
-        if (existingFile.open(QIODevice::ReadOnly)) {
-            needsWrite = existingFile.readAll() != resourceData;
-        }
-    }
-
-    if (needsWrite) {
-        QFile localFile(localPath);
-        if (!localFile.open(QIODevice::WriteOnly)) {
-            qWarning() << "AudioService : impossible d'ecrire" << localPath;
-            return QString();
-        }
-        localFile.write(resourceData);
-    }
-
-    return localPath;
+    // Les QAudioSink lisent les PcmPlaybackDevice : on les detruit d'abord.
+    releaseOutput();
 }
 
 void AudioService::loadSound(EventType type, const QString &variantId, const QString &resourcePath)
 {
-    const QString localPath = extractToLocalFile(resourcePath);
-    const QUrl source = localPath.isEmpty() ? QUrl(resourcePath) : QUrl::fromLocalFile(localPath);
+    QFile file(resourcePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qWarning() << "[AudioService] ressource introuvable" << resourcePath;
+        return;
+    }
+    const QByteArray raw = file.readAll();
 
-    // QAudioOutput ne peut pas etre partage entre plusieurs QMediaPlayer :
-    // chaque son precharge a le sien, comme chaque QSoundEffect avait
-    // auparavant son propre backend.
-    auto *output = new QAudioOutput(this);
-    // Liaison explicite au peripherique de sortie par defaut courant (cf.
-    // rebindAudioDevice()) plutot que de compter sur une resolution
-    // implicite qui peut ne pas suivre un changement de peripherique par
-    // defaut sur certains postes.
-    output->setDevice(QMediaDevices::defaultAudioOutput());
-    output->setVolume(m_volume);
+    pcm::Clip clip;
+    std::string error;
+    if (!pcm::decodeWav(reinterpret_cast<const unsigned char *>(raw.constData()),
+                        static_cast<std::size_t>(raw.size()), clip, &error)) {
+        qWarning() << "[AudioService] impossible de decoder le son" << resourcePath
+                   << "erreur:" << QString::fromStdString(error);
+        return;
+    }
+    m_clips.insert(soundKey(type, variantId), std::move(clip));
+}
 
-    auto *player = new QMediaPlayer(this);
-    player->setAudioOutput(output);
-    player->setSource(source);
-    player->setLoops(QMediaPlayer::Once);
-    // Precharge le fichier pour eviter toute latence lors du premier play().
+QAudioFormat AudioService::chooseOutputFormat(const QAudioDevice &device)
+{
+    // Le format prefere du peripherique est, par definition, celui que le
+    // mixeur de l'OS accepte sans conversion : c'est le premier choix (comme
+    // VoiceAudioIO). Les autres ne servent que si preferredFormat() est
+    // refuse ou inexploitable.
+    const QAudioFormat preferred = device.preferredFormat();
+    const QList<QAudioFormat> candidates = {
+        preferred,
+        makeFormat(48000, 2, QAudioFormat::Int16),
+        makeFormat(44100, 2, QAudioFormat::Int16),
+        makeFormat(48000, 2, QAudioFormat::Float),
+        makeFormat(44100, 2, QAudioFormat::Float),
+        makeFormat(48000, 1, QAudioFormat::Int16),
+        makeFormat(44100, 1, QAudioFormat::Int16),
+    };
+    for (const QAudioFormat &candidate : candidates) {
+        pcm::OutputFormat unused;
+        if (candidate.isValid() && toPcmFormat(candidate, unused) && device.isFormatSupported(candidate))
+            return candidate;
+    }
+    // Rien d'accepte : on tente quand meme le format prefere (le log de
+    // startPlayback() montrera l'erreur du QAudioSink).
+    return preferred;
+}
 
-    connect(player, &QMediaPlayer::errorOccurred, this,
-            [source](QMediaPlayer::Error error, const QString &errorString) {
-                qWarning() << "AudioService : impossible de charger le son" << source
-                           << "erreur:" << error << errorString;
-            });
+bool AudioService::ensureOutput()
+{
+    if (m_outputReady)
+        return true;
 
-    m_sounds.insert(soundKey(type, variantId), NotificationSound{player, output});
+    const QAudioDevice device = QMediaDevices::defaultAudioOutput();
+    if (device.isNull()) {
+        qWarning() << "[AudioService] aucun peripherique de sortie audio par defaut : sons impossibles";
+        return false;
+    }
+
+    const QAudioFormat preferred = device.preferredFormat();
+    const QAudioFormat chosen = chooseOutputFormat(device);
+    pcm::OutputFormat convertible;
+    if (!chosen.isValid() || !toPcmFormat(chosen, convertible)) {
+        qWarning() << "[AudioService] aucun format de sortie exploitable pour" << device.description();
+        return false;
+    }
+
+    m_outputDevice = device;
+    m_outputFormat = chosen;
+    m_outputReady = true;
+
+    // DIAGNOSTIC : ces lignes suffisent a comprendre un poste sans son (format
+    // prefere refuse par la carte, nombre de canaux atypique, etc.).
+    qInfo() << "[AudioService] sortie audio :" << device.description()
+            << "| format prefere :" << preferred.sampleRate() << "Hz,"
+            << preferred.channelCount() << "canaux (config" << static_cast<int>(preferred.channelConfig())
+            << "), echantillon" << static_cast<int>(preferred.sampleFormat())
+            << "accepte par la carte:" << device.isFormatSupported(preferred)
+            << "| format utilise :" << chosen.sampleRate() << "Hz,"
+            << chosen.channelCount() << "canaux, echantillon" << static_cast<int>(chosen.sampleFormat());
+    return true;
+}
+
+void AudioService::destroySink(Channel &channel)
+{
+    if (!channel.sink)
+        return;
+    // QAudioSink emet stateChanged pendant sa destruction : sans cette
+    // deconnexion, notre lambda de diagnostic relirait sink->error() sur un
+    // objet en cours de destruction.
+    QObject::disconnect(channel.sink, nullptr, this, nullptr);
+    channel.sink->stop();
+    delete channel.sink;
+    channel.sink = nullptr;
+}
+
+void AudioService::releaseOutput()
+{
+    for (Channel &channel : m_channels)
+        destroySink(channel);
+    m_converted.clear();
+    m_outputDevice = QAudioDevice();
+    m_outputFormat = QAudioFormat();
+    m_outputReady = false;
+}
+
+void AudioService::rebindAudioDevice()
+{
+    const bool wasRinging = m_callRinging;
+    releaseOutput();
+
+    const QAudioDevice outputDevice = QMediaDevices::defaultAudioOutput();
+    qInfo() << "[AudioService] Peripherique de sortie par defaut change :"
+            << outputDevice.description() << (outputDevice.isNull() ? "(aucun peripherique !)" : "");
+    ensureOutput();
+
+    // Une sonnerie en cours etait liee a l'ancien peripherique : on la
+    // relance sur le nouveau plutot que de la laisser muette.
+    if (wasRinging && m_soundEnabled)
+        playSound(EventType::Call);
+}
+
+QByteArray AudioService::convertedFor(const QString &key)
+{
+    const auto cached = m_converted.constFind(key);
+    if (cached != m_converted.constEnd())
+        return cached.value();
+
+    const auto clip = m_clips.constFind(key);
+    pcm::OutputFormat format;
+    if (clip == m_clips.constEnd() || !toPcmFormat(m_outputFormat, format))
+        return QByteArray();
+
+    const std::vector<unsigned char> bytes = pcm::convertClip(clip.value(), format, kTailSilenceMs);
+    const QByteArray data(reinterpret_cast<const char *>(bytes.data()), static_cast<qsizetype>(bytes.size()));
+    m_converted.insert(key, data);
+    return data;
+}
+
+void AudioService::startPlayback(EventType type, const QString &variantId, bool loop)
+{
+    const QString key = soundKey(type, variantId);
+    if (!m_clips.contains(key)) {
+        qWarning() << "[AudioService] playSound : aucun son trouve pour" << key;
+        return;
+    }
+    if (!ensureOutput())
+        return;
+
+    const QByteArray data = convertedFor(key);
+    if (data.isEmpty()) {
+        qWarning() << "[AudioService] playSound : conversion impossible pour" << key
+                   << "vers" << m_outputFormat.sampleRate() << "Hz," << m_outputFormat.channelCount() << "canaux";
+        return;
+    }
+
+    Channel &channel = m_channels[channelIndex(type)];
+    if (!channel.device) {
+        channel.device = new PcmPlaybackDevice(this);
+        channel.device->open(QIODevice::ReadOnly);
+    }
+
+    // Un QAudioSink neuf a chaque lecture : les notifications sont rares, et
+    // cela evite tout etat residuel d'un sink arrive en fin de flux (Idle).
+    destroySink(channel);
+    channel.sink = new QAudioSink(m_outputDevice, m_outputFormat, this);
+    channel.sink->setVolume(m_volume);
+    connect(channel.sink, &QAudioSink::stateChanged, this, [sink = channel.sink, key](QtAudio::State state) {
+        qDebug() << "[AudioService] etat du lecteur pour" << key << ":" << static_cast<int>(state);
+        if (sink->error() != QtAudio::NoError) {
+            qWarning() << "[AudioService] erreur de lecture pour" << key
+                       << "code:" << static_cast<int>(sink->error());
+        }
+    });
+
+    channel.device->setClip(data, loop);
+
+    qDebug() << "[AudioService] playSound : lecture de" << key
+             << "volume:" << m_volume << "boucle:" << loop
+             << "peripherique:" << m_outputDevice.description()
+             << "format:" << m_outputFormat.sampleRate() << "Hz," << m_outputFormat.channelCount() << "canaux";
+
+    // start(QIODevice*) est asynchrone : QAudioSink tire les donnees dans son
+    // propre fil audio, donc aucun gel de l'UI (criteres de l'issue #56).
+    channel.sink->start(channel.device);
+
+    if (channel.sink->error() != QtAudio::NoError) {
+        qWarning() << "[AudioService] playSound : echec du demarrage pour" << key
+                   << "code:" << static_cast<int>(channel.sink->error());
+    }
+
+    if (type == EventType::Call)
+        m_callRinging = loop;
 }
 
 void AudioService::setSoundEnabled(bool enabled)
@@ -232,8 +434,9 @@ void AudioService::setVolume(qreal volume)
     if (qFuzzyCompare(m_volume, clamped))
         return;
     m_volume = clamped;
-    for (const NotificationSound &sound : std::as_const(m_sounds)) {
-        sound.output->setVolume(m_volume);
+    for (const Channel &channel : m_channels) {
+        if (channel.sink)
+            channel.sink->setVolume(m_volume);
     }
     QSettings().setValue(QStringLiteral("audio/volume"), m_volume);
     emit volumeChanged();
@@ -273,53 +476,19 @@ void AudioService::playSound(services::AudioService::EventType type)
         return;
     }
 
-    const NotificationSound sound = m_sounds.value(soundKey(type, currentVariant(type)));
-    if (!sound.player) {
-        qWarning() << "[AudioService] playSound : aucun son trouve pour"
-                   << soundKey(type, currentVariant(type));
-        return;
-    }
-    if (sound.player->error() != QMediaPlayer::NoError) {
-        qWarning() << "[AudioService] playSound : lecteur en erreur pour"
-                   << soundKey(type, currentVariant(type)) << "source:" << sound.player->source()
-                   << "erreur:" << sound.player->errorString();
-        return;
-    }
-
-    // Seule la sonnerie d'appel doit boucler tant que l'appel n'est pas
-    // traite ; previewSound() peut avoir laisse loops a Once sur ce meme
-    // lecteur lors d'une ecoute prealable, donc on le reimpose explicitement
-    // ici a chaque lecture reelle plutot qu'une seule fois a la creation.
-    sound.player->setLoops(type == EventType::Call ? QMediaPlayer::Infinite : QMediaPlayer::Once);
-    // QMediaPlayer::play() repart de la position courante, pas du debut :
-    // sans ce reset, rejouer un son deja arrive a la fin ne produirait rien.
-    sound.player->setPosition(0);
-
-    qDebug() << "[AudioService] playSound : lecture de" << soundKey(type, currentVariant(type))
-             << "mediaStatus:" << sound.player->mediaStatus() << "volume:" << sound.output->volume()
-             << "playbackState (avant play):" << sound.player->playbackState()
-             << "isMuted:" << sound.output->isMuted()
-             << "peripherique:" << sound.output->device().description();
-
-    // QMediaPlayer::play() est asynchrone : la lecture est geree par le
-    // backend audio de Qt et ne bloque jamais le thread appelant (donc
-    // pas de gel de l'UI, cf. criteres d'acceptation de l'issue #56).
-    sound.player->play();
+    // Seule la sonnerie d'appel boucle tant que l'appel n'est pas traite.
+    startPlayback(type, currentVariant(type), type == EventType::Call);
 }
 
 void AudioService::previewSound(services::AudioService::EventType type, const QString &variantId)
 {
-    // Ecoute volontaire d'une variante avant de la choisir : jouee une
-    // seule fois (jamais en boucle, meme pour "call") et sans tenir
-    // compte de soundEnabled, pour qu'on puisse comparer les sons meme
-    // interrupteur "Sons actives" desactive.
-    const NotificationSound sound = m_sounds.value(soundKey(type, variantId));
-    if (!sound.player || sound.player->error() != QMediaPlayer::NoError) {
+    // Ecoute volontaire d'une variante avant de la choisir : jouee une seule
+    // fois (jamais en boucle, meme pour "call") et sans tenir compte de
+    // soundEnabled, pour qu'on puisse comparer les sons meme interrupteur
+    // "Sons actives" desactive.
+    if (!variantsFor(type).contains(variantId))
         return;
-    }
-    sound.player->setLoops(QMediaPlayer::Once);
-    sound.player->setPosition(0);
-    sound.player->play();
+    startPlayback(type, variantId, false);
 }
 
 void AudioService::playMessageSound()
@@ -339,10 +508,10 @@ void AudioService::playCallSound()
 
 void AudioService::stopCallSound()
 {
-    const NotificationSound sound = m_sounds.value(soundKey(EventType::Call, currentVariant(EventType::Call)));
-    if (sound.player) {
-        sound.player->stop();
-    }
+    m_callRinging = false;
+    Channel &channel = m_channels[channelIndex(EventType::Call)];
+    if (channel.sink)
+        channel.sink->stop();
 }
 
 } // namespace services
