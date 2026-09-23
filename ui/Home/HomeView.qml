@@ -3,29 +3,25 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Themes
 import "../Components"
+import "../Dashboard"
 
 /*
- * HomeView - ecran "Home" (issue #6 : navigation de base Login -> Home)
+ * HomeView - Dashboard principal LocaLink selon la maquette V2.1
  *
- * Point d'entree apres connexion. Tableau de bord avec acces rapides sous
- * forme de cartes.
- *
- * Design revu (juillet) : identite visuelle "dossier / portail institutionnel"
- * alignee sur le portail web de reference (bandeau bleu + accents or, pastilles
- * façon puce documentaire, cartes DashboardCard a bandeau colore). Tous les
- * signaux et proprietes exposes par cet ecran restent inchanges.
- *
- * Grille realignee sur admin-home.component.scss :
- * max-width 1400px, gap 20px, 3 colonnes par defaut, 2 sous 980px, 1 sous 560px.
+ * Structure:
+ * - Sidebar (navigation, profil)
+ * - Header (breadcrumb, recherche)
+ * - Zone titre (bonjour, état serveur)
+ * - NetworkWorkspace (carte réseau)
+ * - ActionRequiredPanel (à traiter)
+ * - TransferList (transferts)
+ * - ActivityList (activité)
  */
 Item {
     id: root
+    objectName: "homeView"
 
     property string username: ""
-
-    // Reserve l'acces a la carte "Administration" aux administrateurs
-    // (les autres utilisateurs ne doivent plus la voir sur le Home).
-    readonly property bool isAdmin: (typeof userManager !== "undefined" && userManager) ? userManager.currentUserIsAdmin : false
 
     signal logoutRequested()
     signal usersRequested()
@@ -37,597 +33,758 @@ Item {
     signal sharedFoldersRequested()
     signal aboutRequested()
 
-    // Nombre de postes detectes sur le reseau local (network::PeersModel,
-    // cf. app/main.cpp). Repli a 0 en contexte preview/design sans backend.
-    readonly property int peersCount: (typeof peersModel !== "undefined" && peersModel) ? peersModel.count : 0
+    // Responsive breakpoints (selon maquette HTML)
+    readonly property int width1440: 1440
+    readonly property int width1200: 1200
+    readonly property int width900: 900
+    readonly property int width700: 700
 
-    // Etat de la bascule automatique de serveur (electionService, cf.
-    // app/main.cpp) - affiche desormais dans le menu profil plutot qu'en
-    // badge separe dans l'en-tete.
-    readonly property var election: (typeof electionService !== "undefined") ? electionService : null
-    property bool serverReconnecting: false
+    readonly property bool isCompact: root.width < width900
+    readonly property bool isMobile: root.width < width700
 
-    Connections {
-        target: root.election
-        function onHeartbeatLost() { root.serverReconnecting = true }
-        function onRoleChanged() { root.serverReconnecting = false }
-    }
+    // Mode validation visuelle (activé pour test géométrie)
+    property bool demoMode: true
 
+    // Couleurs exactes selon maquette HTML
+    readonly property color bg: "#EEF2F1"
+    readonly property color surface: "#FFFFFF"
+    readonly property color surface2: "#F7F9F8"
+    readonly property color line: "#DDE4E2"
+    readonly property color line2: "#C8D2CF"
+    readonly property color ink: "#15222B"
+    readonly property color ink2: "#4A5961"
+    readonly property color ink3: "#62717A"
+    readonly property color primary: "#0B5C70"
+    readonly property color primarySoft: "#E0EEF2"
+    readonly property color primaryMuted: "#B9D8E0"
+    readonly property color ok: "#2E9A66"
+    readonly property color okSoft: "#E4F4EC"
+    readonly property color okText: "#1B7048"
+    readonly property color warn: "#C27A0E"
+    readonly property color warnSoft: "#FCF1DC"
+    readonly property color warnText: "#8E5A08"
+    readonly property color err: "#C8453B"
+    readonly property color errSoft: "#FBE9E7"
+    readonly property color errText: "#9E2F27"
+    readonly property color info: "#3A78B8"
+    readonly property color infoSoft: "#E5EEF8"
+    readonly property color infoText: "#28598C"
+    readonly property color call: "#7A55B0"
+    readonly property color callSoft: "#EEE8F7"
+    readonly property color callText: "#5B3B8C"
+    readonly property color track: "#D9E2E0"
+
+    readonly property bool isAdmin: (typeof userManager !== "undefined" && userManager)
+                                    ? userManager.currentUserIsAdmin : false
+    readonly property var election: (typeof electionService !== "undefined")
+                                    ? electionService : null
+    readonly property int peersCount: (typeof peersModel !== "undefined" && peersModel)
+                                      ? peersModel.count : 0
+
+
+
+    // État serveur
     readonly property string serverStatusLabel: {
         if (!root.election)
-            return ""
-        if (root.serverReconnecting)
-            return qsTr("Reconnexion en cours...")
+            return qsTr("Réseau local")
         if (root.election.roleLabel === "TEMP_SERVER")
-            return qsTr("Mode secours (serveur de secours actif)")
+            return qsTr("Mode secours")
         if (root.election.roleLabel === "SERVER")
             return qsTr("Serveur actif")
         return qsTr("Connecté au serveur")
     }
-
     readonly property color serverStatusColor: {
         if (!root.election)
-            return Theme.textSecondary
-        if (root.serverReconnecting)
-            return Theme.warning
+            return "#2E9A66"
         if (root.election.roleLabel === "TEMP_SERVER")
-            return Theme.warning
-        return Theme.success
+            return "#C27A0E"
+        return "#2E9A66"
     }
 
-    // ---- Jetons locaux (alignes sur LoginView, meme palette navy) ----
-    readonly property color blue700: Theme.primaryDeep
-    readonly property color blue600: Theme.primary
-    readonly property color blueTint: Theme.primaryMuted
-    readonly property color accentSky: Theme.primary
+    // Données transferts
+    property var transferItems: []
 
-    // Meme police d'accent embarquee que LoginView, pour un rendu identique
-    // quel que soit le poste.
-    FontLoader {
-        id: serifFont
-        source: "../Assets/fonts/PTSerif-Bold.ttf"
-    }
-    readonly property string displayFont: serifFont.status === FontLoader.Ready ? serifFont.name : "serif"
-
-    // Le badge "postes en ligne" est centre sur toute la largeur de
-    // l'en-tete (anchors.centerIn), independamment du lockup a gauche et
-    // du profil a droite : sous une certaine largeur de fenetre (proche du
-    // minimumWidth de 640px defini dans Main.qml), son texte le plus long
-    // ("Recherche des postes...") peut chevaucher ces deux blocs. Sous ce
-    // seuil, on bascule sur une version compacte (pastille seule, sans
-    // libelle) pour eviter tout chevauchement visuel.
-    readonly property bool showPeersLabel: root.width >= 760
-
-    Rectangle {
-        anchors.fill: parent
-        color: Theme.background
+    function refreshTransfers() {
+        if (typeof transferContext === "undefined" || !transferContext) {
+            transferItems = []
+            return
+        }
+        const all = transferContext.activeTransfers || []
+        transferItems = all.filter(function(item) {
+            return item && item.statusText === qsTr("En cours")
+        }).slice(-4).reverse()
     }
 
-    ColumnLayout {
-        anchors.fill: parent
-        spacing: 0
+    // Données activité
+    property var activityItems: []
 
-        // ---- En-tete : marque, badge central, profil -----------------------
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 72
-            color: Theme.surface
-            border.width: 1
-            border.color: Theme.border
+    function refreshActivities() {
+        if (typeof auditLogModel === "undefined" || !auditLogModel) {
+            activityItems = []
+            return
+        }
+        const all = []
+        for (let i = 0; i < Math.min(auditLogModel.count, 10); i++) {
+            const item = auditLogModel.get(i)
+            all.push({
+                event: item.event || "activity",
+                actor: item.actor || "",
+                message: item.message || "",
+                result: item.result || "",
+                resultBadge: item.resultBadge || "",
+                timestamp: item.timestamp || new Date()
+            })
+        }
+        activityItems = all
+    }
 
-            Item {
-                anchors.fill: parent
-                anchors.margins: Theme.spacingLarge
+    // Données postes pour la carte réseau. L'angle (degrés) et la
+    // dérivation transfert/appel sont calculés par NetworkWorkspace lui-même
+    // (voir Dashboard/NetworkWorkspace.qml) à partir de activeTransfers/
+    // activeCalls ci-dessous ; on ne fournit ici que les champs réellement
+    // exposés par peersModel (doc étape 3, §38).
+    property var networkPeers: []
+    property var networkOfflinePeers: []
+    property var networkActiveCalls: []
 
-                // ---- Lockup de marque (logo + nom), aligne a gauche -------
-               RowLayout {
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Theme.spacingSmall
+    function refreshNetworkPeers() {
+        if (typeof peersModel === "undefined" || !peersModel) {
+            networkPeers = []
+            return
+        }
+        const peers = []
+        const count = peersModel.count
 
-                    Rectangle {
-                        width: 32
-                        height: 32
-                        color: "transparent"
+        for (let i = 0; i < count; i++) {
+            const index = peersModel.index(i, 0)
+            const name = peersModel.data(index, peersModel.NameRole || 258) || ""
+            const address = peersModel.data(index, peersModel.AddressRole || 261) || ""
+            const status = peersModel.data(index, peersModel.StatusRole || 260) || "online"
+            const userUuid = peersModel.data(index, peersModel.UserUuidRole || 259) || ""
 
-                        Image {
-                            anchors.fill: parent
-                            source: "../Assets/logo.png"
-                            fillMode: Image.PreserveAspectFit
-                            smooth: true
-                            mipmap: true
-                        }
-                    }
+            peers.push({
+                name: name || ("Poste " + (i + 1)),
+                address: address,
+                status: status,
+                userUuid: userUuid,
+                angle: -90 + (360 * i / Math.max(count, 1))
+            })
+        }
+        networkPeers = peers
+    }
+
+    // Postes autorisés mais absents (authorizedMachineModel moins
+    // peersModel) : uniquement visible côté administrateur pour l'instant,
+    // à confirmer côté client standard (doc §38).
+    function refreshNetworkOfflinePeers() {
+        if (!root.isAdmin || typeof authorizedMachineModel === "undefined" || !authorizedMachineModel) {
+            networkOfflinePeers = []
+            return
+        }
+        const present = {}
+        if (typeof peersModel !== "undefined" && peersModel) {
+            for (let i = 0; i < peersModel.count; i++) {
+                const idx = peersModel.index(i, 0)
+                const addr = peersModel.data(idx, peersModel.AddressRole || 260) || ""
+                if (addr) present[addr] = true
+            }
+        }
+        const offline = []
+        const total = authorizedMachineModel.rowCount ? authorizedMachineModel.rowCount() : 0
+        for (let j = 0; j < total; j++) {
+            const midx = authorizedMachineModel.index(j, 0)
+            const authorized = authorizedMachineModel.data(midx, authorizedMachineModel.AuthorizedRole)
+            const ip = authorizedMachineModel.data(midx, authorizedMachineModel.IpAddressRole) || ""
+            const host = authorizedMachineModel.data(midx, authorizedMachineModel.HostnameRole) || ""
+            if (authorized && ip && !present[ip]) {
+                offline.push({ name: host || ip, address: ip })
+            }
+        }
+        networkOfflinePeers = offline
+    }
+
+    // Appel en cours (callContext) sous la forme attendue par
+    // NetworkWorkspace.activeCalls.
+    function refreshNetworkActiveCalls() {
+        if (typeof callContext === "undefined" || !callContext
+                || !callContext.remoteAddress || callContext.callState === "idle") {
+            networkActiveCalls = []
+            return
+        }
+        networkActiveCalls = [{ remoteAddress: callContext.remoteAddress, callState: callContext.callState }]
+    }
+
+    // Données actions requises
+    property var actionRequiredItems: []
+
+    function refreshActionRequired() {
+        const items = []
+
+        // 1. Postes en attente d'autorisation (pendingClientCount)
+        if (typeof authorizedMachineModel !== "undefined" && authorizedMachineModel) {
+            const total = authorizedMachineModel.rowCount ? authorizedMachineModel.rowCount() : 0
+            let pendingCount = 0
+            const pendingHosts = []
+
+            for (let j = 0; j < total; j++) {
+                const midx = authorizedMachineModel.index(j, 0)
+                const authorized = authorizedMachineModel.data(midx, authorizedMachineModel.AuthorizedRole)
+                const ip = authorizedMachineModel.data(midx, authorizedMachineModel.IpAddressRole) || ""
+                const host = authorizedMachineModel.data(midx, authorizedMachineModel.HostnameRole) || ""
+
+                if (!authorized && ip) {
+                    pendingCount++
+                    pendingHosts.push(host || ip)
                 }
+            }
 
-                // ---- Badge central : nombre de postes en ligne ------------
-                Rectangle {
-                    id: peersBadge
-                    anchors.centerIn: parent
-                    height: 30
-                    implicitWidth: peersPillContent.implicitWidth + Theme.spacingMedium * 2
-                    radius: height / 2
-                    color: peersBadgeArea.containsMouse ? root.blue700 : root.blueTint
-                    border.width: 1
-                    border.color: root.blue700
-                    Behavior on color { ColorAnimation { duration: 150 } }
+            if (pendingCount > 0) {
+                items.push({
+                    urgency: "medium",
+                    title: pendingCount + " " + qsTr("poste(s) demandent une autorisation"),
+                    description: pendingHosts.slice(0, 3).join(", ") + (pendingHosts.length > 3 ? "..." : ""),
+                    type: "authorization"
+                })
+            }
+        }
 
-                    RowLayout {
-                        id: peersPillContent
-                        anchors.centerIn: parent
-                        spacing: 6
+        // 2. Connexions refusées récentes (auditLogModel)
+        if (typeof auditLogModel !== "undefined" && auditLogModel) {
+            const count = Math.min(auditLogModel.count, 10)
+            let deniedCount = 0
+            let lastDenied = null
 
-                        Rectangle {
-                            id: peersDot
-                            width: 7
-                            height: 7
-                            radius: 3.5
-                            color: peersBadgeArea.containsMouse ? "#ffffff" : root.blue700
-                            Layout.alignment: Qt.AlignVCenter
-                            Behavior on color { ColorAnimation { duration: 150 } }
-
-                            // Pastille pulsante tant qu'aucun poste n'est
-                            // encore detecte sur le reseau (decouverte en
-                            // cours), pour eviter l'impression d'un badge
-                            // fige/casse a "0 poste(s) en ligne".
-                            SequentialAnimation on opacity {
-                                running: root.peersCount === 0
-                                loops: Animation.Infinite
-                                NumberAnimation { to: 0.25; duration: 650; easing.type: Easing.InOutQuad }
-                                NumberAnimation { to: 1.0; duration: 650; easing.type: Easing.InOutQuad }
-                                onRunningChanged: if (!running) peersDot.opacity = 1.0
-                            }
-                        }
-
-                        Label {
-                            visible: root.showPeersLabel
-                            text: root.peersCount === 0
-                                  ? qsTr("Recherche des postes...")
-                                  : qsTr("%1 poste(s) en ligne").arg(root.peersCount)
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: "monospace"
-                            color: peersBadgeArea.containsMouse ? "#ffffff" : root.blue700
-                            Behavior on color { ColorAnimation { duration: 150 } }
-                        }
-                    }
-
-                    MouseArea {
-                        id: peersBadgeArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.usersRequested()
-
-                        ToolTip.visible: !root.showPeersLabel && containsMouse
-                        ToolTip.delay: 300
-                        ToolTip.text: root.peersCount === 0
-                                      ? qsTr("Recherche des postes...")
-                                      : qsTr("%1 poste(s) en ligne").arg(root.peersCount)
-                    }
-                }
-
-                // ---- Profil (avatar + nom + chevron), menu deroulant ------
-                Rectangle {
-                    id: profileButton
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    height: 44
-                    implicitWidth: profileRow.implicitWidth + Theme.spacingMedium * 2
-                    radius: 18
-                    color: (profileArea.containsMouse || menuPopup.visible) ? Theme.surfaceAlt : Theme.surface
-                    border.width: 1
-                    border.color: Theme.border
-                    Behavior on color { ColorAnimation { duration: 150 } }
-
-                    RowLayout {
-                        id: profileRow
-                        anchors.centerIn: parent
-                        spacing: Theme.spacingSmall
-
-                        Avatar {
-                            name: root.username
-                            size: 30
-                        }
-
-                        Label {
-                            text: root.username
-                            color: Theme.text
-                            font.bold: true
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: Theme.fontFamily
-                        }
-
-                        Text {
-                            text: menuPopup.visible ? "\u25B4" : "\u25BE"
-                            color: Theme.textSecondary
-                            font.pixelSize: 10
-                        }
-                    }
-
-                    MouseArea {
-                        id: profileArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: menuPopup.visible = !menuPopup.visible
-                    }
-
-                    Popup {
-                        id: menuPopup
-                        y: profileButton.height + 6
-                        x: profileButton.width - width
-                        width: 230
-                        padding: 6
-                        modal: false
-                        focus: true
-                        closePolicy: Popup.CloseOnPressOutside | Popup.CloseOnEscape
-
-                        background: Rectangle {
-                            radius: Theme.radiusMedium
-                            color: Theme.surface
-                            border.width: 1
-                            border.color: Theme.border
-                        }
-
-                        contentItem: ColumnLayout {
-                            spacing: 2
-
-                            // Statut du compte
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 32
-                                Layout.margins: Theme.spacingSmall
-                                spacing: 6
-
-                                Rectangle {
-                                    width: 8
-                                    height: 8
-                                    radius: 4
-                                    color: Theme.success
-                                }
-
-                                Label {
-                                    text: qsTr("En ligne")
-                                    color: Theme.textSecondary
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.family: Theme.fontFamily
-                                }
-                            }
-
-                            // Statut de la bascule automatique de serveur
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 32
-                                Layout.margins: Theme.spacingSmall
-                                spacing: 6
-                                visible: root.serverStatusLabel.length > 0
-
-                                Rectangle {
-                                    width: 8
-                                    height: 8
-                                    radius: 4
-                                    color: root.serverStatusColor
-                                }
-
-                                Label {
-                                    text: root.serverStatusLabel
-                                    color: Theme.textSecondary
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.family: Theme.fontFamily
-                                    wrapMode: Text.WordWrap
-                                    Layout.fillWidth: true
-                                }
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 1
-                                Layout.topMargin: 2
-                                Layout.bottomMargin: 2
-                                color: Theme.border
-                            }
-
-                            // Bascule theme clair / sombre
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 36
-                                Layout.margins: Theme.spacingSmall
-                                spacing: 6
-
-                                Label {
-                                    text: Theme.darkMode ? qsTr("Thème sombre") : qsTr("Thème clair")
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.family: Theme.fontFamily
-                                    Layout.fillWidth: true
-                                }
-
-                                Rectangle {
-                                    id: themeSwitchTrack
-                                    width: 38
-                                    height: 22
-                                    radius: 11
-                                    color: Theme.darkMode ? root.blue600 : Theme.border
-                                    Behavior on color { ColorAnimation { duration: 150 } }
-
-                                    Rectangle {
-                                        width: 18
-                                        height: 18
-                                        radius: 9
-                                        color: "#FFFFFF"
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        x: Theme.darkMode ? parent.width - width - 2 : 2
-                                        Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-                                    }
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: Theme.toggle()
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 1
-                                color: Theme.border
-                            }
-
-                            // Acces aux parametres (issue : disponible a
-                            // tous les utilisateurs, plus seulement aux
-                            // administrateurs - Ports
-                            // reseau restent filtres dans SettingsView).
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 38
-                                radius: Theme.radiusSmall
-                                color: settingsArea.containsMouse ? Theme.surfaceHover : "transparent"
-                                Behavior on color { ColorAnimation { duration: 150 } }
-
-                                Label {
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    anchors.leftMargin: Theme.spacingSmall
-                                    text: qsTr("Paramètres")
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.family: Theme.fontFamily
-                                }
-
-                                MouseArea {
-                                    id: settingsArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        menuPopup.close()
-                                        root.settingsRequested()
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 1
-                                color: Theme.border
-                            }
-
-                            // Acces a l'ecran "A propos" (nom/version de
-                            // l'application, editeur NEXIS, fonctionnalites).
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 38
-                                radius: Theme.radiusSmall
-                                color: aboutArea.containsMouse ? Theme.surfaceHover : "transparent"
-                                Behavior on color { ColorAnimation { duration: 150 } }
-
-                                Label {
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    anchors.leftMargin: Theme.spacingSmall
-                                    text: qsTr("À propos")
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.family: Theme.fontFamily
-                                }
-
-                                MouseArea {
-                                    id: aboutArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        menuPopup.close()
-                                        root.aboutRequested()
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 1
-                                color: Theme.border
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 38
-                                radius: Theme.radiusSmall
-                                color: logoutArea.containsMouse ? Theme.errorMuted : "transparent"
-                                Behavior on color { ColorAnimation { duration: 150 } }
-
-                                Label {
-                                    anchors.left: parent.left
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    anchors.leftMargin: Theme.spacingSmall
-                                    text: qsTr("Se déconnecter")
-                                    color: Theme.error
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.bold: true
-                                    font.family: Theme.fontFamily
-                                }
-
-                                MouseArea {
-                                    id: logoutArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        menuPopup.close()
-                                        root.logoutRequested()
-                                    }
-                                }
-                            }
+            for (let i = 0; i < count; i++) {
+                const item = auditLogModel.get(i)
+                if (item && item.event === "access_denied") {
+                    deniedCount++
+                    if (!lastDenied) {
+                        lastDenied = {
+                            message: item.message || "",
+                            timestamp: item.timestamp || new Date()
                         }
                     }
                 }
             }
+
+            if (deniedCount > 0) {
+                const timeStr = lastDenied.timestamp ? new Date(lastDenied.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ""
+                items.push({
+                    urgency: "high",
+                    title: deniedCount + " " + qsTr("connexion(s) refusée(s)"),
+                    description: lastDenied.message || qsTr("Certificat inconnu") + (timeStr ? ", " + timeStr : ""),
+                    type: "access_denied"
+                })
+            }
         }
 
-        // ---- Contenu principal --------------------------------------------
-        Flickable {
+        // Ajouter un item de démonstration si vide (pour tester l'affichage)
+        if (items.length === 0) {
+            items.push({
+                urgency: "info",
+                title: qsTr("Tout est en ordre"),
+                description: qsTr("Aucune action requise pour le moment"),
+                type: "demo"
+            })
+        }
+
+        actionRequiredItems = items
+    }
+
+    Component.onCompleted: {
+        refreshTransfers()
+        refreshActivities()
+        refreshNetworkPeers()
+        refreshNetworkOfflinePeers()
+        refreshNetworkActiveCalls()
+        refreshActionRequired()
+    }
+
+    Connections {
+        target: (typeof transferContext !== "undefined") ? transferContext : null
+        function onActiveTransfersChanged() { root.refreshTransfers() }
+    }
+
+    Connections {
+        target: (typeof peersModel !== "undefined") ? peersModel : null
+        function onCountChanged() {
+            root.refreshNetworkPeers()
+            root.refreshNetworkOfflinePeers()
+        }
+    }
+
+    Connections {
+        target: (typeof authorizedMachineModel !== "undefined") ? authorizedMachineModel : null
+        function onModelReset() {
+            root.refreshNetworkOfflinePeers()
+            root.refreshActionRequired()
+        }
+        function onDataChanged() {
+            root.refreshNetworkOfflinePeers()
+            root.refreshActionRequired()
+        }
+    }
+
+    Connections {
+        target: (typeof callContext !== "undefined") ? callContext : null
+        function onCallStateChanged() { root.refreshNetworkActiveCalls() }
+        function onRemoteAddressChanged() { root.refreshNetworkActiveCalls() }
+    }
+
+    Connections {
+        target: (typeof auditLogModel !== "undefined") ? auditLogModel : null
+        function onModelReset() {
+            root.refreshActivities()
+            root.refreshActionRequired()
+        }
+    }
+
+    // Fond
+    Rectangle {
+        anchors.fill: parent
+        color: "#EEF2F1"
+    }
+
+    RowLayout {
+        anchors.fill: parent
+        spacing: 0
+
+        // Sidebar
+        DashboardSidebar {
+            id: sidebar
+            Layout.fillHeight: true
+            // Largeur réduite à 150px quand le panneau "À traiter" disparait (< 1050px)
+            // Sinon 180px normal
+            isCompact: root.isMobile || root.width < 1050
+            username: root.username
+            serverStatus: root.serverStatusLabel
+            serverStatusColor: root.serverStatusColor
+            activeTransfers: root.transferItems.length
+            pendingAdmin: 0 // TODO: Connecter aux vraies données
+            isAdmin: root.isAdmin
+
+            onHomeRequested: { /* Déjà sur home */ }
+            onChatRequested: root.chatRequested()
+            onTransferRequested: root.fileTransferRequested()
+            onFoldersRequested: root.sharedFoldersRequested()
+            onCallRequested: root.callRequested()
+            onPeersRequested: root.usersRequested()
+            onAdminRequested: root.adminRequested()
+            onSettingsRequested: root.settingsRequested()
+            onLogoutRequested: root.logoutRequested()
+        }
+
+        // Zone principale
+        ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            contentWidth: width
-            contentHeight: contentColumn.implicitHeight + 2 * Theme.spacingXl
-            clip: true
+            spacing: 0
 
+            // Header
+            DashboardHeader {
+                Layout.fillWidth: true
+                // Même remarque que la sidebar : implicitHeight d'un Item nu
+                // vaut 0, donc il faut fixer explicitement la hauteur ici.
+                Layout.preferredHeight: 52
+                breadcrumb: "LocaLink / Vue d'ensemble"
+
+                onSearchRequested: function(query) {
+                    console.log("Search requested:", query)
+                }
+                onNotificationsRequested: {
+                    console.log("Notifications requested")
+                }
+            }
+
+            // Contenu principal - padding exact selon maquette: 4px 24px 18px
             ColumnLayout {
-                id: contentColumn
-                // max-width: 1400px comme la reference SCSS (.card-grid)
-                width: Math.min(parent.width - 2 * Theme.spacingXl, 1400)
-                // Centre horizontalement le bloc de contenu (margin: 0 auto)
-                x: (parent.width - width) / 2
-                y: Theme.spacingXl
-                    spacing: Theme.spacingXl
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 0
 
-                RowLayout {
+                // Zone titre - height 62px, align-items: flex-end selon maquette
+                Item {
                     Layout.fillWidth: true
-                    spacing: Theme.spacingLarge
+                    Layout.preferredHeight: 62
+                    Layout.leftMargin: 24
+                    Layout.rightMargin: 24
+                    Layout.topMargin: 4
 
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        spacing: Theme.spacingXs
+                    RowLayout {
+                        anchors.fill: parent
+                        spacing: 0
 
-                        Label {
-                            text: root.username.length > 0
-                                  ? qsTr("Bonjour, %1").arg(root.username)
-                                  : qsTr("Bienvenue dans LocaLink")
-                            font.pixelSize: Theme.fontSizeTitle
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                            color: Theme.text
-                            elide: Text.ElideRight
+                        ColumnLayout {
                             Layout.fillWidth: true
-                        }
-
-                        Label {
-                            text: qsTr("Retrouvez vos équipes et vos fichiers sur votre réseau local.")
-                            font.pixelSize: Theme.fontSizeBody
-                            font.family: Theme.fontFamily
-                            color: Theme.textSecondary
-                            wrapMode: Text.WordWrap
-                            Layout.fillWidth: true
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.alignment: Qt.AlignVCenter
-                        Layout.preferredHeight: 36
-                        implicitWidth: networkStatusRow.implicitWidth + Theme.spacingMedium * 2
-                        radius: Theme.radiusSmall
-                        color: Theme.surface
-                        border.width: 1
-                        border.color: Theme.border
-
-                        RowLayout {
-                            id: networkStatusRow
-                            anchors.centerIn: parent
-                            spacing: Theme.spacingSmall
-
-                            Rectangle {
-                                Layout.preferredWidth: 8
-                                Layout.preferredHeight: 8
-                                radius: 4
-                                color: root.serverStatusColor
-                            }
+                            Layout.fillHeight: true
+                            Layout.alignment: Qt.AlignBottom
+                            spacing: 5
 
                             Label {
-                                text: root.peersCount > 0
-                                      ? qsTr("%1 poste(s) en ligne").arg(root.peersCount)
-                                      : qsTr("Réseau local")
-                                font.pixelSize: Theme.fontSizeSmall
+                                text: qsTr("Bonjour, ") + (root.username || "")
+                                color: "#15222B"
+                                font.pixelSize: 26
                                 font.bold: true
                                 font.family: Theme.fontFamily
-                                color: Theme.textSecondary
+                                lineHeight: 32
+                                lineHeightMode: Text.ProportionalHeight
+                            }
+
+                            Row {
+                                spacing: 16
+
+                                // Badge Serveur actif - sp1
+                                Rectangle {
+                                    width: 140
+                                    height: 26
+                                    radius: 13
+                                    color: "#E4F4EC"
+
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 9
+                                        anchors.rightMargin: 11
+                                        spacing: 7
+
+                                        Rectangle {
+                                            Layout.preferredWidth: 7
+                                            Layout.preferredHeight: 7
+                                            radius: 3.5
+                                            color: "#2E9A66"
+                                        }
+
+                                        Label {
+                                            text: root.serverStatusLabel
+                                            color: "#1B7048"
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                            font.family: Theme.fontFamily
+                                        }
+                                    }
+                                }
+
+                                Label {
+                                    text: "•"
+                                    color: "#62717A"
+                                    font.pixelSize: 14
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Label {
+                                    text: root.peersCount + " " + qsTr("postes en ligne")
+                                    color: "#15222B"
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                    font.family: Theme.fontFamily
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Label {
+                                    text: "•"
+                                    color: "#62717A"
+                                    font.pixelSize: 14
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Label {
+                                    text: root.transferItems.length + " " + qsTr("transferts")
+                                    color: "#15222B"
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                    font.family: Theme.fontFamily
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+                        }
+
+                        // Bouton "Nouveau transfert"
+                        Button {
+                            text: qsTr("Nouveau transfert")
+                            Layout.alignment: Qt.AlignBottom
+                            background: Rectangle {
+                                color: "#0B5C70"
+                                radius: 8
+                            }
+                            contentItem: Label {
+                                text: parent.text
+                                color: "#FFFFFF"
+                                font.pixelSize: 14
+                                font.bold: true
+                                font.family: Theme.fontFamily
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: root.fileTransferRequested()
+                        }
+                    }
+                }
+
+                // Workspace - height 456px, grid 840px + 1fr selon maquette
+                Rectangle {
+                    id: workspaceContainer
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 456
+                    Layout.leftMargin: 24
+                    Layout.rightMargin: 24
+                    Layout.topMargin: 14
+                    color: "#FFFFFF"
+                    border.width: 1
+                    border.color: "#DDE4E2"
+                    radius: 12
+
+                    // Masquer le radius sur le côté droit quand le panneau "À traiter" est visible
+                    // Crée l'effet de fusion avec le panneau "À traiter"
+                    Rectangle {
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: 12
+                        color: "#FFFFFF"
+                        visible: workspaceContainer.width >= 1050
+                    }
+
+                    // Masquer spécifiquement le coin en bas à droite pour créer l'angle droit
+                    Rectangle {
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        width: 12
+                        height: 12
+                        color: "#FFFFFF"
+                        visible: workspaceContainer.width >= 1050
+                    }
+
+                    Item {
+                        anchors.fill: parent
+                        anchors.margins: 0
+
+                        // ScrollView pour la carte réseau - permet le défilement sur petite résolution
+                        ScrollView {
+                            id: networkScrollView
+                            anchors.left: parent.left
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            width: parent.width >= 1050 ? 840 : parent.width
+                            clip: true
+                            ScrollBar.horizontal.policy: ScrollBar.AsNeeded
+                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                            // Carte réseau - exactement 840px width, positionné à gauche
+                            NetworkWorkspace {
+                                id: networkWorkspace
+                                width: 840
+                                height: 456
+                                peers: root.networkPeers
+                                offlinePeers: root.networkOfflinePeers
+                                localPeerName: root.username || qsTr("Ce poste")
+                                localPeerStatusLabel: root.serverStatusLabel
+                                activeTransfers: (typeof transferContext !== "undefined" && transferContext)
+                                                 ? transferContext.activeTransfers : []
+                                activeCalls: root.networkActiveCalls
+                                demoMode: root.demoMode
+
+                                onSendFileRequested: function(peer) {
+                                    // Nécessite un sélecteur de fichier (doc §26) -
+                                    // pas encore branché à cette étape (carte
+                                    // réseau uniquement, doc §51).
+                                    console.log("Envoyer un fichier vers", peer.name)
+                                }
+                                onCallRequested: function(peer) {
+                                    if (typeof callContext !== "undefined" && callContext && peer.address)
+                                        callContext.call(peer.address)
+                                }
+                                onMessageRequested: function(peer) {
+                                    if (typeof messagingContext !== "undefined" && messagingContext && peer.userUuid)
+                                        messagingContext.startConversationWith(peer.userUuid)
+                                }
+                            }
+                        }
+
+                        // À traiter - remplit le reste (1fr) à droite
+                        // Visible uniquement si la largeur est suffisante (>= 1050px)
+                        ActionRequiredPanel {
+                            anchors.left: networkScrollView.right
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.leftMargin: 0
+                            visible: parent.width >= 1050
+                            actions: root.actionRequiredItems
+
+                            onActionRequested: function(action, actionType) {
+                                console.log("Action requested:", action.title, actionType)
+                                // TODO: Implémenter les actions
                             }
                         }
                     }
                 }
 
-                // Grille d'acces rapide
-                ColumnLayout {
+                // Zone inférieure - grid 1.22fr + 1fr, à plat sur le fond
+                Item {
                     Layout.fillWidth: true
-                    spacing: Theme.spacingSmall
+                    Layout.fillHeight: true
+                    Layout.leftMargin: 24
+                    Layout.rightMargin: 24
+                    Layout.topMargin: 14
+                    Layout.bottomMargin: 18
 
-                    Label {
-                        text: qsTr("Accès rapides")
-                        font.pixelSize: Theme.fontSizeHeading
-                        font.bold: true
-                        font.family: Theme.fontFamily
-                        color: Theme.text
-                        Layout.bottomMargin: 4
-                    }
+                    RowLayout {
+                        anchors.fill: parent
+                        spacing: 0
 
-                    GridLayout {
-                        Layout.fillWidth: true
-                        // Seuils alignes sur .card-grid : 3 colonnes par
-                        // defaut, 2 sous 980px, 1 sous 560px.
-                        columns: contentColumn.width > 980 ? 3 : (contentColumn.width > 560 ? 2 : 1)
-                        columnSpacing: Theme.spacingMedium
-                        rowSpacing: Theme.spacingMedium
+                        // Transferts - 1.22fr
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            Layout.preferredWidth: parent.width * 1.22 / 2.22
+                            Layout.rightMargin: 28
+                            spacing: 0
 
-                        DashboardCard {
-                            Layout.fillWidth: true
-                            icon: "\uf0e0"
-                            title: qsTr("Discussions")
-                            description: qsTr("Retrouvez vos conversations et groupes.")
-                            onClicked: root.chatRequested()
+                            // Header Transferts
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 30
+                                spacing: 8
+
+                                Label {
+                                    text: qsTr("Transferts")
+                                    color: "#15222B"
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                    font.family: Theme.fontFamily
+                                }
+
+                                Label {
+                                    text: root.transferItems.length > 0 ? (root.transferItems.length + " en cours") : ""
+                                    color: "#62717A"
+                                    font.pixelSize: 12
+                                    font.family: Theme.fontFamily
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                Button {
+                                    text: qsTr("Tous les transferts")
+                                    flat: true
+                                    font.pixelSize: 12
+                                    font.family: Theme.fontFamily
+                                    background: Rectangle { color: "transparent" }
+                                    contentItem: Label {
+                                        text: parent.text
+                                        color: "#0B5C70"
+                                        font.pixelSize: 12
+                                        font.family: Theme.fontFamily
+                                    }
+                                }
+                            }
+
+                            // Liste transferts à plat
+                            ScrollView {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                clip: true
+
+                                ColumnLayout {
+                                    width: parent.width
+                                    spacing: 0
+
+                                    Repeater {
+                                        model: root.transferItems
+                                        delegate: TransferRow {
+                                            Layout.fillWidth: true
+                                            fileName: modelData.fileName || ""
+                                            peerName: modelData.recipientName || ""
+                                            address: modelData.recipientAddress || ""
+                                            progress: modelData.progress || 0
+                                            transferred: modelData.transferred || 0
+                                            total: modelData.total || 0
+                                            status: modelData.statusText || "En cours"
+                                            isIncoming: modelData.isIncoming || false
+
+                                            onDetailsRequested: root.fileTransferRequested()
+                                            onOpenLocationRequested: function(transfer) {
+                                                console.log("Open location:", transfer.fileName)
+                                            }
+                                            onRetryRequested: function(transfer) {
+                                                console.log("Retry transfer:", transfer.fileName)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        DashboardCard {
-                            Layout.fillWidth: true
-                            icon: "\uf0ec"
-                            title: qsTr("Transfert de fichiers")
-                            description: qsTr("Envoyez et recevez des fichiers.")
-                            onClicked: root.fileTransferRequested()
+
+                        // Séparateur vertical
+                        Rectangle {
+                            Layout.preferredWidth: 1
+                            Layout.fillHeight: true
+                            color: Theme.dashboardLine
                         }
-                        DashboardCard {
+
+                        // Activité - 1fr
+                        ColumnLayout {
                             Layout.fillWidth: true
-                            icon: "\uf095"
-                            title: qsTr("Appels")
-                            description: qsTr("Demarrez un appel ou consultez votre historique.")
-                            onClicked: root.callRequested()
-                        }
-                        DashboardCard {
-                            Layout.fillWidth: true
-                            icon: "\uf07c"
-                            title: qsTr("Dossiers partagés")
-                            description: qsTr("Partagez un dossier local avec votre réseau.")
-                            onClicked: root.sharedFoldersRequested()
-                        }
-                        DashboardCard {
-                            Layout.fillWidth: true
-                            visible: root.isAdmin
-                            icon: "\uf013"
-                            title: qsTr("Administration")
-                            description: qsTr("Gerez les utilisateurs et les postes.")
-                            onClicked: root.adminRequested()
+                            Layout.fillHeight: true
+                            Layout.leftMargin: 28
+                            spacing: 0
+
+                            // Header Activité
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 30
+                                spacing: 8
+
+                                Label {
+                                    text: qsTr("Activité récente")
+                                    color: "#15222B"
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                    font.family: Theme.fontFamily
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                Button {
+                                    text: qsTr("Voir le journal")
+                                    flat: true
+                                    font.pixelSize: 12
+                                    font.family: Theme.fontFamily
+                                    background: Rectangle { color: "transparent" }
+                                    contentItem: Label {
+                                        text: parent.text
+                                        color: "#0B5C70"
+                                        font.pixelSize: 12
+                                        font.family: Theme.fontFamily
+                                    }
+                                }
+                            }
+
+                            // Liste activité à plat
+                            ScrollView {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                clip: true
+
+                                ColumnLayout {
+                                    width: parent.width
+                                    spacing: 0
+
+                                    Repeater {
+                                        model: root.activityItems
+                                        delegate: ActivityRow {
+                                            Layout.fillWidth: true
+                                            event: modelData.event || ""
+                                            actor: modelData.actor || ""
+                                            message: modelData.message || ""
+                                            result: modelData.result || ""
+                                            resultBadge: modelData.resultBadge || ""
+                                            timestamp: modelData.timestamp || new Date()
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-
             }
         }
     }

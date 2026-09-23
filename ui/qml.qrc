@@ -56,6 +56,17 @@
         <file>Components/ExplorerSidebar.qml</file>
         <file>Components/ExplorerAddressBar.qml</file>
         <file>Components/ServerStatusIndicator.qml</file>
+        <file>Dashboard/DashboardHeader.qml</file>
+        <file>Dashboard/DashboardSidebar.qml</file>
+        <file>Dashboard/NetworkWorkspace.qml</file>
+        <file>Dashboard/NetworkPeer.qml</file>
+        <file>Dashboard/NetworkListView.qml</file>
+        <file>Dashboard/PeerDetailsPanel.qml</file>
+        <file>Dashboard/ActionRequiredPanel.qml</file>
+        <file>Dashboard/TransferList.qml</file>
+        <file>Dashboard/TransferRow.qml</file>
+        <file>Dashboard/ActivityList.qml</file>
+        <file>Dashboard/ActivityRow.qml</file>
         <file>Assets/logo.png</file>
         <file>Assets/fonts/PTSerif-Bold.ttf</file>
         <file>Assets/fonts/PTSerif-Regular.ttf</file>

@@ -128,4 +128,52 @@ QtObject {
     readonly property int fontSizeBody: 14
     readonly property int fontSizeSmall: 12
     readonly property int fontSizeCaption: 11
+
+    // ---- Dashboard V2.1 Tokens ---------------------------------------------
+    // Couleurs spécifiques au dashboard selon la maquette
+    readonly property color dashboardBackground: darkMode ? "#0E1517" : "#EEF2F1"
+    readonly property color dashboardSurface: darkMode ? "#1D2027" : "#FFFFFF"
+    readonly property color dashboardSurfaceAlt: darkMode ? "#262A32" : "#F7F9F8"
+    readonly property color dashboardLine: darkMode ? "#2E323C" : "#DDE4E2"
+    readonly property color dashboardLineStrong: darkMode ? "#3A3F4A" : "#C7D1DC"
+    readonly property color dashboardInk: darkMode ? "#EAF1F2" : "#15222B"
+    readonly property color dashboardInkSecondary: darkMode ? "#B3C2C6" : "#4A5961"
+    readonly property color dashboardInkTertiary: darkMode ? "#93A5AB" : "#62717A"
+    readonly property color dashboardPrimary: darkMode ? "#7FC4D6" : "#0B5C70"
+    readonly property color dashboardPrimaryHover: darkMode ? "#9AD5E5" : "#0A4A5C"
+    readonly property color dashboardPrimarySoft: darkMode ? "#173139" : "#E0EEF2"
+    readonly property color dashboardPrimaryMuted: darkMode ? "#1A2D35" : "#D1E8ED"
+    readonly property color dashboardPrimaryText: "#FFFFFF"
+    readonly property color dashboardSuccess: darkMode ? "#55C88A" : "#258A68"
+    readonly property color dashboardSuccessText: darkMode ? "#86E5A8" : "#1A6B4E"
+    readonly property color dashboardSuccessSoft: darkMode ? "#18362D" : "#E3F3EC"
+    readonly property color dashboardWarning: darkMode ? "#F5BE55" : "#B87513"
+    readonly property color dashboardWarningText: darkMode ? "#FFD699" : "#8B560E"
+    readonly property color dashboardWarningSoft: darkMode ? "#3A301C" : "#FFF2D9"
+    readonly property color dashboardError: darkMode ? "#F58D91" : "#C34F55"
+    readonly property color dashboardErrorText: darkMode ? "#FFB3B6" : "#9E3F44"
+    readonly property color dashboardErrorSoft: darkMode ? "#3A2024" : "#FBE7E8"
+    readonly property color dashboardInfo: darkMode ? "#86B8F4" : "#477DB8"
+    readonly property color dashboardInfoText: darkMode ? "#B8D4FF" : "#366090"
+    readonly property color dashboardInfoSoft: darkMode ? "#1C3046" : "#E9F1FB"
+    readonly property color dashboardCall: darkMode ? "#C792EA" : "#8A63B6"
+    readonly property color dashboardCallText: darkMode ? "#E0B8FF" : "#6B4A8C"
+    readonly property color dashboardCallSoft: darkMode ? "#2A2235" : "#F0E6F7"
+
+    // Dimensions spécifiques au dashboard
+    readonly property int dashboardSidebarWidth: 216
+    readonly property int dashboardSidebarWidthCompact: 76
+    readonly property int dashboardHeaderHeight: 52
+    readonly property int dashboardNetworkWidth: 840
+    readonly property int dashboardNetworkHeight: 480
+
+    // États du dashboard
+    readonly property color dashboardHover: darkMode ? "#2C313A" : "#DCE5EE"
+    readonly property color dashboardSelected: darkMode ? "#2A2FE0" : "#4C5BFF"
+    readonly property color dashboardDisabled: darkMode ? "#1A1C22" : "#E7EDF3"
+    readonly property color dashboardDisabledText: darkMode ? "#4A4E5A" : "#9AA0B2"
+
+    // Ombres dashboard (limitées selon la maquette)
+    readonly property color dashboardShadow: darkMode ? "#00000040" : "#1A1D2112"
+    readonly property color dashboardShadowSoft: darkMode ? "#00000020" : "#1A1D2108"
 }
