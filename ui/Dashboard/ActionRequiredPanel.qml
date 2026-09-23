@@ -57,6 +57,7 @@ ColumnLayout {
 
     // Liste des items
     ScrollView {
+        id: itemsScroll
         Layout.fillWidth: true
         Layout.fillHeight: true
         clip: true
@@ -64,7 +65,11 @@ ColumnLayout {
         ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
         ColumnLayout {
-            width: parent.width
+            // availableWidth (et non parent.width) : le parent est le
+            // contentItem du Flickable, dont la largeur vaut la largeur
+            // implicite du contenu - d'où des cartes plus étroites que la
+            // colonne. availableWidth = largeur réelle du viewport.
+            width: itemsScroll.availableWidth
             spacing: 14
 
             Repeater {

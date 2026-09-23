@@ -519,7 +519,11 @@ Item {
                     }
                 }
 
-                // Workspace - height 456px, grid 840px + 1fr selon maquette
+                // Workspace - height 456px. Maquette : `.ws` = UNE seule surface
+                // (bordure 1px, rayon 12) contenant la carte réseau (`.cv`, filet
+                // droit 1px) et la colonne « À traiter » (`.atr`, fond surface2).
+                // Colonne « À traiter » : 336px à 1440, jamais 1fr illimité ; la
+                // carte prend tout le reste (au minimum 840px).
                 Rectangle {
                     id: workspaceContainer
                     Layout.fillWidth: true
@@ -532,47 +536,51 @@ Item {
                     border.color: "#DDE4E2"
                     radius: 12
 
-                    // Masquer le radius sur le côté droit quand le panneau "À traiter" est visible
-                    // Crée l'effet de fusion avec le panneau "À traiter"
-                    Rectangle {
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        width: 12
-                        color: "#FFFFFF"
-                        visible: workspaceContainer.width >= 1050
-                    }
-
-                    // Masquer spécifiquement le coin en bas à droite pour créer l'angle droit
-                    Rectangle {
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        width: 12
-                        height: 12
-                        color: "#FFFFFF"
-                        visible: workspaceContainer.width >= 1050
-                    }
-
+                    // Surface interne, inscrite DANS la bordure de 1px : les enfants
+                    // ont ainsi un rayon de 11px (12 - 1), concentrique à la bordure.
+                    // Plus aucune « rustine » ne recouvre la bordure du conteneur.
                     Item {
+                        id: workspaceInner
                         anchors.fill: parent
-                        anchors.margins: 0
+                        anchors.margins: 1
 
-                        // ScrollView pour la carte réseau - permet le défilement sur petite résolution
+                        readonly property real innerRadius: workspaceContainer.radius - workspaceContainer.border.width
+                        readonly property real mapMinWidth: 840
+                        readonly property real actionPanelMaxWidth: 336
+                        // Visible uniquement si la largeur est suffisante (>= 1050px)
+                        readonly property bool showActionPanel: workspaceContainer.width >= 1050
+                        // 1fr plafonné : le panneau ne dépasse jamais 336px (le reste
+                        // va à la carte). Il n'est réduit sous 336 que si la carte
+                        // tomberait sous ses 840px.
+                        readonly property real actionPanelWidth: showActionPanel
+                                ? Math.min(actionPanelMaxWidth, Math.max(0, width - mapMinWidth - 1))
+                                : 0
+
+                        // ScrollView pour la carte réseau - défilement uniquement si
+                        // la place manque (< 840px)
                         ScrollView {
                             id: networkScrollView
                             anchors.left: parent.left
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
-                            width: parent.width >= 1050 ? 840 : parent.width
+                            // -1 : filet de séparation vertical
+                            width: parent.width - (workspaceInner.showActionPanel ? workspaceInner.actionPanelWidth + 1 : 0)
                             clip: true
+                            contentWidth: networkWorkspace.width
+                            contentHeight: networkWorkspace.height
                             ScrollBar.horizontal.policy: ScrollBar.AsNeeded
-                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
 
-                            // Carte réseau - exactement 840px width, positionné à gauche
+                            // Carte réseau - au moins 840px, occupe toute la place
+                            // laissée par « À traiter » ; centre recalculé (width/2).
                             NetworkWorkspace {
                                 id: networkWorkspace
-                                width: 840
-                                height: 456
+                                width: Math.max(workspaceInner.mapMinWidth, networkScrollView.width)
+                                height: networkScrollView.height
+                                // Coins arrondis uniquement sur les côtés qui touchent
+                                // la bordure de la surface.
+                                leftRadius: workspaceInner.innerRadius
+                                rightRadius: workspaceInner.showActionPanel ? 0 : workspaceInner.innerRadius
                                 peers: root.networkPeers
                                 offlinePeers: root.networkOfflinePeers
                                 localPeerName: root.username || qsTr("Ce poste")
@@ -599,20 +607,45 @@ Item {
                             }
                         }
 
-                        // À traiter - remplit le reste (1fr) à droite
-                        // Visible uniquement si la largeur est suffisante (>= 1050px)
-                        ActionRequiredPanel {
+                        // Filet vertical carte | À traiter (maquette : `.cv` border-right 1px)
+                        Rectangle {
+                            id: workspaceDivider
+                            visible: workspaceInner.showActionPanel
                             anchors.left: networkScrollView.right
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            width: 1
+                            color: "#DDE4E2"
+                        }
+
+                        // À traiter - colonne accolée à la carte (maquette : `.atr`,
+                        // fond surface2, padding 14px 16px). Seuls les coins droits
+                        // suivent l'arrondi de la surface.
+                        Rectangle {
+                            id: actionPanelSurface
+                            visible: workspaceInner.showActionPanel
+                            anchors.left: workspaceDivider.right
                             anchors.right: parent.right
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
-                            anchors.leftMargin: 0
-                            visible: parent.width >= 1050
-                            actions: root.actionRequiredItems
+                            color: "#F7F9F8"
+                            topLeftRadius: 0
+                            bottomLeftRadius: 0
+                            topRightRadius: workspaceInner.innerRadius
+                            bottomRightRadius: workspaceInner.innerRadius
 
-                            onActionRequested: function(action, actionType) {
-                                console.log("Action requested:", action.title, actionType)
-                                // TODO: Implémenter les actions
+                            ActionRequiredPanel {
+                                anchors.fill: parent
+                                anchors.leftMargin: 16
+                                anchors.rightMargin: 16
+                                anchors.topMargin: 14
+                                anchors.bottomMargin: 14
+                                actions: root.actionRequiredItems
+
+                                onActionRequested: function(action, actionType) {
+                                    console.log("Action requested:", action.title, actionType)
+                                    // TODO: Implémenter les actions
+                                }
                             }
                         }
                     }

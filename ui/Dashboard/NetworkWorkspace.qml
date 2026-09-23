@@ -42,6 +42,13 @@ Rectangle {
     // [{remoteAddress, callState}] dérivé de callContext côté appelant
     property var activeCalls: []
 
+    // Rayons des coins de la surface, par côté : la carte est accolée à la
+    // colonne « À traiter » dans une surface unique (HomeView) ; le côté qui
+    // touche « À traiter » doit avoir un angle droit, sinon un cran visible
+    // apparaît à la jonction. Par défaut : arrondi sur les deux côtés.
+    property real leftRadius: Theme.radiusMedium
+    property real rightRadius: Theme.radiusMedium
+
     // Mode de validation visuelle (doc §37) : désactivé par défaut, ne doit
     // jamais être activé en production.
     property bool debugStatesEnabled: false
@@ -212,10 +219,13 @@ Rectangle {
     // radial-gradient(70% 80% at 50% 50%, #FFFFFF 0%, #F5F9F9 70%, #EDF2F2 100%)
     Rectangle {
         anchors.fill: parent
-        // Coins arrondis alignés sur la carte englobante (HomeView.qml,
-        // Rectangle radius:12) : sans ce radius, ce fond opaque recouvrait
-        // les coins arrondis du conteneur parent et les rendait carrés.
-        radius: Theme.radiusMedium
+        // Coins arrondis alignés sur la surface englobante (HomeView.qml) :
+        // sans ces rayons, ce fond opaque recouvrirait les coins arrondis du
+        // conteneur parent et les rendrait carrés. Côté « À traiter » : 0.
+        topLeftRadius: root.leftRadius
+        bottomLeftRadius: root.leftRadius
+        topRightRadius: root.rightRadius
+        bottomRightRadius: root.rightRadius
         gradient: Gradient {
             GradientStop { position: 0.0; color: "#FFFFFF" }
             GradientStop { position: 0.7; color: "#F5F9F9" }
@@ -682,15 +692,24 @@ Rectangle {
         anchors.bottom: parent.bottom
         height: 40
         color: Qt.rgba(1, 1, 1, 0.85)
-        border.width: 1
-        border.color: "#DDE4E2"
-        // Seuls les coins bas doivent suivre l'arrondi de la carte (le
-        // haut de la légende touche la zone de grille, pas un coin de carte).
+        // Maquette : `border-top` uniquement. Une bordure sur les 4 côtés
+        // doublait la bordure de la surface (gauche/bas) et ajoutait un
+        // second filet contre la séparation avec « À traiter » (droite).
+        // Seuls les coins bas doivent suivre l'arrondi de la surface (le
+        // haut de la légende touche la zone de grille, pas un coin).
         topLeftRadius: 0
         topRightRadius: 0
-        bottomLeftRadius: Theme.radiusMedium
-        bottomRightRadius: Theme.radiusMedium
+        bottomLeftRadius: root.leftRadius
+        bottomRightRadius: root.rightRadius
         z: 6
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 1
+            color: "#DDE4E2"
+        }
 
         Row {
             // anchors.fill (+ hauteur fixe 40 héritée du parent) alignait la
