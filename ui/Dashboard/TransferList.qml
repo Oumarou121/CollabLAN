@@ -13,6 +13,7 @@ ColumnLayout {
     spacing: 0
 
     property var transfers: []
+    property bool loading: false
 
     signal detailsRequested(var transfer)
     signal openLocationRequested(var transfer)
@@ -61,8 +62,14 @@ ColumnLayout {
         }
     }
 
+    SkeletonRows {
+        visible: root.loading
+        variant: "transfer"
+        Layout.fillWidth: true
+    }
+
     EmptyState {
-        visible: root.transfers.length === 0
+        visible: !root.loading && root.transfers.length === 0
         Layout.fillWidth: true
         Layout.fillHeight: true
         iconName: "transfer"
@@ -74,7 +81,7 @@ ColumnLayout {
 
     // Lignes à plat
     ScrollView {
-        visible: root.transfers.length > 0
+        visible: !root.loading && root.transfers.length > 0
         Layout.fillWidth: true
         Layout.fillHeight: true
         clip: true

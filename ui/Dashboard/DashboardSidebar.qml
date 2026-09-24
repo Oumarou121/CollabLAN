@@ -335,55 +335,6 @@ Item {
             }
         }
 
-        // Statut serveur - padding: 9px 10px, radius 10px, margin-bottom: 6px selon HTML
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 36
-            Layout.bottomMargin: 6
-            radius: 10
-            color: Qt.rgba(1, 1, 1, 0.6)
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: isCompact ? 6 : 9
-                anchors.rightMargin: isCompact ? 6 : 10
-                spacing: isCompact ? 6 : 9
-
-                Rectangle {
-                    Layout.preferredWidth: isCompact ? 6 : 8
-                    Layout.preferredHeight: isCompact ? 6 : 8
-                    radius: isCompact ? 3 : 4
-                    color: "#2E9A66"
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 1
-                    visible: !root.isCompact
-
-                    Label {
-                        text: root.serverStatus
-                        color: "#15222B"
-                        font.pixelSize: 12
-                        font.bold: true
-                        font.family: Theme.fontFamily
-                    }
-
-                    Label {
-                        text: qsTr("Ce poste")
-                        color: "#62717A"
-                        font.pixelSize: 11
-                        font.family: Theme.fontFamily
-                    }
-                }
-            }
-
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-            }
-        }
-
         // Profil utilisateur - padding: 10px 8px 0, margin-top: 6px, border-top selon HTML
         Item {
             Layout.fillWidth: true
@@ -435,74 +386,53 @@ Item {
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }
-
-                    Label {
-                        text: qsTr("Session active")
-                        color: "#62717A"
-                        font.pixelSize: 11
-                        font.family: Theme.fontFamily
-                    }
                 }
+            }
+        }
+
+        // Bouton Déconnexion
+        Item {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 32
+            Layout.topMargin: 8
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 8
+                color: logoutMouseArea.containsMouse ? Qt.rgba(1, 1, 1, 0.55) : "transparent"
+                visible: logoutMouseArea.containsMouse
+            }
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: isCompact ? 6 : 10
+                anchors.rightMargin: isCompact ? 6 : 10
+                spacing: isCompact ? 6 : 10
 
                 FaIcon {
-                    glyph: "\u25BE"
-                    color: "#62717A"
+                    glyph: "\uf08b"
+                    color: logoutMouseArea.containsMouse ? "#15222B" : "#4A5961"
+                    font.pixelSize: 16
+                    Layout.preferredWidth: root.isCompact ? -1 : 17
+                    Layout.alignment: root.isCompact ? Qt.AlignHCenter : Qt.AlignVCenter
+                }
+
+                Label {
+                    text: qsTr("Déconnexion")
+                    color: logoutMouseArea.containsMouse ? "#15222B" : "#4A5961"
                     font.pixelSize: 12
+                    font.family: Theme.fontFamily
+                    Layout.fillWidth: true
                     visible: !root.isCompact
                 }
             }
 
             MouseArea {
+                id: logoutMouseArea
                 anchors.fill: parent
+                hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: profileMenu.open()
-            }
-        }
-    }
-
-    // Menu profil
-    Popup {
-        id: profileMenu
-        x: root.width - width - 10
-        y: root.height - height - 70
-        width: 200
-        padding: 8
-        modal: false
-        closePolicy: Popup.CloseOnPressOutside | Popup.CloseOnEscape
-
-        background: Rectangle {
-            radius: 12
-            color: "#FFFFFF"
-            border.width: 1
-            border.color: "#DDE4E2"
-        }
-
-        contentItem: ColumnLayout {
-            spacing: 2
-
-            Label {
-                text: root.serverStatus
-                color: "#4A5961"
-                font.pixelSize: 12
-                Layout.margins: 6
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                height: 1
-                color: "#DDE4E2"
-            }
-
-            Button {
-                text: qsTr("Paramètres")
-                flat: true
-                onClicked: { profileMenu.close(); root.settingsRequested() }
-            }
-
-            Button {
-                text: qsTr("Déconnexion")
-                flat: true
-                onClicked: { profileMenu.close(); root.logoutRequested() }
+                onClicked: root.logoutRequested()
             }
         }
     }

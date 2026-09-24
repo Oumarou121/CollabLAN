@@ -13,6 +13,7 @@ ColumnLayout {
     spacing: 0
 
     property var activities: []
+    property bool loading: false
 
     // Header - height 30px
     Item {
@@ -34,7 +35,7 @@ ColumnLayout {
             Item { Layout.fillWidth: true }
 
             Button {
-                visible: root.activities.length > 0
+                visible: !root.loading && root.activities.length > 0
                 text: qsTr("Voir le journal")
                 flat: true
                 font.pixelSize: 12
@@ -50,8 +51,14 @@ ColumnLayout {
         }
     }
 
+    SkeletonRows {
+        visible: root.loading
+        variant: "activity"
+        Layout.fillWidth: true
+    }
+
     EmptyState {
-        visible: root.activities.length === 0
+        visible: !root.loading && root.activities.length === 0
         Layout.fillWidth: true
         Layout.fillHeight: true
         iconName: "log"
@@ -61,7 +68,7 @@ ColumnLayout {
 
     // Lignes à plat
     ScrollView {
-        visible: root.activities.length > 0
+        visible: !root.loading && root.activities.length > 0
         Layout.fillWidth: true
         Layout.fillHeight: true
         clip: true

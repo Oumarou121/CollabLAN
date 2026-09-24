@@ -374,8 +374,8 @@ Rectangle {
         anchors.fill: parent
         anchors.topMargin: 0
         visible: root.viewMode === "list"
-        peers: root.peers
-        offlinePeers: root.offlinePeers
+        peers: root.effectivePeers
+        offlinePeers: root.effectiveOfflinePeers
         localPeerName: root.localPeerName
         localPeerStatusLabel: root.localPeerStatusLabel
         activeTransfers: root.activeTransfers

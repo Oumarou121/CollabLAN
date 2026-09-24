@@ -101,6 +101,18 @@ Item {
         return "#2E9A66"
     }
 
+    // Chargement : les listes affichent des squelettes tant que le contenu
+    // n'est pas "installe" (evite un flash d'etat vide avant l'arrivee des
+    // donnees). Passe a true des que des donnees arrivent, ou apres 600 ms.
+    property bool contentSettled: false
+
+    Timer {
+        interval: 600
+        running: true
+        repeat: false
+        onTriggered: root.contentSettled = true
+    }
+
     // Données transferts
     property var transferItems: []
 
@@ -113,6 +125,8 @@ Item {
         transferItems = all.filter(function(item) {
             return item && item.statusText === qsTr("En cours")
         }).slice(-4).reverse()
+        if (transferItems.length > 0)
+            contentSettled = true
     }
 
     // Données activité
@@ -136,6 +150,8 @@ Item {
             })
         }
         activityItems = all
+        if (all.length > 0)
+            contentSettled = true
     }
 
     // Données postes pour la carte réseau. L'angle (degrés) et la
@@ -734,8 +750,14 @@ Item {
                             }
 
                             // Etat vide transferts
+                            SkeletonRows {
+                                visible: !root.contentSettled
+                                variant: "transfer"
+                                Layout.fillWidth: true
+                            }
+
                             EmptyState {
-                                visible: root.transferItems.length === 0
+                                visible: root.contentSettled && root.transferItems.length === 0
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 iconName: "transfer"
@@ -747,7 +769,7 @@ Item {
 
                             // Liste transferts à plat
                             ScrollView {
-                                visible: root.transferItems.length > 0
+                                visible: root.contentSettled && root.transferItems.length > 0
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true
@@ -813,7 +835,7 @@ Item {
                                 Item { Layout.fillWidth: true }
 
                                 Button {
-                                    visible: root.activityItems.length > 0
+                                    visible: root.contentSettled && root.activityItems.length > 0
                                     text: qsTr("Voir le journal")
                                     flat: true
                                     font.pixelSize: 12
@@ -829,8 +851,14 @@ Item {
                             }
 
                             // Etat vide activité (pas de bouton : rien à ouvrir)
+                            SkeletonRows {
+                                visible: !root.contentSettled
+                                variant: "activity"
+                                Layout.fillWidth: true
+                            }
+
                             EmptyState {
-                                visible: root.activityItems.length === 0
+                                visible: root.contentSettled && root.activityItems.length === 0
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 iconName: "log"
@@ -840,7 +868,7 @@ Item {
 
                             // Liste activité à plat
                             ScrollView {
-                                visible: root.activityItems.length > 0
+                                visible: root.contentSettled && root.activityItems.length > 0
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true
