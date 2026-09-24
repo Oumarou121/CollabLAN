@@ -408,42 +408,59 @@ Item {
                     Layout.preferredHeight: 62
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
-                    Layout.topMargin: 4
+                    Layout.topMargin: 8
 
-                    RowLayout {
-                        anchors.fill: parent
-                        spacing: 0
+                    // Ancrage explicite (au lieu d'un RowLayout + Layout.fillWidth
+                    // sur la colonne de titre) : le bouton doit rester collé au
+                    // bord droit de la zone, quelle que soit la largeur du texte
+                    // "Bonjour, ..." / des compteurs. Avec fillWidth sur la
+                    // colonne, le RowLayout ne pousse le bouton à droite que si
+                    // la colonne réclame déjà tout l'espace restant ; ça
+                    // provoquait un décalage visible par rapport au bord droit
+                    // de la carte réseau / du panneau "À traiter" juste en
+                    // dessous (qui, eux, sont ancrés sur toute la largeur).
+                    ColumnLayout {
+                        id: titleColumn
+                        anchors.left: parent.left
+                        anchors.right: newTransferBtn.left
+                        anchors.rightMargin: 16
+                        anchors.bottom: parent.bottom
+                        // Permet à la colonne de se réduire (élision du texte)
+                        // plutôt que de déborder et de repousser le bouton hors
+                        // de la zone visible sur les fenêtres étroites.
+                        clip: true
+                        spacing: 5
 
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            Layout.alignment: Qt.AlignBottom
-                            spacing: 5
-
+                            // .gr h1 : 26px / 700 / line-height 32 / letter-spacing -0.02em
                             Label {
                                 text: qsTr("Bonjour, ") + (root.username || "")
                                 color: "#15222B"
                                 font.pixelSize: 26
                                 font.bold: true
+                                font.weight: Font.Medium
                                 font.family: Theme.fontFamily
+                                font.letterSpacing: -0.52
                                 lineHeight: 32
-                                lineHeightMode: Text.ProportionalHeight
+                                lineHeightMode: Text.FixedHeight
                             }
 
-                            Row {
+                            // .stl : flex row, align-items center, gap 16,
+                            // couleur par défaut ink2, texte en gras (b) en ink
+                            RowLayout {
                                 spacing: 16
+                                Layout.alignment: Qt.AlignVCenter
 
-                                // Badge Serveur actif - sp1
+                                // .sp1 : largeur auto (padding 9/11), pas de
+                                // largeur fixe qui tronquerait un libellé long
                                 Rectangle {
-                                    width: 140
-                                    height: 26
+                                    Layout.preferredHeight: 26
+                                    Layout.preferredWidth: sp1Row.implicitWidth + 20
                                     radius: 13
                                     color: "#E4F4EC"
 
                                     RowLayout {
-                                        anchors.fill: parent
-                                        anchors.leftMargin: 9
-                                        anchors.rightMargin: 11
+                                        id: sp1Row
+                                        anchors.centerIn: parent
                                         spacing: 7
 
                                         Rectangle {
@@ -463,59 +480,65 @@ Item {
                                     }
                                 }
 
+                                // <span><b>N</b> postes en ligne</span>
                                 Label {
-                                    text: "•"
-                                    color: "#62717A"
+                                    text: "<b style=\"color:#15222B\">" + root.peersCount + "</b> " + qsTr("postes en ligne")
+                                    textFormat: Text.RichText
+                                    color: "#4A5961"
                                     font.pixelSize: 14
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                Label {
-                                    text: root.peersCount + " " + qsTr("postes en ligne")
-                                    color: "#15222B"
-                                    font.pixelSize: 14
-                                    font.bold: true
                                     font.family: Theme.fontFamily
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    Layout.alignment: Qt.AlignVCenter
                                 }
 
+                                // <span><b>M</b> transferts en cours</span>
                                 Label {
-                                    text: "•"
-                                    color: "#62717A"
+                                    text: "<b style=\"color:#15222B\">" + root.transferItems.length + "</b> " + qsTr("transferts en cours")
+                                    textFormat: Text.RichText
+                                    color: "#4A5961"
                                     font.pixelSize: 14
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                Label {
-                                    text: root.transferItems.length + " " + qsTr("transferts")
-                                    color: "#15222B"
-                                    font.pixelSize: 14
-                                    font.bold: true
                                     font.family: Theme.fontFamily
-                                    anchors.verticalCenter: parent.verticalCenter
+                                    Layout.alignment: Qt.AlignVCenter
                                 }
                             }
-                        }
+                    }
 
-                        // Bouton "Nouveau transfert"
-                        Button {
-                            text: qsTr("Nouveau transfert")
-                            Layout.alignment: Qt.AlignBottom
+                    // .btn.p : height 36, padding 0 14, radius 8, 600 14px,
+                    // icône "+" avant le texte, gap 7. Ancré au bord droit de
+                    // la zone (et non plus poussé par un RowLayout) pour
+                    // rester collé à droite dans tous les cas, indépendamment
+                    // du panneau "À traiter" et de la largeur du texte à gauche.
+                    Button {
+                        id: newTransferBtn
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        height: 36
+                            leftPadding: 14
+                            rightPadding: 14
                             background: Rectangle {
-                                color: "#0B5C70"
+                                color: newTransferBtn.hovered ? "#0A4E5F" : "#0B5C70"
                                 radius: 8
                             }
-                            contentItem: Label {
-                                text: parent.text
-                                color: "#FFFFFF"
-                                font.pixelSize: 14
-                                font.bold: true
-                                font.family: Theme.fontFamily
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
+                            contentItem: RowLayout {
+                                spacing: 7
+                                Label {
+                                    text: "+"
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                    font.family: Theme.fontFamily
+                                    Layout.alignment: Qt.AlignVCenter
+                                }
+                                Label {
+                                    text: qsTr("Nouveau transfert")
+                                    color: "#FFFFFF"
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                    font.family: Theme.fontFamily
+                                    verticalAlignment: Text.AlignVCenter
+                                    Layout.alignment: Qt.AlignVCenter
+                                }
                             }
                             onClicked: root.fileTransferRequested()
-                        }
                     }
                 }
 
@@ -710,8 +733,21 @@ Item {
                                 }
                             }
 
+                            // Etat vide transferts
+                            EmptyState {
+                                visible: root.transferItems.length === 0
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                iconName: "transfer"
+                                title: qsTr("Aucun transfert en cours")
+                                description: qsTr("Les fichiers envoyés et reçus apparaîtront ici.")
+                                actionText: qsTr("Envoyer un fichier")
+                                onActionClicked: root.fileTransferRequested()
+                            }
+
                             // Liste transferts à plat
                             ScrollView {
+                                visible: root.transferItems.length > 0
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true
@@ -777,6 +813,7 @@ Item {
                                 Item { Layout.fillWidth: true }
 
                                 Button {
+                                    visible: root.activityItems.length > 0
                                     text: qsTr("Voir le journal")
                                     flat: true
                                     font.pixelSize: 12
@@ -791,8 +828,19 @@ Item {
                                 }
                             }
 
+                            // Etat vide activité (pas de bouton : rien à ouvrir)
+                            EmptyState {
+                                visible: root.activityItems.length === 0
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                iconName: "log"
+                                title: qsTr("Aucune activité pour le moment")
+                                description: qsTr("Les connexions, messages, transferts et appels apparaîtront ici.")
+                            }
+
                             // Liste activité à plat
                             ScrollView {
+                                visible: root.activityItems.length > 0
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true

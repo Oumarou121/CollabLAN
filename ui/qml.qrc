@@ -52,6 +52,8 @@
         <file>Components/StartupLoadingView.qml</file>
         <file>Components/FolderTransferProgressHost.qml</file>
         <file>Components/StatusBadge.qml</file>
+        <file>Components/EmptyState.qml</file>
+        <file>Components/LineIcon.qml</file>
         <file>Components/RecipientPicker.qml</file>
         <file>Components/ExplorerSidebar.qml</file>
         <file>Components/ExplorerAddressBar.qml</file>

@@ -17,6 +17,7 @@ ColumnLayout {
     signal detailsRequested(var transfer)
     signal openLocationRequested(var transfer)
     signal retryRequested(var transfer)
+    signal newTransferRequested()
 
     // Header - height 30px
     Item {
@@ -60,8 +61,20 @@ ColumnLayout {
         }
     }
 
+    EmptyState {
+        visible: root.transfers.length === 0
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        iconName: "transfer"
+        title: qsTr("Aucun transfert en cours")
+        description: qsTr("Les fichiers envoyés et reçus apparaîtront ici.")
+        actionText: qsTr("Envoyer un fichier")
+        onActionClicked: root.newTransferRequested()
+    }
+
     // Lignes à plat
     ScrollView {
+        visible: root.transfers.length > 0
         Layout.fillWidth: true
         Layout.fillHeight: true
         clip: true

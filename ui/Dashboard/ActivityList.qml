@@ -34,6 +34,7 @@ ColumnLayout {
             Item { Layout.fillWidth: true }
 
             Button {
+                visible: root.activities.length > 0
                 text: qsTr("Voir le journal")
                 flat: true
                 font.pixelSize: 12
@@ -49,8 +50,18 @@ ColumnLayout {
         }
     }
 
+    EmptyState {
+        visible: root.activities.length === 0
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        iconName: "log"
+        title: qsTr("Aucune activité pour le moment")
+        description: qsTr("Les connexions, messages, transferts et appels apparaîtront ici.")
+    }
+
     // Lignes à plat
     ScrollView {
+        visible: root.activities.length > 0
         Layout.fillWidth: true
         Layout.fillHeight: true
         clip: true
