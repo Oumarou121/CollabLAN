@@ -21,6 +21,7 @@ public:
         IdRole = Qt::UserRole + 1,
         IpAddressRole,
         UuidRole,
+        MachineIdRole, // Alias pour UuidRole pour clarifier l'utilisation
         CertificateFingerprintRole,
         LastIpAddressRole,
         HostnameRole,

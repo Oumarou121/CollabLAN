@@ -374,7 +374,7 @@ Item {
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 1
+                    spacing: 4
                     visible: !root.isCompact
 
                     Label {
@@ -385,6 +385,48 @@ Item {
                         font.family: Theme.fontFamily
                         elide: Text.ElideRight
                         Layout.fillWidth: true
+                    }
+
+                    // Sélecteur de statut local
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        visible: typeof discoveryService !== "undefined"
+
+                        Repeater {
+                            model: [
+                                { status: "online", icon: "\uf00c", color: "#2E9A66" },
+                                { status: "away", icon: "\uf111", color: "#C27A0E" },
+                                { status: "busy", icon: "\uf07b", color: "#C27A0E" }
+                            ]
+
+                            Rectangle {
+                                Layout.preferredWidth: 24
+                                Layout.preferredHeight: 24
+                                radius: 12
+                                color: typeof discoveryService !== "undefined" && discoveryService.localStatus === modelData.status ? modelData.color : "#DDE4E2"
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData.icon
+                                    color: typeof discoveryService !== "undefined" && discoveryService.localStatus === modelData.status ? "#FFFFFF" : "#62717A"
+                                    font.pixelSize: 10
+                                    font.family: "FontAwesome"
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (typeof discoveryService !== "undefined") {
+                                            discoveryService.localStatus = modelData.status
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
                     }
                 }
             }

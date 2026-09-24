@@ -109,13 +109,33 @@ Rectangle {
     function findTransferFor(p) {
         if (root.demoMode) return null
         if (!root.activeTransfers) return null
+        var latestTransfer = null
+        var latestTimestamp = ""
         for (var j = 0; j < root.activeTransfers.length; j++) {
             var t = root.activeTransfers[j]
             if (!t) continue
-            if ((p.address && t.peerAddress === p.address) || (p.name && t.peerName === p.name))
-                return t
+            // Ne considérer que les transferts réellement en cours (state == "in_progress")
+            // et non l'historique (transferKey ne commence pas par "history:")
+            if (t.state !== "in_progress") continue
+            if (t.transferKey && t.transferKey.indexOf("history:") === 0) continue
+            // Rattachement par peerMachineId d'abord, puis par adresse en repli
+            var matches = false
+            if (p.id && t.peerMachineId && t.peerMachineId === p.id) {
+                matches = true
+            } else if (p.address && t.peerAddress === p.address) {
+                matches = true
+            } else if (p.name && t.peerName === p.name) {
+                matches = true
+            }
+            if (matches) {
+                // Prendre le transfert le plus récent
+                if (!latestTransfer || (t.timestamp && t.timestamp > latestTimestamp)) {
+                    latestTransfer = t
+                    latestTimestamp = t.timestamp || ""
+                }
+            }
         }
-        return null
+        return latestTransfer
     }
 
     function findCallFor(p) {
@@ -123,8 +143,13 @@ Rectangle {
         if (!root.activeCalls) return null
         for (var k = 0; k < root.activeCalls.length; k++) {
             var c = root.activeCalls[k]
-            if (c && p.address && c.remoteAddress === p.address)
+            if (!c) continue
+            // Rattachement par peerMachineId d'abord, puis par adresse en repli
+            if (p.id && c.remoteMachineId && c.remoteMachineId === p.id) {
                 return c
+            } else if (c && p.address && c.remoteAddress === p.address) {
+                return c
+            }
         }
         return null
     }
@@ -137,6 +162,26 @@ Rectangle {
     function peerIdFor(p) {
         if (p.id && p.id.length > 0) return p.id
         return (p.address && p.address.length > 0) ? p.address : (p.name || "")
+    }
+
+    // Fonction de calcul du statut effectif normalisé
+    // Priorité : offline > calling > transferring > busy > away > online
+    function computeEffectiveStatus(p) {
+        if (!p) return "online"
+        // Statut hors ligne explicite
+        if (p.status === "offline") return "offline"
+        // Appel en cours
+        var call = findCallFor(p)
+        if (call) return "calling"
+        // Transfert en cours
+        var transfer = findTransferFor(p)
+        if (transfer) return "transferring"
+        // Statut occupé
+        if (p.status === "busy") return "busy"
+        // Statut absent
+        if (p.status === "away") return "away"
+        // Statut en ligne ou inconnu
+        return "online"
     }
 
     // --- Placement automatique des postes ---------------------------------
@@ -289,21 +334,27 @@ Rectangle {
         var layout = root.peerLayout
         for (var i = 0; i < layout.length; i++) {
             var b = layout[i]
-            var status = b.baseStatus
-            var direction = ""
             var xfer = null
             var call = null
+            var direction = ""
 
             // En mode demo, utiliser le status tel quel
             if (!root.demoMode) {
                 xfer = root.findTransferFor(b)
                 call = root.findCallFor(b)
-                if (xfer) {
-                    status = "transferring"
-                    direction = xfer.direction || ""
-                } else if (call) {
-                    status = "calling"
-                }
+            }
+
+            // Calculer le statut effectif avec la fonction normalisée
+            var peerObj = {
+                id: b.id,
+                name: b.name,
+                address: b.address,
+                userUuid: b.userUuid,
+                status: b.baseStatus
+            }
+            var effectiveStatus = root.computeEffectiveStatus(peerObj)
+            if (xfer) {
+                direction = xfer.direction || ""
             }
 
             list.push({
@@ -312,7 +363,7 @@ Rectangle {
                 address: b.address,
                 userUuid: b.userUuid,
                 userName: xfer ? (xfer.peerUserName || "") : "",
-                status: status,
+                status: effectiveStatus,
                 direction: direction,
                 transfer: xfer || null,
                 x: b.x,
@@ -964,7 +1015,8 @@ Rectangle {
             Repeater {
                 model: [
                     { color: "#2E9A66", label: qsTr("En ligne"), count: root.presentPeers.filter(function(p) { return p.status === "online" }).length },
-                    { color: "#C27A0E", label: qsTr("Absent"), count: root.presentPeers.filter(function(p) { return p.status === "away" || p.status === "busy" }).length },
+                    { color: "#C27A0E", label: qsTr("Absent"), count: root.presentPeers.filter(function(p) { return p.status === "away" }).length },
+                    { color: "#C27A0E", label: qsTr("Occupé"), count: root.presentPeers.filter(function(p) { return p.status === "busy" }).length },
                     { color: "#0B5C70", label: qsTr("En transfert"), count: root.presentPeers.filter(function(p) { return p.status === "transferring" }).length },
                     { color: "#7A55B0", label: qsTr("En appel"), count: root.presentPeers.filter(function(p) { return p.status === "calling" }).length },
                     { color: "transparent", label: qsTr("Hors ligne"), count: root.offlinePeersPositioned.length, hasBorder: true }

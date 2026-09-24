@@ -35,6 +35,8 @@ QVariant AuthorizedMachineModel::data(const QModelIndex &index, int role) const
         return machine.ipAddress();
     case UuidRole:
         return machine.uuid();
+    case MachineIdRole:
+        return machine.uuid();
     case CertificateFingerprintRole:
         return machine.certificateFingerprint();
     case LastIpAddressRole:
@@ -62,6 +64,7 @@ QHash<int, QByteArray> AuthorizedMachineModel::roleNames() const
     roles[IdRole] = "id";
     roles[IpAddressRole] = "ipAddress";
     roles[UuidRole] = "machineUuid";
+    roles[MachineIdRole] = "machineId";
     roles[CertificateFingerprintRole] = "certificateFingerprint";
     roles[LastIpAddressRole] = "lastIpAddress";
     roles[HostnameRole] = "hostname";

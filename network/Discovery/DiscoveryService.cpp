@@ -138,7 +138,9 @@ QString DiscoveryService::localStatus() const
 
 void DiscoveryService::setLocalStatus(const QString &status)
 {
+    if (m_localStatus == status) return;
     m_localStatus = status;
+    emit localStatusChanged();
 }
 
 quint16 DiscoveryService::port() const

@@ -411,6 +411,7 @@ void TransferContext::onTransferStarted(const QString &transferKey, const QStrin
     entry[QStringLiteral("fileName")] = fileName;
     entry[QStringLiteral("direction")] = incoming ? tr("Réception") : tr("Envoi");
     entry[QStringLiteral("statusText")] = tr("En cours");
+    entry[QStringLiteral("state")] = QStringLiteral("in_progress");
     entry[QStringLiteral("bytesTransferred")] = resumeOffset;
     entry[QStringLiteral("totalBytes")] = fileSize;
     entry[QStringLiteral("percent")] = percentOf(resumeOffset, fileSize);
@@ -482,6 +483,7 @@ void TransferContext::onTransferProgress(const QString &transferKey, qint64 byte
         entry[QStringLiteral("fileName")] = tr("Transfert en cours");
         entry[QStringLiteral("direction")] = QString();
         entry[QStringLiteral("statusText")] = tr("En cours");
+        entry[QStringLiteral("state")] = QStringLiteral("in_progress");
         entry[QStringLiteral("bytesTransferred")] = bytesTransferred;
         entry[QStringLiteral("totalBytes")] = totalBytes;
         entry[QStringLiteral("percent")] = percentOf(bytesTransferred, totalBytes);
@@ -522,6 +524,7 @@ void TransferContext::onTransferCompleted(const QString &transferKey, const QStr
 
     QVariantMap entry = m_activeTransfers.at(index).toMap();
     entry[QStringLiteral("statusText")] = tr("Terminé");
+    entry[QStringLiteral("state")] = QStringLiteral("completed");
     entry[QStringLiteral("percent")] = 100;
     entry[QStringLiteral("bytesTransferred")] = entry.value(QStringLiteral("totalBytes"));
     // filePath est le chemin final ecrit par TransferService : pour une
@@ -550,6 +553,7 @@ void TransferContext::onTransferFailed(const QString &transferKey, const QString
 
     QVariantMap entry = m_activeTransfers.at(index).toMap();
     entry[QStringLiteral("statusText")] = tr("Échoué");
+    entry[QStringLiteral("state")] = QStringLiteral("failed");
     entry[QStringLiteral("errorString")] = errorString;
     m_activeTransfers[index] = entry;
 
@@ -584,17 +588,21 @@ QVariantMap TransferContext::entryFromHistory(const models::Transfer &transfer) 
     }
 
     QString statusText;
+    QString state;
     qint64 bytesTransferred = 0;
     switch (transfer.status()) {
     case models::TransferStatus::Completed:
         statusText = tr("Terminé");
+        state = QStringLiteral("completed");
         bytesTransferred = transfer.fileSize();
         break;
     case models::TransferStatus::Failed:
         statusText = tr("Échoué");
+        state = QStringLiteral("failed");
         break;
     case models::TransferStatus::Cancelled:
         statusText = tr("Annulé");
+        state = QStringLiteral("cancelled");
         break;
     case models::TransferStatus::InProgress:
     case models::TransferStatus::Pending:
@@ -604,6 +612,7 @@ QVariantMap TransferContext::entryFromHistory(const models::Transfer &transfer) 
         // le transfert reseau n'existe plus, donc "En cours" serait
         // trompeur (rien ne progresse plus). On l'affiche comme interrompu.
         statusText = tr("Interrompu");
+        state = QStringLiteral("interrupted");
         break;
     }
 
@@ -612,6 +621,7 @@ QVariantMap TransferContext::entryFromHistory(const models::Transfer &transfer) 
     entry[QStringLiteral("fileName")] = transfer.fileName();
     entry[QStringLiteral("direction")] = direction;
     entry[QStringLiteral("statusText")] = statusText;
+    entry[QStringLiteral("state")] = state;
     entry[QStringLiteral("bytesTransferred")] = bytesTransferred;
     entry[QStringLiteral("totalBytes")] = transfer.fileSize();
     entry[QStringLiteral("percent")] = percentOf(bytesTransferred, transfer.fileSize());

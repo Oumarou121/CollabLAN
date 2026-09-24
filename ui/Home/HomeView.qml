@@ -198,12 +198,15 @@ Item {
             networkOfflinePeers = []
             return
         }
-        const present = {}
+        const presentById = {}
+        const presentByAddress = {}
         if (typeof peersModel !== "undefined" && peersModel) {
             for (let i = 0; i < peersModel.count; i++) {
                 const idx = peersModel.index(i, 0)
-                const addr = peersModel.data(idx, peersModel.AddressRole || 260) || ""
-                if (addr) present[addr] = true
+                const id = peersModel.data(idx, peersModel.IdRole || 257) || ""
+                const addr = peersModel.data(idx, peersModel.AddressRole || 261) || ""
+                if (id) presentById[id] = true
+                if (addr) presentByAddress[addr] = true
             }
         }
         const offline = []
@@ -211,10 +214,15 @@ Item {
         for (let j = 0; j < total; j++) {
             const midx = authorizedMachineModel.index(j, 0)
             const authorized = authorizedMachineModel.data(midx, authorizedMachineModel.AuthorizedRole)
+            const id = authorizedMachineModel.data(midx, authorizedMachineModel.MachineIdRole) || ""
             const ip = authorizedMachineModel.data(midx, authorizedMachineModel.IpAddressRole) || ""
             const host = authorizedMachineModel.data(midx, authorizedMachineModel.HostnameRole) || ""
-            if (authorized && ip && !present[ip]) {
-                offline.push({ name: host || ip, address: ip })
+            if (authorized) {
+                // Vérifier par ID en priorité, puis par adresse en repli
+                const isPresent = (id && presentById[id]) || (ip && presentByAddress[ip])
+                if (!isPresent && (id || ip)) {
+                    offline.push({ name: host || ip || id, address: ip || "", id: id || "" })
+                }
             }
         }
         networkOfflinePeers = offline
@@ -325,6 +333,21 @@ Item {
     Connections {
         target: (typeof peersModel !== "undefined") ? peersModel : null
         function onCountChanged() {
+            root.refreshNetworkPeers()
+            root.refreshNetworkOfflinePeers()
+        }
+        function onDataChanged() {
+            root.refreshNetworkPeers()
+        }
+        function onRowsInserted() {
+            root.refreshNetworkPeers()
+            root.refreshNetworkOfflinePeers()
+        }
+        function onRowsRemoved() {
+            root.refreshNetworkPeers()
+            root.refreshNetworkOfflinePeers()
+        }
+        function onModelReset() {
             root.refreshNetworkPeers()
             root.refreshNetworkOfflinePeers()
         }

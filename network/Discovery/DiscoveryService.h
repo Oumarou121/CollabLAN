@@ -50,6 +50,7 @@ struct DiscoveredPeer {
 class DiscoveryService : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QString localStatus READ localStatus WRITE setLocalStatus NOTIFY localStatusChanged)
 
 public:
     explicit DiscoveryService(QObject *parent = nullptr);
@@ -140,6 +141,7 @@ public:
 signals:
     void started();
     void stopped();
+    void localStatusChanged();
 
     /// Emis lorsqu'un nouveau poste est detecte pour la premiere fois.
     void peerDiscovered(const network::DiscoveredPeer &peer);
