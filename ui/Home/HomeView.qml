@@ -43,7 +43,7 @@ Item {
     readonly property bool isMobile: root.width < width700
 
     // Mode validation visuelle (activé pour test géométrie)
-    property bool demoMode: true
+    property bool demoMode: false
 
     // Couleurs exactes selon maquette HTML
     readonly property color bg: "#EEF2F1"
@@ -173,12 +173,14 @@ Item {
 
         for (let i = 0; i < count; i++) {
             const index = peersModel.index(i, 0)
+            const id = peersModel.data(index, peersModel.IdRole || 257) || ""
             const name = peersModel.data(index, peersModel.NameRole || 258) || ""
             const address = peersModel.data(index, peersModel.AddressRole || 261) || ""
             const status = peersModel.data(index, peersModel.StatusRole || 260) || "online"
             const userUuid = peersModel.data(index, peersModel.UserUuidRole || 259) || ""
 
             peers.push({
+                id: id,
                 name: name || ("Poste " + (i + 1)),
                 address: address,
                 status: status,

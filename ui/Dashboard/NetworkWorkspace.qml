@@ -59,19 +59,19 @@ Rectangle {
 
     // Données de démo de la maquette HTML
     property var demoPeers: [
-        { id: "PC-COMPTA-01", name: "PC-COMPTA-01", address: "192.168.1.21", status: "transferring", angle: -45 },
-        { id: "PC-LOGISTIQUE", name: "PC-LOGISTIQUE", address: "192.168.1.34", status: "transferring", angle: 0 },
-        { id: "PC-ACCUEIL", name: "PC-ACCUEIL", address: "192.168.1.15", status: "online", angle: 45 },
-        { id: "PC-COMMERCIAL-04", name: "PC-COMMERCIAL-04", address: "192.168.1.47", status: "transferring", angle: 90 },
-        { id: "PC-IT-03", name: "PC-IT-03", address: "192.168.1.19", status: "online", angle: 135 },
-        { id: "PC-DIRECTION", name: "PC-DIRECTION", address: "192.168.1.14", status: "calling", angle: 180 },
-        { id: "PC-RH-02", name: "PC-RH-02", address: "192.168.1.28", status: "away", angle: 225 },
-        { id: "PC-ARCHIVES", name: "PC-ARCHIVES", address: "192.168.1.52", status: "online", angle: 270 }
+        { id: "PC-COMPTA-01", name: "PC-COMPTA-01", address: "192.168.1.21", status: "transferring" },
+        { id: "PC-LOGISTIQUE", name: "PC-LOGISTIQUE", address: "192.168.1.34", status: "transferring" },
+        { id: "PC-ACCUEIL", name: "PC-ACCUEIL", address: "192.168.1.15", status: "online" },
+        { id: "PC-COMMERCIAL-04", name: "PC-COMMERCIAL-04", address: "192.168.1.47", status: "transferring" },
+        { id: "PC-IT-03", name: "PC-IT-03", address: "192.168.1.19", status: "online" },
+        { id: "PC-DIRECTION", name: "PC-DIRECTION", address: "192.168.1.14", status: "calling" },
+        { id: "PC-RH-02", name: "PC-RH-02", address: "192.168.1.28", status: "away" },
+        { id: "PC-ARCHIVES", name: "PC-ARCHIVES", address: "192.168.1.52", status: "online" }
     ]
     property var demoOfflinePeers: [
-        { id: "PC-STAGE-01", name: "PC-STAGE-01", address: "192.168.1.58", angle: 30 },
-        { id: "PC-FINANCE-02", name: "PC-FINANCE-02", address: "192.168.1.63", angle: 150 },
-        { id: "PC-JURIDIQUE", name: "PC-JURIDIQUE", address: "192.168.1.77", angle: 350 }
+        { id: "PC-STAGE-01", name: "PC-STAGE-01", address: "192.168.1.58" },
+        { id: "PC-FINANCE-02", name: "PC-FINANCE-02", address: "192.168.1.63" },
+        { id: "PC-JURIDIQUE", name: "PC-JURIDIQUE", address: "192.168.1.77" }
     ]
 
     // Override peers with demo data when demoMode is true
@@ -129,40 +129,175 @@ Rectangle {
         return null
     }
 
+    // Identifiant unique d'un poste sur la carte. On privilégie l'id machine
+    // (unique par poste, fourni par peersModel) : l'adresse IP ne l'est pas
+    // (plusieurs instances sur une même machine, NAT...), et deux postes
+    // partageant la même clé se retrouvaient tous résolus vers le premier
+    // par livePeer() -> le panneau du 1er poste s'ouvrait à chaque clic.
     function peerIdFor(p) {
+        if (p.id && p.id.length > 0) return p.id
         return (p.address && p.address.length > 0) ? p.address : (p.name || "")
     }
 
-    // Angle par défaut (degrés) d'un poste sur l'orbite intérieure. L'ellipse
-    // est deux fois plus large que haute : avec 1 ou 2 postes on les place à
-    // droite / à gauche du hub (là où les étiquettes ont la place) plutôt
-    // qu'au-dessus / au-dessous, où fils et étiquettes se chevauchent.
-    function defaultAngle(i, n) {
-        if (n <= 1) return 0
-        if (n === 2) return i === 0 ? 0 : 180
-        return -90 + (360 * i / n)
+    // --- Placement automatique des postes ---------------------------------
+    // Un poste placé juste au-dessus ou en dessous du hub est collé à lui
+    // (10 px d'écart seulement, la carte est bien plus large que haute) et
+    // son fil devient minuscule. On répartit donc les postes présents sur
+    // deux arcs, à droite et à gauche du hub, à égale distance le long de
+    // l'ellipse. L'axe vertical n'est utilisé que si la place manque.
+    // Tailles (px) d'un poste : icône + libellés ; hub : halo + libellés.
+    readonly property real peerBoxW: 80
+    readonly property real peerBoxH: 67
+    readonly property real peerBoxDy: 16.5   // centre de la boîte sous le centre de l'icône
+    readonly property real hubBoxW: 92
+    readonly property real hubBoxH: 120
+    readonly property real hubBoxDy: 16
+    readonly property real boxMargin: 6
+
+    function boxItem(x, y) { return { x: x, y: y + peerBoxDy, w: peerBoxW, h: peerBoxH } }
+    function hubBox() { return { x: 0, y: hubBoxDy, w: hubBoxW, h: hubBoxH } }
+
+    // Écart normalisé entre deux boîtes : >= 1 = pas de chevauchement
+    function boxGap(a, b) {
+        var kx = (a.w + b.w) / 2 + boxMargin
+        var ky = (a.h + b.h) / 2 + boxMargin
+        return Math.max(Math.abs(a.x - b.x) / kx, Math.abs(a.y - b.y) / ky)
     }
 
-    // Postes présents, positionnés sur l'orbite intérieure - état dérivé
-    // (transfert/appel) et position recalculés dès que peers/activeTransfers/
-    // activeCalls changent.
-    property var presentPeers: {
+    function minBoxGap(item, others) {
+        var m = Infinity
+        for (var i = 0; i < others.length; i++)
+            m = Math.min(m, root.boxGap(item, others[i]))
+        return m
+    }
+
+    // n angles (degrés) répartis à égale distance d'arc sur deux arcs :
+    // droite [-maxDeg, +maxDeg] et gauche [180-maxDeg, 180+maxDeg]. Ordre
+    // horaire : arc droit de haut en bas, puis arc gauche de bas en haut.
+    function slotAngles(n, rx, ry, maxDeg) {
+        var out = []
+        if (n <= 0) return out
+        var a = maxDeg * Math.PI / 180
+        var steps = 64
+        var cum = [0]
+        for (var s = 1; s <= steps; s++) {
+            var t0 = -a + 2 * a * (s - 1) / steps
+            var t1 = -a + 2 * a * s / steps
+            var tm = (t0 + t1) / 2
+            var v = Math.sqrt(rx * rx * Math.sin(tm) * Math.sin(tm)
+                              + ry * ry * Math.cos(tm) * Math.cos(tm))
+            cum.push(cum[s - 1] + v * (t1 - t0))
+        }
+        var total = cum[steps]
+        function angleAt(frac) {
+            var target = frac * total
+            var k = 1
+            while (k < steps && cum[k] < target) k++
+            var seg = cum[k] - cum[k - 1]
+            var u = seg > 0 ? (target - cum[k - 1]) / seg : 0
+            return (-a + 2 * a * ((k - 1) + u) / steps) * 180 / Math.PI
+        }
+        var kRight = Math.ceil(n / 2)
+        var kLeft = n - kRight
+        for (var i = 0; i < kRight; i++) out.push(angleAt((i + 0.5) / kRight))
+        for (var j = 0; j < kLeft; j++) out.push(180 + angleAt((j + 0.5) / kLeft))
+        return out
+    }
+
+    // Angles des postes présents sur l'orbite intérieure. On part d'un cône
+    // vertical interdit de 27° de chaque côté (les postes restent à plus de
+    // ~100 px du centre en horizontal, donc hors de l'emprise du hub) et on
+    // ne l'élargit, par pas de 3°, que si des postes se chevauchent (7 postes
+    // et plus, ou hauteur de carte réduite).
+    function presentAngles(n, rx, ry) {
+        var best = null
+        for (var maxDeg = 63; maxDeg <= 90; maxDeg += 3) {
+            var ang = root.slotAngles(n, rx, ry, maxDeg)
+            var items = []
+            var score = Infinity
+            for (var i = 0; i < ang.length; i++) {
+                var r = ang[i] * Math.PI / 180
+                var it = root.boxItem(rx * Math.cos(r), ry * Math.sin(r))
+                score = Math.min(score, root.minBoxGap(it, items), root.boxGap(it, root.hubBox()))
+                items.push(it)
+            }
+            if (score >= 1) return ang
+            if (best === null || score > best.score) best = { ang: ang, score: score }
+        }
+        return best.ang
+    }
+
+    // Angles des postes hors ligne sur l'orbite extérieure : chacun prend
+    // la place la plus dégagée (hub, postes présents, autres hors ligne).
+    // Ils vont donc naturellement dans les vides, souvent en haut et en bas.
+    function offlineAngles(m, orx, ory, fixedItems) {
+        var placed = [root.hubBox()].concat(fixedItems)
+        var out = []
+        for (var i = 0; i < m; i++) {
+            var bestA = -90
+            var bestS = -1
+            for (var d = 0; d < 360; d += 6) {
+                var a = -90 + d
+                var r = a * Math.PI / 180
+                var s = root.minBoxGap(root.boxItem(orx * Math.cos(r), ory * Math.sin(r)), placed)
+                if (s > bestS + 1e-6) { bestS = s; bestA = a }
+            }
+            var rr = bestA * Math.PI / 180
+            placed.push(root.boxItem(orx * Math.cos(rr), ory * Math.sin(rr)))
+            out.push(bestA)
+        }
+        return out
+    }
+
+    // Postes présents - STRUCTURE : identité + position sur l'orbite
+    // intérieure (226×104). Ne dépend volontairement NI de activeTransfers
+    // NI de activeCalls : c'est le modèle du Repeater, et un Repeater dont
+    // le modèle change détruit puis recrée tous ses délégués. Or
+    // transferContext.activeTransfers change à chaque tick de progression :
+    // les postes étaient recréés en plein clic (appui sur l'ancien
+    // délégué, relâchement sur le nouveau -> clic perdu).
+    property var peerLayout: {
         var list = []
         var sourcePeers = root.demoMode ? root.demoPeers : root.peers
         var count = sourcePeers.length
+        var autoAngles = root.presentAngles(count, root.irx, root.iry)
         for (var i = 0; i < count; i++) {
             var p = sourcePeers[i] || {}
             var angleDeg = (p.angle !== undefined && p.angle !== null)
-                    ? p.angle : root.defaultAngle(i, count)
-            var status = p.status || "online"
+                    ? p.angle : autoAngles[i]
+            var rad = angleDeg * Math.PI / 180
+            list.push({
+                id: root.demoMode ? p.id : root.peerIdFor(p),
+                name: p.name || "",
+                address: p.address || "",
+                userUuid: p.userUuid || "",
+                baseStatus: p.status || "online",
+                x: root.cx + root.irx * Math.cos(rad),
+                y: root.cy + root.iry * Math.sin(rad),
+                index: i
+            })
+        }
+        return list
+    }
+
+    // Postes présents - ÉTAT COURANT : même liste, même ordre que
+    // peerLayout, avec le statut dérivé (transfert/appel) et le transfert
+    // attaché. Recalculé à chaque changement de activeTransfers/activeCalls
+    // sans toucher aux délégués (ils lisent cet état via livePeer()).
+    property var presentPeers: {
+        var list = []
+        var layout = root.peerLayout
+        for (var i = 0; i < layout.length; i++) {
+            var b = layout[i]
+            var status = b.baseStatus
             var direction = ""
             var xfer = null
             var call = null
 
             // En mode demo, utiliser le status tel quel
             if (!root.demoMode) {
-                xfer = root.findTransferFor(p)
-                call = root.findCallFor(p)
+                xfer = root.findTransferFor(b)
+                call = root.findCallFor(b)
                 if (xfer) {
                     status = "transferring"
                     direction = xfer.direction || ""
@@ -171,25 +306,28 @@ Rectangle {
                 }
             }
 
-            var rad = angleDeg * Math.PI / 180
-            // Position sur l'orbite intérieure (226×104)
-            var px = root.cx + root.irx * Math.cos(rad)
-            var py = root.cy + root.iry * Math.sin(rad)
             list.push({
-                id: root.demoMode ? p.id : root.peerIdFor(p),
-                name: p.name || "",
-                address: p.address || "",
-                userUuid: p.userUuid || "",
+                id: b.id,
+                name: b.name,
+                address: b.address,
+                userUuid: b.userUuid,
                 userName: xfer ? (xfer.peerUserName || "") : "",
                 status: status,
                 direction: direction,
                 transfer: xfer || null,
-                x: px,
-                y: py,
-                index: i
+                x: b.x,
+                y: b.y,
+                index: b.index
             })
         }
         return list
+    }
+
+    function livePeer(id) {
+        for (var i = 0; i < root.presentPeers.length; i++) {
+            if (root.presentPeers[i].id === id) return root.presentPeers[i]
+        }
+        return null
     }
 
     // Postes hors ligne, orbite extérieure
@@ -197,10 +335,15 @@ Rectangle {
         var list = []
         var sourceOffline = root.demoMode ? root.demoOfflinePeers : root.offlinePeers
         var count = sourceOffline.length
+        var fixedItems = []
+        for (var k = 0; k < root.peerLayout.length; k++)
+            fixedItems.push(root.boxItem(root.peerLayout[k].x - root.cx,
+                                         root.peerLayout[k].y - root.cy))
+        var autoAngles = root.offlineAngles(count, root.orx, root.ory, fixedItems)
         for (var i = 0; i < count; i++) {
             var p = sourceOffline[i] || {}
             var angleDeg = (p.angle !== undefined && p.angle !== null)
-                    ? p.angle : (-90 + (360 * i / Math.max(count, 1)) + 18)
+                    ? p.angle : autoAngles[i]
             var rad = angleDeg * Math.PI / 180
             // Position sur l'orbite extérieure (312×138)
             var px = root.cx + root.orx * Math.cos(rad)
@@ -216,21 +359,68 @@ Rectangle {
         return list
     }
 
-    function selectedPeer() {
-        for (var i = 0; i < root.presentPeers.length; i++) {
-            if (root.presentPeers[i].id === root.selectedId) return root.presentPeers[i]
-        }
-        return null
-    }
-
-    function hoveredPeer() {
-        for (var i = 0; i < root.presentPeers.length; i++) {
-            if (root.presentPeers[i].id === root.hoveredId) return root.presentPeers[i]
-        }
-        return null
-    }
+    function selectedPeer() { return root.livePeer(root.selectedId) }
+    function hoveredPeer() { return root.livePeer(root.hoveredId) }
 
     function clearSelection() { root.selectedId = "" }
+
+    // Aire de recouvrement (px²) entre deux rectangles {x, y, w, h}
+    // (x, y = centre).
+    function overlapArea(a, b) {
+        var ox = Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2)
+        var oy = Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2)
+        return (ox > 0 && oy > 0) ? ox * oy : 0
+    }
+
+    // Emplacement du panneau de détails (w × h) pour le poste `peer`.
+    // Le panneau est au-dessus des postes (z) et capte les clics : un poste
+    // recouvert n'est plus cliquable, on ne peut alors plus changer de
+    // sélection. On essaie donc côté droit puis gauche, avec des écarts et
+    // des décalages verticaux croissants, et on garde le premier emplacement
+    // qui ne recouvre aucun autre poste (à défaut, le moins gênant : une
+    // icône recouverte coûte 20× plus qu'une simple étiquette).
+    function detailsSpot(peer, w, h) {
+        var gaps = [40, 64, 96, 128]
+        var dys = [-96, -40, 20, -150]
+        var best = null
+        for (var g = 0; g < gaps.length; g++) {
+            for (var s = 0; s < 2; s++) {
+                var right = (s === 0)
+                var x = right ? peer.x + gaps[g] : peer.x - gaps[g] - w
+                if (x < 4 || x + w > root.width - 4) continue
+                for (var d = 0; d < dys.length; d++) {
+                    var y = Math.max(52, Math.min(peer.y + dys[d], root.height - 40 - h))
+                    var rect = { x: x + w / 2, y: y + h / 2, w: w, h: h }
+                    var cost = 0
+                    for (var i = 0; i < root.peerLayout.length; i++) {
+                        var o = root.peerLayout[i]
+                        if (o.id === peer.id) continue
+                        cost += root.overlapArea(rect, root.boxItem(o.x, o.y))
+                                + 20 * root.overlapArea(rect, { x: o.x, y: o.y, w: 34, h: 34 })
+                    }
+                    if (best === null || cost < best.cost)
+                        best = { x: x, y: y, right: right, cost: cost }
+                    if (cost === 0) return best
+                }
+            }
+        }
+        if (best !== null) return best
+        // Aucun emplacement ne tient dans la carte : repli d'origine.
+        var fallRight = peer.x + 40 + w <= root.width - 4
+        return { x: fallRight ? peer.x + 40 : peer.x - 40 - w,
+                 y: Math.max(52, Math.min(peer.y - 96, root.height - 40 - h)),
+                 right: fallRight, cost: -1 }
+    }
+
+    // Le panneau de détails et l'infobulle n'existent que sur la carte :
+    // en passant à la vue liste, on ferme tout (sinon la sélection reste
+    // en mémoire et le panneau réapparaît au retour sur la carte).
+    onViewModeChanged: {
+        if (root.viewMode !== "map") {
+            root.hoveredId = ""
+            root.clearSelection()
+        }
+    }
 
     Keys.onEscapePressed: root.clearSelection()
     focus: true
@@ -333,7 +523,9 @@ Rectangle {
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: root.viewMode = "map"
+                onClicked: {
+                    root.viewMode = "map"
+                }
             }
         }
 
@@ -357,7 +549,9 @@ Rectangle {
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: root.viewMode = "list"
+                onClicked: {
+                    root.viewMode = "list"
+                }
             }
         }
     }
@@ -449,8 +643,8 @@ Rectangle {
 
         // t=0.56 fixe (valeur de la maquette) place la flèche à mi-course,
         // ce qui convient tant que le poste est assez loin du hub. Avec peu
-        // de postes réels, l'angle par défaut (-90/90°, doc refreshNetworkPeers)
-        // peut placer un poste très près du hub sur l'axe vertical : à cette
+        // de postes réels, un poste explicitement placé sur l'axe vertical
+        // (propriété angle) peut être très près du hub : à cette
         // distance réduite, t=0.56 fait tomber la flèche sur l'étiquette du
         // poste (s'il est au-dessus du hub) ou sur celle du hub (s'il est en
         // dessous). On resserre t vers le bord opposé à l'étiquette concernée
@@ -598,16 +792,21 @@ Rectangle {
 
     // Postes présents - orbite intérieure
     Repeater {
-        model: root.presentPeers
+        // Modèle = structure seule (voir peerLayout) : les délégués ne sont
+        // recréés que si les postes ou la géométrie changent.
+        model: root.peerLayout
         delegate: NetworkPeer {
             id: peerDelegate
+            // État courant (statut dérivé transfert/appel), mis à jour sur
+            // place sans recréer le délégué.
+            readonly property var live: root.livePeer(modelData.id)
             x: modelData.x - width / 2
             y: modelData.y - 25
             z: 3
             peerId: modelData.id
             label: modelData.name
             address: modelData.address
-            status: modelData.status
+            status: live ? live.status : modelData.baseStatus
             visible: root.viewMode === "map"
             isSelected: root.selectedId === modelData.id
             isHovered: root.hoveredId === modelData.id
@@ -618,7 +817,7 @@ Rectangle {
                 root.forceActiveFocus()
                 root.hoveredId = ""
                 root.selectedId = (root.selectedId === modelData.id) ? "" : modelData.id
-                root.peerClicked(modelData)
+                root.peerClicked(peerDelegate.live || modelData)
             }
         }
     }
@@ -626,7 +825,8 @@ Rectangle {
     // Tooltip de survol - masqué si le poste est sélectionné (doc §24 : ne
     // pas mélanger hover et selected)
     Loader {
-        active: root.hoveredId.length > 0 && root.hoveredId !== root.selectedId && root.hoveredPeer() !== null
+        active: root.viewMode === "map" && root.hoveredId.length > 0
+                && root.hoveredId !== root.selectedId && root.hoveredPeer() !== null
         z: 4
         sourceComponent: Component {
             Rectangle {
@@ -674,29 +874,37 @@ Rectangle {
     // Panneau de détails - poste sélectionné (doc §26/§27). Position
     // droite si la place le permet, sinon gauche ; clamp vertical.
     Loader {
-        active: root.selectedId.length > 0 && root.selectedPeer() !== null
+        id: detailsLoader
+        active: root.viewMode === "map" && root.selectedId.length > 0
+                && root.selectedPeer() !== null
         z: 5
-        sourceComponent: Component {
-            PeerDetailsPanel {
-                id: panel
-                property var peer: root.selectedPeer()
-                readonly property bool openRight: peer ? (peer.x + 40 + width <= root.width - 4) : true
-                x: peer ? (openRight ? peer.x + 40 : peer.x - 40 - width) : 0
-                y: peer ? Math.max(52, Math.min(peer.y - 96, root.height - 40 - implicitHeight)) : 0
+        sourceComponent: detailsComponent
+    }
 
-                peerName: peer ? peer.name : ""
-                peerAddress: peer ? peer.address : ""
-                peerStatus: peer ? peer.status : "online"
-                accountName: peer ? peer.userName : ""
-                activeTransfer: peer ? peer.transfer : null
-                notchSide: openRight ? "right" : "left"
-                notchOffset: peer ? Math.max(16, Math.min(peer.y - y - 5, 200)) : 30
+    Component {
+        id: detailsComponent
+        PeerDetailsPanel {
+            id: panel
+            // Lié (et non copié au chargement) : le panneau suit le poste
+            // sélectionné et la progression de son transfert.
+            readonly property var peer: root.selectedPeer()
+            readonly property var spot: peer ? root.detailsSpot(peer, width, implicitHeight) : null
+            readonly property bool openRight: spot ? spot.right : true
+            x: spot ? spot.x : 0
+            y: spot ? spot.y : 0
 
-                onCloseRequested: root.clearSelection()
-                onSendFileRequested: root.sendFileRequested(peer)
-                onCallRequested: root.callRequested(peer)
-                onMessageRequested: root.messageRequested(peer)
-            }
+            peerName: peer ? peer.name : ""
+            peerAddress: peer ? peer.address : ""
+            peerStatus: peer ? peer.status : "online"
+            accountName: peer ? peer.userName : ""
+            activeTransfer: peer ? peer.transfer : null
+            notchSide: openRight ? "right" : "left"
+            notchOffset: peer ? Math.max(16, Math.min(peer.y - y - 5, 200)) : 30
+
+            onCloseRequested: root.clearSelection()
+            onSendFileRequested: root.sendFileRequested(peer)
+            onCallRequested: root.callRequested(peer)
+            onMessageRequested: root.messageRequested(peer)
         }
     }
 
