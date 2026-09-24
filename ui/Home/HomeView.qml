@@ -182,8 +182,7 @@ Item {
                 name: name || ("Poste " + (i + 1)),
                 address: address,
                 status: status,
-                userUuid: userUuid,
-                angle: -90 + (360 * i / Math.max(count, 1))
+                userUuid: userUuid
             })
         }
         networkPeers = peers

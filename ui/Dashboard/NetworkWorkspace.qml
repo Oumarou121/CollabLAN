@@ -71,7 +71,7 @@ Rectangle {
     property var demoOfflinePeers: [
         { id: "PC-STAGE-01", name: "PC-STAGE-01", address: "192.168.1.58", angle: 30 },
         { id: "PC-FINANCE-02", name: "PC-FINANCE-02", address: "192.168.1.63", angle: 150 },
-        { id: "PC-JURIDIQUE", name: "PC-JURIDIQUE", address: "192.168.1.77", angle: 270 }
+        { id: "PC-JURIDIQUE", name: "PC-JURIDIQUE", address: "192.168.1.77", angle: 350 }
     ]
 
     // Override peers with demo data when demoMode is true
@@ -88,10 +88,20 @@ Rectangle {
     // Centre calculé dynamiquement - toujours au centre du canvas
     readonly property real cx: width / 2
     readonly property real cy: height / 2
-    readonly property real irx: 226
-    readonly property real iry: 104
-    readonly property real orx: 312
-    readonly property real ory: 138
+    // Rayons de référence (maquette 1440x900). Horizontalement ils restent
+    // fixes ; verticalement ils sont réduits (jamais sous 60 %) quand la
+    // hauteur disponible ne permet pas de loger l'orbite extérieure avec
+    // les nœuds (78px de haut) et la légende (40px) sans débordement.
+    readonly property real refIrx: 226
+    readonly property real refIry: 104
+    readonly property real refOrx: 312
+    readonly property real refOry: 138
+    readonly property real fitY: Math.max(0.6, Math.min(1,
+            Math.min(cy - 47, height - 83 - cy) / refOry))
+    readonly property real irx: refIrx
+    readonly property real iry: refIry * fitY
+    readonly property real orx: refOrx
+    readonly property real ory: refOry * fitY
 
     property string selectedId: ""
     property string hoveredId: ""
@@ -123,6 +133,16 @@ Rectangle {
         return (p.address && p.address.length > 0) ? p.address : (p.name || "")
     }
 
+    // Angle par défaut (degrés) d'un poste sur l'orbite intérieure. L'ellipse
+    // est deux fois plus large que haute : avec 1 ou 2 postes on les place à
+    // droite / à gauche du hub (là où les étiquettes ont la place) plutôt
+    // qu'au-dessus / au-dessous, où fils et étiquettes se chevauchent.
+    function defaultAngle(i, n) {
+        if (n <= 1) return 0
+        if (n === 2) return i === 0 ? 0 : 180
+        return -90 + (360 * i / n)
+    }
+
     // Postes présents, positionnés sur l'orbite intérieure - état dérivé
     // (transfert/appel) et position recalculés dès que peers/activeTransfers/
     // activeCalls changent.
@@ -133,7 +153,7 @@ Rectangle {
         for (var i = 0; i < count; i++) {
             var p = sourcePeers[i] || {}
             var angleDeg = (p.angle !== undefined && p.angle !== null)
-                    ? p.angle : (-90 + (360 * i / Math.max(count, 1)))
+                    ? p.angle : root.defaultAngle(i, count)
             var status = p.status || "online"
             var direction = ""
             var xfer = null
@@ -351,21 +371,29 @@ Rectangle {
             var ctx = getContext("2d")
             ctx.clearRect(0, 0, width, height)
             ctx.setLineDash([2, 6])
-            ctx.strokeStyle = "#B9CBCF"
             ctx.lineWidth = 1
+
+            // Context2D de Qt Quick : ellipse(x, y, w, h) prend le rectangle
+            // ENGLOBANT (coin haut-gauche + largeur/hauteur), et non
+            // (cx, cy, rx, ry) comme en HTML5.
+            ctx.strokeStyle = Theme.darkMode ? "#3B5057" : "#B9CBCF"
             ctx.beginPath()
-            ctx.ellipse(root.cx, root.cy, root.irx, root.iry, 0, 0, 2 * Math.PI)
+            ctx.ellipse(root.cx - root.irx, root.cy - root.iry, 2 * root.irx, 2 * root.iry)
             ctx.stroke()
 
-            ctx.strokeStyle = "#CBD6D8"
+            ctx.strokeStyle = Theme.darkMode ? "#2C3F45" : "#CBD6D8"
             ctx.beginPath()
-            ctx.ellipse(root.cx, root.cy, root.orx, root.ory, 0, 0, 2 * Math.PI)
+            ctx.ellipse(root.cx - root.orx, root.cy - root.ory, 2 * root.orx, 2 * root.ory)
             ctx.stroke()
         }
         Connections {
             target: root
             function onWidthChanged() { orbitsCanvas.requestPaint() }
             function onHeightChanged() { orbitsCanvas.requestPaint() }
+        }
+        Connections {
+            target: Theme
+            function onDarkModeChanged() { orbitsCanvas.requestPaint() }
         }
     }
 
