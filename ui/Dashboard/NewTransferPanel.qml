@@ -80,25 +80,25 @@ Rectangle {
                                         ? Math.min(100, Math.floor(root.batchDone * 100 / root.batchTotal))
                                         : (root.batchFinished ? 100 : 0)
 
-    color: Theme.dashboardSurface
+    color: Theme.surfaceLevel4
 
     // Filet gauche + ombre : le volet est un element flottant, l'un des
-    // rares endroits ou une ombre plus marquee est admise.
+    // rares endroits ou une ombre plus marquee est admise (priorité 23).
     Rectangle {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         width: 1
-        color: Theme.dashboardLine
+        color: Theme.hairlineStrong
     }
     Rectangle {
-        x: -24
-        width: 24
+        x: -28
+        width: 28
         height: parent.height
         gradient: Gradient {
             orientation: Gradient.Horizontal
-            GradientStop { position: 0.0; color: Qt.rgba(Theme.dashboardShadow.r, Theme.dashboardShadow.g, Theme.dashboardShadow.b, 0) }
-            GradientStop { position: 1.0; color: Theme.dashboardShadow }
+            GradientStop { position: 0.0; color: Qt.rgba(Theme.elevationShadow.r, Theme.elevationShadow.g, Theme.elevationShadow.b, 0) }
+            GradientStop { position: 1.0; color: Theme.elevationShadow }
         }
     }
 
@@ -149,7 +149,7 @@ Rectangle {
             }
         }
 
-        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.dashboardLine }
+        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.hairline }
 
         // ---- Corps ----
         Flickable {
@@ -211,10 +211,10 @@ Rectangle {
                             visible: !root.hasSelection
                             Layout.fillWidth: true
                             implicitHeight: emptyZone.implicitHeight + 32
-                            radius: Theme.radiusMedium
-                            color: Theme.dashboardSurfaceAlt
+                            radius: Theme.radiusLarge
+                            color: Theme.dashboardPrimarySoft
                             border.width: 1
-                            border.color: Theme.dashboardLine
+                            border.color: Theme.dashboardPrimaryMuted
 
                             ColumnLayout {
                                 id: emptyZone
@@ -290,9 +290,9 @@ Rectangle {
                             Layout.fillWidth: true
                             implicitHeight: selectedColumn.implicitHeight + 8
                             radius: Theme.radiusMedium
-                            color: Theme.dashboardSurface
+                            color: Theme.surfaceLevel2
                             border.width: 1
-                            border.color: Theme.dashboardLine
+                            border.color: Theme.hairline
 
                             ColumnLayout {
                                 id: selectedColumn
@@ -406,9 +406,9 @@ Rectangle {
                                                     ? Math.min(recipientList.contentHeight, 220) + 8
                                                     : 72
                             radius: Theme.radiusMedium
-                            color: Theme.dashboardSurface
+                            color: Theme.surfaceLevel2
                             border.width: 1
-                            border.color: Theme.dashboardLine
+                            border.color: Theme.hairline
                             clip: true
 
                             Label {
@@ -451,7 +451,7 @@ Rectangle {
                                         anchors.fill: parent
                                         radius: Theme.radiusSmall
                                         color: recipientRow.checked ? Theme.dashboardPrimarySoft
-                                               : (recipientRow.hovered ? Theme.dashboardSurfaceAlt : "transparent")
+                                               : (recipientRow.hovered ? Theme.surfaceLevel3 : "transparent")
                                     }
 
                                     RowLayout {
@@ -726,9 +726,9 @@ Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: batchColumn.implicitHeight
                         radius: Theme.radiusMedium
-                        color: Theme.dashboardSurface
+                        color: Theme.surfaceLevel2
                         border.width: 1
-                        border.color: Theme.dashboardLine
+                        border.color: Theme.hairline
                         clip: true
 
                         ColumnLayout {
@@ -750,7 +750,7 @@ Rectangle {
                                         anchors.left: parent.left
                                         anchors.right: parent.right
                                         height: 1
-                                        color: Theme.dashboardLine
+                                        color: Theme.hairline
                                     }
 
                                     RowLayout {
@@ -821,7 +821,7 @@ Rectangle {
         }
 
         // ---- Pied ----
-        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.dashboardLine }
+        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.hairline }
 
         RowLayout {
             Layout.fillWidth: true

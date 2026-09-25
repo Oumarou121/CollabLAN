@@ -25,6 +25,17 @@ Item {
         anchors.centerIn: parent
         scale: root.size / 24
 
+        // CurveRenderer (Qt >= 6.6, projet en 6.9) plutot que le
+        // GeometryRenderer par defaut : celui-ci triangule les traces et
+        // peut ne rien rendre du tout pour un chemin ouvert (trait sans
+        // remplissage, exactement notre cas ci-dessous) sur certaines
+        // combinaisons GPU/pilote/backend RHI -- symptome observe sur
+        // l'ecran Transferts : la pastille de fond s'affiche (Rectangle,
+        // peint normalement) mais aucune icone dedans (Shape invisible).
+        // CurveRenderer est un rendu analytique qui ne depend pas de cette
+        // triangulation et est recommande par Qt pour ce cas de figure.
+        preferredRendererType: Shape.CurveRenderer
+
         // Sur-echantillonnage : le Shape est rasterise plus grand que sa
         // taille logique pour rester net une fois mis a l'echelle.
         layer.enabled: true

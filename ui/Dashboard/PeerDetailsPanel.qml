@@ -20,10 +20,35 @@ Rectangle {
     id: root
     width: 224
     implicitHeight: contentColumn.implicitHeight + 24
-    radius: Theme.radiusMedium
-    color: Theme.dashboardSurface
+    radius: Theme.radiusLarge
+    color: Theme.surfaceLevel4
     border.width: 1
-    border.color: Theme.dashboardLineStrong
+    border.color: Theme.hairlineStrong
+
+    // Fausse ombre portée (le module Qt Quick Effects n'est pas lié au
+    // projet) : 2 couches empilées, décalées vers le bas, pour donner
+    // l'impression d'un panneau flottant plutôt que d'une simple card
+    // (priorité 23 du brief : ombre réservée au drawer/popup/tooltip/panneau peer).
+    Rectangle {
+        z: -2
+        anchors.left: parent.left; anchors.right: parent.right
+        anchors.top: parent.top; anchors.bottom: parent.bottom
+        anchors.leftMargin: -6; anchors.rightMargin: -6
+        anchors.topMargin: 0; anchors.bottomMargin: -12
+        radius: parent.radius + 6
+        color: Theme.elevationShadow
+        opacity: 0.5
+    }
+    Rectangle {
+        z: -1
+        anchors.left: parent.left; anchors.right: parent.right
+        anchors.top: parent.top; anchors.bottom: parent.bottom
+        anchors.leftMargin: -2; anchors.rightMargin: -2
+        anchors.topMargin: 0; anchors.bottomMargin: -4
+        radius: parent.radius + 2
+        color: Theme.elevationShadow
+        opacity: 0.6
+    }
 
     property string peerName: ""
     property string peerAddress: ""
@@ -74,12 +99,12 @@ Rectangle {
     Rectangle {
         width: 10
         height: 10
-        color: Theme.dashboardSurface
+        color: Theme.surfaceLevel4
         rotation: 45
         y: root.notchOffset
         x: root.notchSide === "right" ? -5 : root.width - 5
         border.width: 1
-        border.color: Theme.dashboardLineStrong
+        border.color: Theme.hairlineStrong
         z: -1
     }
 
@@ -279,8 +304,6 @@ Rectangle {
                     Layout.preferredHeight: 32
                     radius: 8
                     color: "transparent"
-                    border.width: 1
-                    border.color: Theme.dashboardLine
                     enabled: root.peerStatus !== "offline" && root.peerStatus !== "calling"
                     opacity: enabled ? 1 : 0.5
 
@@ -319,8 +342,6 @@ Rectangle {
                     Layout.preferredHeight: 32
                     radius: 8
                     color: "transparent"
-                    border.width: 1
-                    border.color: Theme.dashboardLine
 
                     RowLayout {
                         anchors.fill: parent

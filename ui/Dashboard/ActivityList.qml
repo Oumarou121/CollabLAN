@@ -32,6 +32,17 @@ ColumnLayout {
                 font.family: Theme.fontFamily
             }
 
+            // Résumé contextuel (priorité 11 du brief), même logique que
+            // TransferList : donner du contexte sans ajouter de carte.
+            Label {
+                text: root.activities.length > 0
+                      ? qsTr("Aujourd'hui \u00B7 %1 événement%2").arg(root.activities.length).arg(root.activities.length > 1 ? "s" : "")
+                      : ""
+                color: Theme.dashboardInkTertiary
+                font.pixelSize: 12
+                font.family: Theme.fontFamily
+            }
+
             Item { Layout.fillWidth: true }
 
             Button {
@@ -87,6 +98,8 @@ ColumnLayout {
                     result: modelData.result || ""
                     resultBadge: modelData.resultBadge || ""
                     timestamp: modelData.timestamp || new Date()
+                    isFirst: index === 0
+                    isLast: index === root.activities.length - 1
                 }
             }
         }

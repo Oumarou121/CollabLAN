@@ -29,7 +29,7 @@ ColumnLayout {
             text: qsTr("À traiter")
             color: Theme.dashboardInk
             font.pixelSize: 15
-            font.bold: true
+            font.weight: Theme.weightSemibold
             font.family: Theme.fontFamily
         }
 
@@ -164,7 +164,7 @@ ColumnLayout {
                                     text: modelData.title || ""
                                     color: Theme.dashboardInk
                                     font.pixelSize: 13
-                                    font.bold: true
+                                    font.weight: Theme.weightSemibold
                                     font.family: Theme.fontFamily
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
@@ -198,7 +198,7 @@ ColumnLayout {
                             font.pixelSize: 12
                             font.family: Theme.fontFamily
                             background: Rectangle {
-                                color: parent.hovered ? "#F5F9F9" : "transparent"
+                                color: parent.hovered ? Theme.surfaceLevel3 : "transparent"
                                 radius: 6
                             }
                             contentItem: Label {
@@ -212,19 +212,22 @@ ColumnLayout {
                             onClicked: root.actionRequested(modelData, "examine")
                         }
 
-                        // Badge urgence
+                        // Badge urgence - soft/texte plutôt qu'aplat coloré
+                        // (priorité 18 du brief : la couleur signale, elle
+                        // ne décore pas).
                         Rectangle {
-                            Layout.preferredWidth: 90
-                            Layout.preferredHeight: 24
-                            radius: 12
-                            color: actionColor
+                            implicitWidth: urgencyLabelText.implicitWidth + 18
+                            Layout.preferredHeight: 22
+                            radius: Theme.radiusPill
+                            color: actionColorSoft
 
                             Label {
+                                id: urgencyLabelText
                                 anchors.centerIn: parent
                                 text: urgencyLabel
-                                color: Theme.dashboardSurface
+                                color: actionColor
                                 font.pixelSize: 11
-                                font.bold: true
+                                font.weight: Theme.weightSemibold
                                 font.family: Theme.fontFamily
                             }
                         }
@@ -256,7 +259,7 @@ ColumnLayout {
                 text: qsTr("Rien à traiter")
                 color: Theme.dashboardInkTertiary
                 font.pixelSize: 14
-                font.bold: true
+                font.weight: Theme.weightSemibold
                 font.family: Theme.fontFamily
                 Layout.alignment: Qt.AlignHCenter
             }

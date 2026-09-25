@@ -518,10 +518,14 @@ Rectangle {
                     var dx = (x - centerX) / maskRx
                     var dy = (y - centerY) / maskRy
                     var d = Math.sqrt(dx * dx + dy * dy)
-                    var alpha = (1 - d) * 0.14
-                    if (alpha <= 0.004) continue
+                    // Grille rendue presque subliminale (priorité 5 du brief) :
+                    // alpha divisé par ~2 et couleur liée à l'encre du thème
+                    // (plutôt qu'un bleu fixe illisible en mode sombre).
+                    var alpha = (1 - d) * 0.065
+                    if (alpha <= 0.003) continue
                     ctx.beginPath()
-                    ctx.fillStyle = "rgba(11,92,112," + alpha.toFixed(3) + ")"
+                    var gridInk = Theme.darkMode ? "255,255,255" : "21,34,43"
+                    ctx.fillStyle = "rgba(" + gridInk + "," + alpha.toFixed(3) + ")"
                     ctx.arc(x, y, 1, 0, 2 * Math.PI)
                     ctx.fill()
                 }

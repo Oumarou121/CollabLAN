@@ -15,6 +15,19 @@ ColumnLayout {
     property var transfers: []
     property bool loading: false
 
+    // Deduction actif/historique à partir de state (repli sur status) -
+    // meme logique que TransferRow.effectiveState, pour que le regroupement
+    // et le rendu de chaque ligne restent cohérents (priorité 2 du brief).
+    function isTransferActive(t) {
+        const s = t.state && t.state.length > 0 ? t.state : ({
+            "En cours": "in_progress", "Terminé": "completed", "Échoué": "failed",
+            "Annulé": "cancelled", "Interrompu": "interrupted"
+        }[t.status] || "in_progress")
+        return s === "in_progress"
+    }
+    readonly property var activeTransfers: root.transfers.filter(isTransferActive)
+    readonly property var historyTransfers: root.transfers.filter(t => !isTransferActive(t))
+
     signal detailsRequested(var transfer)
     signal openLocationRequested(var transfer)
     signal retryRequested(var transfer)
@@ -37,8 +50,18 @@ ColumnLayout {
                 font.family: Theme.fontFamily
             }
 
+            // Résumé contextuel (priorité 11 du brief) : nombre de récents
+            // + nombre en cours, plutôt qu'un seul compteur trompeur.
             Label {
-                text: root.transfers.length > 0 ? (root.transfers.length + " en cours") : ""
+                text: {
+                    if (root.transfers.length === 0) return ""
+                    const parts = []
+                    if (root.historyTransfers.length > 0)
+                        parts.push(root.historyTransfers.length + " récent" + (root.historyTransfers.length > 1 ? "s" : ""))
+                    if (root.activeTransfers.length > 0)
+                        parts.push(root.activeTransfers.length + " en cours")
+                    return parts.join(" \u00B7 ")
+                }
                 color: Theme.dashboardInkTertiary
                 font.pixelSize: 12
                 font.family: Theme.fontFamily
@@ -88,10 +111,24 @@ ColumnLayout {
 
         ColumnLayout {
             width: parent.width
-            spacing: 0
+            spacing: 4
+
+            // Transferts actifs - mis en avant (priorité 2 du brief) :
+            // le dashboard doit raconter ce qui se passe maintenant, pas
+            // seulement afficher un historique.
+            Label {
+                visible: root.activeTransfers.length > 0
+                Layout.fillWidth: true
+                Layout.topMargin: 2
+                text: qsTr("Transferts actifs")
+                color: Theme.dashboardInkTertiary
+                font.pixelSize: 11
+                font.bold: true
+                font.family: Theme.fontFamily
+            }
 
             Repeater {
-                model: root.transfers
+                model: root.activeTransfers
                 delegate: TransferRow {
                     Layout.fillWidth: true
                     fileName: modelData.fileName || ""
@@ -101,6 +138,40 @@ ColumnLayout {
                     transferred: modelData.transferred || 0
                     total: modelData.total || 0
                     status: modelData.status || "En cours"
+                    state: modelData.state || ""
+                    timestamp: modelData.timestamp || ""
+                    isIncoming: modelData.isIncoming || false
+
+                    onDetailsRequested: root.detailsRequested(modelData)
+                    onOpenLocationRequested: root.openLocationRequested(modelData)
+                    onRetryRequested: root.retryRequested(modelData)
+                }
+            }
+
+            Label {
+                visible: root.activeTransfers.length > 0 && root.historyTransfers.length > 0
+                Layout.fillWidth: true
+                Layout.topMargin: 10
+                text: qsTr("Historique récent")
+                color: Theme.dashboardInkTertiary
+                font.pixelSize: 11
+                font.bold: true
+                font.family: Theme.fontFamily
+            }
+
+            Repeater {
+                model: root.historyTransfers
+                delegate: TransferRow {
+                    Layout.fillWidth: true
+                    fileName: modelData.fileName || ""
+                    peerName: modelData.peerName || ""
+                    address: modelData.address || ""
+                    progress: modelData.progress || 0
+                    transferred: modelData.transferred || 0
+                    total: modelData.total || 0
+                    status: modelData.status || "En cours"
+                    state: modelData.state || ""
+                    timestamp: modelData.timestamp || ""
                     isIncoming: modelData.isIncoming || false
 
                     onDetailsRequested: root.detailsRequested(modelData)

@@ -556,11 +556,10 @@ Item {
                             Label {
                                 text: qsTr("Bonjour, ") + (root.username || "")
                                 color: Theme.dashboardInk
-                                font.pixelSize: 26
-                                font.bold: true
-                                font.weight: Font.Medium
+                                font.pixelSize: 27
+                                font.weight: Theme.weightSemibold
                                 font.family: Theme.fontFamily
-                                font.letterSpacing: -0.52
+                                font.letterSpacing: -0.54
                                 lineHeight: 32
                                 lineHeightMode: Text.FixedHeight
                             }
@@ -573,40 +572,42 @@ Item {
 
                                 // .sp1 : largeur auto (padding 9/11), pas de
                                 // largeur fixe qui tronquerait un libellé long
-                                Rectangle {
-                                    Layout.preferredHeight: 26
-                                    Layout.preferredWidth: sp1Row.implicitWidth + 20
-                                    radius: 13
-                                    color: Theme.dashboardSuccessSoft
+                                // Statut serveur traité comme information contextuelle
+                                // discrète (pastille + libellé), plus comme un badge
+                                // "alerte" : poids medium au lieu de bold, fond très
+                                // légèrement teinté.
+                                RowLayout {
+                                    spacing: 7
+                                    Layout.alignment: Qt.AlignVCenter
 
-                                    RowLayout {
-                                        id: sp1Row
-                                        anchors.centerIn: parent
-                                        spacing: 7
+                                    Rectangle {
+                                        Layout.preferredWidth: 6
+                                        Layout.preferredHeight: 6
+                                        radius: 3
+                                        color: Theme.dashboardSuccess
+                                    }
 
-                                        Rectangle {
-                                            Layout.preferredWidth: 7
-                                            Layout.preferredHeight: 7
-                                            radius: 3.5
-                                            color: Theme.dashboardSuccess
-                                        }
-
-                                        Label {
-                                            text: root.serverStatusLabel
-                                            color: Theme.dashboardSuccessText
-                                            font.pixelSize: 12
-                                            font.bold: true
-                                            font.family: Theme.fontFamily
-                                        }
+                                    Label {
+                                        text: root.serverStatusLabel
+                                        color: Theme.dashboardInkSecondary
+                                        font.pixelSize: 13
+                                        font.weight: Theme.weightMedium
+                                        font.family: Theme.fontFamily
                                     }
                                 }
 
+                                Rectangle {
+                                    Layout.preferredWidth: 1
+                                    Layout.preferredHeight: 12
+                                    color: Theme.dashboardLine
+                                    Layout.alignment: Qt.AlignVCenter
+                                }
+
                                 // <span><b>N</b> postes en ligne</span>
-                                // Valeur en gras + libelle, en deux Label separes plutot
-                                // qu'en RichText avec une couleur figee : la valeur suit
-                                // desormais Theme.dashboardInk (donc le mode sombre) au
-                                // lieu de rester en #15222B (encre claire) quel que soit
-                                // le theme actif.
+                                // Valeur mise en avant par le poids (semibold) plutôt
+                                // que par une taille plus grande, libellé en tertiaire :
+                                // information contextuelle secondaire, pas un compteur
+                                // "hero".
                                 Row {
                                     spacing: 4
                                     Layout.alignment: Qt.AlignVCenter
@@ -614,14 +615,14 @@ Item {
                                     Label {
                                         text: root.peersCount
                                         color: Theme.dashboardInk
-                                        font.pixelSize: 14
-                                        font.bold: true
+                                        font.pixelSize: 13
+                                        font.weight: Theme.weightSemibold
                                         font.family: Theme.fontFamily
                                     }
                                     Label {
                                         text: qsTr("postes en ligne")
-                                        color: Theme.dashboardInkSecondary
-                                        font.pixelSize: 14
+                                        color: Theme.dashboardInkTertiary
+                                        font.pixelSize: 13
                                         font.family: Theme.fontFamily
                                     }
                                 }
@@ -634,14 +635,14 @@ Item {
                                     Label {
                                         text: root.activeTransferCount
                                         color: Theme.dashboardInk
-                                        font.pixelSize: 14
-                                        font.bold: true
+                                        font.pixelSize: 13
+                                        font.weight: Theme.weightSemibold
                                         font.family: Theme.fontFamily
                                     }
                                     Label {
                                         text: qsTr("transferts en cours")
-                                        color: Theme.dashboardInkSecondary
-                                        font.pixelSize: 14
+                                        color: Theme.dashboardInkTertiary
+                                        font.pixelSize: 13
                                         font.family: Theme.fontFamily
                                     }
                                 }
@@ -700,10 +701,10 @@ Item {
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
                     Layout.topMargin: 14
-                    color: Theme.dashboardSurface
+                    color: Theme.surfaceLevel2
                     border.width: 1
-                    border.color: Theme.dashboardLine
-                    radius: 12
+                    border.color: Theme.hairline
+                    radius: 14
 
                     // Surface interne, inscrite DANS la bordure de 1px : les enfants
                     // ont ainsi un rayon de 11px (12 - 1), concentrique à la bordure.

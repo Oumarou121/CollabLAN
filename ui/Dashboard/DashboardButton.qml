@@ -21,6 +21,12 @@ Button {
     property bool active: false
     property int controlHeight: 36
     property string tooltip: ""
+    // Pour un bouton "ghost" déjà posé sur une ligne qui a elle-même un
+    // fond de survol (TransferRow, ActivityRow...) : évite un second
+    // aplat (gris) qui se superpose au fond de la ligne (blanc/surface)
+    // et donne cet effet de bloc flottant bizarre. Seule la couleur du
+    // texte/icône bouge encore au survol.
+    property bool quiet: false
 
     readonly property bool isPrimary: variant === "primary"
     readonly property int sidePadding: controlHeight >= 36 ? 14 : 12
@@ -47,6 +53,8 @@ Button {
             return (root.isPrimary || root.variant === "secondary") ? Theme.dashboardSurfaceAlt : "transparent"
         if (root.active)
             return Theme.dashboardPrimarySoft
+        if (root.quiet && root.variant === "ghost")
+            return "transparent"
         switch (root.variant) {
         case "primary": return root.hovered || root.down ? Theme.dashboardPrimaryHover : Theme.dashboardPrimary
         case "soft":    return root.hovered ? Theme.dashboardPrimaryMuted : Theme.dashboardPrimarySoft

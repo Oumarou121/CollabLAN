@@ -80,20 +80,33 @@ Rectangle {
         }
     }
 
+    // Modernisation : ligne de flux plutôt que carte administrative
+    // (priorité 11 du brief) - plus de rectangle blanc + bordure par
+    // transfert ; la séparation vient du hairline inférieur + du léger
+    // changement de surface au survol.
     implicitHeight: cardColumn.implicitHeight + Theme.spacingMedium * 2
-    radius: Theme.radiusMedium
-    color: hoverArea.containsMouse ? Theme.dashboardHover : Theme.dashboardSurface
-    border.width: 1
-    border.color: Theme.dashboardLine
+    radius: 10
+    color: hoverArea.containsMouse ? Theme.surfaceLevel3 : "transparent"
 
     Behavior on color { ColorAnimation { duration: 100 } }
+
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 1
+        color: Theme.hairline
+    }
 
     ColumnLayout {
         id: cardColumn
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        anchors.margins: Theme.spacingMedium
+        anchors.leftMargin: Theme.spacingSmall
+        anchors.rightMargin: Theme.spacingSmall
+        anchors.topMargin: Theme.spacingMedium
+        anchors.bottomMargin: Theme.spacingMedium
         spacing: Theme.spacingSmall
 
         RowLayout {
@@ -137,8 +150,8 @@ Rectangle {
                 Label {
                     text: root.fileName
                     color: Theme.dashboardInk
-                    font.pixelSize: 14
-                    font.bold: true
+                    font.pixelSize: 15
+                    font.weight: Theme.weightSemibold
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
                     Layout.fillWidth: true
@@ -149,14 +162,14 @@ Rectangle {
 
                     Label {
                         text: root.isIncoming ? qsTr("Réception") : qsTr("Envoi")
-                        color: Theme.dashboardInkSecondary
+                        color: Theme.dashboardInkTertiary
                         font.pixelSize: 12
                         font.family: Theme.fontFamily
                     }
 
                     LineIcon {
                         path: root.isIncoming ? Icons.arrowDownLeft : Icons.arrowUpRight
-                        color: Theme.dashboardPrimary
+                        color: Theme.dashboardInkTertiary
                         size: 10
                         strokeWidth: 2
                         anchors.verticalCenter: parent.verticalCenter
@@ -164,9 +177,9 @@ Rectangle {
 
                     Label {
                         text: root.peerName
-                        color: Theme.dashboardInk
+                        color: Theme.dashboardInkSecondary
                         font.pixelSize: 12
-                        font.bold: true
+                        font.weight: Theme.weightMedium
                         font.family: Theme.fontFamily
                     }
                 }
@@ -259,8 +272,13 @@ Rectangle {
                 elide: Text.ElideRight
             }
 
+            // Actions quasi invisibles jusqu'au survol de la ligne (priorité
+            // 19 du brief), sauf "Réessayer" sur un échec qui reste visible
+            // (action correctrice à ne pas cacher).
             Row {
                 spacing: 6
+                opacity: hoverArea.containsMouse || root.effectiveState === "failed" ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 120 } }
 
                 DashboardButton {
                     variant: "ghost"

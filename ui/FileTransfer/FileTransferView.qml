@@ -967,9 +967,9 @@ Item {
                     Layout.topMargin: 20
                     implicitHeight: emptyColumn.implicitHeight + 96
                     radius: Theme.radiusMedium
-                    color: Theme.dashboardSurface
+                    color: Theme.surfaceLevel2
                     border.width: 1
-                    border.color: Theme.dashboardLine
+                    border.color: Theme.hairline
 
                     ColumnLayout {
                         id: emptyColumn
@@ -1031,10 +1031,25 @@ Item {
                     columnSpacing: 16
                     rowSpacing: 8
 
+                    // Filtres traités comme une navigation segmentée : un seul
+                    // "rail" (surfaceLevel2) portant les options, au lieu d'une
+                    // rangée de pills individuellement bordées (priorité 15 du
+                    // brief). Seul le filtre actif porte une pastille pleine ;
+                    // les autres restent du texte nu, sans contour.
                     Row {
                         Layout.fillWidth: true
                         Layout.alignment: Qt.AlignVCenter
-                        spacing: 8
+                        spacing: 2
+                        padding: 3
+                        topPadding: 3
+
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: -3
+                            radius: Theme.radiusPill
+                            color: Theme.surfaceLevel2
+                            z: -1
+                        }
 
                         Repeater {
                             model: [
@@ -1054,13 +1069,11 @@ Item {
                                 readonly property color activeText: Theme.darkMode ? Theme.dashboardBackground
                                                                                    : Theme.dashboardPrimaryText
 
-                                height: 28
-                                width: chipRow.implicitWidth + 24
+                                height: 26
+                                width: chipRow.implicitWidth + 20
                                 radius: Theme.radiusPill
-                                color: chip.isActive ? Theme.dashboardPrimary : Theme.dashboardSurface
-                                border.width: 1
-                                border.color: chip.isActive ? Theme.dashboardPrimary
-                                              : (chip.hovered ? Theme.dashboardLineStrong : Theme.dashboardLine)
+                                color: chip.isActive ? Theme.dashboardPrimary
+                                       : (chip.hovered ? Theme.surfaceLevel3 : "transparent")
                                 Behavior on color { ColorAnimation { duration: 100 } }
 
                                 Accessible.role: Accessible.Button
@@ -1264,9 +1277,7 @@ Item {
                             Layout.preferredWidth: page.peerCardWidth
                             Layout.preferredHeight: page.peerCardHeight
                             radius: Theme.radiusMedium
-                            color: Theme.dashboardSurface
-                            border.width: 1
-                            border.color: Theme.dashboardLine
+                            color: Theme.surfaceLevel2
                             SkeletonLine { x: 12; y: 12; width: 36; height: 36; radius: 18 }
                             SkeletonLine { x: 58; y: 16; width: (parent.width - 70) * 0.7 }
                             SkeletonLine { x: 58; y: 36; width: (parent.width - 70) * 0.45 }
@@ -1351,9 +1362,9 @@ Item {
                     Layout.topMargin: 8
                     Layout.preferredHeight: panelColumn.implicitHeight + 2
                     radius: Theme.radiusMedium
-                    color: Theme.dashboardSurface
+                    color: Theme.surfaceLevel2
                     border.width: 1
-                    border.color: Theme.dashboardLine
+                    border.color: Theme.hairline
 
                     readonly property bool showDateColumn: width >= 780
                     readonly property bool showSizeColumn: width >= 600
@@ -1483,9 +1494,9 @@ Item {
                                     readonly property bool hovered: tileHover.hovered
 
                                     radius: Theme.radiusMedium
-                                    color: tile.hovered ? Theme.dashboardSurfaceAlt : Theme.dashboardSurface
+                                    color: tile.hovered ? Theme.surfaceLevel3 : Theme.surfaceLevel2
                                     border.width: 1
-                                    border.color: tile.hovered ? Theme.dashboardLineStrong : Theme.dashboardLine
+                                    border.color: Theme.hairline
 
                                     HoverHandler { id: tileHover }
 
@@ -1719,10 +1730,14 @@ Item {
                 z: 30
                 visible: root.panelOpen || panel.x < panelHost.width
 
+                // Voile discret (priorité 20 du brief) : plus léger que
+                // Theme.overlay (réservé aux modales/dialogues bloquants),
+                // pour rester cohérent avec un drawer contextuel plutôt
+                // qu'un assombrissement complet de l'application.
                 Rectangle {
                     anchors.fill: parent
                     color: Theme.overlay
-                    opacity: root.panelOpen ? 1 : 0
+                    opacity: root.panelOpen ? 0.55 : 0
                     Behavior on opacity { NumberAnimation { duration: 160 } }
 
                     MouseArea {

@@ -31,14 +31,22 @@ Column {
         height: 50
     }
 
-    // Header du tableau
+    // Header du tableau - modernisation (priorité 17 du brief) : plus de
+    // bandeau plein + bordure, juste un hairline inférieur et un libellé
+    // discret (comme l'en-tête "Nom/Taille/Statut/Date" de Transfer Files).
     Rectangle {
         id: header
         width: parent.width
-        height: 40
-        color: Theme.dashboardSurfaceAlt
-        border.width: 1
-        border.color: Theme.dashboardLine
+        height: 34
+        color: "transparent"
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 1
+            color: Theme.hairline
+        }
 
         RowLayout {
             anchors.fill: parent
@@ -50,8 +58,8 @@ Column {
                 Layout.preferredWidth: 200
                 text: qsTr("Poste")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 12
-                font.bold: true
+                font.pixelSize: 11
+                font.weight: Theme.weightSemibold
                 font.family: Theme.fontFamily
             }
 
@@ -59,8 +67,8 @@ Column {
                 Layout.preferredWidth: 140
                 text: qsTr("Adresse IP")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 12
-                font.bold: true
+                font.pixelSize: 11
+                font.weight: Theme.weightSemibold
                 font.family: Theme.fontFamily
             }
 
@@ -68,8 +76,8 @@ Column {
                 Layout.preferredWidth: 120
                 text: qsTr("Statut")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 12
-                font.bold: true
+                font.pixelSize: 11
+                font.weight: Theme.weightSemibold
                 font.family: Theme.fontFamily
             }
 
@@ -81,8 +89,8 @@ Column {
                 Layout.preferredWidth: 80
                 text: qsTr("Actions")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 12
-                font.bold: true
+                font.pixelSize: 11
+                font.weight: Theme.weightSemibold
                 font.family: Theme.fontFamily
             }
         }
@@ -100,17 +108,14 @@ Column {
             spacing: 0
 
             delegate: Rectangle {
+                id: rowRoot
                 width: peerListView.width
                 height: 56
-                color: "transparent"
-                border.width: 0
-                border.color: Theme.dashboardLine
-
-                // Fond alterné pour les lignes
-                Rectangle {
-                    anchors.fill: parent
-                    color: index % 2 === 0 ? Theme.dashboardSurface : Theme.dashboardSurfaceAlt
-                }
+                // Modernisation (priorité 17) : plus de zébrage alterné -
+                // toutes les lignes partagent le même fond, séparées par un
+                // hairline, avec une surface de survol pour l'interaction.
+                color: rowHover.hovered ? Theme.surfaceLevel3 : "transparent"
+                Behavior on color { ColorAnimation { duration: 100 } }
 
                 // Bordure inférieure
                 Rectangle {
@@ -118,8 +123,10 @@ Column {
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     height: 1
-                    color: Theme.dashboardLine
+                    color: Theme.hairline
                 }
+
+                HoverHandler { id: rowHover }
 
                 // Zone de clic sur toute la ligne (ouvre le detail du poste) :
                 // declaree AVANT les actions ci-dessous pour que les boutons
@@ -157,13 +164,13 @@ Column {
                         }
                     }
 
-                    // Nom du poste
+                    // Nom du poste - dominant (priorité 8 du brief)
                     Label {
                         Layout.preferredWidth: 200
                         text: peerName
                         color: Theme.dashboardInk
-                        font.pixelSize: 13
-                        font.bold: true
+                        font.pixelSize: 14
+                        font.weight: Theme.weightSemibold
                         font.family: Theme.fontFamily
                         elide: Text.ElideRight
                     }
@@ -178,20 +185,30 @@ Column {
                         elide: Text.ElideRight
                     }
 
-                    // Statut
+                    // Statut - badge doux, moins "pastille lourde" (priorité 18)
                     Rectangle {
-                        Layout.preferredWidth: 100
-                        Layout.preferredHeight: 24
-                        radius: 12
+                        Layout.preferredWidth: statusRowContent.implicitWidth + 20
+                        Layout.preferredHeight: 22
+                        radius: Theme.radiusPill
                         color: statusBackgroundColor
 
-                        Label {
+                        Row {
+                            id: statusRowContent
                             anchors.centerIn: parent
-                            text: statusLabel
-                            color: statusTextColor
-                            font.pixelSize: 11
-                            font.bold: true
-                            font.family: Theme.fontFamily
+                            spacing: 5
+
+                            Rectangle {
+                                width: 6; height: 6; radius: 3
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: statusTextColor
+                            }
+                            Label {
+                                text: statusLabel
+                                color: statusTextColor
+                                font.pixelSize: 11
+                                font.weight: Theme.weightSemibold
+                                font.family: Theme.fontFamily
+                            }
                         }
                     }
 
@@ -199,82 +216,90 @@ Column {
                         Layout.fillWidth: true
                     }
 
-                    // Actions
+                    // Actions - boutons ghost sans bordure, révélés par une
+                    // surface de survol plutôt qu'un contour permanent
+                    // (priorité 6/19 du brief), quasi invisibles jusqu'au
+                    // survol de la ligne.
                     Row {
-                        spacing: 8
+                        spacing: 4
+                        opacity: rowHover.hovered ? 1 : 0.35
+                        Behavior on opacity { NumberAnimation { duration: 120 } }
 
                         Rectangle {
-                            width: 32
-                            height: 32
-                            radius: 6
-                            color: "transparent"
-                            border.width: 1
-                            border.color: isOnline ? Theme.dashboardLine : "#E4E8E7"
+                            id: msgBtn
+                            width: 30
+                            height: 30
+                            radius: 8
+                            color: msgHover.hovered && enabled ? Theme.surfaceLevel4 : "transparent"
                             enabled: isOnline
-                            opacity: enabled ? 1 : 0.5
+                            opacity: enabled ? 1 : 0.4
 
                             Text {
                                 anchors.centerIn: parent
                                 text: "\uf0e0"
-                                color: isOnline ? Theme.dashboardPrimary : "#B4C1C5"
+                                color: isOnline ? Theme.dashboardPrimary : Theme.dashboardInkTertiary
                                 font.pixelSize: 13
                                 font.family: "FontAwesome"
                             }
 
                             MouseArea {
+                                id: msgHover
                                 anchors.fill: parent
+                                hoverEnabled: true
                                 cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: if (enabled) root.messageRequested(getPeerData())
+                                onClicked: if (msgBtn.enabled) root.messageRequested(getPeerData())
                             }
                         }
 
                         Rectangle {
-                            width: 32
-                            height: 32
-                            radius: 6
-                            color: "transparent"
-                            border.width: 1
-                            border.color: isOnline ? Theme.dashboardLine : "#E4E8E7"
+                            id: xferBtn
+                            width: 30
+                            height: 30
+                            radius: 8
+                            color: xferHover.hovered && enabled ? Theme.surfaceLevel4 : "transparent"
                             enabled: isOnline
-                            opacity: enabled ? 1 : 0.5
+                            opacity: enabled ? 1 : 0.4
 
                             Text {
                                 anchors.centerIn: parent
                                 text: "\uf1d8"
-                                color: isOnline ? Theme.dashboardPrimary : "#B4C1C5"
+                                color: isOnline ? Theme.dashboardPrimary : Theme.dashboardInkTertiary
                                 font.pixelSize: 13
                                 font.family: "FontAwesome"
                             }
 
                             MouseArea {
+                                id: xferHover
                                 anchors.fill: parent
+                                hoverEnabled: true
                                 cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: if (enabled) root.transferRequested(getPeerData())
+                                onClicked: if (xferBtn.enabled) root.transferRequested(getPeerData())
                             }
                         }
 
                         Rectangle {
-                            width: 32
-                            height: 32
-                            radius: 6
-                            color: "transparent"
-                            border.width: 1
-                            border.color: isOnline ? Theme.dashboardLine : "#E4E8E7"
+                            id: callBtn
+                            width: 30
+                            height: 30
+                            radius: 8
+                            color: callHover.hovered && enabled ? Theme.surfaceLevel4 : "transparent"
                             enabled: isOnline && status !== "calling"
-                            opacity: enabled ? 1 : 0.5
+                            opacity: enabled ? 1 : 0.4
 
                             Text {
                                 anchors.centerIn: parent
                                 text: "\uf095"
-                                color: isOnline ? Theme.dashboardPrimary : "#B4C1C5"
+                                color: isOnline ? Theme.dashboardPrimary : Theme.dashboardInkTertiary
                                 font.pixelSize: 13
                                 font.family: "FontAwesome"
                             }
 
                             MouseArea {
+                                id: callHover
                                 anchors.fill: parent
+                                hoverEnabled: true
                                 cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: if (enabled) root.callRequested(getPeerData())
+                                onClicked: if (callBtn.enabled) root.callRequested(getPeerData())
                             }
                         }
                     }

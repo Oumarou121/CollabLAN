@@ -26,16 +26,54 @@ Rectangle {
     property string result: ""
     property string resultBadge: ""
     property var timestamp: new Date()
+    // Position dans la liste - pilote la timeline légère ci-dessous
+    // (priorités 3/4 du brief) : le fil ne dépasse pas de la première
+    // ni de la dernière entrée.
+    property bool isFirst: false
+    property bool isLast: false
 
     signal clicked()
 
-    implicitHeight: contentRow.implicitHeight + Theme.spacingSmall * 2
-    radius: Theme.radiusMedium
-    color: hoverArea.containsMouse ? Theme.dashboardHover : Theme.dashboardSurface
-    border.width: 1
-    border.color: Theme.dashboardLine
+    // Modernisation : flux d'activité compact plutôt que colonne de cards
+    // administratives (priorité 12 du brief) - plus de bordure par entrée,
+    // séparation par hairline + surface au survol, plus compact.
+    implicitHeight: contentRow.implicitHeight + Theme.spacingSmall * 1.5
+    radius: 8
+    color: hoverArea.containsMouse ? Theme.surfaceLevel3 : "transparent"
 
     Behavior on color { ColorAnimation { duration: 100 } }
+
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 1
+        color: Theme.hairline
+    }
+
+    // ---- Timeline très légère (priorités 3/4 du brief) -------------------
+    // Un simple fil vertical centré sous l'icône d'événement, qui traverse
+    // les lignes successives : les icônes teintées servent de "nœuds", le
+    // fil (quasi invisible) fait le lien entre elles. Interrompu avant la
+    // première entrée et après la dernière.
+    Rectangle {
+        id: timelineTrack
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: Theme.spacingSmall + 16 - width / 2
+        width: 1.5
+        color: "transparent"
+        z: -1
+
+        Rectangle {
+            width: parent.width
+            color: Theme.hairlineStrong
+            property real midY: parent.height / 2
+            y: root.isFirst ? midY : 0
+            height: (root.isLast ? midY : parent.height) - y
+        }
+    }
 
     // ---- Palette par type d'evenement (icone + badge par defaut) --------
     readonly property color eventSoft: {
@@ -144,18 +182,19 @@ Rectangle {
                 Label {
                     text: root.actor || root.eventLabel
                     color: Theme.dashboardInk
-                    font.pixelSize: 14
-                    font.bold: true
+                    font.pixelSize: 13
+                    font.weight: Theme.weightSemibold
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
 
+                // Heure traitée comme métadonnée très discrète (priorité 12)
                 Label {
                     text: Qt.formatTime(root.timestamp, "hh:mm")
                     color: Theme.dashboardInkTertiary
-                    font.pixelSize: 11
-                    font.weight: Font.Medium
+                    font.pixelSize: 10
+                    opacity: 0.85
                     font.family: Theme.fontFamily
                 }
             }

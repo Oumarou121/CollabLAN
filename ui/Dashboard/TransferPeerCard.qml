@@ -34,16 +34,27 @@ Rectangle {
 
     readonly property bool hovered: mouse.containsMouse
 
+    // Modernisation (priorité 16 du brief) : plus de "border + radius +
+    // avatar + texte" générique. Le repos et le survol se distinguent par
+    // surface uniquement (pas de contour) ; la sélection est signalée par
+    // un liseré d'accent à gauche plutôt qu'une bordure pleine 2px.
     implicitHeight: 100
     radius: Theme.radiusMedium
     color: root.selected ? Theme.dashboardPrimarySoft
-                         : (root.hovered ? Theme.dashboardSurfaceAlt : Theme.dashboardSurface)
-    border.width: root.selected ? 2 : 1
-    border.color: root.selected ? Theme.dashboardPrimary
-                                : (root.hovered ? Theme.dashboardLineStrong : Theme.dashboardLine)
+                         : (root.hovered ? Theme.surfaceLevel3 : Theme.surfaceLevel2)
+    border.width: 0
 
     Behavior on color { ColorAnimation { duration: 100 } }
-    Behavior on border.color { ColorAnimation { duration: 100 } }
+
+    Rectangle {
+        visible: root.selected
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 3
+        radius: 1.5
+        color: Theme.dashboardPrimary
+    }
 
     Accessible.role: Accessible.Button
     Accessible.name: root.peerLabel
@@ -154,7 +165,7 @@ Rectangle {
             visible: root.showLastTransfer
             Layout.fillWidth: true
             Layout.preferredHeight: 1
-            color: root.selected ? Theme.dashboardPrimaryMuted : Theme.dashboardLine
+            color: root.selected ? Theme.dashboardPrimaryMuted : Theme.hairline
         }
 
         RowLayout {

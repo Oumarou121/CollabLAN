@@ -54,7 +54,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: root.hovered ? Theme.dashboardSurfaceAlt : "transparent"
+        color: root.hovered ? Theme.surfaceLevel3 : "transparent"
         Behavior on color { ColorAnimation { duration: 100 } }
     }
 
@@ -64,7 +64,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         height: 1
-        color: Theme.dashboardLine
+        color: Theme.hairline
     }
 
     HoverHandler { id: hover }
@@ -90,8 +90,8 @@ Item {
                 Layout.fillWidth: true
                 text: root.fileName
                 color: Theme.dashboardInk
-                font.pixelSize: 13
-                font.weight: Font.DemiBold
+                font.pixelSize: 14
+                font.weight: Theme.weightSemibold
                 font.family: Theme.fontFamily
                 elide: Text.ElideMiddle
                 maximumLineCount: 1

@@ -34,11 +34,25 @@ Popup {
     x: (parent ? parent.width - width : 0) / 2
     y: (parent ? parent.height - implicitHeight : 0) / 2
 
+    // Popup = élément réellement flottant : ombre et radius plus marqués
+    // admis ici (priorité 23 du brief).
     background: Rectangle {
-        radius: Theme.radiusMedium
-        color: Theme.dashboardSurface
+        radius: Theme.radiusLarge
+        color: Theme.surfaceLevel4
         border.width: 1
-        border.color: Theme.dashboardLine
+        border.color: Theme.hairlineStrong
+
+        Rectangle {
+            z: -1
+            anchors.left: parent.left; anchors.right: parent.right
+            anchors.top: parent.top; anchors.bottom: parent.bottom
+            anchors.margins: -8
+            anchors.topMargin: -2
+            anchors.bottomMargin: -14
+            radius: parent.radius + 6
+            color: Theme.elevationShadow
+            opacity: 0.55
+        }
     }
 
     Overlay.modal: Rectangle { color: "#00000066" }

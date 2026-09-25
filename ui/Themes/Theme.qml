@@ -176,4 +176,31 @@ QtObject {
     // Ombres dashboard (limitées selon la maquette)
     readonly property color dashboardShadow: darkMode ? "#00000040" : "#1A1D2112"
     readonly property color dashboardShadowSoft: darkMode ? "#00000020" : "#1A1D2108"
+
+    // ---- Hiérarchie de surfaces (modernisation Dashboard/Transferts) ------
+    // 4 niveaux de profondeur obtenus par contraste + spacing plutôt que par
+    // bordures systématiques. À utiliser à la place de card générique
+    // "rectangle blanc + border + radius" partout où c'est possible.
+    readonly property color surfaceLevel1: dashboardBackground                 // fond général de l'app
+    readonly property color surfaceLevel2: darkMode ? "#181D20" : "#F5F8F7"    // surfaces principales, très peu différenciées du fond
+    readonly property color surfaceLevel3: darkMode ? "#232830" : "#FFFFFF"    // éléments interactifs / flottants (lignes hover, chips actifs)
+    readonly property color surfaceLevel4: darkMode ? "#262C35" : "#FFFFFF"    // panels contextuels, drawer, tooltip, peer panel
+
+    // Séparateurs très discrets (au lieu de border pleine autour de tout)
+    readonly property color hairline: darkMode ? "#FFFFFF12" : "#15222B0F"
+    readonly property color hairlineStrong: darkMode ? "#FFFFFF1E" : "#15222B1C"
+
+    // Ombres réservées aux surfaces réellement flottantes (drawer, popup,
+    // tooltip, panneau peer) - jamais utilisées pour une simple card de liste.
+    readonly property color elevationShadow: darkMode ? "#00000055" : "#15222B1A"
+
+    // Échelle de spacing "respiration" un cran au-dessus de spacingXl,
+    // utile pour les zones d'introduction (Bonjour) et le drawer.
+    readonly property int spacingXxl: 40
+
+    // Poids de police pour renforcer la hiérarchie (dominant / secondaire / discret)
+    readonly property int weightRegular: Font.Normal
+    readonly property int weightMedium: Font.Medium
+    readonly property int weightSemibold: Font.DemiBold
+    readonly property int weightBold: Font.Bold
 }

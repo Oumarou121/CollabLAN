@@ -140,6 +140,7 @@ Item {
             color: "#8A98A0"
             font.pixelSize: 15
             font.family: "FontAwesome"
+            opacity: 0.8
         }
 
         // --- Poste présent : cercle blanc + bordure colorée + cercle intérieur ---
