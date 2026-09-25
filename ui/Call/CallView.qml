@@ -43,16 +43,7 @@ Item {
     property var peers: (typeof peersModel !== "undefined") ? peersModel : null
     property var history: (typeof callHistoryModel !== "undefined") ? callHistoryModel : null
 
-    readonly property string callState: root.call ? root.call.callState : "idle"
-    readonly property bool inCall: root.callState !== "idle"
-
     signal backRequested()
-
-    // ---- Jetons locaux "portail corporate", alignes sur LoginView/
-    // HomeView/DashboardCard (meme palette navy dans toute l'app). ----
-    readonly property color blue700: Theme.darkMode ? "#3E6C99" : "#1E3A5F"
-    readonly property color blue600: Theme.darkMode ? "#4E86B8" : "#2E6BAA"
-    readonly property color blueTint: Theme.darkMode ? "#1B2531" : "#E8F1F9"
 
     // Police d'icones Font Awesome 4.7.0, memes glyphes que Home/Postes
     // connectes/Discussions - pour un rendu monochrome coherent d'un
@@ -103,12 +94,6 @@ Item {
         return (m > 0 ? (m + " min ") : "") + s + " s"
     }
 
-    function formatElapsed(seconds) {
-        const m = Math.floor(seconds / 60)
-        const s = seconds % 60
-        return (m < 10 ? "0" + m : m) + ":" + (s < 10 ? "0" + s : s)
-    }
-
     function formatDate(isoString) {
         if (!isoString)
             return ""
@@ -118,34 +103,6 @@ Item {
         return sameDay ? d.toLocaleString(Qt.locale(), "HH:mm")
                        : d.toLocaleString(Qt.locale(), "dd/MM/yyyy HH:mm")
     }
-
-    // Nom affiche pour le correspondant courant : core::CallContext ne
-    // connait que l'adresse IP (remoteAddress), donc on resout le nom via
-    // peersModel (network::PeersModel::nameForAddress) - celui-ci connait
-    // les postes actuellement detectes sur le reseau local. Repli sur
-    // l'adresse IP brute si le correspondant n'est pas (ou plus) dans la
-    // liste des postes decouverts (ex. appel recu d'un poste deja perdu).
-    readonly property string remoteDisplayName: {
-        const addr = root.call ? root.call.remoteAddress : ""
-        if (!addr)
-            return ""
-        // Force la reevaluation quand la liste de postes change (un
-        // correspondant peut etre (re)decouvert pendant que la sonnerie
-        // est deja affichee).
-        const _dep = root.peers ? root.peers.count : 0
-        const resolved = root.peers ? root.peers.nameForAddress(addr) : ""
-        return (resolved && resolved.length > 0) ? resolved : addr
-    }
-
-    // Duree ecoulee affichee pendant un appel en cours.
-    property int connectedSeconds: 0
-    Timer {
-        interval: 1000
-        repeat: true
-        running: root.callState === "connected"
-        onTriggered: root.connectedSeconds++
-    }
-    onCallStateChanged: if (callState !== "connected") root.connectedSeconds = 0
 
     Rectangle {
         anchors.fill: parent
@@ -188,16 +145,6 @@ Item {
             errorLabel.text = message
             opacity = 1
             hideErrorTimer.restart()
-        }
-    }
-
-    Connections {
-        target: root.call
-        function onErrorOccurred(message) { errorBanner.show(message) }
-        function onCallEnded(reason) {
-            if (reason === "connection-lost") {
-                errorBanner.show(qsTr("Connexion perdue avec le correspondant."))
-            }
         }
     }
 
@@ -602,234 +549,4 @@ Item {
         }
     }
 
-    // ======================================================================
-    // Appel en cours : fond assombri + carte compacte centree (pas de
-    // plein ecran, pour rester ergonomique sur un grand moniteur). Largeur
-    // adaptee aux petites fenetres via callCardWidth.
-    // ======================================================================
-    readonly property int callCardWidth: Math.min(380, root.width - Theme.spacingLarge * 2)
-
-    Rectangle {
-        id: backdrop
-        anchors.fill: parent
-        color: Theme.overlay
-        visible: opacity > 0
-        opacity: root.inCall ? 1 : 0
-        z: 20
-
-        Behavior on opacity { NumberAnimation { duration: 150 } }
-
-        // Avale les clics pour ne pas interagir avec la liste derriere.
-        MouseArea { anchors.fill: parent }
-    }
-
-    Rectangle {
-        id: callCard
-        anchors.centerIn: parent
-        width: root.callCardWidth
-        height: callCardColumn.implicitHeight + Theme.spacingXl * 2
-        radius: Theme.radiusLarge
-        color: Theme.surface
-        border.width: 1
-        border.color: Theme.border
-        visible: opacity > 0
-        opacity: root.inCall ? 1 : 0
-        scale: root.inCall ? 1 : 0.94
-        z: 21
-
-        Behavior on opacity { NumberAnimation { duration: 180 } }
-        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-
-        ColumnLayout {
-            id: callCardColumn
-            width: parent.width - Theme.spacingXl * 2
-            anchors.centerIn: parent
-            spacing: Theme.spacingMedium
-
-            // ---- Avatar avec anneaux de pulsation --------------------------
-            Item {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.preferredWidth: 132
-                Layout.preferredHeight: 132
-
-                Repeater {
-                    model: (root.callState === "calling" || root.callState === "ringing"
-                            || root.callState === "connecting") ? 2 : 0
-
-                    delegate: Rectangle {
-                        anchors.centerIn: parent
-                        width: 96
-                        height: 96
-                        radius: 48
-                        color: "transparent"
-                        border.width: 2
-                        border.color: root.blue600
-
-                        SequentialAnimation on opacity {
-                            loops: Animation.Infinite
-                            PauseAnimation { duration: index * 600 }
-                            NumberAnimation { from: 0.55; to: 0; duration: 1400; easing.type: Easing.OutQuad }
-                        }
-                        SequentialAnimation on scale {
-                            loops: Animation.Infinite
-                            PauseAnimation { duration: index * 600 }
-                            NumberAnimation { from: 1; to: 1.5; duration: 1400; easing.type: Easing.OutQuad }
-                        }
-                    }
-                }
-
-                Avatar {
-                    anchors.centerIn: parent
-                    size: 96
-                    name: root.remoteDisplayName
-                }
-            }
-
-            Label {
-                Layout.alignment: Qt.AlignHCenter
-                text: root.remoteDisplayName
-                color: Theme.text
-                font.pixelSize: Theme.fontSizeHeading
-                font.bold: true
-                font.family: Theme.fontFamily
-            }
-
-            Label {
-                Layout.alignment: Qt.AlignHCenter
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeBody
-                font.family: Theme.fontFamily
-                text: {
-                    switch (root.callState) {
-                    case "calling":    return qsTr("Appel en cours...")
-                    case "ringing":    return qsTr("Appel entrant")
-                    case "connecting": return qsTr("Connexion...")
-                    case "connected":  return root.formatElapsed(root.connectedSeconds)
-                    case "ending":     return qsTr("Fin de l'appel...")
-                    default:           return ""
-                    }
-                }
-            }
-
-            // ---- Appel entrant : accepter / refuser -------------------------
-            RowLayout {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.topMargin: Theme.spacingSmall
-                spacing: Theme.spacingLarge
-                visible: root.callState === "ringing"
-
-                CallActionButton {
-                    glyph: "\uf095"
-                    iconRotation: 135
-                    label: qsTr("Refuser")
-                    bgColor: Theme.error
-                    onClicked: root.call && root.call.hangUp()
-                }
-
-                CallActionButton {
-                    glyph: "\uf095"
-                    label: qsTr("Repondre")
-                    bgColor: Theme.success
-                    diameter: 64
-                    onClicked: root.call && root.call.acceptCall()
-                }
-            }
-
-            // ---- Appel sortant / en negociation : annuler --------------------
-            RowLayout {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.topMargin: Theme.spacingSmall
-                spacing: Theme.spacingLarge
-                visible: root.callState === "calling" || root.callState === "connecting"
-
-                CallActionButton {
-                    glyph: "\uf095"
-                    iconRotation: 135
-                    label: qsTr("Annuler")
-                    bgColor: Theme.error
-                    diameter: 64
-                    onClicked: root.call && root.call.hangUp()
-                }
-            }
-
-            // ---- Appel etabli : mute + raccrocher -----------------------------
-            RowLayout {
-                Layout.alignment: Qt.AlignHCenter
-                Layout.topMargin: Theme.spacingSmall
-                spacing: Theme.spacingLarge
-                visible: root.callState === "connected"
-
-                CallActionButton {
-                    glyph: root.call && root.call.muted ? "\uf131" : "\uf130"
-                    label: root.call && root.call.muted ? qsTr("Reactiver") : qsTr("Muet")
-                    bgColor: root.call && root.call.muted ? Theme.warning : Theme.surfaceAlt
-                    iconColor: root.call && root.call.muted ? Theme.primaryText : Theme.text
-                    onClicked: root.call && root.call.toggleMute()
-                }
-
-                CallActionButton {
-                    glyph: "\uf095"
-                    iconRotation: 135
-                    label: qsTr("Raccrocher")
-                    bgColor: Theme.error
-                    diameter: 64
-                    onClicked: root.call && root.call.hangUp()
-                }
-            }
-        }
-    }
-
-    // Bouton d'action rond (raccrocher/decrocher/mute...) avec libelle,
-    // en Font Awesome pour rester coherent avec le reste de l'application.
-    component CallActionButton: ColumnLayout {
-        id: actionBtn
-
-        property string glyph: ""
-        property string label: ""
-        property color bgColor: Theme.primary
-        property color iconColor: "#FFFFFF"
-        property int diameter: 56
-        property real iconRotation: 0
-
-        signal clicked()
-
-        spacing: Theme.spacingXs
-
-        Rectangle {
-            Layout.alignment: Qt.AlignHCenter
-            width: actionBtn.diameter
-            height: actionBtn.diameter
-            radius: width / 2
-            color: btnArea.pressed ? Qt.darker(actionBtn.bgColor, 1.15)
-                   : (btnArea.containsMouse ? Qt.lighter(actionBtn.bgColor, 1.08) : actionBtn.bgColor)
-
-            Behavior on color { ColorAnimation { duration: 100 } }
-
-            Text {
-                anchors.centerIn: parent
-                text: actionBtn.glyph
-                color: actionBtn.iconColor
-                font.family: root.iconFontFamily
-                font.pixelSize: actionBtn.diameter * 0.34
-                rotation: actionBtn.iconRotation
-            }
-
-            MouseArea {
-                id: btnArea
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: actionBtn.clicked()
-            }
-        }
-
-        Label {
-            Layout.alignment: Qt.AlignHCenter
-            text: actionBtn.label
-            color: Theme.textSecondary
-            font.pixelSize: Theme.fontSizeSmall
-            font.family: Theme.fontFamily
-            visible: actionBtn.label.length > 0
-        }
-    }
 }

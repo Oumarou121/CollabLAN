@@ -12,6 +12,7 @@
         <file>FileTransfer/FileTransferView.qml</file>
         <file>FileTransfer/FileIcon.qml</file>
         <file>Call/CallView.qml</file>
+        <file>Call/CallOverlay.qml</file>
         <file>Settings/SettingsView.qml</file>
         <file>About/AboutView.qml</file>
         <file>Admin/AdminView.qml</file>
@@ -62,6 +63,7 @@
         <file>Components/ServerStatusIndicator.qml</file>
         <file>Dashboard/DashboardHeader.qml</file>
         <file>Dashboard/DashboardSidebar.qml</file>
+        <file>Dashboard/DashboardShell.qml</file>
         <file>Dashboard/NetworkWorkspace.qml</file>
         <file>Dashboard/NetworkPeer.qml</file>
         <file>Dashboard/NetworkListView.qml</file>
@@ -71,6 +73,17 @@
         <file>Dashboard/TransferRow.qml</file>
         <file>Dashboard/ActivityList.qml</file>
         <file>Dashboard/ActivityRow.qml</file>
+        <file>Dashboard/DashboardButton.qml</file>
+        <file>Dashboard/TransferStatusBadge.qml</file>
+        <file>Dashboard/TransferErrorBanner.qml</file>
+        <file>Dashboard/TransferDetailsDialog.qml</file>
+        <file>Dashboard/FileTypeIcon.qml</file>
+        <file>Dashboard/InlineAlert.qml</file>
+        <file>Dashboard/TransferPeerCard.qml</file>
+        <file>Dashboard/TransferFileRow.qml</file>
+        <file>Dashboard/NewTransferPanel.qml</file>
+        <file>Dashboard/transferFormat.js</file>
+        <file>Components/icons.js</file>
         <file>Assets/logo.png</file>
         <file>Assets/fonts/PTSerif-Bold.ttf</file>
         <file>Assets/fonts/PTSerif-Regular.ttf</file>

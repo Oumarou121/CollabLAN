@@ -60,6 +60,12 @@ ColumnLayout {
         id: itemsScroll
         Layout.fillWidth: true
         Layout.fillHeight: true
+        // Sans cette condition, ce ScrollView vide restait visible en
+        // parallèle de l'état vide ci-dessous : les deux Layout.fillHeight
+        // se partageaient alors la hauteur disponible (place réservée à un
+        // ScrollView sans contenu), ce qui poussait l'état vide dans la
+        // moitié basse du panneau au lieu de le centrer.
+        visible: root.actions.length > 0
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: ScrollBar.AsNeeded

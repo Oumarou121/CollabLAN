@@ -24,6 +24,11 @@ Item {
     property int activeTransfers: 0
     property int pendingAdmin: 0
     property bool isAdmin: false
+    // Route active dans la navigation ("home", "chat", "transfer",
+    // "folder", "call", "peers") - fournie par l'écran hôte (ou par
+    // DashboardShell) plutôt que hardcodée, pour que chaque écran migré
+    // vers le Dashboard puisse mettre en évidence sa propre entrée.
+    property string activeRoute: "home"
 
     signal homeRequested()
     signal chatRequested()
@@ -109,7 +114,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 32
 
-                readonly property bool isActive: modelData.route === "home"
+                readonly property bool isActive: modelData.route === root.activeRoute
 
                 Rectangle {
                     anchors.fill: parent

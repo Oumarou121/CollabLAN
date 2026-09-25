@@ -410,6 +410,7 @@ void TransferContext::onTransferStarted(const QString &transferKey, const QStrin
     entry[QStringLiteral("transferKey")] = transferKey;
     entry[QStringLiteral("fileName")] = fileName;
     entry[QStringLiteral("direction")] = incoming ? tr("Réception") : tr("Envoi");
+    entry[QStringLiteral("incoming")] = incoming;
     entry[QStringLiteral("statusText")] = tr("En cours");
     entry[QStringLiteral("state")] = QStringLiteral("in_progress");
     entry[QStringLiteral("bytesTransferred")] = resumeOffset;
@@ -482,6 +483,11 @@ void TransferContext::onTransferProgress(const QString &transferKey, qint64 byte
         entry[QStringLiteral("transferKey")] = transferKey;
         entry[QStringLiteral("fileName")] = tr("Transfert en cours");
         entry[QStringLiteral("direction")] = QString();
+        // Sens inconnu ici (progression recue avant le signal de demarrage,
+        // voir le commentaire ci-dessus) : par defaut "sortant" plutot que
+        // de deviner, a corriger si onTransferStarted() finit par arriver
+        // pour cette cle.
+        entry[QStringLiteral("incoming")] = false;
         entry[QStringLiteral("statusText")] = tr("En cours");
         entry[QStringLiteral("state")] = QStringLiteral("in_progress");
         entry[QStringLiteral("bytesTransferred")] = bytesTransferred;
@@ -581,11 +587,12 @@ void TransferContext::loadHistory()
 
 QVariantMap TransferContext::entryFromHistory(const models::Transfer &transfer) const
 {
-    QString direction = tr("Réception");
+    bool incoming = true;
     if (m_userManager && !m_userManager->currentUserUuid().isEmpty()
         && transfer.senderUuid() == m_userManager->currentUserUuid()) {
-        direction = tr("Envoi");
+        incoming = false;
     }
+    const QString direction = incoming ? tr("Réception") : tr("Envoi");
 
     QString statusText;
     QString state;
@@ -620,6 +627,7 @@ QVariantMap TransferContext::entryFromHistory(const models::Transfer &transfer) 
     entry[QStringLiteral("transferKey")] = QStringLiteral("history:%1").arg(transfer.id());
     entry[QStringLiteral("fileName")] = transfer.fileName();
     entry[QStringLiteral("direction")] = direction;
+    entry[QStringLiteral("incoming")] = incoming;
     entry[QStringLiteral("statusText")] = statusText;
     entry[QStringLiteral("state")] = state;
     entry[QStringLiteral("bytesTransferred")] = bytesTransferred;

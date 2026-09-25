@@ -26,12 +26,19 @@ Item {
     signal logoutRequested()
     signal usersRequested()
     signal chatRequested()
-    signal fileTransferRequested()
+    // openNewTransfer=true : la vue Transferts doit s'ouvrir directement sur
+    // le volet "Nouveau transfert" (bouton dedie / etat vide), pas seulement
+    // sur la liste (ex. clic sur "Transferts" dans la Sidebar).
+    signal fileTransferRequested(bool openNewTransfer, var peer)
     signal callRequested()
     signal adminRequested()
     signal settingsRequested()
     signal sharedFoldersRequested()
     signal aboutRequested()
+    // Emis par le bouton "Examiner" d'ActionRequiredPanel : ouvre l'Admin
+    // directement sur l'onglet pertinent (0 = Journal d'audit,
+    // 1 = Machines autorisées - voir AdminView.currentTab).
+    signal adminSectionRequested(int tab)
 
     // Responsive breakpoints (selon maquette HTML)
     readonly property int width1440: 1440
@@ -115,16 +122,42 @@ Item {
 
     // Données transferts
     property var transferItems: []
+    // Nombre de transferts reellement actifs (in_progress) parmi
+    // transferItems - distinct de transferItems.length des que des
+    // transferts recents (termines/echoues/...) sont ajoutes pour
+    // completer la liste (voir refreshTransfers()).
+    property int activeTransferCount: 0
 
     function refreshTransfers() {
         if (typeof transferContext === "undefined" || !transferContext) {
             transferItems = []
+            activeTransferCount = 0
             return
         }
         const all = transferContext.activeTransfers || []
-        transferItems = all.filter(function(item) {
-            return item && item.statusText === qsTr("En cours")
+        // state est la valeur technique non localisee ("in_progress"),
+        // contrairement a statusText qui est traduit et donc fragile a
+        // comparer ici (voir TransferContext::onTransferStarted()).
+        const active = all.filter(function(item) {
+            return item && item.state === "in_progress"
         }).slice(-4).reverse()
+        activeTransferCount = active.length
+
+        // Complete avec les derniers transferts termines/echoues/annules
+        // quand il n'y a pas (ou peu) de transfert en cours, pour eviter
+        // que la section "Transferts" du dashboard soit vide en permanence :
+        // meme logique que la sequence chronologique deja disponible dans
+        // transferContext.activeTransfers (voir TransferContext::loadHistory()),
+        // simplement filtree ici sur l'etat inverse.
+        if (active.length < 4) {
+            const recent = all.filter(function(item) {
+                return item && item.state !== "in_progress"
+            }).slice(-(4 - active.length)).reverse()
+            transferItems = active.concat(recent)
+        } else {
+            transferItems = active
+        }
+
         if (transferItems.length > 0)
             contentSettled = true
     }
@@ -132,22 +165,35 @@ Item {
     // Données activité
     property var activityItems: []
 
+    // Traduit une entree brute auditLogModel.get(i) (cles : eventType,
+    // actorLabel, description, timestamp - voir AuditLogModel::get()) vers
+    // la forme attendue par ActivityRow (event/actor/message/resultBadge).
+    function activityFromAuditEntry(item) {
+        const resultBadgeByEvent = {
+            "connection": "ok",
+            "transfer": "xf",
+            "call": "call",
+            "access_denied": "err"
+        }
+        return {
+            event: item.eventType || "activity",
+            actor: item.actorLabel || "",
+            message: item.description || "",
+            result: "",
+            resultBadge: resultBadgeByEvent[item.eventType] || "",
+            timestamp: item.timestamp ? new Date(item.timestamp) : new Date()
+        }
+    }
+
     function refreshActivities() {
         if (typeof auditLogModel === "undefined" || !auditLogModel) {
             activityItems = []
             return
         }
         const all = []
-        for (let i = 0; i < Math.min(auditLogModel.count, 10); i++) {
-            const item = auditLogModel.get(i)
-            all.push({
-                event: item.event || "activity",
-                actor: item.actor || "",
-                message: item.message || "",
-                result: item.result || "",
-                resultBadge: item.resultBadge || "",
-                timestamp: item.timestamp || new Date()
-            })
+        const total = Math.min(auditLogModel.count, 10)
+        for (let i = 0; i < total; i++) {
+            all.push(root.activityFromAuditEntry(auditLogModel.get(i)))
         }
         activityItems = all
         if (all.length > 0)
@@ -241,12 +287,17 @@ Item {
 
     // Données actions requises
     property var actionRequiredItems: []
+    // Nombre de postes en attente d'autorisation, reutilise par le badge
+    // "admin" de la sidebar (DashboardSidebar.pendingAdmin).
+    property int pendingAuthorizationCount: 0
 
     function refreshActionRequired() {
         const items = []
 
-        // 1. Postes en attente d'autorisation (pendingClientCount)
-        if (typeof authorizedMachineModel !== "undefined" && authorizedMachineModel) {
+        // 1. Postes en attente d'autorisation (pendingClientCount) - seul un
+        // admin peut autoriser un poste (voir AdminView, onglet "Machines
+        // autorisées"), donc réservé côté admin comme refreshNetworkOfflinePeers().
+        if (root.isAdmin && typeof authorizedMachineModel !== "undefined" && authorizedMachineModel) {
             const total = authorizedMachineModel.rowCount ? authorizedMachineModel.rowCount() : 0
             let pendingCount = 0
             const pendingHosts = []
@@ -271,6 +322,7 @@ Item {
                     type: "authorization"
                 })
             }
+            root.pendingAuthorizationCount = pendingCount
         }
 
         // 2. Connexions refusées récentes (auditLogModel)
@@ -281,12 +333,12 @@ Item {
 
             for (let i = 0; i < count; i++) {
                 const item = auditLogModel.get(i)
-                if (item && item.event === "access_denied") {
+                if (item && item.eventType === "access_denied") {
                     deniedCount++
                     if (!lastDenied) {
                         lastDenied = {
-                            message: item.message || "",
-                            timestamp: item.timestamp || new Date()
+                            message: item.description || "",
+                            timestamp: item.timestamp ? new Date(item.timestamp) : new Date()
                         }
                     }
                 }
@@ -301,16 +353,6 @@ Item {
                     type: "access_denied"
                 })
             }
-        }
-
-        // Ajouter un item de démonstration si vide (pour tester l'affichage)
-        if (items.length === 0) {
-            items.push({
-                urgency: "info",
-                title: qsTr("Tout est en ordre"),
-                description: qsTr("Aucune action requise pour le moment"),
-                type: "demo"
-            })
         }
 
         actionRequiredItems = items
@@ -385,6 +427,45 @@ Item {
         color: "#EEF2F1"
     }
 
+    // Bannière d'erreur pour les actions transferts (ouvrir l'emplacement,
+    // réessayer) - même patron que FileTransferView.qml (errorBanner).
+    Rectangle {
+        id: errorBanner
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: errorLabel.implicitHeight + 16
+        color: "#C8453B"
+        visible: opacity > 0
+        opacity: 0
+        z: 10
+
+        Label {
+            id: errorLabel
+            anchors.centerIn: parent
+            width: parent.width - 32
+            color: "#FFFFFF"
+            font.pixelSize: 13
+            font.family: Theme.fontFamily
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+        }
+
+        Behavior on opacity { NumberAnimation { duration: 150 } }
+
+        Timer {
+            id: errorTimer
+            interval: 4000
+            onTriggered: errorBanner.opacity = 0
+        }
+
+        function show(message) {
+            errorLabel.text = message
+            opacity = 1
+            errorTimer.restart()
+        }
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
@@ -399,13 +480,13 @@ Item {
             username: root.username
             serverStatus: root.serverStatusLabel
             serverStatusColor: root.serverStatusColor
-            activeTransfers: root.transferItems.length
-            pendingAdmin: 0 // TODO: Connecter aux vraies données
+            activeTransfers: root.activeTransferCount
+            pendingAdmin: root.isAdmin ? root.pendingAuthorizationCount : 0
             isAdmin: root.isAdmin
 
             onHomeRequested: { /* Déjà sur home */ }
             onChatRequested: root.chatRequested()
-            onTransferRequested: root.fileTransferRequested()
+            onTransferRequested: root.fileTransferRequested(false, null)
             onFoldersRequested: root.sharedFoldersRequested()
             onCallRequested: root.callRequested()
             onPeersRequested: root.usersRequested()
@@ -532,7 +613,7 @@ Item {
 
                                 // <span><b>M</b> transferts en cours</span>
                                 Label {
-                                    text: "<b style=\"color:#15222B\">" + root.transferItems.length + "</b> " + qsTr("transferts en cours")
+                                    text: "<b style=\"color:#15222B\">" + root.activeTransferCount + "</b> " + qsTr("transferts en cours")
                                     textFormat: Text.RichText
                                     color: "#4A5961"
                                     font.pixelSize: 14
@@ -578,7 +659,7 @@ Item {
                                     Layout.alignment: Qt.AlignVCenter
                                 }
                             }
-                            onClicked: root.fileTransferRequested()
+                            onClicked: root.fileTransferRequested(true, null)
                     }
                 }
 
@@ -654,10 +735,13 @@ Item {
                                 demoMode: root.demoMode
 
                                 onSendFileRequested: function(peer) {
-                                    // Nécessite un sélecteur de fichier (doc §26) -
-                                    // pas encore branché à cette étape (carte
-                                    // réseau uniquement, doc §51).
-                                    console.log("Envoyer un fichier vers", peer.name)
+                                    // Ouvre l'écran Transferts avec le volet "Nouveau
+                                    // transfert" déjà déplié et ce poste (carte réseau,
+                                    // vue carte ou liste) déjà sélectionné comme
+                                    // destinataire - même mécanisme que le bouton
+                                    // "Nouveau transfert" du Dashboard (autoOpenPanel),
+                                    // avec le poste transmis en plus.
+                                    root.fileTransferRequested(true, peer)
                                 }
                                 onCallRequested: function(peer) {
                                     if (typeof callContext !== "undefined" && callContext && peer.address)
@@ -706,8 +790,13 @@ Item {
                                 actions: root.actionRequiredItems
 
                                 onActionRequested: function(action, actionType) {
-                                    console.log("Action requested:", action.title, actionType)
-                                    // TODO: Implémenter les actions
+                                    if (actionType !== "examine")
+                                        return
+                                    // 1 = onglet "Machines autorisées" (item de type
+                                    // "authorization"), 0 = "Journal d'audit" (tout le
+                                    // reste, notamment "access_denied") - voir
+                                    // AdminView.currentTab.
+                                    root.adminSectionRequested(action.type === "authorization" ? 1 : 0)
                                 }
                             }
                         }
@@ -750,7 +839,7 @@ Item {
                                 }
 
                                 Label {
-                                    text: root.transferItems.length > 0 ? (root.transferItems.length + " en cours") : ""
+                                    text: root.activeTransferCount > 0 ? (root.activeTransferCount + " en cours") : ""
                                     color: "#62717A"
                                     font.pixelSize: 12
                                     font.family: Theme.fontFamily
@@ -788,7 +877,7 @@ Item {
                                 title: qsTr("Aucun transfert en cours")
                                 description: qsTr("Les fichiers envoyés et reçus apparaîtront ici.")
                                 actionText: qsTr("Envoyer un fichier")
-                                onActionClicked: root.fileTransferRequested()
+                                onActionClicked: root.fileTransferRequested(true, null)
                             }
 
                             // Liste transferts à plat
@@ -800,27 +889,35 @@ Item {
 
                                 ColumnLayout {
                                     width: parent.width
-                                    spacing: 0
+                                    spacing: 10
 
                                     Repeater {
                                         model: root.transferItems
                                         delegate: TransferRow {
                                             Layout.fillWidth: true
                                             fileName: modelData.fileName || ""
-                                            peerName: modelData.recipientName || ""
-                                            address: modelData.recipientAddress || ""
-                                            progress: modelData.progress || 0
-                                            transferred: modelData.transferred || 0
-                                            total: modelData.total || 0
+                                            peerName: modelData.peerName || ""
+                                            address: modelData.peerAddress || ""
+                                            progress: (modelData.percent || 0) / 100
+                                            transferred: modelData.bytesTransferred || 0
+                                            total: modelData.totalBytes || 0
                                             status: modelData.statusText || "En cours"
-                                            isIncoming: modelData.isIncoming || false
+                                            state: modelData.state || ""
+                                            timestamp: modelData.timestamp || ""
+                                            isIncoming: modelData.incoming || false
 
-                                            onDetailsRequested: root.fileTransferRequested()
-                                            onOpenLocationRequested: function(transfer) {
-                                                console.log("Open location:", transfer.fileName)
+                                            onDetailsRequested: root.fileTransferRequested(false, null)
+                                            onOpenLocationRequested: {
+                                                if (typeof transferContext === "undefined" || !transferContext
+                                                        || !transferContext.openFileLocation(modelData.filePath || "")) {
+                                                    errorBanner.show(qsTr("Impossible d'ouvrir l'emplacement du fichier."))
+                                                }
                                             }
-                                            onRetryRequested: function(transfer) {
-                                                console.log("Retry transfer:", transfer.fileName)
+                                            onRetryRequested: {
+                                                if (typeof transferContext === "undefined" || !transferContext
+                                                        || !transferContext.retryTransfer(modelData.transferKey || "")) {
+                                                    errorBanner.show(qsTr("Impossible de relancer le transfert."))
+                                                }
                                             }
                                         }
                                     }
@@ -899,7 +996,7 @@ Item {
 
                                 ColumnLayout {
                                     width: parent.width
-                                    spacing: 0
+                                    spacing: 8
 
                                     Repeater {
                                         model: root.activityItems

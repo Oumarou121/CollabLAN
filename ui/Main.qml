@@ -158,19 +158,15 @@ ApplicationWindow {
         anchors.fill: parent
     }
 
-    // Navigation automatique vers CallView pour un appel entrant (issue #64bis) :
-    // callContext est global et ecoute meme quand l'utilisateur est sur un
-    // autre ecran (Home/Chat/...). Sans ce hook, "ringing" ne se voit que si
-    // CallView est deja ouvert, d'ou les tentatives ignorees cote appelant.
-    Connections {
-        target: callContext
-        function onCallStateChanged() {
-            if (callContext.callState === "ringing"
-                    && stackView.currentItem
-                    && stackView.currentItem.objectName !== "callView") {
-                stackView.push(callViewComponent)
-            }
-        }
+    // Superposition globale de l'appel en cours (calling/ringing/connecting/
+    // connected) : affichee par-dessus l'ecran actif quel qu'il soit
+    // (Dashboard, Discussions, ...) pour l'appelant comme pour le
+    // destinataire, sans navigation vers un ecran dedie. Remplace l'ancien
+    // hook qui poussait CallView en plein ecran uniquement a la reception
+    // d'un appel ("ringing"), laissant l'appelant sans retour visuel.
+    CallOverlay {
+        anchors.fill: parent
+        z: 50
     }
 
     Component {
@@ -248,14 +244,20 @@ ApplicationWindow {
             onChatRequested: {
                 stackView.push(chatWorkspaceComponent)
             }
-            onFileTransferRequested: {
-                stackView.push(fileTransferViewComponent)
+            onFileTransferRequested: function(openNewTransfer, peer) {
+                stackView.push(fileTransferViewComponent, {
+                    autoOpenPanel: openNewTransfer === true,
+                    preselectedPeer: peer || null
+                })
             }
             onCallRequested: {
                 stackView.push(callViewComponent)
             }
             onAdminRequested: {
                 stackView.push(adminViewComponent)
+            }
+            onAdminSectionRequested: function(tab) {
+                stackView.push(adminViewComponent, { currentTab: tab })
             }
             onSettingsRequested: {
                 stackView.push(settingsViewComponent)
@@ -326,6 +328,31 @@ ApplicationWindow {
         FileTransferView {
             onBackRequested: {
                 stackView.pop()
+            }
+            // Navigation Sidebar (voir DashboardShell dans FileTransferView) :
+            // même schéma de câblage que homeViewComponent ci-dessus, pour que
+            // la Sidebar reste pleinement fonctionnelle depuis l'écran Transferts.
+            onChatRequested: {
+                stackView.push(chatWorkspaceComponent)
+            }
+            onFoldersRequested: {
+                stackView.push(sharedFolderViewComponent)
+            }
+            onCallRequested: {
+                stackView.push(callViewComponent)
+            }
+            onPeersRequested: {
+                stackView.push(usersViewComponent)
+            }
+            onAdminRequested: {
+                stackView.push(adminViewComponent)
+            }
+            onSettingsRequested: {
+                stackView.push(settingsViewComponent)
+            }
+            onLogoutRequested: {
+                userManager.logout()
+                stackView.replace(loginViewComponent)
             }
         }
     }

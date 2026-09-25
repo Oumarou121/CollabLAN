@@ -954,7 +954,13 @@ Rectangle {
 
             onCloseRequested: root.clearSelection()
             onSendFileRequested: root.sendFileRequested(peer)
-            onCallRequested: root.callRequested(peer)
+            onCallRequested: {
+                root.callRequested(peer)
+                // Ferme le panneau une fois l'appel lance, comme onCloseRequested :
+                // sans ca, la carte du poste reste ouverte par-dessus l'overlay
+                // d'appel qui vient de s'afficher.
+                root.clearSelection()
+            }
             onMessageRequested: root.messageRequested(peer)
         }
     }

@@ -121,6 +121,18 @@ Column {
                     color: "#DDE4E2"
                 }
 
+                // Zone de clic sur toute la ligne (ouvre le detail du poste) :
+                // declaree AVANT les actions ci-dessous pour que les boutons
+                // Message/Transferer/Appeler (a l'interieur de la RowLayout,
+                // donc dessines par-dessus) recoivent les clics en priorite.
+                // Declaree apres, elle les interceptait tous - le bouton
+                // Appeler semblait ne rien faire.
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.peerClicked(getPeerData())
+                }
+
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 16
@@ -266,12 +278,6 @@ Column {
                             }
                         }
                     }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.peerClicked(getPeerData())
                 }
 
                 readonly property bool isOnline: index < root.peers.length

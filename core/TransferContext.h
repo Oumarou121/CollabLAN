@@ -55,11 +55,15 @@ public:
     /// Transferts en cours ou recemment termines/echoues, le plus recent
     /// en dernier. Chaque element est une QVariantMap prete a l'emploi
     /// comme modele QML : transferKey, fileName, direction ("Envoi" /
-    /// "Reception"), statusText, bytesTransferred, totalBytes, percent
-    /// (0-100), errorString, filePath (chemin local, vide si inconnu),
-    /// peerAddress/peerName (correspondant, vide si inconnu - permet de
-    /// regrouper par correspondant cote QML, voir FileTransferView.qml),
-    /// timestamp (date ISO du transfert, pour affichage/tri).
+    /// "Reception", localise - a ne pas utiliser pour une comparaison
+    /// logique cote QML), incoming (bool, equivalent non localise de
+    /// direction, a utiliser pour le rendu), statusText, bytesTransferred,
+    /// totalBytes, percent (0-100, diviser par 100 cote QML pour une
+    /// fraction 0-1), errorString, filePath (chemin local, vide si
+    /// inconnu), peerAddress/peerName (correspondant, vide si inconnu -
+    /// permet de regrouper par correspondant cote QML, voir
+    /// FileTransferView.qml), timestamp (date ISO du transfert, pour
+    /// affichage/tri).
     QVariantList activeTransfers() const { return m_activeTransfers; }
 
     /// Liste des postes decouverts, prete a servir de modele pour un

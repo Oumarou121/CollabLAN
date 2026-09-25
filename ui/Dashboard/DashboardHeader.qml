@@ -17,8 +17,15 @@ Item {
     property bool showSearch: true
     property bool showNotifications: true
 
+    // "LocaLink / Transferts / PC-COMPTA-01" -> ["LocaLink", "Transferts", "PC-COMPTA-01"]
+    readonly property var breadcrumbParts: root.breadcrumb.split(" / ")
+
     signal searchRequested(string query)
     signal notificationsRequested()
+    // Emis quand un segment non-final du fil d'Ariane est clique (ex.
+    // "Transferts" dans "LocaLink / Transferts / PC-COMPTA-01"), pour
+    // permettre a l'ecran hote de remonter d'un niveau (arborescence).
+    signal segmentClicked(int index, string label)
 
     Rectangle {
         anchors.fill: parent
@@ -33,30 +40,48 @@ Item {
         anchors.rightMargin: 24
         spacing: 8
 
-        // Breadcrumb - selon nouvelle maquette: LocaLink / Vue d'ensemble
+        // Breadcrumb - piloté par root.breadcrumb ("LocaLink / Transferts",
+        // "LocaLink / Transferts / PC-COMPTA-01", ...) : seul le dernier
+        // segment est mis en avant (gras, couleur texte principale).
         Row {
             spacing: 4
 
-            Label {
-                text: "LocaLink"
-                color: "#62717A"
-                font.pixelSize: 12
-                font.family: Theme.fontFamily
-            }
+            Repeater {
+                model: root.breadcrumbParts
 
-            Label {
-                text: "/"
-                color: "#62717A"
-                font.pixelSize: 12
-                font.family: Theme.fontFamily
-            }
+                delegate: Row {
+                    spacing: 4
+                    readonly property bool isLast: index === root.breadcrumbParts.length - 1
+                    readonly property bool crumbHovered: crumbHover.hovered
 
-            Label {
-                text: "Vue d'ensemble"
-                color: "#15222B"
-                font.pixelSize: 12
-                font.bold: true
-                font.family: Theme.fontFamily
+                    Label {
+                        id: crumbLabel
+                        text: modelData
+                        color: isLast ? "#15222B" : (parent.crumbHovered ? "#15222B" : "#62717A")
+                        font.pixelSize: 12
+                        font.bold: isLast
+                        font.underline: !isLast && parent.crumbHovered
+                        font.family: Theme.fontFamily
+
+                        HoverHandler {
+                            id: crumbHover
+                            enabled: !isLast
+                            cursorShape: Qt.PointingHandCursor
+                        }
+                        TapHandler {
+                            enabled: !isLast
+                            onTapped: root.segmentClicked(index, modelData)
+                        }
+                    }
+
+                    Label {
+                        visible: !isLast
+                        text: "/"
+                        color: "#62717A"
+                        font.pixelSize: 12
+                        font.family: Theme.fontFamily
+                    }
+                }
             }
         }
 

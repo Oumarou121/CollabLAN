@@ -12,13 +12,21 @@ Text {
 
     property string glyph: ""
 
+    // Charge la police pour qu'elle soit enregistree dans l'application (le
+    // FontLoader la rend disponible globalement des qu'un premier composant
+    // la reference), mais on ne lie plus font.family a iconFont.name : ce
+    // nom reste vide tant que le chargement asynchrone n'est pas termine,
+    // ce qui pouvait laisser le Text sans police valide au premier rendu
+    // (glyphe invisible - carre de couleur vide, voir section Transferts du
+    // Dashboard). Nom de police en dur, identique a celui deja utilise sans
+    // FontLoader ailleurs dans l'app (voir Dashboard/NetworkPeer.qml) et
+    // confirme comme le nom reel integre dans fontawesome-webfont.ttf.
     FontLoader {
-        id: iconFont
         source: "../Assets/fonts/fontawesome-webfont.ttf"
     }
 
     text: root.glyph
-    font.family: iconFont.name
+    font.family: "FontAwesome"
     horizontalAlignment: Text.AlignHCenter
     verticalAlignment: Text.AlignVCenter
 }

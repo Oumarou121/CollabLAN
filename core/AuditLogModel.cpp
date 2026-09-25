@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QTextStream>
 #include <QStandardPaths>
+#include <QVariantMap>
 
 namespace core {
 
@@ -143,6 +144,20 @@ void AuditLogModel::refresh()
 
     m_logs = m_auditManager->queryEvents(filter);
     endResetModel();
+    emit countChanged();
+}
+
+QVariantMap AuditLogModel::get(int row) const
+{
+    QVariantMap result;
+    if (row < 0 || row >= m_logs.size())
+        return result;
+
+    const QModelIndex idx = index(row, 0);
+    const QHash<int, QByteArray> roles = roleNames();
+    for (auto it = roles.constBegin(); it != roles.constEnd(); ++it)
+        result.insert(QString::fromUtf8(it.value()), data(idx, it.key()));
+    return result;
 }
 
 void AuditLogModel::setEventTypeFilter(const QString &eventType)

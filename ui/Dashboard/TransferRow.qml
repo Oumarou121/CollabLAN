@@ -5,16 +5,28 @@ import Themes
 import "../Components"
 
 /*
- * TransferRow - Ligne de transfert à plat selon la maquette HTML exacte
- * Height: 46px
- * Grid: 32px | minmax(0,1fr) | 128px | 38px | 96px
- * Gap: 12px
- * Border-top: 1px solid line
+ * TransferRow - Carte de transfert (section "Transferts" du dashboard).
+ *
+ * Refonte (issue design "revoir les items de la section Transferts") :
+ * l'ancienne version etait une ligne plate a bordure unique, en couleurs
+ * figees (incompatibles avec le mode sombre) et sans distinction visuelle
+ * claire entre un transfert actif et un transfert termine/echoue de
+ * l'historique. Desormais :
+ *  - carte independante (fond + bordure + coin arrondis), plus une simple
+ *    ligne separee par un filet ;
+ *  - toutes les couleurs viennent de Theme.dashboardXxx (compatible clair/
+ *    sombre) au lieu de hex codes en dur ;
+ *  - badge de statut colore (pastille + texte), coherent avec le meme
+ *    systeme de couleurs "soft/text" que le reste du dashboard ;
+ *  - barre de progression uniquement pour un transfert reellement actif
+ *    (state === "in_progress") - les entrees d'historique (termine/
+ *    echoue/annule/interrompu) affichent a la place la taille totale et
+ *    la date/heure du transfert ;
+ *  - icone de fichier teintee selon le statut (memes couleurs que le
+ *    badge) plutot que toujours "primary".
  */
 Rectangle {
     id: root
-    height: 46
-    color: "transparent"
 
     property string fileName: ""
     property string peerName: ""
@@ -23,115 +35,192 @@ Rectangle {
     property var transferred: 0
     property var total: 0
     property string status: "En cours"
+    // state technique (in_progress/completed/failed/cancelled/interrupted) -
+    // pilote l'affichage barre de progression vs meta historique. Replie sur
+    // une deduction depuis `status` si non fourni (compatibilite ascendante).
+    property string state: ""
     property bool isIncoming: false
+    // Date ISO du transfert (entry.timestamp) - affichee pour les entrees
+    // d'historique (pas de barre de progression a montrer a la place).
+    property string timestamp: ""
 
     signal detailsRequested()
     signal openLocationRequested()
     signal retryRequested()
 
-    readonly property color progressColor: root.status === "Échoué" ? "#C8453B" : "#0B5C70"
+    readonly property string effectiveState: root.state.length > 0 ? root.state : {
+        "En cours": "in_progress",
+        "Terminé": "completed",
+        "Échoué": "failed",
+        "Annulé": "cancelled",
+        "Interrompu": "interrupted"
+    }[root.status] || "in_progress"
 
-    // Border top
-    Rectangle {
+    readonly property bool isActive: effectiveState === "in_progress"
+
+    // ---- Palette par statut : pastille (fond att.), texte, icone ---------
+    readonly property color statusSoft: {
+        switch (root.effectiveState) {
+        case "in_progress": return Theme.dashboardPrimarySoft
+        case "completed":   return Theme.dashboardSuccessSoft
+        case "failed":      return Theme.dashboardErrorSoft
+        case "interrupted": return Theme.dashboardWarningSoft
+        default:            return Theme.dashboardSurfaceAlt
+        }
+    }
+    readonly property color statusText: {
+        switch (root.effectiveState) {
+        case "in_progress": return Theme.dashboardPrimary
+        case "completed":   return Theme.dashboardSuccessText
+        case "failed":      return Theme.dashboardErrorText
+        case "interrupted": return Theme.dashboardWarningText
+        default:            return Theme.dashboardInkTertiary
+        }
+    }
+
+    implicitHeight: cardColumn.implicitHeight + Theme.spacingMedium * 2
+    radius: Theme.radiusMedium
+    color: hoverArea.containsMouse ? Theme.dashboardHover : Theme.dashboardSurface
+    border.width: 1
+    border.color: Theme.dashboardLine
+
+    Behavior on color { ColorAnimation { duration: 100 } }
+
+    ColumnLayout {
+        id: cardColumn
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        height: 1
-        color: Theme.dashboardLine
-    }
+        anchors.margins: Theme.spacingMedium
+        spacing: Theme.spacingSmall
 
-    // Hover background
-    Rectangle {
-        anchors.fill: parent
-        anchors.topMargin: 1
-        color: Qt.rgba(11, 92, 112, 0.06)
-        visible: hoverArea.containsMouse
-    }
-
-    RowLayout {
-        anchors.fill: parent
-        anchors.leftMargin: 8
-        anchors.rightMargin: 8
-        spacing: 12
-
-        // Icône fichier - 32px
-        Rectangle {
-            Layout.preferredWidth: 32
-            Layout.preferredHeight: 32
-            radius: 8
-            color: root.status === "Échoué" ? "#FBE9E7" : "#E0EEF2"
-
-            FaIcon {
-                anchors.centerIn: parent
-                glyph: fileIcon
-                color: root.status === "Échoué" ? "#C8453B" : "#0B5C70"
-                font.pixelSize: 16
-            }
-
-            readonly property string fileIcon: {
-                if (root.fileName.endsWith(".zip")) return "\uf1c9"
-                if (root.fileName.endsWith(".pdf")) return "\uf1c1"
-                if (root.fileName.endsWith(".pptx") || root.fileName.endsWith(".ppt")) return "\uf1c4"
-                if (root.fileName.endsWith(".xlsx") || root.fileName.endsWith(".xls")) return "\uf1c3"
-                if (root.fileName.endsWith(".docx") || root.fileName.endsWith(".doc")) return "\uf1c2"
-                return "\uf15b"
-            }
-        }
-
-        // Nom fichier + route - minmax(0,1fr)
-        ColumnLayout {
+        RowLayout {
             Layout.fillWidth: true
-            spacing: 4
+            spacing: 12
 
-            Label {
-                text: root.fileName
-                color: Theme.dashboardInk
-                font.pixelSize: 14
-                font.bold: true
-                font.family: Theme.fontFamily
-                elide: Text.ElideRight
-                Layout.fillWidth: true
-            }
-
-            // Route: direction + peer
-            Row {
-                spacing: 5
-
-                Label {
-                    text: root.isIncoming ? qsTr("Réception") : qsTr("Envoi")
-                    color: "#4A5961"
-                    font.pixelSize: 12
-                    font.family: Theme.fontFamily
-                }
+            // Icône fichier, teintée selon le statut du transfert.
+            Rectangle {
+                Layout.preferredWidth: 36
+                Layout.preferredHeight: 36
+                radius: 10
+                color: root.statusSoft
 
                 FaIcon {
-                    glyph: root.isIncoming ? "\uf063" : "\uf062"
-                    color: "#0B5C70"
-                    font.pixelSize: 10
-                    anchors.verticalCenter: parent.verticalCenter
-                    transform: Rotation { origin.x: 5; origin.y: 5; angle: root.isIncoming ? 180 : 0 }
+                    anchors.centerIn: parent
+                    glyph: fileIcon
+                    color: root.statusText
+                    font.pixelSize: 18
                 }
 
+                readonly property string fileIcon: {
+                    if (root.fileName.endsWith(".zip") || root.fileName.endsWith(".rar")
+                            || root.fileName.endsWith(".7z")) return "\uf1c6"
+                    if (root.fileName.endsWith(".pdf")) return "\uf1c1"
+                    if (root.fileName.endsWith(".pptx") || root.fileName.endsWith(".ppt")) return "\uf1c4"
+                    if (root.fileName.endsWith(".xlsx") || root.fileName.endsWith(".xls")) return "\uf1c3"
+                    if (root.fileName.endsWith(".docx") || root.fileName.endsWith(".doc")) return "\uf1c2"
+                    if (root.fileName.endsWith(".html") || root.fileName.endsWith(".htm")
+                            || root.fileName.endsWith(".css") || root.fileName.endsWith(".js")
+                            || root.fileName.endsWith(".json") || root.fileName.endsWith(".xml")) return "\uf1c9"
+                    if (root.fileName.endsWith(".jpg") || root.fileName.endsWith(".jpeg")
+                            || root.fileName.endsWith(".png") || root.fileName.endsWith(".gif")
+                            || root.fileName.endsWith(".webp") || root.fileName.endsWith(".bmp")) return "\uf1c5"
+                    if (root.fileName.endsWith(".mp4") || root.fileName.endsWith(".mov")
+                            || root.fileName.endsWith(".avi") || root.fileName.endsWith(".mkv")) return "\uf1c8"
+                    if (root.fileName.endsWith(".mp3") || root.fileName.endsWith(".wav")
+                            || root.fileName.endsWith(".flac")) return "\uf1c7"
+                    if (root.fileName.endsWith(".txt") || root.fileName.endsWith(".md")) return "\uf0f6"
+                    return "\uf0f6"
+                }
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+
                 Label {
-                    text: root.peerName
-                    color: "#15222B"
-                    font.pixelSize: 12
+                    text: root.fileName
+                    color: Theme.dashboardInk
+                    font.pixelSize: 14
                     font.bold: true
                     font.family: Theme.fontFamily
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+
+                Row {
+                    spacing: 5
+
+                    Label {
+                        text: root.isIncoming ? qsTr("Réception") : qsTr("Envoi")
+                        color: Theme.dashboardInkSecondary
+                        font.pixelSize: 12
+                        font.family: Theme.fontFamily
+                    }
+
+                    FaIcon {
+                        glyph: root.isIncoming ? "\uf063" : "\uf062"
+                        color: Theme.dashboardPrimary
+                        font.pixelSize: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        transform: Rotation { origin.x: 5; origin.y: 5; angle: root.isIncoming ? 180 : 0 }
+                    }
+
+                    Label {
+                        text: root.peerName
+                        color: Theme.dashboardInk
+                        font.pixelSize: 12
+                        font.bold: true
+                        font.family: Theme.fontFamily
+                    }
+                }
+            }
+
+            // Badge de statut - pastille + libelle, coherent avec le
+            // systeme de couleurs soft/text du reste du dashboard.
+            Rectangle {
+                Layout.alignment: Qt.AlignTop
+                implicitWidth: statusRow.implicitWidth + 18
+                implicitHeight: 22
+                radius: Theme.radiusPill
+                color: root.statusSoft
+
+                Row {
+                    id: statusRow
+                    anchors.centerIn: parent
+                    spacing: 5
+
+                    Rectangle {
+                        width: 6; height: 6; radius: 3
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: root.statusText
+                    }
+
+                    Label {
+                        text: root.status
+                        color: root.statusText
+                        font.pixelSize: 11
+                        font.bold: true
+                        font.family: Theme.fontFamily
+                    }
                 }
             }
         }
 
-        // Progression + meta - 128px
-        ColumnLayout {
-            Layout.preferredWidth: 128
-            spacing: 4
+        // ---- Ligne meta : barre de progression (actif) OU taille+date
+        // (historique) - jamais les deux, pour ne pas afficher "0 %"
+        // fige sur un transfert termine/echoue de longue date. ----------
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.topMargin: 2
+            spacing: 10
+            visible: root.isActive
 
             Rectangle {
                 Layout.fillWidth: true
-                height: 6
+                Layout.preferredHeight: 6
                 radius: 99
-                color: "#DDE4E2"
+                color: Theme.dashboardLine
 
                 Rectangle {
                     anchors.left: parent.left
@@ -139,67 +228,80 @@ Rectangle {
                     anchors.bottom: parent.bottom
                     width: parent.width * root.progress
                     radius: 99
-                    color: progressColor
+                    color: Theme.dashboardPrimary
                 }
             }
 
             Label {
-                text: formatBytes(root.transferred) + " sur " + formatBytes(root.total)
-                color: "#62717A"
+                text: formatBytes(root.transferred) + " / " + formatBytes(root.total)
+                color: Theme.dashboardInkTertiary
+                font.pixelSize: 11
+                font.family: Theme.fontFamily
+            }
+
+            Label {
+                text: Math.round(root.progress * 100) + " %"
+                color: Theme.dashboardPrimary
+                font.pixelSize: 12
+                font.bold: true
+                font.family: Theme.fontFamily
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.topMargin: 2
+            spacing: 10
+            visible: !root.isActive
+
+            Label {
+                text: formatBytes(root.total) + (root.formattedDate.length > 0 ? " \u00B7 " + root.formattedDate : "")
+                color: Theme.dashboardInkTertiary
                 font.pixelSize: 11
                 font.family: Theme.fontFamily
                 Layout.fillWidth: true
+                elide: Text.ElideRight
+            }
+
+            Row {
+                spacing: 6
+
+                DashboardButton {
+                    variant: "ghost"
+                    controlHeight: 26
+                    text: qsTr("Détails")
+                    visible: root.effectiveState !== "failed"
+                    onClicked: root.detailsRequested()
+                }
+
+                IconButton {
+                    glyph: "\uf115"
+                    size: 26
+                    visible: root.effectiveState === "completed"
+                    onClicked: root.openLocationRequested()
+                }
+
+                DashboardButton {
+                    variant: "ghost"
+                    controlHeight: 26
+                    text: qsTr("Réessayer")
+                    visible: root.effectiveState === "failed"
+                    onClicked: root.retryRequested()
+                }
             }
         }
+    }
 
-        // Pourcentage - 38px
-        Label {
-            Layout.preferredWidth: 38
-            text: Math.round(root.progress * 100) + " %"
-            color: root.status === "Échoué" ? "#C8453B" : "#4A5961"
-            font.pixelSize: 12
-            font.bold: true
-            font.family: Theme.fontFamily
-            horizontalAlignment: Text.AlignRight
-        }
-
-        // Actions - 96px
-        Row {
-            Layout.preferredWidth: 96
-            spacing: 2
-            layoutDirection: Qt.RightToLeft
-
-            Button {
-                text: qsTr("Détails")
-                flat: true
-                font.pixelSize: 12
-                font.family: Theme.fontFamily
-                visible: root.status !== "Échoué"
-                onClicked: root.detailsRequested()
-            }
-
-            IconButton {
-                glyph: "\uf115"
-                size: 28
-                visible: root.status === "Terminé"
-                onClicked: root.openLocationRequested()
-            }
-
-            Button {
-                text: qsTr("Réessayer")
-                flat: true
-                font.pixelSize: 12
-                font.family: Theme.fontFamily
-                visible: root.status === "Échoué"
-                onClicked: root.retryRequested()
-            }
-
-            IconButton {
-                glyph: "\uf141"
-                size: 28
-                visible: root.status !== "Échoué"
-            }
-        }
+    readonly property string formattedDate: {
+        if (!root.timestamp)
+            return ""
+        const d = new Date(root.timestamp)
+        if (isNaN(d.getTime()))
+            return ""
+        const now = new Date()
+        const sameDay = d.toDateString() === now.toDateString()
+        return sameDay ? d.toLocaleString(Qt.locale(), "HH:mm")
+                       : d.toLocaleString(Qt.locale(), "dd/MM/yyyy HH:mm")
     }
 
     MouseArea {
@@ -208,6 +310,12 @@ Rectangle {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: root.detailsRequested()
+        // Laisse les boutons internes (Details/Reessayer/dossier) recevoir
+        // leurs propres clics : declaree en dernier ici, elle ne couvre en
+        // pratique que les zones non deja occupees par cardColumn au sein
+        // du meme parent grace au z par defaut (voir NetworkListView pour
+        // le cas inverse, corrige separement).
+        z: -1
     }
 
     function formatBytes(bytes) {

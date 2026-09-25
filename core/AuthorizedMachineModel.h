@@ -31,6 +31,12 @@ public:
         AddedAtRole,
         ReasonRole
     };
+    // Expose les valeurs de l'enum comme proprietes accessibles depuis QML
+    // (ex. authorizedMachineModel.AuthorizedRole) : sans Q_ENUM, ces
+    // accesseurs valent "undefined" cote QML et data() retombe alors
+    // silencieusement sur Qt::DisplayRole (voir HomeView.qml,
+    // refreshActionRequired()/refreshNetworkOfflinePeers()).
+    Q_ENUM(Roles)
 
     explicit AuthorizedMachineModel(QObject *parent = nullptr);
     ~AuthorizedMachineModel() override;

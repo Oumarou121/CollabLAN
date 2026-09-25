@@ -4,6 +4,7 @@
 #include <QAbstractListModel>
 #include <QVector>
 #include <QString>
+#include <QVariantMap>
 
 #include "models/AuditLog.h"
 
@@ -22,6 +23,7 @@ class AuditLogModel : public QAbstractListModel
 {
     Q_OBJECT
     Q_PROPERTY(QObject* auditManager READ auditManager WRITE setAuditManager NOTIFY auditManagerChanged)
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
 
 public:
     enum Roles {
@@ -43,6 +45,14 @@ public:
     QObject* auditManager() const;
     void setAuditManager(QObject *manager);
 
+    int count() const { return m_logs.size(); }
+
+    /// Retourne l'entree a l'index donne sous forme de QVariantMap (cles :
+    /// id, timestamp, eventType, description, userId, actorLabel - voir
+    /// roleNames()), utilisable directement depuis QML sans passer par les
+    /// roles numeriques (voir HomeView.qml, refreshActivities()).
+    Q_INVOKABLE QVariantMap get(int row) const;
+
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void setEventTypeFilter(const QString &eventType);
     Q_INVOKABLE void setUserIdFilter(qint64 userId);
@@ -52,6 +62,7 @@ public:
 
 signals:
     void auditManagerChanged();
+    void countChanged();
     void error(const QString &message);
 
 private:
