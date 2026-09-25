@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Themes
 import "../Components"
+import "../Components/icons.js" as Icons
 
 /*
  * ActivityRow - Carte d'activité récente (section "Activité récente" du
@@ -59,12 +60,12 @@ Rectangle {
     }
     readonly property string eventGlyph: {
         switch (root.event) {
-        case "connection":    return "\uf1e6"
-        case "message":       return "\uf0e0"
-        case "transfer":      return "\uf0ee"
-        case "call":          return "\uf095"
-        case "access_denied": return "\uf023"
-        default:              return "\uf0f3"
+        case "connection":    return Icons.link
+        case "message":       return Icons.messageCircle
+        case "transfer":      return Icons.exchange
+        case "call":          return Icons.phone
+        case "access_denied": return Icons.ban
+        default:              return Icons.bell
         }
     }
     readonly property string eventLabel: {
@@ -123,11 +124,12 @@ Rectangle {
             radius: 9
             color: root.eventSoft
 
-            FaIcon {
+            LineIcon {
                 anchors.centerIn: parent
-                glyph: root.eventGlyph
+                path: root.eventGlyph
                 color: root.eventText
-                font.pixelSize: 14
+                size: 14
+                strokeWidth: 1.9
             }
         }
 

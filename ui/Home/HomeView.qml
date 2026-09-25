@@ -53,32 +53,32 @@ Item {
     property bool demoMode: false
 
     // Couleurs exactes selon maquette HTML
-    readonly property color bg: "#EEF2F1"
-    readonly property color surface: "#FFFFFF"
-    readonly property color surface2: "#F7F9F8"
-    readonly property color line: "#DDE4E2"
-    readonly property color line2: "#C8D2CF"
-    readonly property color ink: "#15222B"
-    readonly property color ink2: "#4A5961"
-    readonly property color ink3: "#62717A"
-    readonly property color primary: "#0B5C70"
-    readonly property color primarySoft: "#E0EEF2"
-    readonly property color primaryMuted: "#B9D8E0"
-    readonly property color ok: "#2E9A66"
-    readonly property color okSoft: "#E4F4EC"
-    readonly property color okText: "#1B7048"
-    readonly property color warn: "#C27A0E"
-    readonly property color warnSoft: "#FCF1DC"
-    readonly property color warnText: "#8E5A08"
-    readonly property color err: "#C8453B"
-    readonly property color errSoft: "#FBE9E7"
-    readonly property color errText: "#9E2F27"
-    readonly property color info: "#3A78B8"
-    readonly property color infoSoft: "#E5EEF8"
-    readonly property color infoText: "#28598C"
-    readonly property color call: "#7A55B0"
-    readonly property color callSoft: "#EEE8F7"
-    readonly property color callText: "#5B3B8C"
+    readonly property color bg: Theme.dashboardBackground
+    readonly property color surface: Theme.dashboardSurface
+    readonly property color surface2: Theme.dashboardSurfaceAlt
+    readonly property color line: Theme.dashboardLine
+    readonly property color line2: Theme.dashboardLineStrong
+    readonly property color ink: Theme.dashboardInk
+    readonly property color ink2: Theme.dashboardInkSecondary
+    readonly property color ink3: Theme.dashboardInkTertiary
+    readonly property color primary: Theme.dashboardPrimary
+    readonly property color primarySoft: Theme.dashboardPrimarySoft
+    readonly property color primaryMuted: Theme.dashboardPrimaryMuted
+    readonly property color ok: Theme.dashboardSuccess
+    readonly property color okSoft: Theme.dashboardSuccessSoft
+    readonly property color okText: Theme.dashboardSuccessText
+    readonly property color warn: Theme.dashboardWarning
+    readonly property color warnSoft: Theme.dashboardWarningSoft
+    readonly property color warnText: Theme.dashboardWarningText
+    readonly property color err: Theme.dashboardError
+    readonly property color errSoft: Theme.dashboardErrorSoft
+    readonly property color errText: Theme.dashboardErrorText
+    readonly property color info: Theme.dashboardInfo
+    readonly property color infoSoft: Theme.dashboardInfoSoft
+    readonly property color infoText: Theme.dashboardInfoText
+    readonly property color call: Theme.dashboardCall
+    readonly property color callSoft: Theme.dashboardCallSoft
+    readonly property color callText: Theme.dashboardCallText
     readonly property color track: "#D9E2E0"
 
     readonly property bool isAdmin: (typeof userManager !== "undefined" && userManager)
@@ -102,10 +102,10 @@ Item {
     }
     readonly property color serverStatusColor: {
         if (!root.election)
-            return "#2E9A66"
+            return Theme.dashboardSuccess
         if (root.election.roleLabel === "TEMP_SERVER")
-            return "#C27A0E"
-        return "#2E9A66"
+            return Theme.dashboardWarning
+        return Theme.dashboardSuccess
     }
 
     // Chargement : les listes affichent des squelettes tant que le contenu
@@ -424,7 +424,7 @@ Item {
     // Fond
     Rectangle {
         anchors.fill: parent
-        color: "#EEF2F1"
+        color: Theme.dashboardBackground
     }
 
     // Bannière d'erreur pour les actions transferts (ouvrir l'emplacement,
@@ -435,7 +435,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         height: errorLabel.implicitHeight + 16
-        color: "#C8453B"
+        color: Theme.dashboardError
         visible: opacity > 0
         opacity: 0
         z: 10
@@ -444,7 +444,7 @@ Item {
             id: errorLabel
             anchors.centerIn: parent
             width: parent.width - 32
-            color: "#FFFFFF"
+            color: Theme.dashboardSurface
             font.pixelSize: 13
             font.family: Theme.fontFamily
             horizontalAlignment: Text.AlignHCenter
@@ -555,7 +555,7 @@ Item {
                             // .gr h1 : 26px / 700 / line-height 32 / letter-spacing -0.02em
                             Label {
                                 text: qsTr("Bonjour, ") + (root.username || "")
-                                color: "#15222B"
+                                color: Theme.dashboardInk
                                 font.pixelSize: 26
                                 font.bold: true
                                 font.weight: Font.Medium
@@ -577,7 +577,7 @@ Item {
                                     Layout.preferredHeight: 26
                                     Layout.preferredWidth: sp1Row.implicitWidth + 20
                                     radius: 13
-                                    color: "#E4F4EC"
+                                    color: Theme.dashboardSuccessSoft
 
                                     RowLayout {
                                         id: sp1Row
@@ -588,12 +588,12 @@ Item {
                                             Layout.preferredWidth: 7
                                             Layout.preferredHeight: 7
                                             radius: 3.5
-                                            color: "#2E9A66"
+                                            color: Theme.dashboardSuccess
                                         }
 
                                         Label {
                                             text: root.serverStatusLabel
-                                            color: "#1B7048"
+                                            color: Theme.dashboardSuccessText
                                             font.pixelSize: 12
                                             font.bold: true
                                             font.family: Theme.fontFamily
@@ -602,23 +602,48 @@ Item {
                                 }
 
                                 // <span><b>N</b> postes en ligne</span>
-                                Label {
-                                    text: "<b style=\"color:#15222B\">" + root.peersCount + "</b> " + qsTr("postes en ligne")
-                                    textFormat: Text.RichText
-                                    color: "#4A5961"
-                                    font.pixelSize: 14
-                                    font.family: Theme.fontFamily
+                                // Valeur en gras + libelle, en deux Label separes plutot
+                                // qu'en RichText avec une couleur figee : la valeur suit
+                                // desormais Theme.dashboardInk (donc le mode sombre) au
+                                // lieu de rester en #15222B (encre claire) quel que soit
+                                // le theme actif.
+                                Row {
+                                    spacing: 4
                                     Layout.alignment: Qt.AlignVCenter
+
+                                    Label {
+                                        text: root.peersCount
+                                        color: Theme.dashboardInk
+                                        font.pixelSize: 14
+                                        font.bold: true
+                                        font.family: Theme.fontFamily
+                                    }
+                                    Label {
+                                        text: qsTr("postes en ligne")
+                                        color: Theme.dashboardInkSecondary
+                                        font.pixelSize: 14
+                                        font.family: Theme.fontFamily
+                                    }
                                 }
 
                                 // <span><b>M</b> transferts en cours</span>
-                                Label {
-                                    text: "<b style=\"color:#15222B\">" + root.activeTransferCount + "</b> " + qsTr("transferts en cours")
-                                    textFormat: Text.RichText
-                                    color: "#4A5961"
-                                    font.pixelSize: 14
-                                    font.family: Theme.fontFamily
+                                Row {
+                                    spacing: 4
                                     Layout.alignment: Qt.AlignVCenter
+
+                                    Label {
+                                        text: root.activeTransferCount
+                                        color: Theme.dashboardInk
+                                        font.pixelSize: 14
+                                        font.bold: true
+                                        font.family: Theme.fontFamily
+                                    }
+                                    Label {
+                                        text: qsTr("transferts en cours")
+                                        color: Theme.dashboardInkSecondary
+                                        font.pixelSize: 14
+                                        font.family: Theme.fontFamily
+                                    }
                                 }
                             }
                     }
@@ -636,14 +661,14 @@ Item {
                             leftPadding: 14
                             rightPadding: 14
                             background: Rectangle {
-                                color: newTransferBtn.hovered ? "#0A4E5F" : "#0B5C70"
+                                color: newTransferBtn.hovered ? Theme.dashboardPrimaryHover : Theme.dashboardPrimary
                                 radius: 8
                             }
                             contentItem: RowLayout {
                                 spacing: 7
                                 Label {
                                     text: "+"
-                                    color: "#FFFFFF"
+                                    color: Theme.dashboardSurface
                                     font.pixelSize: 15
                                     font.bold: true
                                     font.family: Theme.fontFamily
@@ -651,7 +676,7 @@ Item {
                                 }
                                 Label {
                                     text: qsTr("Nouveau transfert")
-                                    color: "#FFFFFF"
+                                    color: Theme.dashboardSurface
                                     font.pixelSize: 14
                                     font.bold: true
                                     font.family: Theme.fontFamily
@@ -675,9 +700,9 @@ Item {
                     Layout.leftMargin: 24
                     Layout.rightMargin: 24
                     Layout.topMargin: 14
-                    color: "#FFFFFF"
+                    color: Theme.dashboardSurface
                     border.width: 1
-                    border.color: "#DDE4E2"
+                    border.color: Theme.dashboardLine
                     radius: 12
 
                     // Surface interne, inscrite DANS la bordure de 1px : les enfants
@@ -762,7 +787,7 @@ Item {
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
                             width: 1
-                            color: "#DDE4E2"
+                            color: Theme.dashboardLine
                         }
 
                         // À traiter - colonne accolée à la carte (maquette : `.atr`,
@@ -775,7 +800,7 @@ Item {
                             anchors.right: parent.right
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
-                            color: "#F7F9F8"
+                            color: Theme.dashboardSurfaceAlt
                             topLeftRadius: 0
                             bottomLeftRadius: 0
                             topRightRadius: workspaceInner.innerRadius
@@ -832,7 +857,7 @@ Item {
 
                                 Label {
                                     text: qsTr("Transferts")
-                                    color: "#15222B"
+                                    color: Theme.dashboardInk
                                     font.pixelSize: 15
                                     font.bold: true
                                     font.family: Theme.fontFamily
@@ -840,7 +865,7 @@ Item {
 
                                 Label {
                                     text: root.activeTransferCount > 0 ? (root.activeTransferCount + " en cours") : ""
-                                    color: "#62717A"
+                                    color: Theme.dashboardInkTertiary
                                     font.pixelSize: 12
                                     font.family: Theme.fontFamily
                                 }
@@ -855,7 +880,7 @@ Item {
                                     background: Rectangle { color: "transparent" }
                                     contentItem: Label {
                                         text: parent.text
-                                        color: "#0B5C70"
+                                        color: Theme.dashboardPrimary
                                         font.pixelSize: 12
                                         font.family: Theme.fontFamily
                                     }
@@ -947,7 +972,7 @@ Item {
 
                                 Label {
                                     text: qsTr("Activité récente")
-                                    color: "#15222B"
+                                    color: Theme.dashboardInk
                                     font.pixelSize: 15
                                     font.bold: true
                                     font.family: Theme.fontFamily
@@ -964,7 +989,7 @@ Item {
                                     background: Rectangle { color: "transparent" }
                                     contentItem: Label {
                                         text: parent.text
-                                        color: "#0B5C70"
+                                        color: Theme.dashboardPrimary
                                         font.pixelSize: 12
                                         font.family: Theme.fontFamily
                                     }

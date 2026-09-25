@@ -487,10 +487,14 @@ Rectangle {
         bottomLeftRadius: root.leftRadius
         topRightRadius: root.rightRadius
         bottomRightRadius: root.rightRadius
+        // Les 2 arrets etaient restes en hex clair fige : la surface reseau
+        // ne changeait quasiment pas en mode sombre. Repris avec les jetons
+        // Theme.dashboardXxx deja definis (meme hierarchie surface -> surface
+        // alt -> fond que la maquette, mais qui suit le theme actif).
         gradient: Gradient {
-            GradientStop { position: 0.0; color: "#FFFFFF" }
-            GradientStop { position: 0.7; color: "#F5F9F9" }
-            GradientStop { position: 1.0; color: "#EDF2F2" }
+            GradientStop { position: 0.0; color: Theme.dashboardSurface }
+            GradientStop { position: 0.7; color: Theme.dashboardSurfaceAlt }
+            GradientStop { position: 1.0; color: Theme.dashboardBackground }
         }
     }
 
@@ -534,14 +538,14 @@ Rectangle {
 
         Label {
             text: qsTr("Réseau local")
-            color: "#15222B"
+            color: Theme.dashboardInk
             font.pixelSize: 15
             font.bold: true
             font.family: Theme.fontFamily
         }
         Label {
             text: qsTr("Postes détectés autour de ce poste, disposition indicative")
-            color: "#62717A"
+            color: Theme.dashboardInkTertiary
             font.pixelSize: 12
             font.family: Theme.fontFamily
         }
@@ -560,13 +564,13 @@ Rectangle {
             radius: 6
             height: 26
             width: mapLabel.implicitWidth + 22
-            color: root.viewMode === "map" ? "#15222B" : "transparent"
+            color: root.viewMode === "map" ? Theme.dashboardInk : "transparent"
 
             Label {
                 id: mapLabel
                 anchors.centerIn: parent
                 text: qsTr("Carte")
-                color: root.viewMode === "map" ? "#FFFFFF" : "#4A5961"
+                color: root.viewMode === "map" ? Theme.dashboardSurface : Theme.dashboardInkSecondary
                 font.pixelSize: 12
                 font.bold: true
                 font.family: Theme.fontFamily
@@ -584,15 +588,15 @@ Rectangle {
             radius: 6
             height: 26
             width: listLabel.implicitWidth + 22
-            color: root.viewMode === "list" ? "#15222B" : "transparent"
+            color: root.viewMode === "list" ? Theme.dashboardInk : "transparent"
             border.width: root.viewMode === "list" ? 0 : 1
-            border.color: "#DDE4E2"
+            border.color: Theme.dashboardLine
 
             Label {
                 id: listLabel
                 anchors.centerIn: parent
                 text: qsTr("Liste")
-                color: root.viewMode === "list" ? "#FFFFFF" : "#4A5961"
+                color: root.viewMode === "list" ? Theme.dashboardSurface : Theme.dashboardInkSecondary
                 font.pixelSize: 12
                 font.bold: true
                 font.family: Theme.fontFamily
@@ -727,7 +731,7 @@ Rectangle {
             ctx.translate(bx, by)
             ctx.rotate(a)
             ctx.fillStyle = col
-            ctx.strokeStyle = "#FFFFFF"
+            ctx.strokeStyle = Theme.dashboardSurface
             ctx.lineWidth = 1.4
             ctx.beginPath()
             ctx.moveTo(6, 0)
@@ -752,16 +756,16 @@ Rectangle {
                 ctx.quadraticCurveTo(q.qx, q.qy, n.x, n.y)
                 if (n.status === "transferring") {
                     var reverse = n.direction === qsTr("Réception")
-                    ctx.strokeStyle = "#0B5C70"
+                    ctx.strokeStyle = Theme.dashboardPrimary
                     ctx.lineWidth = 1.6
                     ctx.globalAlpha = 0.75
                     ctx.setLineDash([3, 10])
                     ctx.lineDashOffset = reverse ? dashPhase : -dashPhase
                     ctx.stroke()
                     var arrowLen = Math.max(1, Math.hypot(n.x - root.cx, n.y - root.cy))
-                    drawArrow(ctx, q, n, arrowParam(n.x, n.y, arrowLen), !reverse, "#0B5C70")
+                    drawArrow(ctx, q, n, arrowParam(n.x, n.y, arrowLen), !reverse, Theme.dashboardPrimary)
                 } else {
-                    ctx.strokeStyle = "#7A55B0"
+                    ctx.strokeStyle = Theme.dashboardCall
                     ctx.lineWidth = 1.8
                     ctx.globalAlpha = 0.85
                     ctx.setLineDash([])
@@ -783,24 +787,24 @@ Rectangle {
         Rectangle {
             anchors.centerIn: parent
             width: 88; height: 88; radius: 44
-            color: "#0B5C70"; opacity: 0.06
+            color: Theme.dashboardPrimary; opacity: 0.06
         }
         Rectangle {
             anchors.centerIn: parent
             width: 70; height: 70; radius: 35
-            color: "#0B5C70"; opacity: 0.09
+            color: Theme.dashboardPrimary; opacity: 0.09
         }
         Rectangle {
             anchors.centerIn: parent
             width: 50; height: 50; radius: 25
             gradient: Gradient {
                 GradientStop { position: 0.0; color: "#1B7C93" }
-                GradientStop { position: 1.0; color: "#0B5C70" }
+                GradientStop { position: 1.0; color: Theme.dashboardPrimary }
             }
             Label {
                 anchors.centerIn: parent
                 text: "\uf108"
-                color: "#FFFFFF"
+                color: Theme.dashboardSurface
                 font.pixelSize: 22
                 font.family: "FontAwesome"
             }
@@ -810,7 +814,7 @@ Rectangle {
             anchors.top: parent.bottom
             anchors.topMargin: 4
             text: root.localPeerName
-            color: "#15222B"
+            color: Theme.dashboardInk
             font.pixelSize: 12
             font.bold: true
             font.family: Theme.fontFamily
@@ -820,7 +824,7 @@ Rectangle {
             anchors.top: parent.bottom
             anchors.topMargin: 17
             text: root.localPeerStatusLabel
-            color: "#62717A"
+            color: Theme.dashboardInkTertiary
             font.pixelSize: 11
             font.family: Theme.fontFamily
         }
@@ -887,7 +891,7 @@ Rectangle {
                 width: tipCol.implicitWidth + 22
                 height: tipCol.implicitHeight + 16
                 radius: 8
-                color: "#15222B"
+                color: Theme.dashboardInk
 
                 Column {
                     id: tipCol
@@ -895,7 +899,7 @@ Rectangle {
                     spacing: 2
                     Label {
                         text: peer ? peer.name : ""
-                        color: "#FFFFFF"
+                        color: Theme.dashboardSurface
                         font.pixelSize: 12
                         font.bold: true
                         font.family: Theme.fontFamily
@@ -1001,7 +1005,7 @@ Rectangle {
             anchors.right: parent.right
             anchors.top: parent.top
             height: 1
-            color: "#DDE4E2"
+            color: Theme.dashboardLine
         }
 
         Row {
@@ -1020,20 +1024,20 @@ Rectangle {
 
             Repeater {
                 model: [
-                    { color: "#2E9A66", label: qsTr("En ligne"), count: root.presentPeers.filter(function(p) { return p.status === "online" }).length },
-                    { color: "#C27A0E", label: qsTr("Absent"), count: root.presentPeers.filter(function(p) { return p.status === "away" }).length },
-                    { color: "#C27A0E", label: qsTr("Occupé"), count: root.presentPeers.filter(function(p) { return p.status === "busy" }).length },
-                    { color: "#0B5C70", label: qsTr("En transfert"), count: root.presentPeers.filter(function(p) { return p.status === "transferring" }).length },
-                    { color: "#7A55B0", label: qsTr("En appel"), count: root.presentPeers.filter(function(p) { return p.status === "calling" }).length },
+                    { color: Theme.dashboardSuccess, label: qsTr("En ligne"), count: root.presentPeers.filter(function(p) { return p.status === "online" }).length },
+                    { color: Theme.dashboardWarning, label: qsTr("Absent"), count: root.presentPeers.filter(function(p) { return p.status === "away" }).length },
+                    { color: Theme.dashboardWarning, label: qsTr("Occupé"), count: root.presentPeers.filter(function(p) { return p.status === "busy" }).length },
+                    { color: Theme.dashboardPrimary, label: qsTr("En transfert"), count: root.presentPeers.filter(function(p) { return p.status === "transferring" }).length },
+                    { color: Theme.dashboardCall, label: qsTr("En appel"), count: root.presentPeers.filter(function(p) { return p.status === "calling" }).length },
                     { color: "transparent", label: qsTr("Hors ligne"), count: root.offlinePeersPositioned.length, hasBorder: true }
                 ]
                 delegate: Rectangle {
                     width: chipContent.implicitWidth + 20
                     height: 24
                     radius: 999
-                    color: modelData.hasBorder ? "transparent" : "#FFFFFF"
+                    color: modelData.hasBorder ? "transparent" : Theme.dashboardSurface
                     border.width: modelData.hasBorder ? 1.5 : 1
-                    border.color: "#DDE4E2"
+                    border.color: Theme.dashboardLine
 
                     Row {
                         id: chipContent
@@ -1049,7 +1053,7 @@ Rectangle {
                         }
                         Label {
                             text: modelData.label
-                            color: "#4A5961"
+                            color: Theme.dashboardInkSecondary
                             font.pixelSize: 12
                             font.bold: true
                             font.family: Theme.fontFamily
@@ -1057,7 +1061,7 @@ Rectangle {
                         }
                         Label {
                             text: modelData.count
-                            color: "#62717A"
+                            color: Theme.dashboardInkTertiary
                             font.pixelSize: 12
                             font.weight: Font.Medium
                             font.family: Theme.fontFamily
@@ -1090,14 +1094,14 @@ Rectangle {
                 height: 22
                 width: dbgLabel.implicitWidth + 14
                 radius: 6
-                color: "#15222B"
+                color: Theme.dashboardInk
                 opacity: 0.85
 
                 Label {
                     id: dbgLabel
                     anchors.centerIn: parent
                     text: modelData.t
-                    color: "#FFFFFF"
+                    color: Theme.dashboardSurface
                     font.pixelSize: 10
                     font.family: Theme.fontFamily
                 }

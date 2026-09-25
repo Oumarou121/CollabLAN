@@ -21,9 +21,9 @@ Rectangle {
     width: 224
     implicitHeight: contentColumn.implicitHeight + 24
     radius: Theme.radiusMedium
-    color: "#FFFFFF"
+    color: Theme.dashboardSurface
     border.width: 1
-    border.color: "#C8D2CF"
+    border.color: Theme.dashboardLineStrong
 
     property string peerName: ""
     property string peerAddress: ""
@@ -51,12 +51,12 @@ Rectangle {
 
     readonly property color statusColor: {
         switch (root.peerStatus) {
-        case "transferring": return "#0B5C70"
-        case "calling": return "#7A55B0"
-        case "away": return "#C27A0E"
-        case "busy": return "#C27A0E"
-        case "offline": return "#62717A"
-        default: return "#2E9A66"
+        case "transferring": return Theme.dashboardPrimary
+        case "calling": return Theme.dashboardCall
+        case "away": return Theme.dashboardWarning
+        case "busy": return Theme.dashboardWarning
+        case "offline": return Theme.dashboardInkTertiary
+        default: return Theme.dashboardSuccess
         }
     }
     readonly property string statusLabel: {
@@ -74,12 +74,12 @@ Rectangle {
     Rectangle {
         width: 10
         height: 10
-        color: "#FFFFFF"
+        color: Theme.dashboardSurface
         rotation: 45
         y: root.notchOffset
         x: root.notchSide === "right" ? -5 : root.width - 5
         border.width: 1
-        border.color: "#C8D2CF"
+        border.color: Theme.dashboardLineStrong
         z: -1
     }
 
@@ -98,12 +98,12 @@ Rectangle {
                 Layout.preferredWidth: 36
                 Layout.preferredHeight: 36
                 radius: 18
-                color: "#E0EEF2"
+                color: Theme.dashboardPrimarySoft
 
                 Text {
                     anchors.centerIn: parent
                     text: "\uf108"
-                    color: "#0B5C70"
+                    color: Theme.dashboardPrimary
                     font.pixelSize: 18
                     font.family: "FontAwesome"
                 }
@@ -115,7 +115,7 @@ Rectangle {
 
                 Label {
                     text: root.peerName
-                    color: "#15222B"
+                    color: Theme.dashboardInk
                     font.pixelSize: 14
                     font.bold: true
                     font.family: Theme.fontFamily
@@ -124,7 +124,7 @@ Rectangle {
                 }
                 Label {
                     text: root.peerAddress
-                    color: "#62717A"
+                    color: Theme.dashboardInkTertiary
                     font.pixelSize: 12
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
@@ -138,12 +138,12 @@ Rectangle {
                 radius: 13
                 color: "transparent"
                 border.width: 1
-                border.color: "#DDE4E2"
+                border.color: Theme.dashboardLine
 
                 Text {
                     anchors.centerIn: parent
                     text: "\uf00d"
-                    color: "#62717A"
+                    color: Theme.dashboardInkTertiary
                     font.pixelSize: 14
                     font.family: "FontAwesome"
                 }
@@ -173,7 +173,7 @@ Rectangle {
                 }
                 Label {
                     text: root.statusLabel
-                    color: "#4A5961"
+                    color: Theme.dashboardInkSecondary
                     font.pixelSize: 12
                     font.bold: true
                     font.family: Theme.fontFamily
@@ -182,7 +182,7 @@ Rectangle {
                 Label {
                     visible: root.activeTransfer !== null
                     text: root.activeTransfer ? (root.activeTransfer.percent + " %") : ""
-                    color: "#15222B"
+                    color: Theme.dashboardInk
                     font.pixelSize: 12
                     font.bold: true
                     font.family: Theme.fontFamily
@@ -199,7 +199,7 @@ Rectangle {
                 Rectangle {
                     height: parent.height
                     radius: 2
-                    color: "#0B5C70"
+                    color: Theme.dashboardPrimary
                     width: parent.width * (root.activeTransfer ? root.activeTransfer.percent / 100 : 0)
                 }
             }
@@ -211,7 +211,7 @@ Rectangle {
                 text: root.activeTransfer
                       ? ((root.activeTransfer.direction === "Réception" ? qsTr("Envoi de ") : qsTr("Réception de ")) + root.activeTransfer.fileName)
                       : ""
-                color: "#62717A"
+                color: Theme.dashboardInkTertiary
                 font.pixelSize: 11
                 font.family: Theme.fontFamily
             }
@@ -221,7 +221,7 @@ Rectangle {
                 Layout.fillWidth: true
                 elide: Text.ElideRight
                 text: qsTr("Compte connecté : ") + root.accountName
-                color: "#62717A"
+                color: Theme.dashboardInkTertiary
                 font.pixelSize: 11
                 font.family: Theme.fontFamily
             }
@@ -236,7 +236,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 32
                 radius: 8
-                color: "#0B5C70"
+                color: Theme.dashboardPrimary
                 enabled: root.peerStatus !== "offline"
                 opacity: enabled ? 1 : 0.5
 
@@ -248,14 +248,14 @@ Rectangle {
 
                     Text {
                         text: "\uf1d8"
-                        color: "#FFFFFF"
+                        color: Theme.dashboardSurface
                         font.pixelSize: 14
                         font.family: "FontAwesome"
                     }
 
                     Label {
                         text: qsTr("Envoyer un fichier")
-                        color: "#FFFFFF"
+                        color: Theme.dashboardSurface
                         font.pixelSize: 13
                         font.bold: true
                         font.family: Theme.fontFamily
@@ -280,7 +280,7 @@ Rectangle {
                     radius: 8
                     color: "transparent"
                     border.width: 1
-                    border.color: "#DDE4E2"
+                    border.color: Theme.dashboardLine
                     enabled: root.peerStatus !== "offline" && root.peerStatus !== "calling"
                     opacity: enabled ? 1 : 0.5
 
@@ -292,14 +292,14 @@ Rectangle {
 
                         Text {
                             text: "\uf095"
-                            color: "#0B5C70"
+                            color: Theme.dashboardPrimary
                             font.pixelSize: 14
                             font.family: "FontAwesome"
                         }
 
                         Label {
                             text: qsTr("Appeler")
-                            color: "#0B5C70"
+                            color: Theme.dashboardPrimary
                             font.pixelSize: 13
                             font.bold: true
                             font.family: Theme.fontFamily
@@ -320,7 +320,7 @@ Rectangle {
                     radius: 8
                     color: "transparent"
                     border.width: 1
-                    border.color: "#DDE4E2"
+                    border.color: Theme.dashboardLine
 
                     RowLayout {
                         anchors.fill: parent
@@ -330,14 +330,14 @@ Rectangle {
 
                         Text {
                             text: "\uf0e0"
-                            color: "#0B5C70"
+                            color: Theme.dashboardPrimary
                             font.pixelSize: 14
                             font.family: "FontAwesome"
                         }
 
                         Label {
                             text: qsTr("Message")
-                            color: "#0B5C70"
+                            color: Theme.dashboardPrimary
                             font.pixelSize: 13
                             font.bold: true
                             font.family: Theme.fontFamily

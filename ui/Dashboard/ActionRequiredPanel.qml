@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Themes
 import "../Components"
+import "../Components/icons.js" as Icons
 
 /*
  * ActionRequiredPanel - Zone "À traiter" selon la maquette HTML exacte
@@ -26,7 +27,7 @@ ColumnLayout {
 
         Label {
             text: qsTr("À traiter")
-            color: "#15222B"
+            color: Theme.dashboardInk
             font.pixelSize: 15
             font.bold: true
             font.family: Theme.fontFamily
@@ -41,13 +42,13 @@ ColumnLayout {
             Layout.preferredWidth: 20
             Layout.preferredHeight: 20
             radius: 10
-            color: "#C27A0E"
+            color: Theme.dashboardWarning
             visible: root.actions.length > 0
 
             Label {
                 anchors.centerIn: parent
                 text: root.actions.length > 99 ? "99+" : root.actions.length
-                color: "#FFFFFF"
+                color: Theme.dashboardSurface
                 font.pixelSize: 11
                 font.bold: true
                 font.family: Theme.fontFamily
@@ -86,25 +87,25 @@ ColumnLayout {
 
                     readonly property color actionColor: {
                         switch(modelData.urgency) {
-                            case "high": return "#C8453B"
-                            case "medium": return "#C27A0E"
-                            default: return "#3A78B8"
+                            case "high": return Theme.dashboardError
+                            case "medium": return Theme.dashboardWarning
+                            default: return Theme.dashboardInfo
                         }
                     }
 
                     readonly property color actionColorSoft: {
                         switch(modelData.urgency) {
-                            case "high": return "#FBE9E7"
-                            case "medium": return "#FCF1DC"
-                            default: return "#E5EEF8"
+                            case "high": return Theme.dashboardErrorSoft
+                            case "medium": return Theme.dashboardWarningSoft
+                            default: return Theme.dashboardInfoSoft
                         }
                     }
 
                     readonly property string urgencyIcon: {
                         switch(modelData.urgency) {
-                            case "high": return "\uf071"
-                            case "medium": return "\uf132"
-                            default: return "\uf0e5"
+                            case "high": return Icons.alertTriangle
+                            case "medium": return Icons.bell
+                            default: return Icons.messageCircle
                         }
                     }
 
@@ -145,11 +146,12 @@ ColumnLayout {
                                 radius: 7
                                 color: actionColor
 
-                                FaIcon {
+                                LineIcon {
                                     anchors.centerIn: parent
-                                    glyph: urgencyIcon
-                                    color: "#FFFFFF"
-                                    font.pixelSize: 14
+                                    path: urgencyIcon
+                                    color: Theme.dashboardSurface
+                                    size: 14
+                                    strokeWidth: 1.9
                                 }
                             }
 
@@ -160,7 +162,7 @@ ColumnLayout {
 
                                 Label {
                                     text: modelData.title || ""
-                                    color: "#15222B"
+                                    color: Theme.dashboardInk
                                     font.pixelSize: 13
                                     font.bold: true
                                     font.family: Theme.fontFamily
@@ -170,7 +172,7 @@ ColumnLayout {
 
                                 Label {
                                     text: modelData.description || ""
-                                    color: "#4A5961"
+                                    color: Theme.dashboardInkSecondary
                                     font.pixelSize: 12
                                     font.family: Theme.fontFamily
                                     elide: Text.ElideRight
@@ -201,7 +203,7 @@ ColumnLayout {
                             }
                             contentItem: Label {
                                 text: parent.text
-                                color: "#0B5C70"
+                                color: Theme.dashboardPrimary
                                 font.pixelSize: 12
                                 font.family: Theme.fontFamily
                                 horizontalAlignment: Text.AlignHCenter
@@ -220,7 +222,7 @@ ColumnLayout {
                             Label {
                                 anchors.centerIn: parent
                                 text: urgencyLabel
-                                color: "#FFFFFF"
+                                color: Theme.dashboardSurface
                                 font.pixelSize: 11
                                 font.bold: true
                                 font.family: Theme.fontFamily
@@ -242,16 +244,17 @@ ColumnLayout {
             anchors.centerIn: parent
             spacing: 12
 
-            FaIcon {
-                glyph: "\uf1de"
-                color: "#62717A"
-                font.pixelSize: 28
+            LineIcon {
+                path: Icons.checkCircle
+                color: Theme.dashboardInkTertiary
+                size: 28
+                strokeWidth: 1.6
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Label {
                 text: qsTr("Rien à traiter")
-                color: "#62717A"
+                color: Theme.dashboardInkTertiary
                 font.pixelSize: 14
                 font.bold: true
                 font.family: Theme.fontFamily
@@ -260,7 +263,7 @@ ColumnLayout {
 
             Label {
                 text: qsTr("Tout est en ordre")
-                color: "#4A5961"
+                color: Theme.dashboardInkSecondary
                 font.pixelSize: 12
                 font.family: Theme.fontFamily
                 Layout.alignment: Qt.AlignHCenter

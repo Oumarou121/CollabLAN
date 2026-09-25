@@ -3,6 +3,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Themes
 import "../Components"
+import "../Components/icons.js" as Icons
+import "transferFormat.js" as Fmt
 
 /*
  * TransferRow - Carte de transfert (section "Transferts" du dashboard).
@@ -105,32 +107,26 @@ Rectangle {
                 radius: 10
                 color: root.statusSoft
 
-                FaIcon {
+                LineIcon {
                     anchors.centerIn: parent
-                    glyph: fileIcon
+                    path: fileIcon
                     color: root.statusText
-                    font.pixelSize: 18
+                    size: 18
+                    strokeWidth: 1.8
                 }
 
+                // Meme classification que FileTypeIcon.qml (ecran Transferts),
+                // pour un seul et meme langage d'icones de fichier.
                 readonly property string fileIcon: {
-                    if (root.fileName.endsWith(".zip") || root.fileName.endsWith(".rar")
-                            || root.fileName.endsWith(".7z")) return "\uf1c6"
-                    if (root.fileName.endsWith(".pdf")) return "\uf1c1"
-                    if (root.fileName.endsWith(".pptx") || root.fileName.endsWith(".ppt")) return "\uf1c4"
-                    if (root.fileName.endsWith(".xlsx") || root.fileName.endsWith(".xls")) return "\uf1c3"
-                    if (root.fileName.endsWith(".docx") || root.fileName.endsWith(".doc")) return "\uf1c2"
-                    if (root.fileName.endsWith(".html") || root.fileName.endsWith(".htm")
-                            || root.fileName.endsWith(".css") || root.fileName.endsWith(".js")
-                            || root.fileName.endsWith(".json") || root.fileName.endsWith(".xml")) return "\uf1c9"
-                    if (root.fileName.endsWith(".jpg") || root.fileName.endsWith(".jpeg")
-                            || root.fileName.endsWith(".png") || root.fileName.endsWith(".gif")
-                            || root.fileName.endsWith(".webp") || root.fileName.endsWith(".bmp")) return "\uf1c5"
-                    if (root.fileName.endsWith(".mp4") || root.fileName.endsWith(".mov")
-                            || root.fileName.endsWith(".avi") || root.fileName.endsWith(".mkv")) return "\uf1c8"
-                    if (root.fileName.endsWith(".mp3") || root.fileName.endsWith(".wav")
-                            || root.fileName.endsWith(".flac")) return "\uf1c7"
-                    if (root.fileName.endsWith(".txt") || root.fileName.endsWith(".md")) return "\uf0f6"
-                    return "\uf0f6"
+                    switch (Fmt.fileKind(root.fileName)) {
+                    case "doc":
+                    case "sheet":
+                    case "slides": return Icons.fileText
+                    case "image":  return Icons.image
+                    case "archive": return Icons.archive
+                    case "media":  return Icons.media
+                    default:       return Icons.file
+                    }
                 }
             }
 
@@ -158,12 +154,12 @@ Rectangle {
                         font.family: Theme.fontFamily
                     }
 
-                    FaIcon {
-                        glyph: root.isIncoming ? "\uf063" : "\uf062"
+                    LineIcon {
+                        path: root.isIncoming ? Icons.arrowDownLeft : Icons.arrowUpRight
                         color: Theme.dashboardPrimary
-                        font.pixelSize: 10
+                        size: 10
+                        strokeWidth: 2
                         anchors.verticalCenter: parent.verticalCenter
-                        transform: Rotation { origin.x: 5; origin.y: 5; angle: root.isIncoming ? 180 : 0 }
                     }
 
                     Label {
@@ -274,9 +270,12 @@ Rectangle {
                     onClicked: root.detailsRequested()
                 }
 
-                IconButton {
-                    glyph: "\uf115"
-                    size: 26
+                DashboardButton {
+                    variant: "ghost"
+                    iconOnly: true
+                    controlHeight: 26
+                    iconPath: Icons.folderOpen
+                    tooltip: qsTr("Ouvrir l'emplacement")
                     visible: root.effectiveState === "completed"
                     onClicked: root.openLocationRequested()
                 }

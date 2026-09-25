@@ -39,23 +39,23 @@ Item {
 
     readonly property color statusColor: {
         switch (root.status) {
-        case "transferring": return "#0B5C70"
-        case "calling": return "#7A55B0"
-        case "away": return "#C27A0E"
-        case "busy": return "#C27A0E"
+        case "transferring": return Theme.dashboardPrimary
+        case "calling": return Theme.dashboardCall
+        case "away": return Theme.dashboardWarning
+        case "busy": return Theme.dashboardWarning
         case "offline": return "#B4C1C5"
-        default: return "#2E9A66"
+        default: return Theme.dashboardSuccess
         }
     }
 
     readonly property color labelColor: {
         switch (root.status) {
-        case "transferring": return "#0B5C70"
-        case "calling": return "#7A55B0"
-        case "away": return "#8E5A08"
-        case "busy": return "#8E5A08"
-        case "offline": return "#62717A"
-        default: return "#62717A"
+        case "transferring": return Theme.dashboardPrimary
+        case "calling": return Theme.dashboardCall
+        case "away": return Theme.dashboardWarningText
+        case "busy": return Theme.dashboardWarningText
+        case "offline": return Theme.dashboardInkTertiary
+        default: return Theme.dashboardInkTertiary
         }
     }
 
@@ -78,10 +78,10 @@ Item {
         width: 60
         height: 60
         radius: 30
-        color: "#0B5C70"
+        color: Theme.dashboardPrimary
         opacity: 0.09
         border.width: 1.8
-        border.color: "#0B5C70"
+        border.color: Theme.dashboardPrimary
     }
 
     // Halo de survol - rayon 29, discret, disparaît en dehors du hover
@@ -92,10 +92,10 @@ Item {
         width: 58
         height: 58
         radius: 29
-        color: "#0B5C70"
+        color: Theme.dashboardPrimary
         opacity: root.isHovered ? 0.07 : 0
         border.width: root.isHovered ? 1.4 : 0
-        border.color: "#0B5C70"
+        border.color: Theme.dashboardPrimary
         Behavior on opacity { NumberAnimation { duration: 120 } }
     }
 
@@ -147,7 +147,7 @@ Item {
             visible: !root.offline
             anchors.fill: parent
             radius: width / 2
-            color: "#FFFFFF"
+            color: Theme.dashboardSurface
             border.width: 2.4
             border.color: root.statusColor
         }
@@ -157,13 +157,13 @@ Item {
             width: parent.width - 7
             height: width
             radius: width / 2
-            color: "#E0EEF2"
+            color: Theme.dashboardPrimarySoft
         }
         Text {
             visible: !root.offline
             anchors.centerIn: parent
             text: "\uf108"
-            color: "#0B5C70"
+            color: Theme.dashboardPrimary
             font.pixelSize: 16
             font.family: "FontAwesome"
         }
@@ -176,7 +176,7 @@ Item {
             radius: width / 2
             color: root.statusColor
             border.width: 2
-            border.color: "#FFFFFF"
+            border.color: Theme.dashboardSurface
             x: root.nodeRadius + root.nodeRadius * 0.74 - width / 2
             y: root.nodeRadius + root.nodeRadius * 0.74 - height / 2
 
@@ -184,7 +184,7 @@ Item {
                 visible: root.hasBadgeIcon
                 anchors.centerIn: parent
                 text: root.status === "transferring" ? "\uf1d8" : "\uf095"
-                color: "#FFFFFF"
+                color: Theme.dashboardSurface
                 font.pixelSize: 9
                 font.family: "FontAwesome"
             }
@@ -201,7 +201,7 @@ Item {
         horizontalAlignment: Text.AlignHCenter
         elide: Text.ElideRight
         text: root.label
-        color: root.offline ? "#62717A" : "#15222B"
+        color: root.offline ? Theme.dashboardInkTertiary : Theme.dashboardInk
         font.pixelSize: 12
         font.weight: root.isSelected ? Font.Bold : Font.DemiBold
         font.family: Theme.fontFamily

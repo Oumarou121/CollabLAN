@@ -36,9 +36,9 @@ Column {
         id: header
         width: parent.width
         height: 40
-        color: "#F7F9F8"
+        color: Theme.dashboardSurfaceAlt
         border.width: 1
-        border.color: "#DDE4E2"
+        border.color: Theme.dashboardLine
 
         RowLayout {
             anchors.fill: parent
@@ -49,7 +49,7 @@ Column {
             Label {
                 Layout.preferredWidth: 200
                 text: qsTr("Poste")
-                color: "#62717A"
+                color: Theme.dashboardInkTertiary
                 font.pixelSize: 12
                 font.bold: true
                 font.family: Theme.fontFamily
@@ -58,7 +58,7 @@ Column {
             Label {
                 Layout.preferredWidth: 140
                 text: qsTr("Adresse IP")
-                color: "#62717A"
+                color: Theme.dashboardInkTertiary
                 font.pixelSize: 12
                 font.bold: true
                 font.family: Theme.fontFamily
@@ -67,7 +67,7 @@ Column {
             Label {
                 Layout.preferredWidth: 120
                 text: qsTr("Statut")
-                color: "#62717A"
+                color: Theme.dashboardInkTertiary
                 font.pixelSize: 12
                 font.bold: true
                 font.family: Theme.fontFamily
@@ -80,7 +80,7 @@ Column {
             Label {
                 Layout.preferredWidth: 80
                 text: qsTr("Actions")
-                color: "#62717A"
+                color: Theme.dashboardInkTertiary
                 font.pixelSize: 12
                 font.bold: true
                 font.family: Theme.fontFamily
@@ -104,12 +104,12 @@ Column {
                 height: 56
                 color: "transparent"
                 border.width: 0
-                border.color: "#DDE4E2"
+                border.color: Theme.dashboardLine
 
                 // Fond alterné pour les lignes
                 Rectangle {
                     anchors.fill: parent
-                    color: index % 2 === 0 ? "#FFFFFF" : "#F7F9F8"
+                    color: index % 2 === 0 ? Theme.dashboardSurface : Theme.dashboardSurfaceAlt
                 }
 
                 // Bordure inférieure
@@ -118,7 +118,7 @@ Column {
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     height: 1
-                    color: "#DDE4E2"
+                    color: Theme.dashboardLine
                 }
 
                 // Zone de clic sur toute la ligne (ouvre le detail du poste) :
@@ -144,14 +144,14 @@ Column {
                         Layout.preferredWidth: 32
                         Layout.preferredHeight: 32
                         radius: 16
-                        color: isOnline ? "#E0EEF2" : "#F3F6F6"
+                        color: isOnline ? Theme.dashboardPrimarySoft : "#F3F6F6"
                         border.width: 2
                         border.color: statusColor
 
                         Text {
                             anchors.centerIn: parent
                             text: "\uf108"
-                            color: isOnline ? "#0B5C70" : "#8A98A0"
+                            color: isOnline ? Theme.dashboardPrimary : "#8A98A0"
                             font.pixelSize: 14
                             font.family: "FontAwesome"
                         }
@@ -161,7 +161,7 @@ Column {
                     Label {
                         Layout.preferredWidth: 200
                         text: peerName
-                        color: "#15222B"
+                        color: Theme.dashboardInk
                         font.pixelSize: 13
                         font.bold: true
                         font.family: Theme.fontFamily
@@ -172,7 +172,7 @@ Column {
                     Label {
                         Layout.preferredWidth: 140
                         text: peerData.address || ""
-                        color: "#4A5961"
+                        color: Theme.dashboardInkSecondary
                         font.pixelSize: 12
                         font.family: Theme.fontFamily
                         elide: Text.ElideRight
@@ -209,14 +209,14 @@ Column {
                             radius: 6
                             color: "transparent"
                             border.width: 1
-                            border.color: isOnline ? "#DDE4E2" : "#E4E8E7"
+                            border.color: isOnline ? Theme.dashboardLine : "#E4E8E7"
                             enabled: isOnline
                             opacity: enabled ? 1 : 0.5
 
                             Text {
                                 anchors.centerIn: parent
                                 text: "\uf0e0"
-                                color: isOnline ? "#0B5C70" : "#B4C1C5"
+                                color: isOnline ? Theme.dashboardPrimary : "#B4C1C5"
                                 font.pixelSize: 13
                                 font.family: "FontAwesome"
                             }
@@ -234,14 +234,14 @@ Column {
                             radius: 6
                             color: "transparent"
                             border.width: 1
-                            border.color: isOnline ? "#DDE4E2" : "#E4E8E7"
+                            border.color: isOnline ? Theme.dashboardLine : "#E4E8E7"
                             enabled: isOnline
                             opacity: enabled ? 1 : 0.5
 
                             Text {
                                 anchors.centerIn: parent
                                 text: "\uf1d8"
-                                color: isOnline ? "#0B5C70" : "#B4C1C5"
+                                color: isOnline ? Theme.dashboardPrimary : "#B4C1C5"
                                 font.pixelSize: 13
                                 font.family: "FontAwesome"
                             }
@@ -259,14 +259,14 @@ Column {
                             radius: 6
                             color: "transparent"
                             border.width: 1
-                            border.color: isOnline ? "#DDE4E2" : "#E4E8E7"
+                            border.color: isOnline ? Theme.dashboardLine : "#E4E8E7"
                             enabled: isOnline && status !== "calling"
                             opacity: enabled ? 1 : 0.5
 
                             Text {
                                 anchors.centerIn: parent
                                 text: "\uf095"
-                                color: isOnline ? "#0B5C70" : "#B4C1C5"
+                                color: isOnline ? Theme.dashboardPrimary : "#B4C1C5"
                                 font.pixelSize: 13
                                 font.family: "FontAwesome"
                             }
@@ -287,34 +287,34 @@ Column {
 
                 readonly property color statusColor: {
                     switch (status) {
-                    case "transferring": return "#0B5C70"
-                    case "calling": return "#7A55B0"
-                    case "away": return "#C27A0E"
-                    case "busy": return "#C27A0E"
+                    case "transferring": return Theme.dashboardPrimary
+                    case "calling": return Theme.dashboardCall
+                    case "away": return Theme.dashboardWarning
+                    case "busy": return Theme.dashboardWarning
                     case "offline": return "#B4C1C5"
-                    default: return "#2E9A66"
+                    default: return Theme.dashboardSuccess
                     }
                 }
 
                 readonly property color statusBackgroundColor: {
                     switch (status) {
-                    case "transferring": return "#E0EEF2"
-                    case "calling": return "#EEE8F7"
-                    case "away": return "#FCF1DC"
-                    case "busy": return "#FCF1DC"
+                    case "transferring": return Theme.dashboardPrimarySoft
+                    case "calling": return Theme.dashboardCallSoft
+                    case "away": return Theme.dashboardWarningSoft
+                    case "busy": return Theme.dashboardWarningSoft
                     case "offline": return "#F3F6F6"
-                    default: return "#E4F4EC"
+                    default: return Theme.dashboardSuccessSoft
                     }
                 }
 
                 readonly property color statusTextColor: {
                     switch (status) {
-                    case "transferring": return "#0B5C70"
-                    case "calling": return "#7A55B0"
-                    case "away": return "#8E5A08"
-                    case "busy": return "#8E5A08"
-                    case "offline": return "#62717A"
-                    default: return "#1B7048"
+                    case "transferring": return Theme.dashboardPrimary
+                    case "calling": return Theme.dashboardCall
+                    case "away": return Theme.dashboardWarningText
+                    case "busy": return Theme.dashboardWarningText
+                    case "offline": return Theme.dashboardInkTertiary
+                    default: return Theme.dashboardSuccessText
                     }
                 }
 
