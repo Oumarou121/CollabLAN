@@ -8,6 +8,7 @@
 #include <QSslKey>
 #include "Security/SecurityService.h"
 #include <QFile>
+#include <QCryptographicHash>
 #include <QFileInfo>
 #include <QDir>
 #include <QDataStream>
@@ -75,7 +76,8 @@ bool configureTls(QSslSocket *socket, SecurityService *security, bool server)
 QByteArray encodeHeader(const QString &fileName, qint64 fileSize, const QString &senderUuid,
                          const QString &recipientUuid, const QString &senderMachineId,
                          quint8 compressionFlags = 0, bool isFolderTransfer = false,
-                         const QString &relativeDirPath = QString())
+                         const QString &relativeDirPath = QString(),
+                         const QString &sha256Hex = QString())
 {
     QByteArray payload;
     QDataStream stream(&payload, QIODevice::WriteOnly);
@@ -85,14 +87,15 @@ QByteArray encodeHeader(const QString &fileName, qint64 fileSize, const QString 
            << senderMachineId
            << compressionFlags
            << isFolderTransfer
-           << relativeDirPath;
+           << relativeDirPath
+           << sha256Hex; // empreinte du contenu, verifiee a la reception (champ optionnel)
     return payload;
 }
 
 bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize,
                    QString *senderUuid, QString *recipientUuid, QString *senderMachineId,
                    quint8 *compressionFlags = nullptr, bool *isFolderTransfer = nullptr,
-                   QString *relativeDirPath = nullptr)
+                   QString *relativeDirPath = nullptr, QString *sha256Hex = nullptr)
 {
     QDataStream stream(payload);
     stream.setVersion(QDataStream::Qt_6_0);
@@ -141,6 +144,14 @@ bool decodeHeader(const QByteArray &payload, QString *fileName, qint64 *fileSize
             relativeDirPath->clear();
         }
     }
+    // sha256Hex : champ optionnel ajoute apres relativeDirPath (verification d'integrite).
+    // Vide avec un expediteur plus ancien : seule la taille est alors verifiee.
+    if (sha256Hex) {
+        stream >> *sha256Hex;
+        if (stream.status() != QDataStream::Ok) {
+            sha256Hex->clear();
+        }
+    }
     return true;
 }
 
@@ -172,6 +183,45 @@ QByteArray frameOf(const QByteArray &payload)
     stream << static_cast<quint32>(payload.size());
     frame.append(payload);
     return frame;
+}
+
+// Suffixe stable d'un fichier partiel : identifie le TRANSFERT LOGIQUE (qui envoie quoi a qui),
+// pas la connexion. C'est ce qui permet de reprendre apres une coupure.
+QString partialSuffixFor(const QString &senderMachineId, const QString &senderUuid,
+                          const QString &recipientUuid, const QString &fileName, qint64 fileSize)
+{
+    const QByteArray identity = senderMachineId.toUtf8() + '\0' + senderUuid.toUtf8() + '\0'
+        + recipientUuid.toUtf8() + '\0' + fileName.toUtf8() + '\0' + QByteArray::number(fileSize);
+    return QString::fromLatin1(
+        QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex().left(16));
+}
+
+// Empreinte SHA-256 d'un fichier, lue par blocs (jamais tout le fichier en memoire).
+// Chaine vide si le fichier est illisible : l'appelant retombe alors sur la verification de taille.
+QString fileSha256(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return QString();
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&file))
+        return QString();
+    return QString::fromLatin1(hash.result().toHex());
+}
+
+// "rapport.pdf" deja present -> "rapport (2).pdf", puis "(3)"... (comme un navigateur).
+QString uniqueDestination(const QString &path)
+{
+    const QFileInfo info(path);
+    const QString base = info.completeBaseName();
+    const QString suffix = info.suffix().isEmpty() ? QString() : QLatin1Char('.') + info.suffix();
+    for (int n = 2; n < 10000; ++n) {
+        const QString candidate = info.absolutePath() + QLatin1Char('/')
+            + QStringLiteral("%1 (%2)%3").arg(base).arg(n).arg(suffix);
+        if (!QFile::exists(candidate))
+            return candidate;
+    }
+    return path; // cas extreme : on garde le nom d'origine
 }
 
 // Nettoie un nom de dossier destine au systeme de fichiers (retire les
@@ -473,9 +523,15 @@ bool TransferService::startSendOnSocket(QTcpSocket *socket, const PendingSendJob
                           job.isFolderTransfer);
 
     const quint8 compressionFlags = m_compressionEnabled ? 0x01 : 0x00;
+    // Empreinte du contenu, verifiee par le destinataire une fois le fichier complet : le README
+    // annoncait une "verification d'integrite" qui n'existait pas. Lecture par blocs pour ne pas
+    // charger un gros fichier en memoire ; en cas d'echec de lecture, l'empreinte reste vide et le
+    // destinataire se contente alors de la verification de taille (comme avant).
+    const QString sha256Hex = fileSha256(job.filePath);
     const QByteArray header = encodeHeader(announcedFileName, state.fileSize, state.senderUuid,
                                             state.recipientUuid, m_localMachineId,
-                                            compressionFlags, job.isFolderTransfer, job.relativeDirPath);
+                                            compressionFlags, job.isFolderTransfer, job.relativeDirPath,
+                                            sha256Hex);
     socket->write(frameOf(header));
     // La reponse (resumeOffset) arrive de facon asynchrone dans
     // onClientSocketReadyRead ; voir state.resumeOffsetReceived.
@@ -779,6 +835,16 @@ void TransferService::setPermissionManager(QObject *manager)
     m_permissionManager = manager;
 }
 
+void TransferService::setMaxReceiveBytes(qint64 bytes)
+{
+    m_maxReceiveBytes = bytes > 0 ? bytes : 0;
+}
+
+qint64 TransferService::maxReceiveBytes() const
+{
+    return m_maxReceiveBytes;
+}
+
 void TransferService::onServerSocketReadyRead()
 {
     auto *socket = qobject_cast<QTcpSocket*>(sender());
@@ -917,11 +983,22 @@ void TransferService::onServerSocketReadyRead()
             quint8 compressionFlags = 0;
             bool isFolderTransfer = false;
             QString relativeDirPath;
-            if (!decodeHeader(payload, &fileName, &fileSize, &senderUuid, &recipientUuid, &senderMachineId, &compressionFlags, &isFolderTransfer, &relativeDirPath)
+            QString expectedSha256;
+            if (!decodeHeader(payload, &fileName, &fileSize, &senderUuid, &recipientUuid, &senderMachineId, &compressionFlags, &isFolderTransfer, &relativeDirPath, &expectedSha256)
                 || fileSize < 0) {
                 finishReceive(socket, false, QStringLiteral("En-tete de transfert invalide"));
                 return;
             }
+            // Taille annoncee au-dela de la limite : refus avant toute ecriture sur le disque.
+            if (m_maxReceiveBytes > 0 && fileSize > m_maxReceiveBytes) {
+                qWarning() << "TransferService: fichier refuse, taille annoncee" << fileSize
+                           << "au-dela de la limite" << m_maxReceiveBytes;
+                finishReceive(socket, false,
+                              tr("Fichier refusé : %1 Mo, au-delà de la limite de %2 Mo")
+                                  .arg(fileSize / (1024 * 1024)).arg(m_maxReceiveBytes / (1024 * 1024)));
+                return;
+            }
+            state.expectedSha256 = expectedSha256;
 
             // N'utiliser que le nom de fichier (pas de chemin) pour eviter
             // toute ecriture en dehors du repertoire de reception.
@@ -989,8 +1066,22 @@ void TransferService::onServerSocketReadyRead()
             // (resync force + folder_op/catchup). Un .part partagé par nom
             // logique permettait à ces réceptions de s'écraser mutuellement
             // avant la promotion vers le fichier final.
-            state.partialPath = state.destinationPath
-                + QStringLiteral(".part-") + state.transferKey;
+            // CORRECTIF (reprise inoperante) : le nom du fichier partiel derivait de transferKey,
+            // regenere aleatoirement a CHAQUE connexion -- apres une coupure, le poste ne
+            // retrouvait jamais les octets deja recus et repartait de zero. Le nom depend
+            // desormais uniquement du transfert logique (expediteur, destinataire, fichier,
+            // taille), donc il est identique d'une tentative a l'autre.
+            // Le suffixe reste unique si une AUTRE reception ecrit deja dans ce meme fichier
+            // partiel (demandes concurrentes de resynchronisation), cas qui avait motive le
+            // choix d'un nom aleatoire.
+            state.partialPath = state.destinationPath + QStringLiteral(".part-")
+                + partialSuffixFor(state.senderMachineId, state.senderUuid, state.recipientUuid,
+                                    state.fileName, state.fileSize);
+            if (isPartialPathInUse(state.partialPath, socket)) {
+                state.partialPath = state.destinationPath + QStringLiteral(".part-") + state.transferKey;
+                qWarning() << "TransferService: fichier partiel deja en cours d'ecriture, reprise desactivee pour"
+                           << state.fileName;
+            }
 
             // Reprise (issue #54) : si un fichier partiel de meme nom
             // existe deja et n'est pas plus grand que la taille finale
@@ -1079,6 +1170,15 @@ void TransferService::onServerSocketDisconnected()
     socket->deleteLater();
 }
 
+bool TransferService::isPartialPathInUse(const QString &partialPath, QTcpSocket *except) const
+{
+    for (auto it = m_receiveStates.constBegin(); it != m_receiveStates.constEnd(); ++it) {
+        if (it.key() != except && it.value().file && it.value().partialPath == partialPath)
+            return true;
+    }
+    return false;
+}
+
 void TransferService::finishReceive(QTcpSocket *socket, bool success, const QString &errorString)
 {
     if (!m_receiveStates.contains(socket)) {
@@ -1110,10 +1210,27 @@ void TransferService::finishReceive(QTcpSocket *socket, bool success, const QStr
             state.file = nullptr;
         }
 
+        // Verification d'integrite avant de promouvoir le fichier : l'empreinte annoncee dans
+        // l'en-tete doit correspondre au contenu reellement recu. Un expediteur plus ancien
+        // n'annonce pas d'empreinte : seule la taille est alors verifiee, comme avant.
+        if (!state.expectedSha256.isEmpty() && !state.partialPath.isEmpty()) {
+            const QString actual = fileSha256(state.partialPath);
+            if (actual.compare(state.expectedSha256, Qt::CaseInsensitive) != 0) {
+                qWarning() << "TransferService: fichier corrompu, empreinte attendue"
+                           << state.expectedSha256 << "obtenue" << actual;
+                QFile::remove(state.partialPath); // ne jamais promouvoir un contenu altere
+                finishReceive(socket, false, tr("Fichier corrompu : l'empreinte ne correspond pas"));
+                return;
+            }
+        }
+
         // Transfert termine : promouvoir le fichier temporaire "<nom>.part"
         // vers son nom final.
         if (!state.partialPath.isEmpty() && state.partialPath != state.destinationPath) {
-            QFile::remove(state.destinationPath); // Ecrase un fichier final precedent le cas echeant.
+            // Un fichier du meme nom deja present n'est plus ecrase en silence : le nouveau est
+            // depose a cote sous "<nom> (2).<ext>", comme le ferait un navigateur.
+            if (QFile::exists(state.destinationPath))
+                state.destinationPath = uniqueDestination(state.destinationPath);
             if (!QFile::rename(state.partialPath, state.destinationPath)) {
                 qWarning() << "TransferService: impossible de promouvoir le fichier temporaire :"
                            << state.partialPath << "->" << state.destinationPath;
@@ -1124,6 +1241,7 @@ void TransferService::finishReceive(QTcpSocket *socket, bool success, const QStr
         }
         emit transferCompleted(state.transferKey, state.destinationPath);
 
+        state.expectedSha256.clear();
         state.headerParsed = false;
         state.headerAcked = false;
         state.fileName.clear();

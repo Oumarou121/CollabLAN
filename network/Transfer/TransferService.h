@@ -194,6 +194,7 @@ private:
         bool isFolderTransfer = false; ///< true si le transfert provient de FolderSyncService (ne doit pas etre enregistre dans la table Transfers).
         QString relativeDirPath; ///< Sous-chemin a recreer sous le repertoire de reception (partage ponctuel de dossier, voir encodeHeader()). Vide = fichier isole a la racine.
         QFile *file = nullptr;
+        QString expectedSha256;     ///< Empreinte annoncee par l'expediteur (vide = pas de verification possible).
         QString destinationPath;    ///< Chemin final (une fois le transfert termine).
         QString partialPath;        ///< Fichier temporaire "<nom>.part" pendant le transfert.
         qint64 pendingBlockSize = -1; ///< Taille du bloc en cours d'attente (-1 = attend l'entete de bloc).
@@ -280,6 +281,13 @@ private:
 
     QTcpServer *m_server = nullptr;
     QHash<QTcpSocket*, ReceiveState> m_receiveStates;
+
+    /// Taille maximale acceptee en reception (0 = sans limite). Protege le disque du poste
+    /// contre un envoi demesure, volontaire ou accidentel.
+    qint64 m_maxReceiveBytes = 0;
+
+    /// Vrai si une AUTRE reception en cours ecrit deja dans ce fichier partiel.
+    bool isPartialPathInUse(const QString &partialPath, QTcpSocket *except) const;
     QHash<QTcpSocket*, SendState> m_sendStates;
     QHash<QString, QQueue<PendingSendJob>> m_sendQueues;   ///< destKey -> fichiers en attente d'envoi vers cette destination.
     QHash<QString, DestInfo> m_destInfo;                    ///< destKey -> host/port, pour ouvrir de nouvelles connexions.
@@ -306,6 +314,11 @@ public:
 
     /// Applique le contrôle d'accès également au canal TCP des fichiers.
     void setPermissionManager(QObject *manager);
+
+    /// Taille maximale d'un fichier accepte en reception, en octets (0 = sans limite).
+    /// Au-dela, le transfert est refuse des l'en-tete, sans rien ecrire sur le disque.
+    void setMaxReceiveBytes(qint64 bytes);
+    qint64 maxReceiveBytes() const;
     void setSecurityService(SecurityService *service);
 
     /**

@@ -12,6 +12,7 @@
 #include "models/Settings.h"
 #include "network/Transfer/TransferService.h"
 #include "TransferManager.h"
+#include "TestTlsIdentity.h"
 
 /*
  * Issue #55 : "Enregistrement d'un transfert (fichier, expediteur,
@@ -90,6 +91,8 @@ private slots:
             QVERIFY(dbManager.open(m_dbPath));
 
             network::TransferService transferService;
+
+            transferService.setSecurityService(testTlsIdentity());
             transferService.setReceiveDirectory(m_destDir.path());
             QVERIFY(transferService.start(23470));
 
@@ -190,6 +193,8 @@ private slots:
         QVERIFY(dbManager.open(m_dbPath));
 
         network::TransferService transferService;
+
+        transferService.setSecurityService(testTlsIdentity());
         transferService.setReceiveDirectory(m_destDir.path());
         QVERIFY(transferService.start(23471));
 
@@ -244,6 +249,8 @@ private slots:
         QVERIFY(dbManager.open(m_dbPath));
 
         network::TransferService transferService;
+
+        transferService.setSecurityService(testTlsIdentity());
         transferService.setReceiveDirectory(m_destDir.path());
         QVERIFY(transferService.start(23472));
 
@@ -320,6 +327,8 @@ private slots:
         }
 
         network::TransferService transferService;
+
+        transferService.setSecurityService(testTlsIdentity());
         transferService.setReceiveDirectory(m_destDir.path());
         // Porte le peerMachineId dans l'en-tete cote emission, exactement
         // comme le ferait Application::initialize() en usage reel (voir

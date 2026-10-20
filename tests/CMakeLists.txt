@@ -160,3 +160,11 @@ add_test(NAME test_messagingserverauth COMMAND test_messagingserverauth)
 add_executable(test_syncvisibility UnitTests/test_syncvisibility.cpp)
 target_link_libraries(test_syncvisibility PRIVATE Qt6::Test network models)
 add_test(NAME test_syncvisibility COMMAND test_syncvisibility)
+
+# Lot 3 : messages de groupe en temps reel reellement traites (code auparavant inatteignable).
+
+
+# Lot 3 : reprise, integrite, fichier existant preserve, limite de taille en reception.
+add_executable(test_transferintegrity UnitTests/test_transferintegrity.cpp)
+target_link_libraries(test_transferintegrity PRIVATE Qt6::Test Qt6::Network network)
+add_test(NAME test_transferintegrity COMMAND test_transferintegrity)

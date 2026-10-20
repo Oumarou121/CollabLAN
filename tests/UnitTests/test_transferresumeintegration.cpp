@@ -8,6 +8,8 @@
 #include <memory>
 
 #include "Transfer/TransferService.h"
+#include "TestTlsIdentity.h"
+#include "TestTransferNaming.h"
 
 using network::TransferService;
 
@@ -82,6 +84,8 @@ private slots:
         const quint16 receiverPort = 23470;
 
         auto receiver = std::make_unique<TransferService>();
+
+        receiver->setSecurityService(testTlsIdentity());
         receiver->setReceiveDirectory(destDir.path());
         QVERIFY(receiver->start(receiverPort));
 
@@ -91,6 +95,7 @@ private slots:
 
         // --- Etape 1 : premier envoi, interrompu volontairement en cours ---
         auto sender1 = std::make_unique<TransferService>();
+        sender1->setSecurityService(testTlsIdentity());
         QSignalSpy sender1Progress(sender1.get(), &TransferService::transferProgress);
 
         QVERIFY(sender1->sendFile(QHostAddress::LocalHost, receiverPort, sourcePath,
@@ -122,8 +127,10 @@ private slots:
 
         // Le fichier temporaire ".part" doit exister et ne contenir
         // qu'une partie du fichier (transfert bien interrompu).
-        const QString partialPath = destDir.filePath(QStringLiteral("gros_fichier.bin.part"));
-        QVERIFY(QFile::exists(partialPath));
+        // Nom exact sans importance ici : le test constate seulement qu'une reception
+        // interrompue a laisse un fichier temporaire incomplet (voir TestTransferNaming.h).
+        const QString partialPath = testFindPartialFile(destDir.path());
+        QVERIFY2(!partialPath.isEmpty(), "un fichier temporaire doit subsister apres la coupure");
         const qint64 partialSize = QFileInfo(partialPath).size();
         QVERIFY(partialSize > 0);
         QVERIFY(partialSize < fileSize);
@@ -134,6 +141,8 @@ private slots:
         receiverCompleted.clear();
 
         auto sender2 = std::make_unique<TransferService>();
+
+        sender2->setSecurityService(testTlsIdentity());
         QSignalSpy sender2Completed(sender2.get(), &TransferService::transferCompleted);
         QSignalSpy sender2Failed(sender2.get(), &TransferService::transferFailed);
         QSignalSpy sender2Progress(sender2.get(), &TransferService::transferProgress);

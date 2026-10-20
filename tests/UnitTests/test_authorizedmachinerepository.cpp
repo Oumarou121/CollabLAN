@@ -33,6 +33,15 @@ private:
 
         // La table AuthorizedMachines (avec la colonne `status`, migration 031)
         // est creee par les migrations reelles executees dans open().
+        // added_by reference Users(id) et les cles etrangeres sont actives : sans ces comptes,
+        // toute autorisation echoue silencieusement (les ids 1 et 42 sont ceux utilises ci-dessous
+        // comme "administrateur ayant autorise la machine").
+        QSqlQuery seed(m_dbManager->database());
+        QVERIFY(seed.exec(QStringLiteral(
+            "INSERT INTO Users (id, name, password_hash, password_salt, uuid) VALUES "
+            "(1, 'admin-test', 'h', 's', 'uuid-admin-test'), "
+            "(42, 'autre-admin', 'h', 's', 'uuid-autre-admin')")));
+
         m_repository = std::make_unique<AuthorizedMachineRepository>(m_dbManager->database());
     }
 

@@ -11,6 +11,8 @@
 #include "network/Transfer/TransferService.h"
 #include "TransferManager.h"
 #include "TransferContext.h"
+#include "TestTlsIdentity.h"
+#include "TestTransferNaming.h"
 
 /*
  * Issue #57 : "FileTransferView.qml - selection fichier + progression".
@@ -45,6 +47,8 @@ private slots:
         QVERIFY(dbManager.open(m_dbDir.filePath(QStringLiteral("db1.sqlite"))));
 
         network::TransferService transferService;
+
+        transferService.setSecurityService(testTlsIdentity());
         core::TransferManager manager(&dbManager);
         manager.setTransferService(&transferService);
 
@@ -66,6 +70,8 @@ private slots:
         QVERIFY(dbManager.open(m_dbDir.filePath(QStringLiteral("db2.sqlite"))));
 
         network::TransferService transferService;
+
+        transferService.setSecurityService(testTlsIdentity());
         core::TransferManager manager(&dbManager);
         manager.setTransferService(&transferService);
 
@@ -92,6 +98,8 @@ private slots:
         QVERIFY(dbManager.open(m_dbDir.filePath(QStringLiteral("db3.sqlite"))));
 
         network::TransferService transferService;
+
+        transferService.setSecurityService(testTlsIdentity());
         transferService.setReceiveDirectory(m_destDir.path());
         QVERIFY(transferService.start(23480));
 
@@ -171,6 +179,7 @@ private slots:
         // comme le vivrait l'application reelle (le pair distant se
         // deconnecte, pas nous).
         network::TransferService senderService;
+        senderService.setSecurityService(testTlsIdentity());
         core::TransferManager manager(&dbManager);
         manager.setTransferService(&senderService);
 
@@ -195,6 +204,7 @@ private slots:
 
         // --- Etape 1 : premier envoi, coupe cote destinataire en plein transfert ---
         auto receiver1 = std::make_unique<network::TransferService>();
+        receiver1->setSecurityService(testTlsIdentity());
         receiver1->setReceiveDirectory(m_destDir.path());
         QVERIFY(receiver1->start(receiverPort));
 
@@ -233,14 +243,17 @@ private slots:
         }
         QVERIFY(!failedKey.isEmpty());
 
-        const QString partialPath = m_destDir.filePath(QStringLiteral("resume.bin.part"));
-        QVERIFY(QFile::exists(partialPath));
+        // Nom exact sans importance ici : le test constate seulement qu'une reception
+        // interrompue a laisse un fichier temporaire incomplet (voir TestTransferNaming.h).
+        const QString partialPath = testFindPartialFile(m_destDir.path());
+        QVERIFY2(!partialPath.isEmpty(), "un fichier temporaire doit subsister apres la coupure");
         const qint64 partialSize = QFileInfo(partialPath).size();
         QVERIFY(partialSize > 0);
         QVERIFY(partialSize < fileSize);
 
         // --- Etape 2 : le destinataire revient (nouvelle instance, meme port) ---
         auto receiver2 = std::make_unique<network::TransferService>();
+        receiver2->setSecurityService(testTlsIdentity());
         receiver2->setReceiveDirectory(m_destDir.path());
         QVERIFY(receiver2->start(receiverPort));
 

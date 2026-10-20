@@ -7,6 +7,8 @@
 #include <QRandomGenerator>
 
 #include "Transfer/TransferService.h"
+#include "TestTlsIdentity.h"
+#include "TestTransferNaming.h"
 
 using network::TransferService;
 
@@ -44,6 +46,7 @@ private slots:
     void startAndStop()
     {
         TransferService service;
+        service.setSecurityService(testTlsIdentity());
         QVERIFY(service.start(23460));
         QVERIFY(service.isRunning());
         QCOMPARE(service.port(), static_cast<quint16>(23460));
@@ -65,10 +68,14 @@ private slots:
         QCOMPARE(original.size(), static_cast<int>(fileSize));
 
         TransferService receiver;
+
+        receiver.setSecurityService(testTlsIdentity());
         receiver.setReceiveDirectory(destDir.path());
         QVERIFY(receiver.start(23461));
 
         TransferService sender;
+
+        sender.setSecurityService(testTlsIdentity());
 
         QSignalSpy receiverStarted(&receiver, &TransferService::transferStarted);
         QSignalSpy receiverCompleted(&receiver, &TransferService::transferCompleted);
@@ -105,6 +112,7 @@ private slots:
     void sendMissingFileFails()
     {
         TransferService sender;
+        sender.setSecurityService(testTlsIdentity());
         QVERIFY(!sender.sendFile(QHostAddress::LocalHost, 23462,
                                   QStringLiteral("/path/does/not/exist.bin"),
                                   QStringLiteral("1"), QStringLiteral("2")));
@@ -137,10 +145,14 @@ private slots:
         }
 
         TransferService receiver;
+
+        receiver.setSecurityService(testTlsIdentity());
         receiver.setReceiveDirectory(destDir.path());
         QVERIFY(receiver.start(23464));
 
         TransferService sender;
+
+        sender.setSecurityService(testTlsIdentity());
 
         QSignalSpy receiverCompleted(&receiver, &TransferService::transferCompleted);
         QSignalSpy receiverFailed(&receiver, &TransferService::transferFailed);
@@ -197,9 +209,12 @@ private slots:
         }
 
         TransferService receiver;
+
+        receiver.setSecurityService(testTlsIdentity());
         receiver.setReceiveDirectory(destDir.path());
         QVERIFY(receiver.start(23465));
         TransferService sender;
+        sender.setSecurityService(testTlsIdentity());
         QSignalSpy receiverCompleted(&receiver, &TransferService::transferCompleted);
         QSignalSpy senderCompleted(&sender, &TransferService::transferCompleted);
         QSignalSpy senderFailed(&sender, &TransferService::transferFailed);
@@ -257,7 +272,11 @@ private slots:
         // moitie du fichier.
         const qint64 alreadyReceived = fileSize / 2;
         QVERIFY(alreadyReceived > 0);
-        const QString partialPath = destDir.filePath(QStringLiteral("archive.bin.part"));
+        // Le nom du fichier temporaire depend du transfert logique (expediteur, destinataire,
+        // fichier, taille) et non de la connexion : c'est ce qui permet de le retrouver a la
+        // tentative suivante. Voir TestTransferNaming.h.
+        const QString partialPath = destDir.filePath(testPartialFileName(
+            QString(), QStringLiteral("1"), QStringLiteral("2"), QStringLiteral("archive.bin"), fileSize));
         {
             QFile partial(partialPath);
             QVERIFY(partial.open(QIODevice::WriteOnly));
@@ -267,10 +286,14 @@ private slots:
         }
 
         TransferService receiver;
+
+        receiver.setSecurityService(testTlsIdentity());
         receiver.setReceiveDirectory(destDir.path());
         QVERIFY(receiver.start(23463));
 
         TransferService sender;
+
+        sender.setSecurityService(testTlsIdentity());
 
         QSignalSpy receiverStarted(&receiver, &TransferService::transferStarted);
         QSignalSpy receiverCompleted(&receiver, &TransferService::transferCompleted);

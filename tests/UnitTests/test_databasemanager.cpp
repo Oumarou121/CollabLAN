@@ -45,9 +45,12 @@ private slots:
         QVERIFY(dir.isValid());
         const QString path = dbPathIn(dir);
 
+        int versionAfterFirstOpen = 0;
         {
             database::DatabaseManager manager(QStringLiteral("test-reopen-a-%1").arg(reinterpret_cast<quintptr>(this)));
             QVERIFY(manager.open(path));
+            versionAfterFirstOpen = manager.schemaVersion();
+            QVERIFY(versionAfterFirstOpen > 0);
             manager.close();
         }
 
@@ -56,11 +59,10 @@ private slots:
         database::DatabaseManager manager2(QStringLiteral("test-reopen-b-%1").arg(reinterpret_cast<quintptr>(this)));
         QVERIFY(manager2.open(path));
         QVERIFY(manager2.lastError().isEmpty());
-        // schemaVersion() compte le nombre de fichiers *.sql presents dans
-        // database/Migrations/ (une ligne schema_migrations par fichier
-        // applique) : a mettre a jour a chaque migration ajoutee/retiree.
-        // `ls database/Migrations/*.sql | wc -l` donne le chiffre courant.
-        QCOMPARE(manager2.schemaVersion(), 24);
+        // On compare a la version obtenue ci-dessus plutot qu'a un nombre fige : ce test
+        // verifie que rien n'est rejoue, pas le nombre de migrations du projet (qui change a
+        // chaque evolution du schema et faisait echouer ce test sans aucun rapport avec son objet).
+        QCOMPARE(manager2.schemaVersion(), versionAfterFirstOpen);
     }
 
     void foreignKeysAreEnabled()
@@ -113,6 +115,8 @@ private slots:
 
         QVERIFY(manager.open(path));
         QVERIFY(manager.isOpen());
+        const int versionAfterFirstOpen = manager.schemaVersion();
+        QVERIFY(versionAfterFirstOpen > 0);
         manager.close();
         QVERIFY(!manager.isOpen());
 
@@ -121,8 +125,8 @@ private slots:
         QVERIFY(manager.open(path));
         QVERIFY(manager.isOpen());
         QVERIFY(manager.lastError().isEmpty());
-        // Voir reopenIsIdempotent() : nombre de fichiers *.sql presents sur le disque.
-        QCOMPARE(manager.schemaVersion(), 24);
+        // Voir reopenIsIdempotent() : on compare a la version relevee avant fermeture.
+        QCOMPARE(manager.schemaVersion(), versionAfterFirstOpen);
 
         manager.close();
     }
