@@ -305,6 +305,86 @@ private slots:
         core::UserManager restarted(db);
         QVERIFY(!restarted.loginWithRememberedToken(QStringLiteral("admin"), token));
     }
+
+    // ------------------------------------------------------------------
+    // Changement de mot de passe par l'utilisateur lui-meme.
+    // Avant changeOwnPassword(), la seule voie etait resetPassword(), reservee
+    // a un administrateur : celui-ci choisissait donc le mot de passe et le
+    // connaissait. Ces tests verifient que l'ancien mot de passe est bien exige
+    // et que le nouveau prend effet reellement (connexion apres coup).
+    // ------------------------------------------------------------------
+    void changeOwnPasswordRequiresAnAuthenticatedUser()
+    {
+        database::DatabaseManager *db = freshDatabase();
+        core::UserManager manager(db);
+
+        // Personne n'est connecte : aucun changement ne doit etre possible.
+        QVERIFY(!manager.changeOwnPassword(QStringLiteral("admin123"),
+                                           QStringLiteral("nouveau-mdp"),
+                                           QStringLiteral("nouveau-mdp")).isEmpty());
+
+        core::UserManager other(db);
+        QVERIFY(other.login(QStringLiteral("admin"), QStringLiteral("admin123")));
+    }
+
+    void changeOwnPasswordRejectsWrongCurrentPassword()
+    {
+        database::DatabaseManager *db = freshDatabase();
+        core::UserManager manager(db);
+        QVERIFY(manager.login(QStringLiteral("admin"), QStringLiteral("admin123")));
+
+        QVERIFY(!manager.changeOwnPassword(QStringLiteral("pas-le-bon"),
+                                           QStringLiteral("nouveau-mdp"),
+                                           QStringLiteral("nouveau-mdp")).isEmpty());
+
+        // L'ancien mot de passe doit rester valable, le nouveau refuse.
+        core::UserManager fresh(db);
+        QVERIFY(fresh.login(QStringLiteral("admin"), QStringLiteral("admin123")));
+        core::UserManager fresh2(db);
+        QVERIFY(!fresh2.login(QStringLiteral("admin"), QStringLiteral("nouveau-mdp")));
+    }
+
+    void changeOwnPasswordRejectsMismatchedConfirmationOrTooShortPassword()
+    {
+        database::DatabaseManager *db = freshDatabase();
+        core::UserManager manager(db);
+        QVERIFY(manager.login(QStringLiteral("admin"), QStringLiteral("admin123")));
+
+        // Confirmation differente.
+        QVERIFY(!manager.changeOwnPassword(QStringLiteral("admin123"),
+                                           QStringLiteral("nouveau-mdp"),
+                                           QStringLiteral("nouveau-mdq")).isEmpty());
+        // Trop court (meme regle que createUser).
+        QVERIFY(!manager.changeOwnPassword(QStringLiteral("admin123"),
+                                           QStringLiteral("ab"),
+                                           QStringLiteral("ab")).isEmpty());
+        // Identique a l'ancien : sans interet et masque une erreur de saisie.
+        QVERIFY(!manager.changeOwnPassword(QStringLiteral("admin123"),
+                                           QStringLiteral("admin123"),
+                                           QStringLiteral("admin123")).isEmpty());
+
+        core::UserManager fresh(db);
+        QVERIFY(fresh.login(QStringLiteral("admin"), QStringLiteral("admin123")));
+    }
+
+    void changeOwnPasswordSucceedsAndNewPasswordIsRequiredAfterwards()
+    {
+        database::DatabaseManager *db = freshDatabase();
+        core::UserManager manager(db);
+        QVERIFY(manager.login(QStringLiteral("admin"), QStringLiteral("admin123")));
+
+        QCOMPARE(manager.changeOwnPassword(QStringLiteral("admin123"),
+                                           QStringLiteral("nouveau-mdp"),
+                                           QStringLiteral("nouveau-mdp")),
+                 QString());
+
+        // L'ancien mot de passe ne doit plus ouvrir la session...
+        core::UserManager fresh(db);
+        QVERIFY(!fresh.login(QStringLiteral("admin"), QStringLiteral("admin123")));
+        // ...et le nouveau doit fonctionner.
+        core::UserManager fresh2(db);
+        QVERIFY(fresh2.login(QStringLiteral("admin"), QStringLiteral("nouveau-mdp")));
+    }
 };
 
 QTEST_MAIN(TestUserManager)

@@ -40,7 +40,7 @@ Le logiciel s'adresse aux petites équipes, établissements scolaires, administr
 - **Liste blanche cryptographique des machines autorisées**, avec trois états (`pending` / `authorized` / `revoked`) : une machine inconnue est toujours mise en attente et refusée par défaut ; seul un administrateur, depuis une machine déjà autorisée, peut faire passer une machine en `authorized`. Bootstrap automatique de la première machine admin sur une base vide
 - **Gestion des comptes utilisateurs** (rôles, statuts, mots de passe hashés)
 - **Journal d'audit** consultable et exportable (connexions, messages, transferts, appels, tentatives refusées)
-- **Paramètres globaux** (nom du poste, thème, langue, dossier de téléchargement par défaut)
+- **Paramètres globaux** (nom du poste, thème clair/sombre, dossiers de téléchargement et de partage par défaut, notifications, ports réseau, changement de son propre mot de passe). La traduction de l'interface (choix de la langue) n'est pas implémentée : aucun QTranslator n'est installé, les chaînes sont en français
 
 ### Résilience réseau (architecture hybride)
 

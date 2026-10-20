@@ -18,6 +18,7 @@ class SettingsModel : public QObject
     Q_PROPERTY(bool enableNotifications READ enableNotifications WRITE setEnableNotifications NOTIFY enableNotificationsChanged)
     Q_PROPERTY(int messagingPort READ messagingPort WRITE setMessagingPort NOTIFY messagingPortChanged)
     Q_PROPERTY(int discoveryPort READ discoveryPort WRITE setDiscoveryPort NOTIFY discoveryPortChanged)
+    Q_PROPERTY(QString machineName READ machineName WRITE setMachineName NOTIFY machineNameChanged)
     Q_PROPERTY(QString rememberedUsername READ rememberedUsername WRITE setRememberedUsername NOTIFY rememberedUsernameChanged)
     Q_PROPERTY(QString rememberedSessionToken READ rememberedSessionToken WRITE setRememberedSessionToken NOTIFY rememberedSessionTokenChanged)
 
@@ -43,6 +44,16 @@ public:
     int discoveryPort() const;
     void setDiscoveryPort(int port);
 
+    // Nom sous lequel ce poste se presente aux autres sur le reseau
+    // (paquets de decouverte, network::DiscoveryService::setLocalName).
+    // Chaine vide = nom d'hote de la machine, comme avant ce reglage.
+    // Le README annoncait ce parametre depuis le debut, mais rien ne
+    // permettait de le changer : seul QHostInfo::localHostName() etait
+    // utilise, ce qui rend deux postes indiscernables quand le nom
+    // Windows est generique (ex. "DESKTOP-1").
+    QString machineName() const;
+    void setMachineName(const QString &name);
+
     // "Se souvenir de moi" (LoginView.qml) : conserve uniquement le nom
     // d'utilisateur du dernier login reussi avec la case cochee - jamais
     // le mot de passe. Chaine vide = rien a pre-remplir.
@@ -65,6 +76,7 @@ signals:
     void enableNotificationsChanged();
     void messagingPortChanged();
     void discoveryPortChanged();
+    void machineNameChanged();
     void rememberedUsernameChanged();
     void rememberedSessionTokenChanged();
 
@@ -74,6 +86,7 @@ private:
     bool m_enableNotifications = true;
     int m_messagingPort = 12345;
     int m_discoveryPort = 45454;
+    QString m_machineName = "";
     QString m_rememberedUsername = "";
     QString m_rememberedSessionToken = "";
 };

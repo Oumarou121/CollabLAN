@@ -2,6 +2,10 @@ add_executable(test_usermanager UnitTests/test_usermanager.cpp)
 target_link_libraries(test_usermanager PRIVATE Qt6::Test Qt6::Sql core database models)
 add_test(NAME test_usermanager COMMAND test_usermanager)
 
+add_executable(test_settingsmodel UnitTests/test_settingsmodel.cpp)
+target_link_libraries(test_settingsmodel PRIVATE Qt6::Test core)
+add_test(NAME test_settingsmodel COMMAND test_settingsmodel)
+
 add_executable(test_databasemanager UnitTests/test_databasemanager.cpp)
 target_link_libraries(test_databasemanager PRIVATE Qt6::Test database)
 add_test(NAME test_databasemanager COMMAND test_databasemanager)

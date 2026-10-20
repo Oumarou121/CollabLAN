@@ -77,6 +77,20 @@ void SettingsModel::setDiscoveryPort(int port)
     }
 }
 
+QString SettingsModel::machineName() const
+{
+    return m_machineName;
+}
+
+void SettingsModel::setMachineName(const QString &name)
+{
+    const QString trimmed = name.trimmed();
+    if (m_machineName != trimmed) {
+        m_machineName = trimmed;
+        emit machineNameChanged();
+    }
+}
+
 QString SettingsModel::rememberedUsername() const
 {
     return m_rememberedUsername;
@@ -111,6 +125,7 @@ void SettingsModel::save()
     settings.setValue("enableNotifications", m_enableNotifications);
     settings.setValue("messagingPort", m_messagingPort);
     settings.setValue("discoveryPort", m_discoveryPort);
+    settings.setValue("machineName", m_machineName);
     settings.setValue("rememberedUsername", m_rememberedUsername);
     settings.setValue("rememberedSessionToken", m_rememberedSessionToken);
     settings.sync();
@@ -132,6 +147,7 @@ void SettingsModel::load()
     setEnableNotifications(settings.value("enableNotifications", true).toBool());
     setMessagingPort(settings.value("messagingPort", 12345).toInt());
     setDiscoveryPort(settings.value("discoveryPort", 45454).toInt());
+    setMachineName(settings.value("machineName", "").toString());
     setRememberedUsername(settings.value("rememberedUsername", "").toString());
     setRememberedSessionToken(settings.value("rememberedSessionToken", "").toString());
     qDebug().noquote() << "[SettingsModel::load] fichier=" << settings.fileName()

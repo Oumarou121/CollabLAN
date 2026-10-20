@@ -137,6 +137,16 @@ public:
     bool resetPassword(int userId, const QString &newPassword);
 
     /**
+     * @brief Change le mot de passe de l'utilisateur connecte, apres verification de l'ancien.
+     *
+     * Jusqu'ici, seul un administrateur pouvait reinitialiser un mot de passe (resetPassword) :
+     * la personne devait donc le communiquer, et ne pouvait jamais en choisir un connu d'elle
+     * seule. Renvoie un message a afficher, ou une chaine vide en cas de succes.
+     */
+    Q_INVOKABLE QString changeOwnPassword(const QString &currentPassword, const QString &newPassword,
+                                           const QString &confirmation);
+
+    /**
      * @brief Supprime definitivement un utilisateur (administration).
      */
     bool deleteUser(int userId);

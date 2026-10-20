@@ -348,6 +348,34 @@ bool UserManager::resetPassword(int userId, const QString &newPassword)
     return ok;
 }
 
+QString UserManager::changeOwnPassword(const QString &currentPassword, const QString &newPassword,
+                                        const QString &confirmation)
+{
+    if (!m_authenticated || !m_currentUserId.has_value())
+        return tr("Aucun utilisateur connecté.");
+
+    const auto user = m_userRepository.findById(static_cast<int>(*m_currentUserId));
+    if (!user.has_value())
+        return tr("Compte introuvable.");
+
+    // L'ancien mot de passe est exige : sans cela, un poste laisse ouvert suffirait a prendre
+    // definitivement la main sur le compte.
+    if (!PasswordHasher::verify(currentPassword, user->passwordSalt(), user->passwordHash()))
+        return tr("Mot de passe actuel incorrect.");
+
+    if (newPassword.size() < kMinPasswordLength)
+        return tr("Le nouveau mot de passe doit contenir au moins %1 caractères.").arg(kMinPasswordLength);
+    if (newPassword != confirmation)
+        return tr("Les deux nouveaux mots de passe ne correspondent pas.");
+    if (newPassword == currentPassword)
+        return tr("Le nouveau mot de passe doit être différent de l'ancien.");
+
+    if (!resetPassword(static_cast<int>(*m_currentUserId), newPassword))
+        return tr("Changement impossible (code %1).").arg(static_cast<int>(m_lastError));
+
+    return QString();
+}
+
 std::optional<models::UserStatus> UserManager::status(int userId) const
 {
     const auto user = m_userRepository.findById(userId);

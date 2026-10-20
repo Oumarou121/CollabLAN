@@ -1,6 +1,9 @@
 #include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QHostInfo>
+
+#include "network/Discovery/DiscoveryService.h"
 #include <QQuickStyle>
 #include <QWindow>
 #include <QIcon>
@@ -471,6 +474,22 @@ int main(int argc, char *argv[])
         if (application.notificationManager())
             application.notificationManager()->setNotificationsEnabled(settingsModel->enableNotifications());
     });
+
+    // CORRECTIF : le README annonce un parametre "nom du poste", mais ce nom
+    // etait fige sur QHostInfo::localHostName() -- deux machines au nom Windows
+    // generique apparaissaient donc a l'identique dans la liste des pairs, sans
+    // aucun moyen de les distinguer. settingsModel->machineName() vide conserve
+    // l'ancien comportement (nom d'hote).
+    const auto applyMachineName = [settingsModel, &application]() {
+        if (!application.discoveryService())
+            return;
+        const QString chosen = settingsModel->machineName();
+        application.discoveryService()->setLocalName(chosen.isEmpty() ? QHostInfo::localHostName()
+                                                                      : chosen);
+    };
+    applyMachineName();
+    QObject::connect(settingsModel, &core::SettingsModel::machineNameChanged,
+                      &application, applyMachineName);
 
     // Créer et exposer le contexte "Shared Folder" (1ère tranche : creer/
     // lister/supprimer des dossiers partages + indexation locale de leur

@@ -195,6 +195,70 @@ Item {
                     }
                 }
 
+                // --- Identite du poste + theme -----------------------------
+                // Le README annonce depuis le debut des reglages "nom du poste"
+                // et "theme" : le theme existait (Theme.darkMode, persiste) mais
+                // n'etait accessible que via le bouton d'en-tete, et le nom du
+                // poste n'existait pas du tout (QHostInfo::localHostName() fige,
+                // donc deux "DESKTOP-xxxx" indiscernables dans la liste des pairs).
+                SettingsSectionCard {
+                    Layout.fillWidth: true
+                    icon: "\uf109"
+                    title: qsTr("Ce poste")
+                    subtitle: qsTr("Nom affiché aux autres postes du réseau et apparence de l'application.")
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        AppTextField {
+                            Layout.fillWidth: true
+                            label: qsTr("Nom du poste")
+                            placeholderText: Qt.application.name
+                            text: settingsModel.machineName
+                            onTextChanged: settingsModel.machineName = text
+                        }
+
+                        Label {
+                            text: qsTr("Laissé vide, le nom réseau de la machine est utilisé.")
+                            color: Theme.textTertiary
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.family: Theme.fontFamily
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: Theme.spacingMedium
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 1
+                                Label {
+                                    text: qsTr("Thème sombre")
+                                    color: Theme.text
+                                    font.pixelSize: Theme.fontSizeBody
+                                    font.family: Theme.fontFamily
+                                }
+                                Label {
+                                    text: qsTr("Appliqué immédiatement et conservé au prochain démarrage.")
+                                    color: Theme.textTertiary
+                                    font.pixelSize: Theme.fontSizeCaption
+                                    font.family: Theme.fontFamily
+                                    wrapMode: Text.WordWrap
+                                    Layout.fillWidth: true
+                                }
+                            }
+
+                            Switch {
+                                checked: Theme.darkMode
+                                onToggled: Theme.darkMode = checked
+                            }
+                        }
+                    }
+                }
+
                 // --- Notifications -------------------------------------------
                 // Reorganisation : une carte par sujet (Notifications / Sons /
                 // Son par categorie) plutot qu'une seule carte melangeant les
@@ -596,6 +660,110 @@ Item {
                             }
                         }
                     }
+
+                // --- Securite du compte : changement de mot de passe -------
+                // Jusqu'ici, seul un administrateur pouvait reinitialiser un
+                // mot de passe (UserManager::resetPassword) : l'utilisateur
+                // devait donc le recevoir de quelqu'un d'autre et ne pouvait
+                // jamais en choisir un connu de lui seul. La verification de
+                // l'ancien mot de passe et toutes les regles de validation
+                // sont faites en C++ (UserManager::changeOwnPassword), qui
+                // renvoie le message a afficher, ou "" en cas de succes.
+                SettingsSectionCard {
+                    Layout.fillWidth: true
+                    visible: typeof userManager !== "undefined" && userManager && userManager.authenticated
+                    icon: "\uf084"
+                    title: qsTr("Sécurité du compte")
+                    subtitle: qsTr("Changez le mot de passe de votre compte. Il vous sera demandé à la prochaine connexion.")
+
+                    ColumnLayout {
+                        id: passwordForm
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingSmall
+
+                        // Message renvoye par changeOwnPassword() : vide tant
+                        // qu'aucune tentative n'a eu lieu.
+                        property string feedback: ""
+                        property bool feedbackIsError: true
+
+                        function clearFields() {
+                            currentPasswordField.text = ""
+                            newPasswordField.text = ""
+                            confirmPasswordField.text = ""
+                        }
+
+                        AppTextField {
+                            id: currentPasswordField
+                            Layout.fillWidth: true
+                            label: qsTr("Mot de passe actuel")
+                            echoMode: TextInput.Password
+                            onTextChanged: passwordForm.feedback = ""
+                        }
+
+                        AppTextField {
+                            id: newPasswordField
+                            Layout.fillWidth: true
+                            label: qsTr("Nouveau mot de passe")
+                            echoMode: TextInput.Password
+                            onTextChanged: passwordForm.feedback = ""
+                        }
+
+                        AppTextField {
+                            id: confirmPasswordField
+                            Layout.fillWidth: true
+                            label: qsTr("Confirmer le nouveau mot de passe")
+                            echoMode: TextInput.Password
+                            onTextChanged: passwordForm.feedback = ""
+                            onAccepted: if (changePasswordButton.enabled) changePasswordButton.clicked()
+                        }
+
+                        Label {
+                            visible: passwordForm.feedback !== ""
+                            text: passwordForm.feedback
+                            color: passwordForm.feedbackIsError ? Theme.error : Theme.success
+                            font.pixelSize: Theme.fontSizeSmall
+                            font.family: Theme.fontFamily
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
+
+                        Button {
+                            id: changePasswordButton
+                            text: qsTr("Changer le mot de passe")
+                            Layout.preferredHeight: 32
+                            enabled: currentPasswordField.text !== ""
+                                     && newPasswordField.text !== ""
+                                     && confirmPasswordField.text !== ""
+
+                            background: Rectangle {
+                                radius: Theme.radiusSmall
+                                color: parent.hovered ? Theme.primaryHover : Theme.primary
+                                opacity: parent.enabled ? 1.0 : 0.5
+                            }
+                            contentItem: Text {
+                                text: changePasswordButton.text
+                                color: Theme.primaryText
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.family: Theme.fontFamily
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+
+                            onClicked: {
+                                var error = userManager.changeOwnPassword(currentPasswordField.text,
+                                                                          newPasswordField.text,
+                                                                          confirmPasswordField.text)
+                                passwordForm.feedbackIsError = (error !== "")
+                                if (error === "") {
+                                    passwordForm.feedback = qsTr("Mot de passe modifié.")
+                                    passwordForm.clearFields()
+                                } else {
+                                    passwordForm.feedback = error
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // --- Ports reseau (reserve aux administrateurs) -------------
                 SettingsSectionCard {
