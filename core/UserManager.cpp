@@ -250,7 +250,7 @@ std::optional<models::User> UserManager::createUser(const QString &name,
     }
 
     const QString salt = PasswordHasher::generateSalt();
-    const QString hash = PasswordHasher::hash(password, salt);
+    const QString hash = PasswordHasher::hashPassword(password, salt);
 
     models::User user;
     user.setName(trimmedName);
@@ -287,6 +287,17 @@ std::optional<models::User> UserManager::authenticate(const QString &name, const
     if (!PasswordHasher::verify(password, existing->passwordSalt(), existing->passwordHash())) {
         m_lastError = UserManagerError::WrongPassword;
         return std::nullopt;
+    }
+
+    // Ancienne empreinte (SHA-256 rapide) : regeneree en PBKDF2 maintenant que le mot de passe
+    // vient d'etre verifie. Mise a jour locale silencieuse (aucun signal, rien de rediffuse).
+    if (PasswordHasher::needsRehash(existing->passwordHash())) {
+        models::User upgraded = *existing;
+        const QString salt = PasswordHasher::generateSalt();
+        upgraded.setPasswordSalt(salt);
+        upgraded.setPasswordHash(PasswordHasher::hashPassword(password, salt));
+        if (!m_userRepository.update(upgraded))
+            qWarning() << "UserManager: conversion de l'empreinte du mot de passe impossible pour" << existing->name();
     }
 
     m_userRepository.updateStatus(existing->id(), models::UserStatus::Online);
@@ -326,7 +337,7 @@ bool UserManager::resetPassword(int userId, const QString &newPassword)
 
     const QString salt = PasswordHasher::generateSalt();
     user->setPasswordSalt(salt);
-    user->setPasswordHash(PasswordHasher::hash(newPassword, salt));
+    user->setPasswordHash(PasswordHasher::hashPassword(newPassword, salt));
     user->setUpdatedAt(QDateTime::currentDateTimeUtc());
 
     const bool ok = m_userRepository.update(*user);

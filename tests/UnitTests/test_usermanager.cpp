@@ -48,6 +48,40 @@ private slots:
         m_dir.reset();
     }
 
+    // --- Lot 2 securite : empreintes PBKDF2 --------------------------------
+
+    void passwordHashUsesPbkdf2AndVerifies()
+    {
+        const QString salt = core::PasswordHasher::generateSalt();
+        const QString stored = core::PasswordHasher::hashPassword(QStringLiteral("S3cret-motdepasse"), salt);
+        QVERIFY2(stored.startsWith(QStringLiteral("pbkdf2$sha256$100000$")), qPrintable(stored));
+        QVERIFY(!core::PasswordHasher::needsRehash(stored));
+        QVERIFY(core::PasswordHasher::verify(QStringLiteral("S3cret-motdepasse"), salt, stored));
+        QVERIFY(!core::PasswordHasher::verify(QStringLiteral("mauvais"), salt, stored));
+        // Nombre d'iterations aberrant (empreinte recue du reseau) : refuse sans calcul interminable.
+        QVERIFY(!core::PasswordHasher::verify(QStringLiteral("x"), salt, QStringLiteral("pbkdf2$sha256$999999999$00")));
+    }
+
+    void legacyHashIsAcceptedThenUpgradedAtLogin()
+    {
+        database::DatabaseManager *db = freshDatabase();
+        database::UserRepository repository(db->database());
+        auto legacy = repository.findByName(QStringLiteral("admin"));
+        QVERIFY(legacy.has_value());
+        legacy->setPasswordSalt(QStringLiteral("ancien-sel"));
+        legacy->setPasswordHash(core::PasswordHasher::hash(QStringLiteral("admin123"), QStringLiteral("ancien-sel")));
+        QVERIFY(repository.update(*legacy));
+        QVERIFY(core::PasswordHasher::needsRehash(repository.findByName(QStringLiteral("admin"))->passwordHash()));
+
+        core::UserManager manager(db);
+        QVERIFY(manager.authenticate(QStringLiteral("admin"), QStringLiteral("admin123")).has_value());
+
+        const auto upgraded = repository.findByName(QStringLiteral("admin"));
+        QVERIFY(!core::PasswordHasher::needsRehash(upgraded->passwordHash()));
+        QVERIFY(manager.authenticate(QStringLiteral("admin"), QStringLiteral("admin123")).has_value());
+        QVERIFY(!manager.authenticate(QStringLiteral("admin"), QStringLiteral("faux")).has_value());
+    }
+
     // --- Parcours QML (login/logout) ------------------------------------
 
     void loginWithSeededAdminSucceeds()
