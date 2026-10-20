@@ -845,8 +845,22 @@ void TransferService::onServerSocketReadyRead()
         state.pendingBlockSize = -1;
 
         if (payload.startsWith(kIdentityFramePrefix)) {
-            const QString announcedFingerprint = QString::fromUtf8(
+            const QString claimedFingerprint = QString::fromUtf8(
                 payload.mid(kIdentityFramePrefix.size())).toLower().trimmed();
+            // L'identite qui compte est celle PROUVEE par la poignee de main TLS (certificat
+            // client presente), jamais l'empreinte simplement annoncee dans cette trame : elle
+            // circule en clair dans la decouverte UDP et n'importe quel poste pourrait la recopier.
+            const auto *tlsSocket = qobject_cast<QSslSocket *>(socket);
+            const QString tlsFingerprint = tlsSocket
+                ? SecurityService::certificateFingerprint(tlsSocket->peerCertificate()).toLower()
+                : QString();
+            if (m_permissionManager && (tlsFingerprint.isEmpty() || claimedFingerprint != tlsFingerprint)) {
+                qWarning() << "TransferService: transfer refused, TLS certificate missing or not matching announced identity from"
+                           << socket->peerAddress();
+                finishReceive(socket, false, QStringLiteral("Certificat distant absent ou non concordant"));
+                return;
+            }
+            const QString announcedFingerprint = tlsFingerprint.isEmpty() ? claimedFingerprint : tlsFingerprint;
             bool authorized = !m_permissionManager;
             if (m_permissionManager && !announcedFingerprint.isEmpty()) {
                 QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",

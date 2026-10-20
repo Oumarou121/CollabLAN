@@ -122,7 +122,11 @@ bool VoiceSignalingChannel::listen(quint16 port)
         sslConfig.setPrivateKey(privateKey);
         keyFile.close();
     }
-    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    // QueryPeer : le certificat de l'appelant est DEMANDE (auto-signe, donc pas de verification
+    // d'autorite), puis son empreinte est comparee a la liste des machines autorisees.
+    // Avec VerifyNone, aucun certificat client n'etait demande et l'autorisation reposait sur une
+    // empreinte simplement annoncee dans la signalisation, recopiable depuis la decouverte UDP.
+    sslConfig.setPeerVerifyMode(QSslSocket::QueryPeer);
     sslConfig.setProtocol(QSsl::TlsV1_2OrLater);
     m_server->setSslConfiguration(sslConfig);
 
@@ -284,6 +288,14 @@ void VoiceSignalingChannel::onServerNewConnection()
     qDebug() << "VoiceSignalingChannel: empreinte certificat entrant"
              << (fingerprint.isEmpty() ? QStringLiteral("<vide>") : fingerprint);
     bool tlsAuthorized = !m_permissionManager;
+    if (m_permissionManager && fingerprint.isEmpty()) {
+        // Pas de certificat client : identite non prouvee, appel refuse.
+        qWarning() << "VoiceSignalingChannel: appel refuse, aucun certificat presente par" << socket->peerAddress();
+        socket->close();
+        socket->deleteLater();
+        emit error(QStringLiteral("Appel refusé : certificat distant absent"));
+        return;
+    }
     if (m_permissionManager && !fingerprint.isEmpty()) {
         bool authorized = tlsAuthorized;
         QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
@@ -301,6 +313,12 @@ void VoiceSignalingChannel::onServerNewConnection()
             emit error(QStringLiteral("Appel refusé : certificat distant non autorisé"));
             return;
         }
+        // Identite prouvee par TLS et machine autorisee : l'empreinte annoncee plus tard dans
+        // la signalisation n'est plus consultee pour cette connexion.
+        tlsAuthorized = true;
+        QMetaObject::invokeMethod(m_permissionManager, "recordMachineSeen",
+                                  Qt::DirectConnection, Q_ARG(QString, fingerprint),
+                                  Q_ARG(QString, socket->peerAddress().toString()));
     }
 
     if (m_incomingSocket) {
@@ -404,48 +422,12 @@ void VoiceSignalingChannel::onTextMessageReceived(const QString &message)
     }
 
     if (socket == m_incomingSocket && !socket->property("voiceAuthorized").toBool()) {
-        const QString announcedFingerprint = parsed.certificateFingerprint.toLower().trimmed();
-        qDebug() << "VoiceSignalingChannel: empreinte annoncee par signalisation"
-                 << (announcedFingerprint.isEmpty() ? QStringLiteral("<vide>") : announcedFingerprint);
-
-        bool authorized = false;
-        if (m_permissionManager && !announcedFingerprint.isEmpty()) {
-            QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
-                                      Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
-                                      Q_ARG(QString, announcedFingerprint));
-            if (!authorized) {
-                QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
-                                          Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
-                                          Q_ARG(QString, announcedFingerprint),
-                                          Q_ARG(QString, peerAddress.toString()));
-            }
-            if (authorized) {
-                QMetaObject::invokeMethod(m_permissionManager, "recordMachineSeen",
-                                          Qt::DirectConnection,
-                                          Q_ARG(QString, announcedFingerprint),
-                                          Q_ARG(QString, peerAddress.toString()));
-            }
-        }
-
-        if (!authorized) {
-            qWarning() << "VoiceSignalingChannel: appel refuse, empreinte annoncee non autorisee"
-                       << announcedFingerprint << "peer" << peerAddress;
-            if (m_permissionManager && !announcedFingerprint.isEmpty()) {
-                QMetaObject::invokeMethod(m_permissionManager, "registerPendingMachineByCertificate",
-                                          Qt::DirectConnection, Q_ARG(QString, announcedFingerprint),
-                                          Q_ARG(QString, peerAddress.toString()),
-                                          Q_ARG(QString, QString()));
-            }
-            socket->close();
-            emit error(QStringLiteral("Appel refuse : certificat distant non autorise"));
-            return;
-        }
-
-        socket->setProperty("voiceAuthorized", true);
-        if (!socket->property("voicePeerConnectedEmitted").toBool()) {
-            socket->setProperty("voicePeerConnectedEmitted", true);
-            emit peerConnected(peerAddress);
-        }
+        // Ne devrait jamais arriver : une connexion entrante n'est conservee qu'apres verification
+        // du certificat TLS (onNewConnection). L'empreinte annoncee dans la signalisation n'est
+        // pas une preuve d'identite : on refuse au lieu de s'y fier.
+        qWarning() << "VoiceSignalingChannel: message ignore, connexion non authentifiee par TLS" << peerAddress;
+        socket->close();
+        return;
     }
 
     emit messageReceived(parsed, peerAddress);
