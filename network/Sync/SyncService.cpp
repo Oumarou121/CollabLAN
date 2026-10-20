@@ -11,6 +11,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDebug>
+#include <QMetaObject>
+#include <QSet>
 
 namespace network {
 
@@ -79,6 +81,69 @@ models::ServerElectionLogEntry electionEntryFromJson(const QJsonObject &obj)
 }
 } // namespace
 
+std::vector<models::SyncLogEntry> syncEntriesVisibleTo(const std::vector<models::SyncLogEntry> &entries,
+                                                       const QString &userUuid)
+{
+    const auto payloadOf = [](const models::SyncLogEntry &entry) {
+        return QJsonDocument::fromJson(entry.payloadJson().toUtf8()).object();
+    };
+
+    // 1er passage : groupes dont l'utilisateur est (ou a ete) membre, et leurs conversations.
+    QSet<QString> groups;
+    QSet<QString> groupConversations;
+    if (!userUuid.isEmpty()) {
+        for (const auto &entry : entries) {
+            const QJsonObject payload = payloadOf(entry);
+            if (entry.tableName() == QStringLiteral("Groups")) {
+                bool member = payload.value(QStringLiteral("ownerUuid")).toString() == userUuid;
+                for (const auto &value : payload.value(QStringLiteral("memberUuids")).toArray())
+                    member = member || value.toString() == userUuid;
+                if (member) {
+                    groups.insert(entry.recordUuid());
+                    groupConversations.insert(payload.value(QStringLiteral("conversationUuid")).toString());
+                }
+            } else if (entry.tableName() == QStringLiteral("GroupMembers")
+                       && payload.value(QStringLiteral("memberUuid")).toString() == userUuid) {
+                groups.insert(payload.value(QStringLiteral("groupUuid")).toString());
+            }
+        }
+        // Conversations des groupes rejoints apres coup (ajout de membre) : relues sur l'entree Groups.
+        for (const auto &entry : entries) {
+            if (entry.tableName() == QStringLiteral("Groups") && groups.contains(entry.recordUuid()))
+                groupConversations.insert(payloadOf(entry).value(QStringLiteral("conversationUuid")).toString());
+        }
+        groupConversations.remove(QString());
+    }
+
+    // 2e passage : selection.
+    std::vector<models::SyncLogEntry> visible;
+    for (const auto &entry : entries) {
+        const QString table = entry.tableName();
+        if (table == QStringLiteral("Users")) {
+            visible.push_back(entry);
+            continue;
+        }
+        if (userUuid.isEmpty())
+            continue;
+        const QJsonObject payload = payloadOf(entry);
+        if (table == QStringLiteral("Groups")) {
+            if (groups.contains(entry.recordUuid()))
+                visible.push_back(entry);
+        } else if (table == QStringLiteral("GroupMembers")) {
+            if (groups.contains(payload.value(QStringLiteral("groupUuid")).toString()))
+                visible.push_back(entry);
+        } else if (table == QStringLiteral("Messages")) {
+            const bool direct = payload.value(QStringLiteral("senderUuid")).toString() == userUuid
+                || payload.value(QStringLiteral("participant1Uuid")).toString() == userUuid
+                || payload.value(QStringLiteral("participant2Uuid")).toString() == userUuid;
+            if (direct || groupConversations.contains(payload.value(QStringLiteral("conversationUuid")).toString()))
+                visible.push_back(entry);
+        }
+        // Tout autre type d'entree : jamais envoye a un client (fail closed).
+    }
+    return visible;
+}
+
 SyncService::SyncService(database::SyncLogRepository *repository, QObject *parent)
     : QObject(parent)
     , m_repository(repository)
@@ -116,6 +181,11 @@ void SyncService::setServerElectionRepository(database::ServerElectionRepository
     m_electionRepository = repository;
 }
 
+void SyncService::setPermissionManager(QObject *manager)
+{
+    m_permissionManager = manager;
+}
+
 bool SyncService::requestReconciliation(int fromEpoch, const QString &localMachineUuid)
 {
     if (!m_messagingService || !m_messagingService->isConnected()) {
@@ -148,7 +218,20 @@ void SyncService::onServerMessageReceived(const QString &message, const QHostAdd
 
     if (msg == QString::fromLatin1(kMsgSyncRequest)) {
         const int fromEpoch = obj.value(QStringLiteral("from_epoch")).toInt();
-        const auto entries = m_repository->entriesSinceEpoch(fromEpoch);
+        auto entries = m_repository->entriesSinceEpoch(fromEpoch);
+
+        // Le journal contient TOUS les messages prives et tous les groupes. Il n'est envoye en
+        // entier qu'a un pair reconnu comme serveur (reconciliation SERVER <-> TEMP_SERVER) ;
+        // un client ne recoit que ce qui concerne l'utilisateur identifie sur sa connexion.
+        // Sans gestionnaire d'autorisations (tests unitaires isoles) : comportement historique.
+        bool peerIsServer = !m_permissionManager;
+        if (m_permissionManager && m_messagingServer) {
+            QMetaObject::invokeMethod(m_permissionManager, "isTrustedServer", Qt::DirectConnection,
+                                      Q_RETURN_ARG(bool, peerIsServer),
+                                      Q_ARG(QString, m_messagingServer->currentSenderFingerprint()));
+        }
+        if (!peerIsServer && m_messagingServer)
+            entries = syncEntriesVisibleTo(entries, m_messagingServer->currentSenderUserUuid());
 
         QJsonArray array;
         for (const auto &entry : entries) {
@@ -172,8 +255,9 @@ void SyncService::onServerMessageReceived(const QString &message, const QHostAdd
             batch.insert(QStringLiteral("election_entries"), electionArray);
         }
 
+        // Reponse au SEUL demandeur (auparavant diffusee a tous les clients connectes).
         if (m_messagingServer) {
-            m_messagingServer->broadcastMessage(
+            m_messagingServer->replyToCurrentSender(
                 QString::fromUtf8(QJsonDocument(batch).toJson(QJsonDocument::Compact)));
         }
         emit batchSentToPeer(static_cast<int>(entries.size()));

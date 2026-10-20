@@ -4,6 +4,9 @@
 #include <QObject>
 #include <QString>
 #include <QHostAddress>
+#include <vector>
+
+#include "models/SyncLogEntry.h"
 
 namespace database {
 class SyncLogRepository;
@@ -14,6 +17,14 @@ namespace network {
 
 class MessagingServer;
 class MessagingService;
+
+/// Entrees du journal de synchronisation qu'un CLIENT identifie comme `userUuid` a le droit de
+/// recevoir : les comptes (necessaires a la connexion locale), les groupes dont il est ou a ete
+/// membre et leurs mouvements de membres, les messages de ses conversations directes et de ses
+/// groupes. Tout le reste est retire, y compris les types d'entree inconnus. Sans utilisateur
+/// identifie (poste neuf, personne de connecte) : uniquement les comptes.
+std::vector<models::SyncLogEntry> syncEntriesVisibleTo(const std::vector<models::SyncLogEntry> &entries,
+                                                       const QString &userUuid);
 
 /**
  * @brief Reconciliation post-panne pour l'architecture hybride
@@ -61,6 +72,11 @@ public:
     /// se comporte comme avant (SyncLogRepository seul).
     void setServerElectionRepository(database::ServerElectionRepository *repository);
 
+    /// Gestionnaire d'autorisations (PermissionManager) : le journal COMPLET n'est envoye qu'a un
+    /// pair reconnu comme serveur (reconciliation SERVER <-> TEMP_SERVER) ; un client recoit
+    /// seulement ce qui le concerne (syncEntriesVisibleTo).
+    void setPermissionManager(QObject *manager);
+
     /**
      * @brief A appeler par le SERVER officiel une fois connecte au TEMP_SERVER
      *        (MessagingService::connectToHost() deja effectue par l'appelant).
@@ -92,6 +108,7 @@ private:
     database::ServerElectionRepository *m_electionRepository = nullptr;
     MessagingServer *m_messagingServer = nullptr;
     MessagingService *m_messagingService = nullptr;
+    QObject *m_permissionManager = nullptr;
 };
 
 } // namespace network

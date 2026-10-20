@@ -76,6 +76,9 @@ public:
     /// Accepte aussi un certificat de serveur deja epingle localement. Cela
     /// couvre le retour du serveur officiel vers un pair devenu TEMP_SERVER.
     Q_INVOKABLE bool isMachineAuthorizedOrTrustedServer(const QString &fingerprint) const;
+    /// Vrai si ce certificat a ete approuve comme SERVEUR (liste TrustedServers) : seul un tel
+    /// pair recoit le journal de synchronisation complet (cf. SyncService).
+    Q_INVOKABLE bool isTrustedServer(const QString &fingerprint) const;
     Q_INVOKABLE void recordMachineSeen(const QString &fingerprint, const QString &ipAddress);
     /// Verifie la confiance LOCALE envers le certificat du serveur. Cette
     /// decision ne quitte jamais ce poste.

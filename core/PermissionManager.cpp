@@ -87,6 +87,11 @@ bool PermissionManager::isMachineAuthorizedOrTrustedServer(const QString &finger
         || (m_trustedServers && m_trustedServers->isTrusted(fingerprint));
 }
 
+bool PermissionManager::isTrustedServer(const QString &fingerprint) const
+{
+    return !fingerprint.trimmed().isEmpty() && m_trustedServers && m_trustedServers->isTrusted(fingerprint);
+}
+
 void PermissionManager::recordMachineSeen(const QString &fingerprint, const QString &ipAddress)
 {
     if (!m_repository || fingerprint.trimmed().isEmpty()) return;
