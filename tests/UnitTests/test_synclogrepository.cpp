@@ -297,6 +297,57 @@ private slots:
         QCOMPARE(*storedRole, models::UserRole::Admin);
     }
 
+    // Lot 1 securite : un role absent ne retrograde jamais un compte.
+    void applyUserEntryUpdateWithoutRoleKeepsExistingRole()
+    {
+        freshDatabase();
+        QCOMPARE(m_repository->applyBatch({makeUserEntry(QStringLiteral("e-r1"), QStringLiteral("rec-admin-a"),
+            models::SyncOperation::Insert, QStringLiteral("dana"), QStringLiteral("2026-01-01T00:00:00Z"), QStringLiteral("Admin"))}), 1);
+        QCOMPARE(m_repository->applyBatch({makeUserEntry(QStringLiteral("e-r2"), QStringLiteral("rec-admin-b"),
+            models::SyncOperation::Insert, QStringLiteral("eric"), QStringLiteral("2026-01-01T00:00:00Z"), QStringLiteral("Admin"))}), 1);
+        QCOMPARE(m_repository->applyBatch({makeUserEntry(QStringLiteral("e-r3"), QStringLiteral("rec-admin-a"),
+            models::SyncOperation::Update, QStringLiteral("dana"), QStringLiteral("2026-01-02T00:00:00Z"), QString())}), 1);
+
+        QSqlQuery query(m_dbManager->database());
+        QVERIFY(query.exec(QStringLiteral("SELECT role FROM Users WHERE uuid = 'rec-admin-a'")));
+        QVERIFY(query.next());
+        QCOMPARE(models::stringToUserRole(query.value(0).toString()).value_or(models::UserRole::User), models::UserRole::Admin);
+    }
+
+    // Lot 1 securite : une date future ne gagne pas toutes les reconciliations a venir.
+    void applyUserEntryFutureTimestampIsClampedToNow()
+    {
+        freshDatabase();
+        QCOMPARE(m_repository->applyBatch({makeUserEntry(QStringLiteral("e-f1"), QStringLiteral("rec-future"),
+            models::SyncOperation::Insert, QStringLiteral("fanny"), QStringLiteral("2026-01-01T00:00:00Z"))}), 1);
+        QCOMPARE(m_repository->applyBatch({makeUserEntry(QStringLiteral("e-f2"), QStringLiteral("rec-future"),
+            models::SyncOperation::Update, QStringLiteral("fanny"), QStringLiteral("2099-12-31T00:00:00Z"))}), 1);
+
+        database::UserRepository users(m_dbManager->database());
+        const auto stored = users.findByUuid(QStringLiteral("rec-future"));
+        QVERIFY(stored.has_value());
+        QVERIFY2(stored->updatedAt() <= QDateTime::currentDateTimeUtc().addSecs(300),
+                 qPrintable(stored->updatedAt().toString(Qt::ISODate)));
+    }
+
+    // Lot 1 securite : le reseau ne peut pas laisser le poste sans administrateur.
+    void applyUserEntryLastAdminIsNeitherDeletedNorDemoted()
+    {
+        freshDatabase();
+        QCOMPARE(m_repository->applyBatch({makeUserEntry(QStringLiteral("e-l1"), QStringLiteral("rec-last-admin"),
+            models::SyncOperation::Insert, QStringLiteral("gael"), QStringLiteral("2026-01-01T00:00:00Z"), QStringLiteral("Admin"))}), 1);
+
+        m_repository->applyBatch({makeUserEntry(QStringLiteral("e-l2"), QStringLiteral("rec-last-admin"),
+            models::SyncOperation::Update, QStringLiteral("gael"), QStringLiteral("2026-01-02T00:00:00Z"), QStringLiteral("User"))});
+        m_repository->applyBatch({makeUserEntry(QStringLiteral("e-l3"), QStringLiteral("rec-last-admin"),
+            models::SyncOperation::Delete, QStringLiteral("gael"), QStringLiteral("2026-01-03T00:00:00Z"))});
+
+        database::UserRepository users(m_dbManager->database());
+        const auto stored = users.findByUuid(QStringLiteral("rec-last-admin"));
+        QVERIFY2(stored.has_value(), "le dernier administrateur ne doit pas etre supprime");
+        QVERIFY2(stored->isAdmin(), "le dernier administrateur ne doit pas etre retrograde");
+    }
+
     void applyUserEntryUpdateLosesWhenOlder()
     {
         freshDatabase();

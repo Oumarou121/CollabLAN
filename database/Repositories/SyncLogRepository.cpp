@@ -519,10 +519,22 @@ bool SyncLogRepository::applyUserEntry(const models::SyncLogEntry &entry)
     // faire perdre silencieusement l'un des deux changements).
     UserRepository users(m_db);
 
+    // Garde-fou : le reseau ne doit jamais pouvoir laisser ce poste sans aucun administrateur.
+    const auto adminCount = [&users]() {
+        int count = 0;
+        for (const auto &u : users.findAll())
+            if (u.isAdmin()) ++count;
+        return count;
+    };
+
     if (entry.operation() == models::SyncOperation::Delete) {
         const auto existing = users.findByUuid(entry.recordUuid());
         if (!existing) {
             return true; // deja absent localement : idempotent
+        }
+        if (existing->isAdmin() && adminCount() <= 1) {
+            m_lastError = QStringLiteral("Suppression refusee : dernier compte administrateur");
+            return false;
         }
         if (!users.remove(existing->id())) {
             m_lastError = users.lastError();
@@ -541,12 +553,18 @@ bool SyncLogRepository::applyUserEntry(const models::SyncLogEntry &entry)
     const QString name = obj.value(QStringLiteral("name")).toString();
     const QString ipAddress = obj.value(QStringLiteral("ipAddress")).toString();
     const models::UserStatus status = models::userStatusFromString(obj.value(QStringLiteral("status")).toString());
-    const models::UserRole role = models::stringToUserRole(obj.value(QStringLiteral("role")).toString())
-                                       .value_or(models::UserRole::User);
+    // Role absent ou illisible : jamais de retrogradation implicite (cf. Update ci-dessous).
+    const auto parsedRole = models::stringToUserRole(obj.value(QStringLiteral("role")).toString());
+    const models::UserRole role = parsedRole.value_or(models::UserRole::User);
     const QString passwordHash = obj.value(QStringLiteral("passwordHash")).toString();
     const QString passwordSalt = obj.value(QStringLiteral("passwordSalt")).toString();
-    const QDateTime payloadUpdatedAt = QDateTime::fromString(
+    QDateTime payloadUpdatedAt = QDateTime::fromString(
         obj.value(QStringLiteral("updatedAt")).toString(), Qt::ISODate);
+    // Une date dans le futur gagnerait toutes les reconciliations "dernier ecrit gagne" a venir :
+    // au-dela d'une petite tolerance d'horloge, on la ramene a maintenant.
+    const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+    if (payloadUpdatedAt.isValid() && payloadUpdatedAt > nowUtc.addSecs(300))
+        payloadUpdatedAt = nowUtc;
 
     const auto existing = users.findByUuid(entry.recordUuid());
 
@@ -614,7 +632,10 @@ bool SyncLogRepository::applyUserEntry(const models::SyncLogEntry &entry)
         updated.setName(name.isEmpty() ? existing->name() : name);
         updated.setIpAddress(ipAddress);
         updated.setStatus(status);
-        updated.setRole(role);
+        models::UserRole newRole = parsedRole.value_or(existing->role());
+        if (existing->isAdmin() && newRole != models::UserRole::Admin && adminCount() <= 1)
+            newRole = models::UserRole::Admin; // dernier administrateur : jamais retrograde
+        updated.setRole(newRole);
         updated.setPasswordHash(passwordHash.isEmpty() ? existing->passwordHash() : passwordHash);
         updated.setPasswordSalt(passwordSalt.isEmpty() ? existing->passwordSalt() : passwordSalt);
         updated.setUpdatedAt(payloadUpdatedAt);
