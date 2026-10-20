@@ -1,4 +1,5 @@
 #include "SharedFolderContext.h"
+#include "Sync/SafePath.h"
 
 #include <algorithm>
 #include <QHash>
@@ -679,8 +680,14 @@ bool SharedFolderContext::resolveConflict(qint64 folderId, const QString &relati
         return false;
     }
 
-    QString originalAbsPath = QDir::cleanPath(localPath + QDir::separator() + relativePath);
-    QString conflictAbsPath = QDir::cleanPath(localPath + QDir::separator() + conflictPath);
+    // Chemins issus de la synchronisation (donc du reseau) : jamais hors du dossier partage.
+    const QString originalAbsPath = core::sync::resolveInsideFolder(localPath, relativePath);
+    const QString conflictAbsPath = core::sync::resolveInsideFolder(localPath, conflictPath);
+    if (originalAbsPath.isEmpty() || conflictAbsPath.isEmpty()) {
+        m_lastErrorString = QStringLiteral("Chemin de fichier invalide (hors du dossier partagé)");
+        emit errorOccurred(m_lastErrorString);
+        return false;
+    }
 
     if (resolution == QStringLiteral("keep_local")) {
         if (QFile::exists(conflictAbsPath)) {

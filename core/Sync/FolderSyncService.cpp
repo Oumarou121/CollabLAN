@@ -1,4 +1,5 @@
 #include "FolderSyncService.h"
+#include "SafePath.h"
 
 #include "core/SharedFolderManager.h"
 #include "core/UserManager.h"
@@ -147,12 +148,10 @@ models::SharedFolderPermission FolderSyncService::effectivePermission(
     // Résolution machineId → utilisateur (uuid = identifiant réseau du compte).
     const auto user = m_userRepository.findByUuid(peerMachineId);
     if (!user.has_value()) {
-        // Identité non résolue (aucun compte local ne correspond au machineId).
-        // Politique "fail-open" : on ne peut pas confirmer une révocation pour
-        // un utilisateur inconnu -- on laisse passer plutôt que de bloquer
-        // arbitrairement un pair légitime dont le compte n'est pas enregistré
-        // localement. La sécurité périmètre repose sur l'isolation du LAN.
-        return models::SharedFolderPermission::Write;
+        // Identite non resolue (vide, identifiant de machine, compte inconnu) : AUCUN droit.
+        // L'ancienne politique "fail-open" accordait l'ecriture a tout identifiant inconnu, ce qui
+        // permettait a n'importe quel pair de lire ou modifier n'importe quel dossier partage.
+        return models::SharedFolderPermission::None;
     }
     // Le propriétaire du dossier a toujours accès complet.
     if (user->id() == static_cast<int>(folder.ownerId())) {
@@ -163,6 +162,45 @@ models::SharedFolderPermission FolderSyncService::effectivePermission(
     return m_accessRepository.permissionFor(folder.id(), user->id());
 }
 
+bool FolderSyncService::isClaimFromSender(const QString &type, const QJsonObject &obj) const
+{
+    if (!m_messagingServer)
+        return true;
+    const QString sender = m_messagingServer->currentSenderUserUuid();
+    const auto claimIs = [&](const char *field) {
+        const QString claimed = obj[QLatin1String(field)].toString();
+        return !sender.isEmpty() && claimed == sender;
+    };
+    if (type == QString::fromLatin1(kTypeFolderOp))
+        return claimIs("user_uuid");
+    if (type == QString::fromLatin1(kTypeFileRequest) || type == QString::fromLatin1(kTypeResyncRequest)
+        || type == QString::fromLatin1(kTypeFolderHello))
+        return claimIs("requester_user_uuid");
+    if (type == QString::fromLatin1(kTypeAccessGranted) || type == QString::fromLatin1(kTypeAccessRevoked))
+        return claimIs("owner_uuid"); // seul le proprietaire du dossier accorde ou retire un acces
+    if (type == QString::fromLatin1(kTypeCatchupBatch)) {
+        // Rattrapage envoye par un client : uniquement le contenu de SES dossiers, jamais d'octroi
+        // d'acces (sinon un pair pourrait s'accorder l'acces au dossier d'un autre).
+        if (sender.isEmpty() || !obj[QStringLiteral("access_grants")].toArray().isEmpty())
+            return false;
+        for (const auto &value : obj[QStringLiteral("operations")].toArray()) {
+            const auto folder = m_folderManager
+                ? m_folderManager->getFolderByUuid(value.toObject()[QStringLiteral("folder_uuid")].toString())
+                : std::nullopt;
+            if (!folder.has_value() || ownerUuidOf(*folder) != sender)
+                return false;
+        }
+        return true;
+    }
+    return true;
+}
+
+QString FolderSyncService::ownerUuidOf(const models::SharedFolder &folder) const
+{
+    const auto owner = m_userRepository.findById(static_cast<int>(folder.ownerId()));
+    return owner.has_value() ? owner->uuid() : QString();
+}
+
 void FolderSyncService::cleanupRevokedFolder(const models::SharedFolder &folder)
 {
     if (!m_folderManager) return;
@@ -170,8 +208,7 @@ void FolderSyncService::cleanupRevokedFolder(const models::SharedFolder &folder)
     // Supprime les fichiers locaux indexés pour ce dossier.
     const auto files = m_folderManager->getFiles(folder.id());
     for (const auto &file : files) {
-        const QString absPath = QDir::cleanPath(
-            folder.localPath() + QDir::separator() + file.relativePath());
+        const QString absPath = resolveInsideFolder(folder.localPath(), file.relativePath());
         if (QFile::exists(absPath)) {
             QFile::remove(absPath);
         }
@@ -505,6 +542,7 @@ void FolderSyncService::announceAccessRevoked(qint64 folderId, qint64 userId)
     obj[QStringLiteral("type")]              = QString::fromLatin1(kTypeAccessRevoked);
     obj[QStringLiteral("folder_uuid")]       = folder->uuid();
     obj[QStringLiteral("user_uuid")]         = revokedUser->uuid();
+    obj[QStringLiteral("owner_uuid")]        = ownerUuidOf(*folder); // verifie par le serveur relais
     obj[QStringLiteral("origin_machine_id")] = m_machineId;
 
     const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
@@ -524,6 +562,7 @@ void FolderSyncService::onConnectedToServer()
     const qint64 lastAccessId = 0;
     QJsonObject hello;
     hello[QStringLiteral("type")]          = QString::fromLatin1(kTypeFolderHello);
+    hello[QStringLiteral("requester_user_uuid")] = m_userManager ? m_userManager->currentUserUuid() : QString();
     hello[QStringLiteral("machine_id")]    = m_machineId;
     hello[QStringLiteral("last_op_id")]    = lastOpId;
     hello[QStringLiteral("last_access_id")] = lastAccessId;
@@ -544,6 +583,14 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
     if (!doc.isObject()) return;
     const QJsonObject obj = doc.object();
     const QString type = obj[QStringLiteral("type")].toString();
+
+    // Ce poste est le relais (serveur) : l'identite declaree dans le message doit etre celle de
+    // l'utilisateur identifie sur la connexion qui l'envoie, sinon le message n'est ni traite ni
+    // relaye. Les clients ne recoivent ces messages que par le serveur, auquel ils font confiance.
+    if (!isClaimFromSender(type, obj)) {
+        qWarning() << "[FolderSync]" << type << "refuse : identite declaree differente de l'utilisateur de la connexion";
+        return;
+    }
 
     if (type == QString::fromLatin1(kTypeFolderOp)) {
         handleFolderOp(obj, senderAddress);
@@ -730,8 +777,8 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
             folderKnownLocally = true;
             // ── Vérification d'accès : ignorer les ops d'un pair non autorisé ──
             // Utiliser user_uuid si disponible (plus fiable que machineId pour les permissions)
-            const QString peerIdentifier = userUuid.isEmpty() ? machineId : userUuid;
-            if (effectivePermission(folder, peerIdentifier) == models::SharedFolderPermission::None) {
+            const QString peerIdentifier = userUuid; // utilisateur verifie par le serveur relais
+            if (!models::canWrite(effectivePermission(folder, peerIdentifier))) {
                 qWarning() << "[FolderSync] folder_op ignoré : accès révoqué pour" << peerIdentifier;
                 break;
             }
@@ -762,8 +809,7 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
             // reseau, seulement une mise a jour de metadonnee locale.
             bool needsUpdate = true;
             if (!folder.localPath().isEmpty() && !fileHash.isEmpty()) {
-                const QString expectedAbsPath = QDir::cleanPath(
-                    folder.localPath() + QDir::separator() + relativePath);
+                const QString expectedAbsPath = resolveInsideFolder(folder.localPath(), relativePath);
                 // La base peut conserver une version/hash historique après
                 // une réindexation locale ou un ancien téléchargement. Le
                 // contenu présent sur disque est la source de vérité pour
@@ -781,8 +827,7 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
                         if (folder.localPath().isEmpty()) {
                             needsUpdate = false;
                         } else {
-                            const QString expectedAbsPath = QDir::cleanPath(
-                                folder.localPath() + QDir::separator() + relativePath);
+                            const QString expectedAbsPath = resolveInsideFolder(folder.localPath(), relativePath);
                             needsUpdate = !QFile::exists(expectedAbsPath);
                         }
                         break;
@@ -835,8 +880,8 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
     } else if (opType == QStringLiteral("Delete")) {
         for (const auto &folder : m_folderManager->getFolders()) {
             if (folder.uuid() != folderUuid) continue;
-            const QString peerIdentifier = userUuid.isEmpty() ? machineId : userUuid;
-            if (effectivePermission(folder, peerIdentifier) == models::SharedFolderPermission::None) {
+            const QString peerIdentifier = userUuid; // utilisateur verifie par le serveur relais
+            if (!models::canWrite(effectivePermission(folder, peerIdentifier))) {
                 qWarning() << "[FolderSync] folder_op Delete ignoré : accès révoqué pour" << peerIdentifier;
                 break;
             }
@@ -846,8 +891,8 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
     } else if (opType == QStringLiteral("Rename")) {
         for (const auto &folder : m_folderManager->getFolders()) {
             if (folder.uuid() != folderUuid) continue;
-            const QString peerIdentifier = userUuid.isEmpty() ? machineId : userUuid;
-            if (effectivePermission(folder, peerIdentifier) == models::SharedFolderPermission::None) {
+            const QString peerIdentifier = userUuid; // utilisateur verifie par le serveur relais
+            if (!models::canWrite(effectivePermission(folder, peerIdentifier))) {
                 qWarning() << "[FolderSync] folder_op Rename ignoré : accès révoqué pour" << peerIdentifier;
                 break;
             }
@@ -861,8 +906,8 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
         // groupe de renommages partageant le meme couple de dossiers.
         for (const auto &folder : m_folderManager->getFolders()) {
             if (folder.uuid() != folderUuid) continue;
-            const QString peerIdentifier = userUuid.isEmpty() ? machineId : userUuid;
-            if (effectivePermission(folder, peerIdentifier) == models::SharedFolderPermission::None) {
+            const QString peerIdentifier = userUuid; // utilisateur verifie par le serveur relais
+            if (!models::canWrite(effectivePermission(folder, peerIdentifier))) {
                 qWarning() << "[FolderSync] folder_op DirectoryRename ignoré : accès révoqué pour" << peerIdentifier;
                 break;
             }
@@ -901,8 +946,7 @@ void FolderSyncService::handleFolderHello(const QJsonObject &obj)
 
         // ── Vérification d'accès : n'envoyer le rattrapage que si le pair
         //    qui se connecte a (encore) accès à ce dossier.
-        if (!requesterMachineId.isEmpty()
-            && effectivePermission(folder, requesterMachineId) == models::SharedFolderPermission::None) {
+        if (effectivePermission(folder, obj[QStringLiteral("requester_user_uuid")].toString()) == models::SharedFolderPermission::None) {
             qDebug() << "[FolderSync] folder_hello : rattrapage refusé pour"
                      << requesterMachineId << "sur le dossier" << folder.name();
             continue;
@@ -1019,8 +1063,8 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
             const auto folders = m_folderManager->getFolders();
             for (const auto &folder : folders) {
                 if (folder.uuid() != folderUuid) continue;
-                const QString peerIdentifier = userUuid.isEmpty() ? machineId : userUuid;
-                if (effectivePermission(folder, peerIdentifier) == models::SharedFolderPermission::None) {
+                const QString peerIdentifier = userUuid.isEmpty() ? ownerUuidOf(folder) : userUuid;
+                if (!models::canWrite(effectivePermission(folder, peerIdentifier))) {
                     qWarning() << "[FolderSync] catchup op ignoré : accès révoqué pour" << peerIdentifier;
                     break;
                 }
@@ -1068,8 +1112,7 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
                 // (le hash connu ne peut provenir que d'un placeholder).
                 bool needsUpdate = true;
                 if (!folder.localPath().isEmpty() && !fileHash.isEmpty()) {
-                    const QString expectedAbsPath = QDir::cleanPath(
-                        folder.localPath() + QDir::separator() + relativePath);
+                    const QString expectedAbsPath = resolveInsideFolder(folder.localPath(), relativePath);
                     // Priorité au contenu réel : des métadonnées locales
                     // périmées ne doivent pas provoquer un téléchargement
                     // d'un fichier déjà identique sur disque.
@@ -1086,8 +1129,7 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
                             if (folder.localPath().isEmpty()) {
                                 needsUpdate = false;
                             } else {
-                                const QString expectedAbsPath = QDir::cleanPath(
-                                    folder.localPath() + QDir::separator() + relativePath);
+                                const QString expectedAbsPath = resolveInsideFolder(folder.localPath(), relativePath);
                                 needsUpdate = !QFile::exists(expectedAbsPath);
                             }
                             break;
@@ -1122,8 +1164,8 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
         } else if (opType == QStringLiteral("Delete")) {
             for (const auto &folder : m_folderManager->getFolders()) {
                 if (folder.uuid() != folderUuid) continue;
-                const QString peerIdentifier = userUuid.isEmpty() ? machineId : userUuid;
-                if (effectivePermission(folder, peerIdentifier) == models::SharedFolderPermission::None) {
+                const QString peerIdentifier = userUuid.isEmpty() ? ownerUuidOf(folder) : userUuid;
+                if (!models::canWrite(effectivePermission(folder, peerIdentifier))) {
                     qWarning() << "[FolderSync] catchup Delete ignoré : accès révoqué pour" << peerIdentifier;
                     break;
                 }
@@ -1133,8 +1175,8 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
         } else if (opType == QStringLiteral("Rename")) {
             for (const auto &folder : m_folderManager->getFolders()) {
                 if (folder.uuid() != folderUuid) continue;
-                const QString peerIdentifier = userUuid.isEmpty() ? machineId : userUuid;
-                if (effectivePermission(folder, peerIdentifier) == models::SharedFolderPermission::None) {
+                const QString peerIdentifier = userUuid.isEmpty() ? ownerUuidOf(folder) : userUuid;
+                if (!models::canWrite(effectivePermission(folder, peerIdentifier))) {
                     qWarning() << "[FolderSync] catchup Rename ignoré : accès révoqué pour" << peerIdentifier;
                     break;
                 }
@@ -1230,7 +1272,7 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
         // récupérer les octets. None (révoqué ou jamais accordé) est refusé
         // pour la même raison -- canWrite() couvre les deux cas en un seul
         // test (None et Read renvoient tous deux false).
-        const auto perm = effectivePermission(folder, requesterMachineId);
+        const auto perm = effectivePermission(folder, obj[QStringLiteral("requester_user_uuid")].toString());
         if (!models::canWrite(perm)) {
             qWarning() << "[FolderSync] folder_file_request : accès refusé (lecture seule ou révoqué) pour"
                        << requesterMachineId << "sur le dossier" << folder.name();
@@ -1238,8 +1280,12 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
         }
         // ──────────────────────────────────────────────────────────────────
 
-        const QString absPath = QDir::cleanPath(
-            folder.localPath() + QDir::separator() + relativePath);
+        // Chemin recu du reseau : jamais en dehors du dossier partage (traversee "../").
+        const QString absPath = resolveInsideFolder(folder.localPath(), relativePath);
+        if (absPath.isEmpty()) {
+            qWarning() << "[FolderSync] folder_file_request refusé : chemin hors du dossier partagé :" << relativePath;
+            return;
+        }
         if (!QFile::exists(absPath)) {
             qWarning() << "[FolderSync] folder_file_request : fichier introuvable :" << absPath;
             return;
@@ -1412,6 +1458,7 @@ void FolderSyncService::handleFolderAccessGranted(const QJsonObject &obj)
         req[QStringLiteral("type")]                = QString::fromLatin1(kTypeResyncRequest);
         req[QStringLiteral("folder_uuid")]          = folder->uuid();
         req[QStringLiteral("requester_machine_id")] = m_machineId;
+        req[QStringLiteral("requester_user_uuid")]  = m_userManager ? m_userManager->currentUserUuid() : QString();
         req[QStringLiteral("since_op_id")]          = sinceOpId;
         const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
         broadcastMessage(json);
@@ -1471,6 +1518,7 @@ void FolderSyncService::requestFolderResync(const QString &folderUuid)
     req[QStringLiteral("type")]                = QString::fromLatin1(kTypeResyncRequest);
     req[QStringLiteral("folder_uuid")]          = folder->uuid();
     req[QStringLiteral("requester_machine_id")] = m_machineId;
+    req[QStringLiteral("requester_user_uuid")]  = m_userManager ? m_userManager->currentUserUuid() : QString();
     req[QStringLiteral("since_op_id")]          = sinceOpId;
     req[QStringLiteral("force")]                = true;
     const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
@@ -1508,7 +1556,7 @@ void FolderSyncService::handleFolderResyncRequest(const QJsonObject &obj)
         return;
     }
 
-    if (effectivePermission(*folder, requesterMachineId) == models::SharedFolderPermission::None) {
+    if (effectivePermission(*folder, obj[QStringLiteral("requester_user_uuid")].toString()) == models::SharedFolderPermission::None) {
         qDebug() << "[FolderSync] folder_resync_request refusé (accès révoqué) pour" << requesterMachineId
                  << "sur le dossier" << folder->name();
         return;
@@ -1655,6 +1703,7 @@ void FolderSyncService::requestRemoteFile(const QString &folderUuid,
 
     QJsonObject req;
     req[QStringLiteral("type")]                    = QString::fromLatin1(kTypeFileRequest);
+    req[QStringLiteral("requester_user_uuid")]     = m_userManager ? m_userManager->currentUserUuid() : QString();
     req[QStringLiteral("folder_uuid")]             = folderUuid;
     req[QStringLiteral("relative_path")]           = relativePath;
     req[QStringLiteral("requester_machine_id")]    = m_machineId;
@@ -2060,8 +2109,11 @@ void FolderSyncService::applyRemoteDelete(const models::SharedFolder &folder,
                                            const QString &relativePath,
                                            const QString &machineId)
 {
-    const QString absPath = QDir::cleanPath(
-        folder.localPath() + QDir::separator() + relativePath);
+    const QString absPath = resolveInsideFolder(folder.localPath(), relativePath);
+    if (absPath.isEmpty()) {
+        qWarning() << "[FolderSync] Suppression distante refusée : chemin hors du dossier partagé :" << relativePath;
+        return;
+    }
     if (QFile::exists(absPath) && !QFile::remove(absPath)) {
         qWarning() << "[FolderSync] Suppression distante : échec de la suppression sur disque :" << absPath;
     }
@@ -2102,10 +2154,13 @@ void FolderSyncService::applyRemoteRename(const models::SharedFolder &folder,
                                            const QString &newRelativePath,
                                            const QString &machineId)
 {
-    const QString oldAbsPath = QDir::cleanPath(
-        folder.localPath() + QDir::separator() + oldRelativePath);
-    const QString newAbsPath = QDir::cleanPath(
-        folder.localPath() + QDir::separator() + newRelativePath);
+    const QString oldAbsPath = resolveInsideFolder(folder.localPath(), oldRelativePath);
+    const QString newAbsPath = resolveInsideFolder(folder.localPath(), newRelativePath);
+    if (oldAbsPath.isEmpty() || newAbsPath.isEmpty()) {
+        qWarning() << "[FolderSync] Renommage distant refusé : chemin hors du dossier partagé :"
+                   << oldRelativePath << "->" << newRelativePath;
+        return;
+    }
 
     QDir().mkpath(QFileInfo(newAbsPath).absolutePath());
 
@@ -2150,10 +2205,13 @@ void FolderSyncService::applyRemoteDirectoryRename(const models::SharedFolder &f
                                                      const QString &newRelativeDir,
                                                      const QString &machineId)
 {
-    const QString oldAbsDir = QDir::cleanPath(
-        folder.localPath() + QDir::separator() + oldRelativeDir);
-    const QString newAbsDir = QDir::cleanPath(
-        folder.localPath() + QDir::separator() + newRelativeDir);
+    const QString oldAbsDir = resolveInsideFolder(folder.localPath(), oldRelativeDir);
+    const QString newAbsDir = resolveInsideFolder(folder.localPath(), newRelativeDir);
+    if (oldAbsDir.isEmpty() || newAbsDir.isEmpty()) {
+        qWarning() << "[FolderSync] Renommage de dossier distant refusé : chemin hors du dossier partagé :"
+                   << oldRelativeDir << "->" << newRelativeDir;
+        return;
+    }
 
     // Repli fichier par fichier si on ne peut pas se permettre un
     // renommage de dossier "en gros" : sous-dossier source introuvable
@@ -2335,8 +2393,12 @@ void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending
     }
 
     // 2. Chemin cible absolu.
-    const QString targetAbsPath = QDir::cleanPath(
-        pending.localFolderPath + QDir::separator() + pending.relativePath);
+    const QString targetAbsPath = resolveInsideFolder(pending.localFolderPath, pending.relativePath);
+    if (targetAbsPath.isEmpty()) {
+        qWarning() << "[FolderSync] Fichier reçu ignoré : chemin hors du dossier partagé :" << pending.relativePath;
+        QFile::remove(sourcePath);
+        return;
+    }
 
     // CORRECTIF (historique "Créé" + "Modifié" simultanés côté destinataire) :
     // capturé AVANT toute copie/suppression ci-dessous, car ces opérations
@@ -2365,8 +2427,7 @@ void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending
         // On renomme le fichier reçu plutôt que d'écraser.
         const QString shortId = pending.ownerMachineId.left(6);
         effectiveRelativePath = makeConflictPath(pending.relativePath, shortId);
-        const QString conflictAbsPath = QDir::cleanPath(
-            pending.localFolderPath + QDir::separator() + effectiveRelativePath);
+        const QString conflictAbsPath = resolveInsideFolder(pending.localFolderPath, effectiveRelativePath);
 
         // Crée les répertoires parents si nécessaire.
         QDir().mkpath(QFileInfo(conflictAbsPath).absolutePath());
@@ -2403,8 +2464,7 @@ void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending
     }
 
     // 4. Infos du fichier final sur disque.
-    const QString finalAbsPath = QDir::cleanPath(
-        pending.localFolderPath + QDir::separator() + effectiveRelativePath);
+    const QString finalAbsPath = resolveInsideFolder(pending.localFolderPath, effectiveRelativePath);
     const QFileInfo fi(finalAbsPath);
 
     // 5. Upsert SharedFile.

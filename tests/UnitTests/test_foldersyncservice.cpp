@@ -14,6 +14,27 @@
 #include "core/SharedFolderManager.h"
 #include "database/DatabaseManager.h"
 #include "database/Repositories/SharedFileRepository.h"
+#include "database/Repositories/UserRepository.h"
+#include "models/User.h"
+
+namespace {
+// Lot 2 securite : les operations de dossier partage recues portent l'uuid du compte auteur ;
+// sans identite connue localement, le pair n'a aucun droit (effectivePermission). Les tests
+// creent donc un compte "auteur distant" et en font le proprietaire du dossier.
+struct TestUser { qint64 id = 0; QString uuid; };
+
+TestUser createRemoteAuthor(database::DatabaseManager *db, const QString &name = QStringLiteral("auteur-distant"))
+{
+    database::UserRepository users(db->database());
+    models::User user;
+    user.setName(name);
+    user.setUuid(QStringLiteral("uuid-") + name);
+    user.setPasswordHash(QStringLiteral("h"));
+    user.setPasswordSalt(QStringLiteral("s"));
+    const int id = users.create(user);
+    return TestUser{static_cast<qint64>(id), user.uuid()};
+}
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Stub minimaliste de MessagingServer/Service pour capturer les messages
@@ -778,6 +799,66 @@ private slots:
     // 15. folder_op Delete recu d'un pair -> fichier supprime du disque
     //     et marque supprime (tombstone) en base.
     // ------------------------------------------------------------------
+    // ------------------------------------------------------------------
+    // Lot 2 securite : une operation distante ne modifie le disque que si son AUTEUR a le droit
+    // d'ecrire. Avant, une identite inconnue valait "ecriture autorisee" (fail-open).
+    // ------------------------------------------------------------------
+    void receiveFolderOp_withoutWriteAccess_doesNotTouchDisk_data()
+    {
+        QTest::addColumn<QString>("author");    // "none" | "unknown" | "reader"
+        QTest::newRow("sans identite") << QStringLiteral("none");
+        QTest::newRow("compte inconnu") << QStringLiteral("unknown");
+        QTest::newRow("acces en lecture seule") << QStringLiteral("reader");
+    }
+
+    void receiveFolderOp_withoutWriteAccess_doesNotTouchDisk()
+    {
+        QFETCH(QString, author);
+
+        QTemporaryDir dbDir, folderDir;
+        QVERIFY(dbDir.isValid() && folderDir.isValid());
+        const QString dbPath = dbDir.filePath(QStringLiteral("fss_perm_%1.sqlite")
+            .arg(QRandomGenerator::global()->generate()));
+        auto *db = openRealDb(QStringLiteral("fss_perm_%1").arg(QRandomGenerator::global()->generate()), dbPath);
+        QVERIFY(db);
+
+        core::SharedFolderManager mgr(db);
+        const TestUser owner = createRemoteAuthor(db, QStringLiteral("proprietaire"));
+        const TestUser reader = createRemoteAuthor(db, QStringLiteral("lecteur"));
+        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), owner.id);
+        QVERIFY(folder.has_value());
+        QVERIFY(mgr.grantAccess(folder->id(), reader.id, owner.id,
+                                 models::SharedFolderPermission::Read, /*broadcastNetwork=*/false));
+
+        const QString absPath = folderDir.filePath(QStringLiteral("secret.txt"));
+        {
+            QFile f(absPath);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(QByteArrayLiteral("contenu d'origine"));
+        }
+        QVERIFY(mgr.shareFolder(folder->id()).has_value());
+
+        auto *svc = new core::sync::FolderSyncService(db, &mgr, this);
+        svc->setLocalMachineId(QStringLiteral("machine-local"));
+
+        QJsonObject obj;
+        obj[QStringLiteral("type")]          = QStringLiteral("folder_op");
+        obj[QStringLiteral("folder_uuid")]   = folder->uuid();
+        obj[QStringLiteral("op_type")]       = QStringLiteral("Delete");
+        obj[QStringLiteral("relative_path")] = QStringLiteral("secret.txt");
+        obj[QStringLiteral("machine_id")]    = QStringLiteral("machine-remote");
+        if (author == QStringLiteral("unknown"))
+            obj[QStringLiteral("user_uuid")] = QStringLiteral("uuid-inconnu-du-poste");
+        else if (author == QStringLiteral("reader"))
+            obj[QStringLiteral("user_uuid")] = reader.uuid;
+
+        QMetaObject::invokeMethod(svc, "onClientMessageReceived", Qt::DirectConnection,
+                                  Q_ARG(QString, QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact))));
+
+        QVERIFY2(QFile::exists(absPath), "un pair sans droit d'ecriture ne doit pas supprimer le fichier");
+        QCOMPARE(mgr.getFiles(folder->id()).size(), 1);
+    }
+
     void receiveFolderOpDelete_removesFileAndMarksTombstone()
     {
         QTemporaryDir dbDir, folderDir;
@@ -789,7 +870,8 @@ private slots:
         QVERIFY(db);
 
         core::SharedFolderManager mgr(db);
-        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), 0);
+        const TestUser author = createRemoteAuthor(db);
+        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), author.id);
         QVERIFY(folder.has_value());
         const qint64 folderId = folder->id();
 
@@ -814,6 +896,7 @@ private slots:
         obj[QStringLiteral("relative_path")]     = QStringLiteral("obsolete.txt");
         obj[QStringLiteral("old_relative_path")] = QString();
         obj[QStringLiteral("machine_id")]        = QStringLiteral("machine-remote");
+        obj[QStringLiteral("user_uuid")]         = author.uuid;
         const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 
         QMetaObject::invokeMethod(svc, "onClientMessageReceived",
@@ -853,7 +936,8 @@ private slots:
         QVERIFY(db);
 
         core::SharedFolderManager mgr(db);
-        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), 0);
+        const TestUser author = createRemoteAuthor(db);
+        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), author.id);
         QVERIFY(folder.has_value());
         const qint64 folderId = folder->id();
 
@@ -877,6 +961,7 @@ private slots:
         obj[QStringLiteral("relative_path")]     = QStringLiteral("nouveau.txt");
         obj[QStringLiteral("old_relative_path")] = QStringLiteral("ancien.txt");
         obj[QStringLiteral("machine_id")]        = QStringLiteral("machine-remote");
+        obj[QStringLiteral("user_uuid")]         = author.uuid;
         const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 
         QMetaObject::invokeMethod(svc, "onClientMessageReceived",
@@ -921,7 +1006,8 @@ private slots:
         QVERIFY(db);
 
         core::SharedFolderManager mgr(db);
-        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), 0);
+        const TestUser author = createRemoteAuthor(db);
+        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), author.id);
         QVERIFY(folder.has_value());
         const qint64 folderId = folder->id();
 
@@ -950,6 +1036,7 @@ private slots:
         obj[QStringLiteral("relative_path")]     = QStringLiteral("final");
         obj[QStringLiteral("old_relative_path")] = QStringLiteral("drafts");
         obj[QStringLiteral("machine_id")]        = QStringLiteral("machine-remote");
+        obj[QStringLiteral("user_uuid")]         = author.uuid;
         const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
 
         QMetaObject::invokeMethod(svc, "onClientMessageReceived",
@@ -1140,7 +1227,8 @@ private slots:
         QVERIFY(db);
 
         core::SharedFolderManager mgr(db);
-        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), 0);
+        const TestUser author = createRemoteAuthor(db);
+        const auto folder = mgr.createFolder(QStringLiteral("Docs"), folderDir.path(), author.id);
         QVERIFY(folder.has_value());
 
         // Pair révoqué : connu en base, mais sans accès.

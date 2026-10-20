@@ -6,6 +6,7 @@
 #include <QHostAddress>
 #include <QVector>
 #include <QHash>
+#include <QJsonObject>
 #include <QTimer>
 
 #include "database/Repositories/SyncOperationRepository.h"
@@ -466,6 +467,13 @@ private:
      */
     models::SharedFolderPermission effectivePermission(const models::SharedFolder &folder,
                                                         const QString &peerMachineId) const;
+
+    /// Uuid du compte proprietaire du dossier (vide si inconnu localement).
+    QString ownerUuidOf(const models::SharedFolder &folder) const;
+
+    /// Cote serveur relais : l'identite declaree dans un message de dossier partage est-elle
+    /// celle de l'utilisateur identifie sur la connexion emettrice ?
+    bool isClaimFromSender(const QString &type, const QJsonObject &obj) const;
 
     /**
      * @brief Nettoie les données locales d'un dossier dont l'accès vient d'être
