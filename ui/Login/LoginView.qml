@@ -420,7 +420,86 @@ Item {
             // Ombre portee : rectangle legerement plus grand, decale,
             // avec une opacite faible - simule une elevation douce sans
             // dependre d'un effet graphique externe.
+            // Premier lancement du serveur principal : aucun compte n'existe encore. Plus de compte
+            // "admin"/"admin123" par defaut : la personne qui installe choisit le nom et le mot de
+            // passe du premier administrateur (Application::createInitialAdmin).
             Rectangle {
+                id: setupCard
+                visible: application.needsInitialAdmin
+                anchors.centerIn: parent
+                width: Math.min(460, parent.width - Theme.spacingXl * 2)
+                height: setupColumn.implicitHeight + Theme.spacingXl * 2.2
+                radius: Theme.radiusLarge
+                color: Theme.darkMode ? "#1C232D" : "#FFFFFF"
+                border.width: 1
+                border.color: root.borderCol
+
+                function submit() {
+                    const error = application.createInitialAdmin(setupName.text, setupPassword.text, setupConfirm.text)
+                    setupError.text = error
+                    if (error.length === 0) {
+                        usernameAppField.text = setupName.text.trim()
+                        passwordAppField.text = ""
+                    }
+                }
+
+                ColumnLayout {
+                    id: setupColumn
+                    anchors.centerIn: parent
+                    width: Math.min(360, parent.width - Theme.spacingXl * 2)
+                    spacing: Theme.spacingMedium
+
+                    Label {
+                        text: qsTr("Créer le compte administrateur")
+                        font.pixelSize: 24
+                        font.family: root.displayFont
+                        color: root.ink
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        text: qsTr("Premier démarrage : choisissez l'identifiant et le mot de passe du premier administrateur du réseau (8 caractères minimum).")
+                        font.pixelSize: Theme.fontSizeBody
+                        color: root.inkMuted
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    AppTextField {
+                        id: setupName
+                        label: qsTr("Nom d'utilisateur")
+                        Layout.fillWidth: true
+                        onAccepted: setupPassword.field.forceActiveFocus()
+                    }
+                    AppPasswordField {
+                        id: setupPassword
+                        label: qsTr("Mot de passe")
+                        Layout.fillWidth: true
+                        onAccepted: setupConfirm.field.forceActiveFocus()
+                    }
+                    AppPasswordField {
+                        id: setupConfirm
+                        label: qsTr("Confirmer le mot de passe")
+                        Layout.fillWidth: true
+                        onAccepted: setupCard.submit()
+                    }
+                    Label {
+                        id: setupError
+                        visible: text.length > 0
+                        color: root.errorText
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+                    AppButton {
+                        variant: "primary"
+                        text: qsTr("Créer le compte")
+                        Layout.fillWidth: true
+                        onClicked: setupCard.submit()
+                    }
+                }
+            }
+
+            Rectangle {
+                visible: formCard.visible
                 anchors.centerIn: formCard
                 width: formCard.width + 8
                 height: formCard.height + 8
@@ -432,6 +511,7 @@ Item {
 
             Rectangle {
                 id: formCard
+                visible: !application.needsInitialAdmin
                 anchors.centerIn: parent
                 width: Math.min(460, parent.width - Theme.spacingXl * 2)
                 height: formColumn.implicitHeight + Theme.spacingXl * 2.2

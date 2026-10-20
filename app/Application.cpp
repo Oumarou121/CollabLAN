@@ -109,6 +109,10 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     qDebug() << "Base de donnees utilisee :" << m_databaseManager->databaseFilePath();
 
     m_userManager = new core::UserManager(m_databaseManager.get(), this);
+    // Ecran "premier administrateur" : a reevaluer des que la liste des comptes change
+    // (creation locale, comptes recus par synchronisation).
+    connect(m_userManager, &core::UserManager::usersChanged, this, &Application::initialAdminStateChanged);
+    connect(m_userManager, &core::UserManager::userCreated, this, &Application::initialAdminStateChanged);
 
     // Initialiser le MessagingManager pour la messagerie
     m_messagingManager = new core::MessagingManager(m_databaseManager.get(), this);
@@ -328,6 +332,8 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 Q_UNUSED(id)
                 appendSyncLogEntry(QStringLiteral("Users"), uuid, models::SyncOperation::Delete, QString());
             });
+    connect(m_electionService, &network::ElectionService::roleChanged,
+            this, &Application::initialAdminStateChanged);
     connect(m_electionService, &network::ElectionService::roleChanged,
             this, [this, messagingServerPort](models::ServerRole newRole, models::ServerRole previousRole) {
                 m_serverElectionRepository->updateRoleAndEpoch(newRole, m_electionService->epoch());
@@ -922,6 +928,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // Connecter PermissionManager aux services réseau pour vérifier les machines autorisées
     m_messagingService->setPermissionManager(m_permissionManager);
     m_messagingServer->setPermissionManager(m_permissionManager);
+    m_syncService->setPermissionManager(m_permissionManager);
     m_transferService->setPermissionManager(m_permissionManager);
     m_transferService->setSecurityService(m_securityService);
     m_voiceService->setPermissionManager(m_permissionManager);
@@ -1664,17 +1671,35 @@ void Application::seedDefaultAdminIfNeeded()
     if (!m_electionService || m_electionService->role() != models::ServerRole::Server)
         return;
 
-    if (!m_userManager->allUsers().empty()) {
-        return; // deja des comptes (soit le seed a deja eu lieu, soit une
-                // synchronisation a deja rempli la base) : rien a faire.
-    }
+    // Plus de compte "admin"/"admin123" cree d'office (mot de passe connu de tous, replique a tout
+    // le reseau) : l'ecran de connexion propose de creer le premier administrateur
+    // (createInitialAdmin), avec un mot de passe choisi par la personne qui installe.
+    emit initialAdminStateChanged();
+}
 
-    const auto admin = m_userManager->createUser(QStringLiteral("admin"), QStringLiteral("admin123"), /*isAdmin=*/true);
-    if (!admin.has_value()) {
-        qWarning() << "Impossible de creer le compte admin par defaut (code erreur :"
-                   << static_cast<int>(m_userManager->lastError()) << ")";
-        return;
-    }
+bool Application::needsInitialAdmin() const
+{
+    return m_userManager && m_electionService
+        && m_electionService->role() == models::ServerRole::Server
+        && m_userManager->allUsers().empty();
+}
+
+QString Application::createInitialAdmin(const QString &name, const QString &password,
+                                        const QString &confirmation)
+{
+    if (!needsInitialAdmin())
+        return tr("Un compte existe déjà : connectez-vous avec un compte administrateur.");
+    const QString trimmedName = name.trimmed();
+    if (trimmedName.isEmpty())
+        return tr("Choisissez un nom d'utilisateur.");
+    if (password.size() < 8)
+        return tr("Le mot de passe doit contenir au moins 8 caractères.");
+    if (password != confirmation)
+        return tr("Les deux mots de passe ne correspondent pas.");
+
+    const auto admin = m_userManager->createUser(trimmedName, password, /*isAdmin=*/true);
+    if (!admin.has_value())
+        return tr("Création du compte impossible (code %1).").arg(static_cast<int>(m_userManager->lastError()));
 
     // A ce stade, le role Server/TempServer de ce poste est deja stabilise
     // (seedDefaultAdminIfNeeded n'est appele que sous cette condition, cf.
@@ -1685,6 +1710,8 @@ void Application::seedDefaultAdminIfNeeded()
     // de propager son propre etat interne : c'est le tout premier
     // utilisateur de la base et il DOIT etre connu de tout futur pair.
     appendUserSyncLog(*admin, models::SyncOperation::Insert, /*bypassRoleCheck=*/true);
+    emit initialAdminStateChanged();
+    return QString();
 }
 
 bool Application::shouldWriteSyncLog() const
@@ -1734,6 +1761,22 @@ void Application::appendSyncLogEntry(const QString &tableName, const QString &re
         qWarning() << "Impossible de journaliser SyncLog" << tableName << recordUuid
                    << m_syncLogRepository->lastError();
     }
+}
+
+bool Application::isLocalAdminUuid(const QString &userUuid) const
+{
+    if (!m_userManager || userUuid.trimmed().isEmpty())
+        return false;
+    for (const auto &user : m_userManager->allUsers()) {
+        if (user.uuid() == userUuid)
+            return user.isAdmin();
+    }
+    return false;
+}
+
+bool Application::isUserEventFromAdmin() const
+{
+    return m_messagingServer && isLocalAdminUuid(m_messagingServer->currentSenderUserUuid());
 }
 
 QString Application::userUuidForId(qint64 userId) const
@@ -1816,7 +1859,18 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         entry.setEventUuid(object.value(QStringLiteral("event_uuid")).toString());
         entry.setEventType(object.value(QStringLiteral("event_type")).toString());
         entry.setDescription(object.value(QStringLiteral("description")).toString());
-        entry.setActorLabel(object.value(QStringLiteral("actor_label")).toString());
+        // Provenance ajoutee par CE poste a partir de la connexion reelle (certificat TLS verifie,
+        // utilisateur identifie), jamais a partir du contenu du message : un pair pouvait sinon
+        // ecrire n'importe quel acteur dans le journal d'audit des autres.
+        QString origin = object.value(QStringLiteral("actor_label")).toString();
+        if (relay && m_messagingServer) {
+            const QString senderUuid = m_messagingServer->currentSenderUserUuid();
+            const QString fingerprint = m_messagingServer->currentSenderFingerprint();
+            origin = tr("%1 (rapporté par %2)")
+                         .arg(origin.isEmpty() ? tr("inconnu") : origin,
+                              senderUuid.isEmpty() ? fingerprint.left(16) : senderUuid);
+        }
+        entry.setActorLabel(origin);
         entry.setTimestamp(QDateTime::fromString(object.value(QStringLiteral("created_at")).toString(), Qt::ISODateWithMs));
         if (m_auditManager) m_auditManager->recordRemoteEvent(entry);
         if (relay && m_messagingServer) m_messagingServer->broadcastMessage(message);
@@ -1832,6 +1886,15 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
     // batch a exactement la meme forme de payload.
     if (document.isObject()
         && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("users_catchup_batch")) {
+        // Le rattrapage des comptes n'est emis QUE par le serveur vers ses clients. Recu par le
+        // serveur (relay) depuis un client, il servirait a injecter des comptes (y compris Admin,
+        // avec l'empreinte de mot de passe de son choix) : refus systematique.
+        if (relay) {
+            qWarning() << "handleIncomingPayload: users_catchup_batch recu d'un client, refuse";
+            if (m_auditManager)
+                m_auditManager->logRefusedAttempt(QStringLiteral("Rattrapage de comptes envoyé par un client (refusé)"));
+            return;
+        }
         const QJsonArray entriesArray = document.object().value(QStringLiteral("entries")).toArray();
         bool anyApplied = false;
         for (const QJsonValue &value : entriesArray) {
@@ -1876,6 +1939,17 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
     // le correctif deja en place pour "group_created"/"authorized_machine_event").
     if (document.isObject()
         && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("user_event")) {
+        // Cote serveur (relay), le changement vient d'un client : il n'est accepte que d'une
+        // connexion identifiee comme un compte Admin connu ici. Sans ce controle, n'importe quel
+        // poste autorise pouvait creer un Admin, changer le mot de passe ou le role d'un compte,
+        // ou le supprimer, puis le faire relayer a tout le reseau. Cote client, le message vient
+        // du serveur, dont le certificat a ete verifie : il fait autorite.
+        if (relay && !isUserEventFromAdmin()) {
+            qWarning() << "handleIncomingPayload: user_event refuse (emetteur non administrateur)";
+            if (m_auditManager)
+                m_auditManager->logRefusedAttempt(QStringLiteral("Modification de compte par un non-administrateur (refusée)"));
+            return;
+        }
         const QJsonObject object = document.object();
         models::SyncLogEntry entry;
         entry.setTableName(QStringLiteral("Users"));

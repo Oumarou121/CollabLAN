@@ -64,6 +64,10 @@ class Application : public QObject
     Q_PROPERTY(QString pendingServerAddress READ pendingServerAddress NOTIFY pendingServerChanged)
     Q_PROPERTY(int pendingServerPort READ pendingServerPort NOTIFY pendingServerChanged)
     Q_PROPERTY(int pendingClientCount READ pendingClientCount NOTIFY pendingClientCountChanged)
+    /// Vrai au tout premier lancement du serveur principal, tant qu'aucun compte n'existe :
+    /// l'ecran de connexion propose alors de creer le premier administrateur (plus aucun
+    /// compte par defaut a mot de passe connu).
+    Q_PROPERTY(bool needsInitialAdmin READ needsInitialAdmin NOTIFY initialAdminStateChanged)
 
 public:
     explicit Application(QObject *parent = nullptr);
@@ -213,6 +217,7 @@ public:
 signals:
     void pendingServerChanged();
     void pendingClientCountChanged();
+    void initialAdminStateChanged();
 
 private:
     /// Cree le compte "admin" par defaut (dev/demo) si la base est vide et
@@ -223,6 +228,16 @@ private:
     /// "admin*conflict*<uuid>", cf. SyncLogRepository::applyUserEntry).
     /// Idempotent (relit allUsers() a chaque appel).
     void seedDefaultAdminIfNeeded();
+
+public:
+    bool needsInitialAdmin() const;
+
+    /// Cree le premier compte administrateur (premier lancement du serveur principal, base vide).
+    /// Renvoie un message d'erreur a afficher, ou une chaine vide en cas de succes.
+    Q_INVOKABLE QString createInitialAdmin(const QString &name, const QString &password,
+                                           const QString &confirmation);
+
+private:
 
     /// Diffuse en temps reel (type "user_event") la creation/mise a jour
     /// d'un utilisateur a tous les postes actuellement connectes, plutot
@@ -285,6 +300,13 @@ private:
     /// entre postes (cf. HYBRID_SERVER_FAILOVER.md et la note de
     /// SyncLogRepository::applyUserEntry).
     QString userUuidForId(qint64 userId) const;
+
+    /// Vrai si l'uuid designe un compte Admin dans la base LOCALE de ce poste.
+    bool isLocalAdminUuid(const QString &userUuid) const;
+
+    /// Un changement de compte (user_event) recu d'un client n'est accepte par le serveur que
+    /// si cette connexion est autorisee et identifiee comme un compte Admin connu ici.
+    bool isUserEventFromAdmin() const;
 
     /// Uuid de la Conversation locale d'id donne (chaine vide si introuvable).
     QString conversationUuidForId(qint64 conversationId) const;
