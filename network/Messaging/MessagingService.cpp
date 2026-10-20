@@ -190,7 +190,8 @@ void MessagingService::onDisconnected()
 
 void MessagingService::onTextMessageReceived(const QString &message)
 {
-    qDebug() << "Message received (encrypted):" << message;
+    // Jamais le contenu dans les journaux (fichier de log lisible sur le poste).
+    qDebug() << "Message received (encrypted," << message.size() << "caracteres)";
     emit messageReceived(message);
 }
 

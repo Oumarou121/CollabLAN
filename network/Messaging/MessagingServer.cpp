@@ -68,10 +68,12 @@ bool MessagingServer::start(quint16 port)
     }
 
     if (!sslConfigured) {
-        qWarning() << "SecurityService not ready, using insecure mode";
-        // En mode développement, on peut utiliser un mode non sécurisé
+        // Jamais de repli en clair : sans identite TLS, aucun poste ne peut etre authentifie et
+        // les messages circuleraient en clair sur le reseau. Le serveur ne demarre pas.
+        qCritical() << "MessagingServer: identite TLS indisponible, demarrage refuse (aucun mode non chiffre)";
         delete m_server;
-        m_server = new QWebSocketServer(QStringLiteral("LocaLink Messaging Server"), QWebSocketServer::NonSecureMode, this);
+        m_server = nullptr;
+        return false;
     }
 
     connect(m_server, &QWebSocketServer::newConnection, this, &MessagingServer::onNewConnection);
@@ -123,6 +125,9 @@ int MessagingServer::broadcastMessage(const QString &message, const QHostAddress
         if (!excludeAddress.isNull() && client->peerAddress() == excludeAddress) {
             continue;
         }
+        if (!isClientAuthorized(client)) {
+            continue; // machine en attente ou revoquee : ne recoit rien
+        }
         client->sendTextMessage(message);
         ++sentCount;
     }
@@ -137,7 +142,7 @@ int MessagingServer::sendToUuids(const QString &message, const QStringList &uuid
 
     int sentCount = 0;
     for (auto it = m_clientUuids.constBegin(); it != m_clientUuids.constEnd(); ++it) {
-        if (uuids.contains(it.value())) {
+        if (uuids.contains(it.value()) && isClientAuthorized(it.key())) {
             it.key()->sendTextMessage(message);
             ++sentCount;
         }
@@ -161,7 +166,7 @@ int MessagingServer::sendToFingerprint(const QString &message, const QString &fi
 
     int sentCount = 0;
     for (auto it = m_clientFingerprints.constBegin(); it != m_clientFingerprints.constEnd(); ++it) {
-        if (it.value() == fingerprint) {
+        if (it.value() == fingerprint && isClientAuthorized(it.key())) {
             it.key()->sendTextMessage(message);
             ++sentCount;
         }
@@ -246,17 +251,15 @@ void MessagingServer::onTextMessageReceived(const QString &message)
                 return;
             }
             const QString userUuid = obj.value(QStringLiteral("userUuid")).toString();
-            if (!userUuid.isEmpty()) {
+            const bool authorized = isClientAuthorized(client);
+            // Une machine en attente ne peut pas revendiquer un utilisateur : sinon elle recevrait
+            // les messages prives de cet utilisateur (son uuid circule dans la decouverte UDP).
+            if (authorized && !userUuid.isEmpty()) {
                 m_clientUuids.insert(client, userUuid);
                 qDebug() << "Client" << client->peerAddress() << "identifie comme utilisateur" << userUuid;
+            } else {
+                m_clientUuids.remove(client);
             }
-            bool authorized = false;
-            if (m_permissionManager) {
-                QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedOrTrustedServer",
-                                          Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
-                                          Q_ARG(QString, m_clientFingerprints.value(client)));
-            }
-            m_clientAuthorized.insert(client, authorized);
             // Emis des que la machine est autorisee au niveau reseau, meme
             // si userUuid est vide (poste tout neuf, sans aucun compte
             // local -- cf. commentaire de clientIdentified). Gater ce
@@ -271,13 +274,54 @@ void MessagingServer::onTextMessageReceived(const QString &message)
         }
     }
 
-    if (!m_clientAuthorized.value(client, false)) {
+    if (!isClientAuthorized(client)) {
         qWarning() << "Message ignored from pending machine" << client->peerAddress();
         return;
     }
 
-    qDebug() << "Message received from" << client->peerAddress() << ":" << message;
+    // Jamais le contenu dans les journaux (fichier de log lisible sur le poste).
+    qDebug() << "Message received from" << client->peerAddress() << "(" << message.size() << "caracteres)";
+    m_currentSender = client;
     emit messageReceived(message, client->peerAddress());
+    m_currentSender = nullptr;
+}
+
+QString MessagingServer::currentSenderUserUuid() const
+{
+    return m_currentSender ? m_clientUuids.value(m_currentSender) : QString();
+}
+
+QString MessagingServer::currentSenderFingerprint() const
+{
+    return m_currentSender ? m_clientFingerprints.value(m_currentSender) : QString();
+}
+
+bool MessagingServer::replyToCurrentSender(const QString &message)
+{
+    if (!m_currentSender || !isClientAuthorized(m_currentSender))
+        return false;
+    return m_currentSender->sendTextMessage(message) >= 0;
+}
+
+bool MessagingServer::isClientAuthorized(QWebSocket *client)
+{
+    if (!client || !m_clients.contains(client))
+        return false;
+    if (!m_permissionManager) {
+        // Sans gestionnaire d'autorisations (tests unitaires isoles) : comportement historique.
+        return true;
+    }
+    const QString fingerprint = m_clientFingerprints.value(client);
+    bool authorized = false;
+    if (!fingerprint.trimmed().isEmpty()) {
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedOrTrustedServer",
+                                  Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                  Q_ARG(QString, fingerprint));
+    }
+    m_clientAuthorized.insert(client, authorized);
+    if (!authorized)
+        m_clientUuids.remove(client);
+    return authorized;
 }
 
 void MessagingServer::onSocketDisconnected()

@@ -76,6 +76,17 @@ public:
     /// Définit le PermissionManager pour vérifier les machines autorisées (issue #70).
     void setPermissionManager(QObject *manager);
 
+    /// Utilisateur identifie (message "identify" d'une connexion AUTORISEE) qui a envoye le
+    /// message en cours de traitement. Valide uniquement pendant l'emission de messageReceived
+    /// (connexion directe) ; vide sinon. Sert a verifier les droits de l'emetteur cote serveur.
+    QString currentSenderUserUuid() const;
+
+    /// Empreinte du certificat TLS de l'emetteur du message en cours (meme duree de validite).
+    QString currentSenderFingerprint() const;
+
+    /// Repond uniquement a l'emetteur du message en cours (connexion autorisee) ; faux sinon.
+    bool replyToCurrentSender(const QString &message);
+
 signals:
     /// Émis lorsqu'un message texte est reçu d'un client.
     void messageReceived(const QString &message, const QHostAddress &senderAddress);
@@ -111,6 +122,13 @@ private slots:
     void onSocketDisconnected();
 
 private:
+    /// Vrai si la machine de cette connexion est autorisee (relu a chaque appel : une
+    /// autorisation ou une revocation faite entre-temps par un administrateur s'applique
+    /// sans attendre une reconnexion). Une connexion non autorisee ne recoit JAMAIS rien.
+    bool isClientAuthorized(QWebSocket *client);
+
+    QWebSocket *m_currentSender = nullptr;
+
     QWebSocketServer *m_server = nullptr;
     SecurityService *m_securityService = nullptr;
     QObject *m_permissionManager = nullptr;
