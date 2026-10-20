@@ -51,33 +51,19 @@
 #include <QStandardPaths>
 #include <QCoreApplication>
 
-// DEBUG TEMPORAIRE (a retirer une fois le diagnostic sync termine) :
-// l'executable est en subsystem WIN32 (cf. app/CMakeLists.txt,
-// add_executable(LocaLink WIN32 ...)) -- volontaire pour ne pas avoir de
-// fenetre console en usage normal, mais ca veut dire que qDebug()/qWarning()
-// ne vont nulle part de visible sur un poste sans Visual Studio attache.
-// Ce handler redirige tout vers un fichier texte a cote de l'executable
-// (writable meme installe dans Program Files, contrairement a certains
-// dossiers systeme) pour pouvoir recuperer les logs sur les PC de test.
-// DEBUG TEMPORAIRE : dossier de l'executable calcule via argv[0], PAS via
-// QCoreApplication::applicationDirPath(). Le tout premier qDebug() (le
-// diagnostic TLS juste apres qInstallMessageHandler) s'execute avant que
-// QApplication app(argc, argv) soit construit plus bas dans main() ;
-// applicationDirPath() sans instance QCoreApplication vivante declenche un
-// Q_ASSERT fatal ("the application static was used without a
-// QCoreApplication instance"), pas une simple exception recuperable.
-#ifdef Q_OS_WIN
-static QString g_exeDir;
-#endif
+// Journal de l'application : <AppData>/LocaLink/logs/localink.log (dossier propre a l'utilisateur,
+// toujours accessible en ecriture, contrairement au dossier d'installation). Les messages emis
+// avant que ce chemin soit connu (avant QApplication) ne vont que sur la sortie d'erreur.
+// Les messages de niveau debug ne sont conserves que dans les builds Debug. Le contenu des
+// messages echanges n'est jamais journalise (cf. MessagingServer/MessagingService).
+static QString g_logPath;
 
-#ifdef Q_OS_WIN
 static void fileMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
 {
-    static QFile logFile(g_exeDir + "/localink_debug.log");
-    static bool opened = logFile.open(QIODevice::Append | QIODevice::Text);
-    if (!opened)
+#ifdef NDEBUG
+    if (type == QtDebugMsg)
         return;
-
+#endif
     const char *levelStr = "DEBUG";
     switch (type) {
         case QtDebugMsg:    levelStr = "DEBUG";   break;
@@ -91,30 +77,39 @@ static void fileMessageHandler(QtMsgType type, const QMessageLogContext &context
         + " [" + levelStr + "] " + msg
         + (context.file ? QString(" (%1:%2)").arg(context.file).arg(context.line) : QString());
 
-    QTextStream out(&logFile);
-    out << line << Qt::endl;
-    out.flush();
-
-    // DEBUG TEMPORAIRE : sans WIN32 (cf. CMakeLists.txt), une fenetre cmd
-    // s'ouvre desormais au lancement -- il faut aussi y ecrire, sinon elle
-    // reste vide (qInstallMessageHandler remplace le handler par defaut de
-    // Qt qui aurait ecrit sur stderr tout seul).
     QTextStream(stderr) << line << Qt::endl;
+
+    if (!g_logPath.isEmpty()) {
+        static QFile logFile(g_logPath);
+        static bool opened = logFile.open(QIODevice::Append | QIODevice::Text);
+        if (opened) {
+            QTextStream out(&logFile);
+            out << line << Qt::endl;
+        }
+    }
 
     if (type == QtFatalMsg)
         abort();
 }
-#endif
+
+/// Fixe le fichier de journal une fois l'organisation/l'application connues ; garde une seule
+/// archive (.1) au-dela de 5 Mo pour que le journal ne grossisse pas indefiniment.
+static void setupLogFile()
+{
+    const QString dir = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath(QStringLiteral("logs"));
+    if (!QDir().mkpath(dir))
+        return;
+    const QString path = QDir(dir).filePath(QStringLiteral("localink.log"));
+    if (QFileInfo(path).size() > 5 * 1024 * 1024) {
+        QFile::remove(path + QStringLiteral(".1"));
+        QFile::rename(path, path + QStringLiteral(".1"));
+    }
+    g_logPath = path;
+}
 
 int main(int argc, char *argv[])
 {
-#ifdef Q_OS_WIN
-    // Doit etre fait AVANT qInstallMessageHandler : le handler s'en sert
-    // des le tout premier message, potentiellement avant toute instance
-    // QCoreApplication (cf. commentaire sur g_exeDir plus haut).
-    g_exeDir = QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath();
     qInstallMessageHandler(fileMessageHandler);
-#endif
 
     // Garde-fou backend TLS : deplace apres QApplication app(argc, argv)
     // plus bas (cf. commentaire a cet endroit) -- QSslSocket::availableBackends()
@@ -128,7 +123,7 @@ int main(int argc, char *argv[])
     // reste bloque sans jamais lever d'exception cote Qt. Debug en
     // developpement ; a repasser en LogLevel::Warning pour une release
     // si le volume de logs devient genant.
-    rtc::InitLogger(rtc::LogLevel::Debug);
+    rtc::InitLogger(rtc::LogLevel::Warning);
 
     // Le .qrc "sounds" est compile dans la bibliotheque STATIQUE "services".
     // Sans reference explicite, l'editeur de liens elague l'objet genere par
@@ -229,6 +224,7 @@ int main(int argc, char *argv[])
     // cree plus bas, mais reste prudent de le faire au plus tot).
     QCoreApplication::setOrganizationName(QStringLiteral("LocaLink"));
     QCoreApplication::setApplicationName(QStringLiteral("LocaLink"));
+    setupLogFile();
 
     // CORRECTIF (persistance des ports reseau, ecran Parametres > Ports
     // reseau) : messagingPort/discoveryPort etaient bien sauvegardes dans
@@ -300,15 +296,27 @@ int main(int argc, char *argv[])
     quint16 messagingPort = parser.value(portOption).toUShort();
     const quint16 discoveryPort = parser.value(discoveryPortOption).toUShort();
     const QString dbFilePath = parser.value(dbOption);
-    const QString roleOverride = parser.value(roleOption);
-    const int priorityWeightOverride = parser.value(priorityWeightOption).toInt();
+    // Options de test (scenarios multi-instances) : reservees aux builds Debug. En production,
+    // elles permettraient de creer un compte avec un mot de passe visible dans la liste des
+    // processus ou de forcer le role de serveur du poste : elles sont ignorees.
+#ifdef NDEBUG
+    const bool devOptionsAllowed = false;
+#else
+    const bool devOptionsAllowed = true;
+#endif
+    if (!devOptionsAllowed && (parser.isSet(roleOption) || parser.isSet(priorityWeightOption)
+                               || parser.isSet(createUserOption))) {
+        qWarning() << "Options --role, --priority-weight et --create-user ignorees : reservees aux builds de developpement.";
+    }
+    const QString roleOverride = devOptionsAllowed ? parser.value(roleOption) : QString();
+    const int priorityWeightOverride = devOptionsAllowed ? parser.value(priorityWeightOption).toInt() : -1;
     qDebug() << "MessagingServer port:" << messagingPort << "- DiscoveryService port:" << discoveryPort;
 
     Application application;
     application.setDiscoveryPort(discoveryPort);
     application.initialize(messagingPort, dbFilePath, roleOverride, priorityWeightOverride);
 
-    if (parser.isSet(createUserOption)) {
+    if (devOptionsAllowed && parser.isSet(createUserOption)) {
         const QString spec = parser.value(createUserOption);
         const int sep = spec.indexOf(QLatin1Char(':'));
         if (sep <= 0) {

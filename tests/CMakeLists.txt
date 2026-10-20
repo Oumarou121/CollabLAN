@@ -141,3 +141,22 @@ add_test(NAME test_syncengine COMMAND test_syncengine)
 add_executable(test_syncengine_multinode_integration UnitTests/test_syncengine_multinode_integration.cpp)
 target_link_libraries(test_syncengine_multinode_integration PRIVATE Qt6::Test core database models network)
 add_test(NAME test_syncengine_multinode_integration COMMAND test_syncengine_multinode_integration)
+# Lot 1 securite : garde des chemins des dossiers partages (traversee "../").
+add_executable(test_safepath UnitTests/test_safepath.cpp)
+target_link_libraries(test_safepath PRIVATE Qt6::Test core)
+add_test(NAME test_safepath COMMAND test_safepath)
+
+# Lot 1 securite : un transfert n'est accepte que sur le certificat TLS prouve (pas l'empreinte annoncee).
+add_executable(test_transferidentity UnitTests/test_transferidentity.cpp)
+target_link_libraries(test_transferidentity PRIVATE Qt6::Test Qt6::Network network)
+add_test(NAME test_transferidentity COMMAND test_transferidentity)
+
+# Lot 1 securite : machines en attente sans aucun message, jamais de demarrage en clair.
+add_executable(test_messagingserverauth UnitTests/test_messagingserverauth.cpp)
+target_link_libraries(test_messagingserverauth PRIVATE Qt6::Test Qt6::WebSockets network)
+add_test(NAME test_messagingserverauth COMMAND test_messagingserverauth)
+
+# Lot 2 securite : journal de synchronisation filtre par utilisateur pour les clients.
+add_executable(test_syncvisibility UnitTests/test_syncvisibility.cpp)
+target_link_libraries(test_syncvisibility PRIVATE Qt6::Test network models)
+add_test(NAME test_syncvisibility COMMAND test_syncvisibility)
