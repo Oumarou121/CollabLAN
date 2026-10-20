@@ -101,6 +101,10 @@ add_executable(test_pcmconverter UnitTests/test_pcmconverter.cpp)
 target_link_libraries(test_pcmconverter PRIVATE services)
 add_test(NAME test_pcmconverter COMMAND test_pcmconverter)
 
+add_executable(test_electionvalidation UnitTests/test_electionvalidation.cpp)
+target_link_libraries(test_electionvalidation PRIVATE Qt6::Test Qt6::Network network models)
+add_test(NAME test_electionvalidation COMMAND test_electionvalidation)
+
 add_executable(test_electionservice UnitTests/test_electionservice.cpp)
 target_link_libraries(test_electionservice PRIVATE Qt6::Test Qt6::Network network models)
 add_test(NAME test_electionservice COMMAND test_electionservice)
@@ -166,7 +170,9 @@ target_link_libraries(test_syncvisibility PRIVATE Qt6::Test network models)
 add_test(NAME test_syncvisibility COMMAND test_syncvisibility)
 
 # Lot 3 : messages de groupe en temps reel reellement traites (code auparavant inatteignable).
-
+add_executable(test_applicationgroupwiring UnitTests/test_applicationgroupwiring.cpp)
+target_link_libraries(test_applicationgroupwiring PRIVATE Qt6::Test Qt6::Widgets app_core)
+add_test(NAME test_applicationgroupwiring COMMAND test_applicationgroupwiring)
 
 # Lot 3 : reprise, integrite, fichier existant preserve, limite de taille en reception.
 add_executable(test_transferintegrity UnitTests/test_transferintegrity.cpp)

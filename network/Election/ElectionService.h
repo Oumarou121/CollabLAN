@@ -137,6 +137,36 @@ public:
      */
     void stepDownToClient();
 
+    /**
+     * @brief Exige qu'un serveur annonce par UDP soit valide avant d'etre adopte.
+     *
+     * Les paquets d'election ne sont ni signes ni authentifies : n'importe quelle
+     * machine du reseau local peut diffuser un server_promoted avec un epoch
+     * arbitrairement grand et detourner ainsi tous les postes vers elle. Plutot
+     * que de signer les datagrammes (fragmentation UDP, amorcage a froid, rejeu),
+     * on valide le RESULTAT de l'election : l'annonce n'est qu'une indication,
+     * et l'etat local ne change qu'une fois une connexion TLS etablie avec le
+     * poste annonce et son certificat reconnu (cf. Application, qui branche
+     * MessagingService::connected sur confirmPendingServer()).
+     *
+     * Desactive par defaut pour que ElectionService reste utilisable seul (tests
+     * de protocole) ; Application l'active systematiquement.
+     */
+    void setRequireValidatedServer(bool require);
+    bool requiresValidatedServer() const;
+
+    /// UUID du serveur annonce en attente de validation, ou chaine vide.
+    QString pendingServerUuid() const;
+
+    /// A appeler quand la connexion TLS vers le serveur en attente a abouti et
+    /// que son certificat est reconnu : l'annonce est alors appliquee (epoch,
+    /// serveur actif, role).
+    void confirmPendingServer(const QString &machineUuid);
+
+    /// A appeler quand la validation echoue (connexion impossible, certificat
+    /// inconnu/revoque) : l'annonce est jetee et l'etat local reste inchange.
+    void rejectPendingServer(const QString &machineUuid, const QString &reason);
+
 signals:
     void started();
     void stopped();
@@ -163,6 +193,13 @@ signals:
     /// pour declencher la reconciliation via le futur SyncService (section 7.1).
     void reconciliationRequired(const QString &tempServerUuid);
 
+    /// Un serveur a ete annonce par UDP mais n'est pas encore adopte : l'appelant
+    /// doit le joindre en TLS puis appeler confirmPendingServer/rejectPendingServer.
+    void serverEndpointPending(const QString &machineUuid, const QHostAddress &address, quint16 port);
+
+    /// La validation du serveur annonce a echoue : rien n'a ete applique.
+    void serverEndpointRejected(const QString &machineUuid, const QString &reason);
+
     // Signaux NOTIFY des Q_PROPERTY ci-dessus, pour le binding QML reactif
     // (SettingsView.qml / indicateur Main.qml, section 9 etape 5).
     void roleLabelChanged();
@@ -184,6 +221,13 @@ private:
     };
 
     void handlePacket(const QByteArray &data, const QHostAddress &senderAddress);
+    // Vrai si l'annonce doit d'abord etre validee (serveur inconnu ou vu depuis
+    // une autre adresse que celle deja validee) : l'appel memorise alors
+    // l'annonce et emet serverEndpointPending.
+    bool deferUntilValidated(const QString &machineUuid, const QHostAddress &address,
+                              quint16 port, int epoch, bool temporary, bool viaPromotion);
+    void applyRemoteServer(const QString &machineUuid, const QHostAddress &address,
+                            quint16 port, int epoch, bool temporary, bool viaPromotion);
     void broadcastPacket(const QByteArray &data);
     void startElection();
     void applyRole(models::ServerRole newRole);
@@ -216,6 +260,20 @@ private:
     bool m_heartbeatEverSeen = false;
 
     QList<Candidate> m_candidates;
+
+    // Validation du resultat d'election (voir setRequireValidatedServer).
+    struct PendingServer {
+        QString machineUuid;
+        QHostAddress address;
+        quint16 port = 0;
+        int epoch = 0;
+        bool temporary = false;
+        bool viaPromotion = false;
+    };
+    bool m_requireValidatedServer = false;
+    PendingServer m_pendingServer;
+    QString m_validatedServerUuid;
+    QHostAddress m_validatedServerAddress;
 };
 
 } // namespace network

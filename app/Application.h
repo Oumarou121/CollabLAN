@@ -301,6 +301,9 @@ private:
     /// SyncLogRepository::applyUserEntry).
     QString userUuidForId(qint64 userId) const;
 
+    /// Uuid des comptes membres du groupe designe par son uuid (vide si inconnu localement).
+    QStringList groupMemberUuids(const QString &groupUuid) const;
+
     /// Vrai si l'uuid designe un compte Admin dans la base LOCALE de ce poste.
     bool isLocalAdminUuid(const QString &userUuid) const;
 
@@ -323,7 +326,9 @@ private:
     /// persistait dans SA PROPRE base sans jamais le retransmettre au
     /// veritable destinataire) - c'etait la cause principale des messages
     /// "perdus" cote destinataire.
-    void handleIncomingPayload(const QString &message, bool relay);
+    /// Q_INVOKABLE : permet aux tests d appeler ce point d entree unique de reception
+    /// sans monter une vraie connexion WebSocket (meme procede que FolderSyncService).
+    Q_INVOKABLE void handleIncomingPayload(const QString &message, bool relay);
 
     /// Envoie au serveur actif le handshake d'identification
     /// {"type":"identify","userUuid":...} via m_messagingService, si la

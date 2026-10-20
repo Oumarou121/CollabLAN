@@ -348,6 +348,10 @@ void ElectionService::enterServerRole(int newEpoch, bool temporary)
     m_activeServerUuid = m_localMachineUuid;
     m_activeServerAddress = QHostAddress::LocalHost;
     m_activeServerPort = m_messagingPort;
+    // Ce poste est sa propre autorite : rien a valider en TLS pour lui-meme
+    // (voir setRequireValidatedServer).
+    m_validatedServerUuid = m_localMachineUuid;
+    m_validatedServerAddress = QHostAddress::LocalHost;
     applyRole(newRole);
     emit epochChanged();
     emit activeServerUuidChanged();
@@ -435,6 +439,10 @@ void ElectionService::handlePacket(const QByteArray &data, const QHostAddress &s
 
         const int remoteEpoch = obj.value("epoch").toInt();
         const bool remoteTemporary = obj.value("temporary").toBool(false);
+        // messaging_port : toInt(0) -- un pair qui n'aurait pas encore ce champ
+        // (ancien format) laisse le port a 0, traite comme "inconnu" par
+        // l'appelant plutot que de connecter silencieusement au mauvais port.
+        const quint16 remotePort = static_cast<quint16>(obj.value("messaging_port").toInt(0));
 
         // Cas de retour du SERVER officiel : son epoch persiste peut etre
         // superieur a celui du TEMP_SERVER elu pendant son absence. Ce
@@ -446,19 +454,14 @@ void ElectionService::handlePacket(const QByteArray &data, const QHostAddress &s
         // mais on adopte l'adresse/port du temporaire pour le joindre.
         if (remoteEpoch < m_epoch) {
             if (m_role == models::ServerRole::Server && remoteTemporary) {
-                const bool activeServerChangedFlag = (m_activeServerUuid != serverUuid);
-                m_activeServerUuid = serverUuid;
-                m_activeServerAddress = senderAddress;
-                m_activeServerPort = static_cast<quint16>(obj.value("messaging_port").toInt(0));
-                m_lastHeartbeatSeenMs = QDateTime::currentMSecsSinceEpoch();
-                m_heartbeatEverSeen = true;
-                if (activeServerChangedFlag)
-                    emit activeServerUuidChanged();
-
+                if (deferUntilValidated(serverUuid, senderAddress, remotePort, m_epoch,
+                                         remoteTemporary, /*viaPromotion=*/false))
+                    return;
                 qInfo() << "ElectionService: TEMP_SERVER detecte avec epoch inferieur"
                         << remoteEpoch << "(serveur officiel:" << m_epoch
                         << ") - reconciliation requise avant reprise";
-                emit reconciliationRequired(serverUuid);
+                applyRemoteServer(serverUuid, senderAddress, remotePort, m_epoch,
+                                   remoteTemporary, /*viaPromotion=*/false);
             }
             return;
         }
@@ -466,34 +469,12 @@ void ElectionService::handlePacket(const QByteArray &data, const QHostAddress &s
         // Le client adopte l'epoch du serveur legitime : c'est ce qui permet
         // ensuite a startElection()/enterServerRole() de repartir de la bonne
         // valeur (epoch+1) plutot que de l'epoch initial jamais mis a jour.
-        const bool epochChangedFlag = (m_epoch != remoteEpoch);
-        m_epoch = remoteEpoch;
+        if (deferUntilValidated(serverUuid, senderAddress, remotePort, remoteEpoch,
+                                 remoteTemporary, /*viaPromotion=*/false))
+            return;
 
-        m_lastHeartbeatSeenMs = QDateTime::currentMSecsSinceEpoch();
-        m_heartbeatEverSeen = true;
-        const bool activeServerChangedFlag = (m_activeServerUuid != serverUuid);
-        m_activeServerUuid = serverUuid;
-        m_activeServerAddress = senderAddress;
-        // messaging_port : ajouté pour corriger un bug silencieux où l'on
-        // supposait que le pair actif écoutait sur NOTRE PROPRE
-        // messagingServerPort (voir messagingPort()/activeServerPort()).
-        // toInt(0) : un pair qui n'aurait pas encore ce champ (paquet
-        // ancien format) laisse le port à 0, traité comme "inconnu" par
-        // l'appelant plutôt que de connecter silencieusement au mauvais port.
-        m_activeServerPort = static_cast<quint16>(obj.value("messaging_port").toInt(0));
-
-        if (epochChangedFlag)
-            emit epochChanged();
-        if (activeServerChangedFlag)
-            emit activeServerUuidChanged();
-
-        // Section 7.1 : le Server officiel qui etait hors-ligne et revient
-        // constate qu'un autre poste emet deja un heartbeat en son nom (un
-        // TempServer a pris le relais) : point d'accroche pour la
-        // reconciliation via le futur SyncService.
-        if (m_role == models::ServerRole::Server && serverUuid != m_localMachineUuid) {
-            emit reconciliationRequired(serverUuid);
-        }
+        applyRemoteServer(serverUuid, senderAddress, remotePort, remoteEpoch,
+                           remoteTemporary, /*viaPromotion=*/false);
         return;
     }
 
@@ -516,6 +497,7 @@ void ElectionService::handlePacket(const QByteArray &data, const QHostAddress &s
         const int remoteEpoch = obj.value("epoch").toInt();
         const QString machineUuid = obj.value("machine_uuid").toString();
         const bool temporary = obj.value("temporary").toBool();
+        const quint16 remotePort = static_cast<quint16>(obj.value("messaging_port").toInt(0));
 
         // Le broadcast UDP boucle generalement vers l'emetteur lui-meme sur le
         // meme hote : on ignore silencieusement notre propre server_promoted
@@ -527,70 +509,142 @@ void ElectionService::handlePacket(const QByteArray &data, const QHostAddress &s
         // Regle anti split-brain (section 7) : tout server_promoted avec un
         // epoch strictement inferieur a l'epoch local est ignore.
         //
-        // CORRECTIF (epoch a egalite) : la regle d'origine ignorait aussi
-        // les epochs EGAUX ("<="), ce qui cree un vrai deadlock quand deux
-        // postes sont promus independamment sans s'etre jamais entendus
-        // (ex: l'un s'auto-elit faute d'avoir entendu l'autre a temps,
-        // l'autre est promu manuellement) : partant tous deux d'un epoch a
-        // 0, ils arrivent chacun a epoch=1 et aucun des deux ne cede jamais
-        // a l'autre, meme une fois la connexion reseau retablie -- constate
-        // en conditions reelles (poste reste bloque en TempServer malgre
-        // une vraie connexion, necessitant un passage manuel en Client).
-        // A epoch strictement egal, on depart de facon deterministe par
-        // machine_uuid : le plus grand (au sens chaine) gagne. La
-        // comparaison etant symetrique, un seul des deux cotes voit le
-        // "remote" gagnant et cede -- l'autre ignore simplement le message
-        // et reste tel quel, sans qu'aucune coordination supplementaire ne
-        // soit necessaire.
+        // CORRECTIF (epoch a egalite) : la regle d'origine ignorait aussi les
+        // epochs EGAUX ("<="), ce qui cree un deadlock quand deux postes sont
+        // promus independamment sans s'etre jamais entendus. A epoch egal, on
+        // depart de facon deterministe par machine_uuid : le plus grand (au
+        // sens chaine) gagne. La comparaison etant symetrique, un seul des
+        // deux cotes voit le "remote" gagnant et cede.
         if (remoteEpoch < m_epoch
             || (remoteEpoch == m_epoch && machineUuid <= m_localMachineUuid)) {
             emit splitBrainAttemptIgnored(remoteEpoch, machineUuid);
             return;
         }
 
-        m_epoch = remoteEpoch;
-        m_activeServerUuid = machineUuid;
-        m_activeServerAddress = senderAddress;
-        m_activeServerPort = static_cast<quint16>(obj.value("messaging_port").toInt(0));
-        m_lastHeartbeatSeenMs = QDateTime::currentMSecsSinceEpoch();
-        m_heartbeatEverSeen = true;
+        // Un epoch arbitrairement grand suffisait ici a faire basculer tout le
+        // reseau vers n'importe quelle machine : c'est precisement ce que
+        // setRequireValidatedServer() empeche (voir ElectionService.h).
+        if (deferUntilValidated(machineUuid, senderAddress, remotePort, remoteEpoch,
+                                 temporary, /*viaPromotion=*/true))
+            return;
+
+        applyRemoteServer(machineUuid, senderAddress, remotePort, remoteEpoch,
+                           temporary, /*viaPromotion=*/true);
+        return;
+    }
+}
+
+void ElectionService::setRequireValidatedServer(bool require)
+{
+    m_requireValidatedServer = require;
+}
+
+bool ElectionService::requiresValidatedServer() const
+{
+    return m_requireValidatedServer;
+}
+
+QString ElectionService::pendingServerUuid() const
+{
+    return m_pendingServer.machineUuid;
+}
+
+bool ElectionService::deferUntilValidated(const QString &machineUuid, const QHostAddress &address,
+                                           quint16 port, int epoch, bool temporary, bool viaPromotion)
+{
+    if (!m_requireValidatedServer)
+        return false;
+
+    // Deja valide a cette adresse : les heartbeats suivants du meme serveur ne
+    // repassent pas par une validation (sinon chaque battement rouvrirait une
+    // connexion). L'adresse fait partie de la cle : un tiers qui rejoue l'UUID
+    // du serveur legitime depuis une autre machine est traite comme inconnu.
+    if (machineUuid == m_validatedServerUuid && address.isEqual(m_validatedServerAddress))
+        return false;
+
+    // Validation deja demandee pour cette meme annonce : on ne reemet pas le
+    // signal a chaque heartbeat (3 s) tant que l'appelant n'a pas tranche.
+    if (m_pendingServer.machineUuid == machineUuid
+        && m_pendingServer.address.isEqual(address)
+        && m_pendingServer.epoch >= epoch) {
+        return true;
+    }
+
+    m_pendingServer = PendingServer{machineUuid, address, port, epoch, temporary, viaPromotion};
+    qInfo() << "ElectionService: serveur annonce" << machineUuid << address
+            << "- validation TLS requise avant adoption";
+    emit serverEndpointPending(machineUuid, address, port);
+    return true;
+}
+
+void ElectionService::confirmPendingServer(const QString &machineUuid)
+{
+    if (m_pendingServer.machineUuid.isEmpty() || m_pendingServer.machineUuid != machineUuid)
+        return;
+
+    const PendingServer pending = m_pendingServer;
+    m_pendingServer = PendingServer{};
+    applyRemoteServer(pending.machineUuid, pending.address, pending.port, pending.epoch,
+                       pending.temporary, pending.viaPromotion);
+}
+
+void ElectionService::rejectPendingServer(const QString &machineUuid, const QString &reason)
+{
+    if (m_pendingServer.machineUuid.isEmpty() || m_pendingServer.machineUuid != machineUuid)
+        return;
+
+    m_pendingServer = PendingServer{};
+    qWarning() << "ElectionService: serveur annonce" << machineUuid << "rejete -" << reason;
+    // m_lastHeartbeatSeenMs n'est volontairement pas rafraichi : faute de
+    // serveur valide, le delai d'attente finit par declencher une election,
+    // plutot que de laisser le poste suspendu a une annonce non verifiee.
+    emit serverEndpointRejected(machineUuid, reason);
+}
+
+void ElectionService::applyRemoteServer(const QString &machineUuid, const QHostAddress &address,
+                                         quint16 port, int epoch, bool temporary, bool viaPromotion)
+{
+    m_validatedServerUuid = machineUuid;
+    m_validatedServerAddress = address;
+
+    const bool epochChangedFlag = (m_epoch != epoch);
+    m_epoch = epoch;
+
+    const bool activeServerChangedFlag = (m_activeServerUuid != machineUuid);
+    m_activeServerUuid = machineUuid;
+    m_activeServerAddress = address;
+    m_activeServerPort = port;
+    m_lastHeartbeatSeenMs = QDateTime::currentMSecsSinceEpoch();
+    m_heartbeatEverSeen = true;
+
+    if (epochChangedFlag)
         emit epochChanged();
+    if (activeServerChangedFlag)
         emit activeServerUuidChanged();
 
-        // Une election en cours localement est annulee : quelqu'un d'autre
-        // a deja tranche avec un epoch superieur.
+    if (viaPromotion) {
+        // Une election en cours localement est annulee : quelqu'un d'autre a
+        // deja tranche avec un epoch superieur.
         m_electionInProgress = false;
         m_electionWindowTimer->stop();
         m_candidates.clear();
+    }
 
-        // Section 7.1/7.3 : si CE poste est actuellement le Server officiel,
-        // un server_promoted (forcement emis par un TempServer, puisqu'un
-        // epoch superieur au notre suffit a le faire passer le filtre
-        // ci-dessus) NE DOIT PAS nous faire retomber en Client en silence.
-        // C'est exactement le meme cas de figure que la reception de son
-        // heartbeat juste au-dessus : on doit passer par la reconciliation
-        // (SyncService, cf. Application::initialize()) puis reprendre la
-        // main nous-memes (reclaimAsOfficialServer()), pas laisser le
-        // TempServer prendre le controle.
-        //
-        // Avant ce correctif, applyRole(Client) etait appele sans condition
-        // ici. Comme enterServerRole() diffuse server_promoted AVANT son
-        // premier heartbeat, ce paquet arrivait generalement en premier chez
-        // le Server officiel et le degradait en Client avant meme qu'il ait
-        // pu voir le heartbeat correspondant -> reconciliationRequired
-        // n'etait alors jamais emis (cf. test_applicationreconciliationwiring,
-        // issue #4).
-        if (m_role == models::ServerRole::Server) {
-            emit reconciliationRequired(machineUuid);
-            return;
-        }
+    // Section 7.1/7.3 : si CE poste est le Server officiel, l'annonce d'un
+    // TempServer NE DOIT PAS le faire retomber en Client en silence : il doit
+    // passer par la reconciliation (SyncService) puis reprendre la main
+    // lui-meme (reclaimAsOfficialServer()).
+    if (m_role == models::ServerRole::Server) {
+        emit reconciliationRequired(machineUuid);
+        return;
+    }
 
-        // Un autre poste a ete promu : on redevient/reste Client et on
-        // bascule notre connexion vers lui (a la charge de l'appelant, via
+    if (viaPromotion) {
+        // Un autre poste a ete promu : on redevient/reste Client et on bascule
+        // notre connexion vers lui (a la charge de l'appelant, via
         // activeServerUuid() / le signal serverPromoted).
         applyRole(models::ServerRole::Client);
         emit serverPromoted(m_epoch, machineUuid, temporary);
-        return;
     }
 }
 

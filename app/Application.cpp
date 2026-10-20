@@ -47,6 +47,13 @@
 #include "models/SyncLogEntry.h"
 #include <QSysInfo>
 
+namespace {
+// Delai au-dela duquel un serveur annonce par UDP mais injoignable en TLS est
+// rejete (voir ElectionService::setRequireValidatedServer). Volontairement plus
+// court que le delai de heartbeat (15 s) pour qu une election puisse suivre.
+constexpr int kServerValidationTimeoutMs = 8000;
+} // namespace
+
 Application::Application(QObject *parent)
     : QObject(parent)
 {
@@ -332,6 +339,73 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 Q_UNUSED(id)
                 appendSyncLogEntry(QStringLiteral("Users"), uuid, models::SyncOperation::Delete, QString());
             });
+    // --- Validation TLS du resultat d'election ---------------------------
+    // Les datagrammes UDP d'election ne sont ni signes ni authentifies :
+    // n'importe quelle machine du reseau pouvait diffuser un server_promoted
+    // avec un epoch arbitrairement grand et detourner ainsi tous les postes
+    // vers elle. Plutot que de signer les paquets (fragmentation UDP, amorcage
+    // a froid, rejeu), on valide le RESULTAT : l'annonce n'est qu'une
+    // indication, et ElectionService n'applique rien tant que ce poste n'a pas
+    // joint le serveur annonce en TLS. MessagingService::connected n'est emis
+    // qu'apres verification du certificat du pair contre les machines
+    // autorisees (PermissionManager::trustRemoteServerCertificate) : c'est
+    // donc lui, et lui seul, qui confirme l'adoption.
+    m_electionService->setRequireValidatedServer(true);
+    connect(m_electionService, &network::ElectionService::serverEndpointPending,
+            this, [this](const QString &machineUuid, const QHostAddress &address, quint16 port) {
+                if (address.isNull() || port == 0) {
+                    m_electionService->rejectPendingServer(
+                        machineUuid, QStringLiteral("adresse ou port de messagerie inconnu"));
+                    return;
+                }
+
+                if (m_messagingService->isConnected()
+                    && m_messagingService->peerAddress() == address
+                    && m_messagingService->peerPort() == port) {
+                    // Deja connecte a ce poste, donc certificat deja reconnu.
+                    m_electionService->confirmPendingServer(machineUuid);
+                    return;
+                }
+
+                // Objet ephemere porteur des trois issues possibles (succes,
+                // erreur, delai depasse) : le detruire deconnecte d'un coup les
+                // trois lambdas, sans qu'une annonce ulterieure puisse etre
+                // confirmee par la connexion declenchee pour une annonce
+                // precedente.
+                auto *validation = new QObject(this);
+                connect(m_messagingService, &network::MessagingService::connected, validation,
+                        [this, machineUuid, validation]() {
+                            m_electionService->confirmPendingServer(machineUuid);
+                            validation->deleteLater();
+                        });
+                connect(m_messagingService, &network::MessagingService::error, validation,
+                        [this, machineUuid, validation](const QString &reason) {
+                            m_electionService->rejectPendingServer(machineUuid, reason);
+                            validation->deleteLater();
+                        });
+                // Sans cette echeance, un serveur annonce qui ne repond jamais
+                // laisserait le poste suspendu a une annonce non verifiee : le
+                // rejet laisse au contraire le delai de heartbeat declencher une
+                // nouvelle election.
+                QTimer::singleShot(kServerValidationTimeoutMs, validation,
+                                    [this, machineUuid, validation]() {
+                    m_electionService->rejectPendingServer(
+                        machineUuid, QStringLiteral("delai de validation depasse"));
+                    validation->deleteLater();
+                });
+
+                m_messagingService->disconnectFromHost();
+                if (!m_messagingService->connectToHost(address, port)) {
+                    m_electionService->rejectPendingServer(
+                        machineUuid, QStringLiteral("connexion au serveur annonce impossible"));
+                    validation->deleteLater();
+                }
+            });
+    connect(m_electionService, &network::ElectionService::serverEndpointRejected,
+            this, [](const QString &machineUuid, const QString &reason) {
+                qWarning() << "Annonce de serveur ignoree (non validee) :" << machineUuid << '-' << reason;
+            });
+
     connect(m_electionService, &network::ElectionService::roleChanged,
             this, &Application::initialAdminStateChanged);
     connect(m_electionService, &network::ElectionService::roleChanged,
@@ -408,7 +482,14 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 if (m_messagingService->isConnected()
                     && m_messagingService->peerAddress() == activeAddress
                     && m_messagingService->peerPort() == activePort) {
-                    return; // deja connecte au bon serveur, rien a faire
+                    // Deja connecte au bon serveur : c'est desormais le cas
+                    // normal, puisque la connexion TLS est precisement ce qui
+                    // vient de valider l'annonce (serverEndpointPending). Le
+                    // signal connected() est donc deja passe : on demande ici
+                    // la reconciliation que la connexion differee aurait
+                    // declenchee, sinon ce poste resterait sans journal.
+                    m_syncService->requestReconciliation(0, m_electionService->localMachineUuid());
+                    return;
                 }
 
                 const QString localUuid = m_electionService->localMachineUuid();
@@ -448,6 +529,16 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 const quint16 newServerPort = m_electionService->activeServerPort();
                 if (newServerAddress.isNull() || newServerPort == 0) {
                     qWarning() << "server_promoted reçu mais adresse/port introuvable pour" << machineUuid;
+                    return;
+                }
+
+                if (m_messagingService->isConnected()
+                    && m_messagingService->peerAddress() == newServerAddress
+                    && m_messagingService->peerPort() == newServerPort) {
+                    // Depuis la validation TLS des annonces d'election, la
+                    // connexion vers ce serveur est deja etablie au moment ou
+                    // serverPromoted est emis : la couper pour la refaire a
+                    // l'identique ne ferait que provoquer une coupure inutile.
                     return;
                 }
 
@@ -2015,6 +2106,61 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         return;
     }
 
+    // Messages de groupe en temps reel. CORRECTIF : ce traitement se trouvait APRES le bloc
+    // "message" ci-dessous, qui se termine par un "return" inconditionnel -- il n'etait donc
+    // JAMAIS execute. Consequence : la creation d'un groupe et l'ajout/retrait d'un membre
+    // n'arrivaient aux autres postes qu'a la prochaine reconciliation complete (en pratique, au
+    // redemarrage de l'application). On les traite desormais en premier, par type explicite.
+    if (document.isObject()) {
+        const QString type = document.object().value(QStringLiteral("type")).toString();
+
+        if (type == QStringLiteral("group_created")) {
+            if (const auto group = m_groupManager->receiveGroupCreated(message); group.has_value()) {
+                m_notificationManager->onGroupCreated(*group);
+            }
+            // Relais aux SEULS membres annonces (le payload contient deja leurs uuid), plutot
+            // qu'a tous les clients connectes : la composition d'un groupe ne regarde que ses
+            // membres (meme principe que pour les messages, cf. plus bas).
+            if (relay && m_messagingServer) {
+                QStringList targets;
+                const QJsonObject object = document.object();
+                const QString ownerUuid = object.value(QStringLiteral("ownerUuid")).toString();
+                if (!ownerUuid.isEmpty()) targets << ownerUuid;
+                for (const auto &value : object.value(QStringLiteral("memberUuids")).toArray()) {
+                    const QString uuid = value.toString();
+                    if (!uuid.isEmpty()) targets << uuid;
+                }
+                targets.removeDuplicates();
+                if (!targets.isEmpty()) m_messagingServer->sendToUuids(message, targets);
+                else m_messagingServer->broadcastMessage(message);
+            }
+            return;
+        }
+
+        if (type == QStringLiteral("member_added") || type == QStringLiteral("member_removed")) {
+            const QString groupUuid = document.object().value(QStringLiteral("groupUuid")).toString();
+            // Destinataires releves AVANT application : pour un retrait, la personne concernee
+            // doit encore recevoir l'annonce qui la retire du groupe.
+            QStringList targets = groupMemberUuids(groupUuid);
+            const QString memberUuid = document.object().value(QStringLiteral("memberUuid")).toString();
+            if (!memberUuid.isEmpty()) targets << memberUuid;
+            targets.removeDuplicates();
+
+            const bool applied = type == QStringLiteral("member_added")
+                ? m_groupManager->receiveMemberAdded(message)
+                : m_groupManager->receiveMemberRemoved(message);
+            if (!applied) {
+                qWarning() << "handleIncomingPayload:" << type << "non applique :"
+                           << m_groupManager->lastErrorString();
+            }
+            if (relay && m_messagingServer) {
+                if (!targets.isEmpty()) m_messagingServer->sendToUuids(message, targets);
+                else m_messagingServer->broadcastMessage(message);
+            }
+            return;
+        }
+    }
+
     // MessagingManager ne traite que les messages de type "message".
     // SyncService traite de son cote les messages de type "sync_request",
     // "sync_ack", "sync_batch" (connecte separement sur les memes signaux).
@@ -2050,39 +2196,27 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
             m_messagingServer->broadcastMessage(message);
         }
     }
-    return;
+}
 
-    // Pas un message : peut-etre la creation d'un groupe diffusee en
-    // temps reel par un autre poste (type "group_created", cf.
-    // GroupManager::createGroup) - sans ce relais, les autres membres
-    // n'apprenaient l'existence du groupe qu'a la prochaine
-    // reconciliation SyncLog.
-    if (const auto group = m_groupManager->receiveGroupCreated(message); group.has_value()) {
-        m_notificationManager->onGroupCreated(*group);
-        if (relay && m_messagingServer) {
-            m_messagingServer->broadcastMessage(message);
-        }
-        return;
+QStringList Application::groupMemberUuids(const QString &groupUuid) const
+{
+    QStringList uuids;
+    if (groupUuid.isEmpty() || !m_databaseManager)
+        return uuids;
+    QSqlQuery query(m_databaseManager->database());
+    query.prepare(QStringLiteral(
+        "SELECT u.uuid FROM GroupMembers gm "
+        "JOIN Users u ON u.id = gm.user_id "
+        "JOIN Groups g ON g.id = gm.group_id "
+        "WHERE g.uuid = :uuid AND u.uuid IS NOT NULL AND u.uuid <> ''"));
+    query.bindValue(QStringLiteral(":uuid"), groupUuid);
+    if (!query.exec()) {
+        qWarning() << "groupMemberUuids: requete en echec" << query.lastError().text();
+        return uuids;
     }
-
-    // Traitement des ajouts de membres en temps réel (member_added)
-    if (m_groupManager->receiveMemberAdded(message)) {
-        if (relay && m_messagingServer) {
-            m_messagingServer->broadcastMessage(message);
-        }
-        return;
-    }
-
-    // Traitement des retraits de membres en temps réel (member_removed)
-    if (m_groupManager->receiveMemberRemoved(message)) {
-        if (relay && m_messagingServer) {
-            m_messagingServer->broadcastMessage(message);
-        }
-        return;
-    }
-
-    // Ce n'est pas forcément une erreur : peut-être un message de sync
-    qDebug() << "Message ignore par MessagingManager/GroupManager (probablement message de sync) :" << message.left(100);
+    while (query.next())
+        uuids << query.value(0).toString();
+    return uuids;
 }
 
 void Application::appendMessageSyncLog(const models::Message &message)

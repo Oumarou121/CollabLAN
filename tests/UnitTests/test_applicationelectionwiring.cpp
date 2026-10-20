@@ -112,14 +112,72 @@ private slots:
         // interesse ici).
         network::ElectionService official;
         official.setPort(electionPort);
+        // Port de messagerie annonce non nul : sans lui, Application rejette
+        // l'annonce immediatement ("adresse ou port inconnu") et la validation
+        // simulee plus bas n'aurait aucune chance de s'exercer.
+        official.setMessagingPort(nextPort());
         official.setInitialState(models::ServerRole::Server, election->epoch() + 100);
         QVERIFY(official.start());
+
+        // Depuis l'authentification du resultat d'election (Application appelle
+        // ElectionService::setRequireValidatedServer(true)), une annonce UDP ne
+        // suffit plus : elle n'est appliquee qu'une fois le poste annonce joint
+        // en TLS avec un certificat reconnu. Ce test porte sur le pilotage de
+        // MessagingServer, pas sur la couche TLS : on simule donc ici la
+        // validation reussie. Le refus de valider est couvert par le test
+        // suivant, et le mecanisme lui-meme par test_electionvalidation.
+        QObject::connect(election, &network::ElectionService::serverEndpointPending, &app,
+                          [election](const QString &machineUuid, const QHostAddress &, quint16) {
+                              election->confirmPendingServer(machineUuid);
+                          });
+
         official.reclaimAsOfficialServer();
 
         QTRY_VERIFY_WITH_TIMEOUT(!app.messagingServer()->isRunning(), 5000);
         QCOMPARE(election->role(), models::ServerRole::Client);
 
         official.stop();
+    }
+
+    // Revers de la medaille du test precedent, et raison d'etre du mecanisme :
+    // sans validation, l'annonce d'un poste quelconque ne doit RIEN changer.
+    // Avant cela, un simple datagramme portant un epoch plus grand suffisait a
+    // faire ceder le serveur en place a n'importe quelle machine du reseau.
+    void unvalidatedServerAnnouncementDoesNotStopMessagingServer()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const quint16 electionPort = nextPort();
+
+        Application app;
+        app.initialize(nextPort(), dir.filePath(QStringLiteral("test.db")),
+                        QStringLiteral("CLIENT"), -1, electionPort);
+
+        network::ElectionService *election = app.electionService();
+        QVERIFY(election != nullptr);
+        election->setHeartbeatTimeoutMs(300);
+        election->setElectionWindowMs(150);
+
+        QTRY_VERIFY_WITH_TIMEOUT(app.messagingServer()->isRunning(), 5000);
+        QCOMPARE(election->role(), models::ServerRole::TempServer);
+
+        // Ce poste annonce un epoch bien superieur mais n'expose aucun service
+        // de messagerie TLS : la validation ne peut pas aboutir.
+        network::ElectionService intruder;
+        intruder.setPort(electionPort);
+        intruder.setInitialState(models::ServerRole::Server, election->epoch() + 100);
+        QVERIFY(intruder.start());
+        intruder.reclaimAsOfficialServer();
+
+        QSignalSpy pending(election, &network::ElectionService::serverEndpointPending);
+        QVERIFY(pending.wait(5000));
+
+        // L'annonce reste en attente : le role et MessagingServer ne bougent pas.
+        QTest::qWait(1000);
+        QVERIFY(app.messagingServer()->isRunning());
+        QCOMPARE(election->role(), models::ServerRole::TempServer);
+
+        intruder.stop();
     }
 };
 
