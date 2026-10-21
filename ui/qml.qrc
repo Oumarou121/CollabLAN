@@ -14,6 +14,7 @@
         <file>Call/CallView.qml</file>
         <file>Call/CallOverlay.qml</file>
         <file>Settings/SettingsView.qml</file>
+        <file>Settings/AppearanceSettings.qml</file>
         <file>About/AboutView.qml</file>
         <file>Admin/AdminView.qml</file>
         <file>SharedFolder/SharedFolderView.qml</file>
@@ -29,6 +30,10 @@
         <file>Components/AppDialog.qml</file>
         <file>Components/AppMenu.qml</file>
         <file>Components/AppMenuItem.qml</file>
+        <file>Components/AppMenuSeparator.qml</file>
+        <file>Components/Card.qml</file>
+        <file>Components/ConfirmDialog.qml</file>
+        <file>Components/TableHeader.qml</file>
         <file>Components/AppSlider.qml</file>
         <file>Components/AppSpinBox.qml</file>
         <file>Components/AppSwitch.qml</file>
@@ -51,6 +56,7 @@
         <file>Components/Toast.qml</file>
         <file>Components/ToastHost.qml</file>
         <file>Components/StartupLoadingView.qml</file>
+        <file>Components/Spinner.qml</file>
         <file>Components/FolderTransferProgressHost.qml</file>
         <file>Components/StatusBadge.qml</file>
         <file>Components/EmptyState.qml</file>
@@ -68,6 +74,13 @@
         <file>Dashboard/NetworkPeer.qml</file>
         <file>Dashboard/NetworkListView.qml</file>
         <file>Dashboard/PeerDetailsPanel.qml</file>
+        <file>Dashboard/MetricTile.qml</file>
+        <file>Dashboard/StatPill.qml</file>
+        <file>Dashboard/SupervisionRow.qml</file>
+        <file>Dashboard/SelectedPeerPanel.qml</file>
+        <file>Dashboard/AppShell.qml</file>
+        <file>Dashboard/ConversationPreviewList.qml</file>
+        <file>Dashboard/FolderPreviewList.qml</file>
         <file>Dashboard/ActionRequiredPanel.qml</file>
         <file>Dashboard/TransferList.qml</file>
         <file>Dashboard/TransferRow.qml</file>

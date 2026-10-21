@@ -123,7 +123,7 @@ Rectangle {
                 Label {
                     text: root.mode === "sending" ? qsTr("Envoi en cours") : qsTr("Nouveau transfert")
                     color: Theme.dashboardInk
-                    font.pixelSize: 17
+                    font.pixelSize: Theme.fs(17)
                     font.weight: Font.Bold
                     font.family: Theme.fontFamily
                 }
@@ -133,7 +133,7 @@ Rectangle {
                           ? qsTr("Vous pouvez fermer ce volet : les transferts continuent.")
                           : qsTr("Envoyez des fichiers vers un ou plusieurs postes.")
                     color: Theme.dashboardInkTertiary
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fs(12)
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
                 }
@@ -193,7 +193,7 @@ Rectangle {
                                 Layout.fillWidth: true
                                 text: qsTr("Fichier")
                                 color: Theme.dashboardInk
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.fs(13)
                                 font.weight: Font.DemiBold
                                 font.family: Theme.fontFamily
                             }
@@ -247,7 +247,7 @@ Rectangle {
                                         Label {
                                             text: qsTr("Aucun fichier sélectionné")
                                             color: Theme.dashboardInk
-                                            font.pixelSize: 13
+                                            font.pixelSize: Theme.fs(13)
                                             font.weight: Font.DemiBold
                                             font.family: Theme.fontFamily
                                         }
@@ -255,7 +255,7 @@ Rectangle {
                                             Layout.fillWidth: true
                                             text: qsTr("Glissez-déposez des fichiers sur la page, ou choisissez-les.")
                                             color: Theme.dashboardInkTertiary
-                                            font.pixelSize: 12
+                                            font.pixelSize: Theme.fs(12)
                                             font.family: Theme.fontFamily
                                             wrapMode: Text.WordWrap
                                         }
@@ -325,7 +325,7 @@ Rectangle {
                                                 Layout.fillWidth: true
                                                 text: Fmt.fileNameFromPath(modelData)
                                                 color: Theme.dashboardInk
-                                                font.pixelSize: 13
+                                                font.pixelSize: Theme.fs(13)
                                                 font.weight: Font.DemiBold
                                                 font.family: Theme.fontFamily
                                                 elide: Text.ElideMiddle
@@ -334,7 +334,7 @@ Rectangle {
                                                 visible: root.hasFolder
                                                 text: qsTr("Dossier complet, sous-dossiers inclus")
                                                 color: Theme.dashboardInkTertiary
-                                                font.pixelSize: 11
+                                                font.pixelSize: Theme.fs(11)
                                                 font.family: Theme.fontFamily
                                             }
                                         }
@@ -347,7 +347,7 @@ Rectangle {
                                     Layout.bottomMargin: 8
                                     text: qsTr("+ %1 autre(s) fichier(s)").arg(root.selectedFilePaths.length - 4)
                                     color: Theme.dashboardInkTertiary
-                                    font.pixelSize: 12
+                                    font.pixelSize: Theme.fs(12)
                                     font.family: Theme.fontFamily
                                 }
                             }
@@ -386,7 +386,7 @@ Rectangle {
                                       ? qsTr("Destinataires (%1)").arg(root.selectedRecipients.length)
                                       : qsTr("Destinataires")
                                 color: Theme.dashboardInk
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.fs(13)
                                 font.weight: Font.DemiBold
                                 font.family: Theme.fontFamily
                             }
@@ -417,7 +417,7 @@ Rectangle {
                                 anchors.margins: 16
                                 text: qsTr("Aucun poste disponible sur le réseau pour le moment.")
                                 color: Theme.dashboardInkTertiary
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fs(12)
                                 font.family: Theme.fontFamily
                                 wrapMode: Text.WordWrap
                                 verticalAlignment: Text.AlignVCenter
@@ -499,7 +499,7 @@ Rectangle {
                                                 Layout.fillWidth: true
                                                 text: modelData.name
                                                 color: Theme.dashboardInk
-                                                font.pixelSize: 13
+                                                font.pixelSize: Theme.fs(13)
                                                 font.weight: Font.DemiBold
                                                 font.family: Theme.fontFamily
                                                 elide: Text.ElideRight
@@ -508,7 +508,7 @@ Rectangle {
                                                 Layout.fillWidth: true
                                                 text: modelData.address
                                                 color: Theme.dashboardInkTertiary
-                                                font.pixelSize: 11
+                                                font.pixelSize: Theme.fs(11)
                                                 font.family: Theme.fontFamily
                                                 elide: Text.ElideRight
                                             }
@@ -518,7 +518,7 @@ Rectangle {
                                             Layout.alignment: Qt.AlignVCenter
                                             text: "\u25CF " + recipientRow.presenceText
                                             color: Theme.dashboardSuccessText
-                                            font.pixelSize: 11
+                                            font.pixelSize: Theme.fs(11)
                                             font.family: Theme.fontFamily
                                         }
                                     }
@@ -540,7 +540,7 @@ Rectangle {
                             Label {
                                 text: qsTr("Hors ligne (%1)").arg(root.offlineRecipients.length)
                                 color: Theme.dashboardInkTertiary
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fs(11)
                                 font.weight: Font.DemiBold
                                 font.family: Theme.fontFamily
                             }
@@ -587,7 +587,7 @@ Rectangle {
                                                 Layout.fillWidth: true
                                                 text: modelData.name
                                                 color: Theme.dashboardInk
-                                                font.pixelSize: 13
+                                                font.pixelSize: Theme.fs(13)
                                                 font.weight: Font.DemiBold
                                                 font.family: Theme.fontFamily
                                                 elide: Text.ElideRight
@@ -596,7 +596,7 @@ Rectangle {
                                                 Layout.fillWidth: true
                                                 text: modelData.address
                                                 color: Theme.dashboardInkTertiary
-                                                font.pixelSize: 11
+                                                font.pixelSize: Theme.fs(11)
                                                 font.family: Theme.fontFamily
                                                 elide: Text.ElideRight
                                             }
@@ -605,7 +605,7 @@ Rectangle {
                                             Layout.alignment: Qt.AlignVCenter
                                             text: qsTr("Hors ligne")
                                             color: Theme.dashboardInkTertiary
-                                            font.pixelSize: 11
+                                            font.pixelSize: Theme.fs(11)
                                             font.family: Theme.fontFamily
                                         }
                                     }
@@ -645,7 +645,7 @@ Rectangle {
                                            .arg(n === 1 ? root.selectedRecipients[0].name : qsTr("%1 postes").arg(n))
                                 }
                                 color: Theme.dashboardPrimary
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.fs(13)
                                 font.weight: Font.DemiBold
                                 font.family: Theme.fontFamily
                                 wrapMode: Text.WordWrap
@@ -673,7 +673,7 @@ Rectangle {
                                          ? (root.batchFailed > 0 ? qsTr("Envoi terminé, avec des échecs") : qsTr("Envoi terminé"))
                                          : qsTr("Envoi en cours"))
                                 color: Theme.dashboardInk
-                                font.pixelSize: 14
+                                font.pixelSize: Theme.fs(14)
                                 font.weight: Font.Bold
                                 font.family: Theme.fontFamily
                             }
@@ -681,7 +681,7 @@ Rectangle {
                                 visible: root.batchStarted
                                 text: root.batchPercent + " %"
                                 color: root.batchFailed > 0 && root.batchFinished ? Theme.dashboardErrorText : Theme.dashboardPrimary
-                                font.pixelSize: 14
+                                font.pixelSize: Theme.fs(14)
                                 font.weight: Font.Bold
                                 font.family: Theme.fontFamily
                             }
@@ -716,7 +716,7 @@ Rectangle {
                             visible: root.batchStarted
                             text: qsTr("%1 sur %2").arg(Fmt.formatBytes(root.batchDone)).arg(Fmt.formatBytes(root.batchTotal))
                             color: Theme.dashboardInkTertiary
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fs(12)
                             font.family: Theme.fontFamily
                         }
                     }
@@ -771,7 +771,7 @@ Rectangle {
                                                 Layout.fillWidth: true
                                                 text: modelData.fileName
                                                 color: Theme.dashboardInk
-                                                font.pixelSize: 13
+                                                font.pixelSize: Theme.fs(13)
                                                 font.weight: Font.DemiBold
                                                 font.family: Theme.fontFamily
                                                 elide: Text.ElideMiddle
@@ -800,7 +800,7 @@ Rectangle {
                                                           ? (modelData.percent || 0) + " %"
                                                           : qsTr("vers %1").arg(modelData.peerUserName || modelData.peerName || modelData.peerAddress || "")
                                                     color: Theme.dashboardInkTertiary
-                                                    font.pixelSize: 11
+                                                    font.pixelSize: Theme.fs(11)
                                                     font.family: Theme.fontFamily
                                                     elide: Text.ElideRight
                                                 }

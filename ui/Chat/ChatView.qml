@@ -6,14 +6,17 @@ import Core
 import "../Components"
 
 /*
- * ChatView - Interface de conversation individuelle
- * Branchee sur MessagingManager via MessagingContext
+ * ChatView - conversation ouverte (panneau droit de l'espace Discussions),
+ * branchee sur MessagingManager via MessagingContext.
  *
- * REFONTE (alignement design system) : header et zone de saisie flottants
- * avec ombre douce plutot que des filets 1px, bulles regroupees par
- * expediteur (WhatsApp/Telegram-like) avec avatar affiche uniquement sur
- * le dernier message d'un groupe, separateurs de date en "pilule", et
- * etat vide illustre. Aucune logique metier modifiee.
+ * Bulles regroupees par expediteur (avatar et nom sur le premier message
+ * d'un groupe en conversation de groupe), separateurs de date
+ * ("Aujourd'hui", "Hier", date), defilement automatique seulement si
+ * l'utilisateur etait deja en bas. Zone de redaction multiligne : Entree
+ * envoie, Maj+Entree passe a la ligne.
+ *
+ * Aucun indicateur "livre"/"lu" : l'application ne dispose pas de cette
+ * information, l'afficher serait trompeur.
  */
 Item {
     id: root
@@ -21,21 +24,14 @@ Item {
     property var messagingContext: null
     property var conversationId: 0
     property string name: ""
-    // Une instance de ChatView peut rester vivante sous une autre page du
-    // StackView. Dans ce cas elle ne doit surtout pas faire croire au modele
-    // que l'utilisateur lit encore la conversation.
+    // Faux tant que ce panneau n'est pas reellement affiche : la
+    // conversation n'est alors pas activee (pas d'acquittement de lecture).
     property bool conversationActive: true
     property int currentUserId: messagingContext ? messagingContext.currentUserId() : 0
     readonly property bool isGroup: messagingContext ? messagingContext.isGroupConversation(conversationId) : false
 
-    // CORRECTIF (refonte UI type WhatsApp Web) : quand ChatView est le
-    // panneau de droite de ChatWorkspaceView, il n'y a rien "en dessous"
-    // dans une pile -- la fleche retour n'a pas de sens et prenait de la
-    // place inutilement a cote du nom du contact.
-    property bool showBackButton: true
+    property bool showBackButton: false
 
-    // Nom reel du contact/groupe : priorite au nom transmis par ConversationsView,
-    // sinon repli sur la resolution cote MessagingContext (utile si ouvert sans nom)
     readonly property string displayName: name.length > 0
         ? name
         : (messagingContext ? messagingContext.conversationDisplayName(conversationId) : qsTr("Conversation"))
@@ -47,11 +43,7 @@ Item {
             messagingContext.setConversation(conversationId)
     }
 
-    // Statut de presence de l'autre participant (conversation individuelle
-    // uniquement -- une conversation de groupe n'a pas de statut unique).
-    // Rafraichi manuellement via refreshPresence(), car userStatus()/
-    // otherParticipantId() sont des Q_INVOKABLE sans NOTIFY : un binding
-    // direct ne se reevaluerait pas quand le statut change cote C++.
+    // ---- Presence de l'interlocuteur (conversation individuelle) --------
     property string otherUserStatus: "offline"
 
     function refreshPresence() {
@@ -67,25 +59,28 @@ Item {
         switch (status) {
         case "online": return qsTr("En ligne")
         case "away": return qsTr("Absent")
+        case "busy": return qsTr("Occupé")
         default: return qsTr("Hors ligne")
         }
     }
 
-    function presenceColor(status) {
-        switch (status) {
-        case "online": return Theme.success
-        case "away": return Theme.warning
-        default: return Theme.textTertiary
-        }
+    function dayLabel(ts) {
+        if (!ts)
+            return ""
+        const d = new Date(ts)
+        const now = new Date()
+        if (d.toDateString() === now.toDateString())
+            return qsTr("Aujourd'hui")
+        const yesterday = new Date(now.getTime() - 86400000)
+        if (d.toDateString() === yesterday.toDateString())
+            return qsTr("Hier")
+        const s = d.toLocaleDateString(Qt.locale(), "dddd d MMMM yyyy")
+        return s.charAt(0).toUpperCase() + s.slice(1)
     }
 
-    // Le statut peut changer (login/logout/mise en veille d'un autre
-    // poste) pendant que la conversation reste ouverte -- on ecoute donc
-    // le meme signal qu'utilise availableUsers() (emis par UserManager a
-    // chaque userUpdated/usersChanged) plutot que de ne rafraichir qu'a
-    // l'ouverture.
     Connections {
         target: messagingContext
+        ignoreUnknownSignals: true
         function onAvailableUsersChanged() { root.refreshPresence() }
         function onPresenceChanged() { root.refreshPresence() }
     }
@@ -97,22 +92,12 @@ Item {
     onConversationActiveChanged: root.activateConversationIfVisible()
     onIsGroupChanged: root.refreshPresence()
 
-    // Police d'icones Font Awesome 4.7.0 pour l'illustration de l'etat vide
-    // (meme police que IconButton/Avatar, chargee ici car ce glyphe est
-    // utilise en dehors de ces composants).
-    FontLoader {
-        id: emptyStateIconFont
-        source: "../Assets/fonts/fontawesome-webfont.ttf"
-    }
-
-    // CORRECTIF : un echec d'envoi (pas de conversation active, service
-    // deconnecte, erreur base de donnees...) ne produisait auparavant
-    // qu'un qWarning() cote C++ -- rien ne remontait jamais ici. Bandeau
-    // transitoire, discret mais visible, qui disparait tout seul.
+    // ---- Erreur d'envoi -------------------------------------------------
     property string sendErrorMessage: ""
 
     Connections {
         target: messagingContext
+        ignoreUnknownSignals: true
         function onMessageSendFailed(error) {
             root.sendErrorMessage = error
             sendErrorBanner.visible = true
@@ -122,195 +107,176 @@ Item {
 
     Timer {
         id: sendErrorHideTimer
-        interval: 4000
+        interval: 6000
         onTriggered: sendErrorBanner.visible = false
     }
 
-    // Fond legerement teinte (au lieu d'un blanc/gris plat) pour donner de
-    // la profondeur derriere les bulles, a la maniere des messageries
-    // modernes -- tres subtil, reste dans la palette du theme.
+    function sendCurrentMessage() {
+        const text = composer.text.trim()
+        if (text.length === 0 || !messagingContext)
+            return
+        messagingContext.sendMessage(text)
+        composer.text = ""
+        composer.forceActiveFocus()
+    }
+
     Rectangle {
         anchors.fill: parent
-        color: Theme.background
+        color: Theme.bg
     }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // Header de la conversation -- flotte au-dessus de la liste avec
-        // une ombre douce plutot qu'un filet 1px, pour un rendu plus
-        // "carte" et moins tableur.
+        // ---- En-tete de conversation ------------------------------------
         Rectangle {
-            id: header
             Layout.fillWidth: true
-            Layout.preferredHeight: 72
-            color: Theme.surface
-            z: 2
+            Layout.preferredHeight: Theme.compact ? 54 : 62
+            color: Theme.surface0
 
             Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.top: parent.bottom
-                height: 8
-                z: -1
-                gradient: Gradient {
-                    orientation: Gradient.Vertical
-                    GradientStop { position: 0.0; color: Theme.shadowSoft }
-                    GradientStop { position: 1.0; color: "transparent" }
-                }
+                anchors.bottom: parent.bottom
+                height: 1
+                color: Theme.line
             }
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.spacingMedium
-                anchors.rightMargin: Theme.spacingMedium
-                spacing: Theme.spacingMedium
+                anchors.leftMargin: Theme.cardPadding
+                anchors.rightMargin: Theme.cardPadding
+                spacing: 10
 
                 IconButton {
-                    glyph: "\uf060"
-                    variant: "ghost"
                     visible: root.showBackButton
+                    glyph: ""
+                    tooltip: qsTr("Retour")
                     onClicked: root.backRequested()
                 }
 
-                // Avatar + nom regroupes cote a cote (meme cluster, faible
-                // espacement) plutot qu'espaces uniformement avec le
-                // bouton retour -- rendu "identite du contact" a la
-                // WhatsApp Web, ou l'avatar colle au nom.
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Theme.spacingSmall
+                Avatar {
+                    name: root.displayName
+                    size: 36
+                    showStatus: !root.isGroup
+                    status: root.otherUserStatus
+                }
 
-                    Avatar {
-                        name: root.displayName
-                        size: 40
-                        showStatus: !root.isGroup
-                        online: root.otherUserStatus === "online"
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
+
+                    Text {
+                        text: root.displayName
+                        color: Theme.ink
+                        font.pixelSize: Theme.fs(14)
+                        font.weight: Theme.weightSemibold
+                        font.family: Theme.fontFamily
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                        Accessible.role: Accessible.Heading
                     }
 
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 0
-
-                        Label {
-                            text: root.displayName
-                            font.pixelSize: Theme.fontSizeSubheading
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                            color: Theme.text
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                        }
-
-                        // Statut de presence reel de l'autre participant
-                        // (UserManager), absent pour les conversations de
-                        // groupe qui n'ont pas d'interlocuteur unique.
-                        Label {
-                            visible: !root.isGroup
-                            text: root.presenceLabel(root.otherUserStatus)
-                            font.pixelSize: Theme.fontSizeCaption
-                            font.family: Theme.fontFamily
-                            color: root.presenceColor(root.otherUserStatus)
-                        }
+                    Text {
+                        text: root.isGroup ? qsTr("Conversation de groupe")
+                                           : root.presenceLabel(root.otherUserStatus)
+                        color: Theme.ink3
+                        font.pixelSize: Theme.fs(12)
+                        font.family: Theme.fontFamily
                     }
                 }
             }
         }
 
-        // Bandeau d'erreur d'envoi (masque par defaut, cf. sendErrorMessage)
+        // ---- Erreur d'envoi -----------------------------------------------
         Rectangle {
             id: sendErrorBanner
             Layout.fillWidth: true
-            Layout.preferredHeight: visible ? 36 : 0
+            Layout.preferredHeight: visible ? 40 : 0
             visible: false
-            color: Theme.error
+            color: Theme.dangerSoft
             clip: true
 
-            Behavior on Layout.preferredHeight { NumberAnimation { duration: 120 } }
+            Behavior on Layout.preferredHeight { NumberAnimation { duration: Theme.durationFast } }
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.spacingMedium
-                anchors.rightMargin: Theme.spacingMedium
-                spacing: Theme.spacingSmall
+                anchors.leftMargin: Theme.cardPadding
+                anchors.rightMargin: Theme.cardPadding - 6
+                spacing: 8
 
-                Label {
+                FaIcon {
+                    glyph: ""
+                    color: Theme.dangerInk
+                    font.pixelSize: Theme.fs(13)
+                }
+
+                Text {
                     Layout.fillWidth: true
-                    text: root.sendErrorMessage
-                    color: Theme.primaryText
-                    font.pixelSize: Theme.fontSizeCaption
+                    text: qsTr("Le message n'a pas pu être envoyé : %1").arg(root.sendErrorMessage)
+                    color: Theme.dangerInk
+                    font.pixelSize: Theme.fs(12)
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
                 }
 
-                Text {
-                    text: "\u2715"
-                    color: Theme.primaryText
-                    font.pixelSize: 12
-
-                    MouseArea {
-                        anchors.fill: parent
-                        anchors.margins: -6
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: sendErrorBanner.visible = false
-                    }
+                IconButton {
+                    glyph: ""
+                    size: 28
+                    iconSize: Theme.fs(11)
+                    tooltip: qsTr("Fermer")
+                    glyphColorOverride: Theme.dangerInk
+                    onClicked: sendErrorBanner.visible = false
                 }
             }
         }
 
-        // Liste des messages
+        // ---- Messages -----------------------------------------------------
         ListView {
             id: messageListView
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.margins: Theme.spacingMedium
+            Layout.leftMargin: Theme.spacingLarge
+            Layout.rightMargin: Theme.spacingLarge
             spacing: 0
             clip: true
+            boundsBehavior: Flickable.StopAtBounds
             verticalLayoutDirection: ListView.TopToBottom
+            header: Item { width: 1; height: 12 }
+            footer: Item { width: 1; height: 12 }
 
             model: messagingContext ? messagingContext.messageModel : null
 
-            // CORRECTIF : on capture "etait en bas ?" AVANT que contentHeight
-            // ne grandisse avec le nouveau message. Tester la condition dans
-            // onCountChanged (ou apres, via callLater) est trop tard : le
-            // modele a deja grandi et contentY n'a pas encore ete recalcule,
-            // ce qui fausse le test pile pour l'utilisateur qui est en bas.
-            // onModelAboutToBeReset n'est pas suffisant ici car l'ajout d'un
-            // message declenche un insert, pas un reset ; on ecoute donc le
-            // rowsAboutToBeInserted du modele sous-jacent.
+            // Defilement automatique vers le dernier message uniquement si
+            // l'utilisateur etait deja en bas (il peut relire l'historique
+            // sans etre ramene en bas a chaque message recu).
             property bool wasAtBottom: true
             readonly property int autoScrollTolerance: 50
 
             Connections {
                 target: messageListView.model
+                ignoreUnknownSignals: true
                 function onRowsAboutToBeInserted() {
                     messageListView.wasAtBottom =
                         messageListView.contentY >= messageListView.contentHeight - messageListView.height - messageListView.autoScrollTolerance
                 }
                 function onModelAboutToBeReset() {
-                    // Chargement d'une nouvelle conversation (setMessages) :
-                    // on veut toujours atterrir en bas de l'historique.
                     messageListView.wasAtBottom = true
                 }
             }
 
             onCountChanged: Qt.callLater(function() {
-                if (messageListView.wasAtBottom) {
+                if (messageListView.wasAtBottom)
                     messageListView.positionViewAtEnd()
-                }
             })
 
             delegate: Column {
                 id: messageDelegate
                 readonly property bool isMine: senderId === root.currentUserId
                 width: messageListView.width
-                spacing: 2
+                spacing: 0
 
-                // Le message precedent (meme expediteur, meme jour) : sert a
-                // regrouper visuellement une rafale de messages consecutifs
-                // (moins d'espace entre eux, nom/avatar affiches une seule
-                // fois) plutot que de repeter l'en-tete a chaque bulle.
                 readonly property var prevItem: (index > 0 && messagingContext)
                     ? messagingContext.messageModel.get(index - 1) : null
                 readonly property var nextItem: (messagingContext && index < messagingContext.messageModel.count - 1)
@@ -319,236 +285,232 @@ Item {
                 readonly property bool sameSenderAsPrev: prevItem && prevItem.senderId === senderId
                 readonly property bool sameSenderAsNext: nextItem && nextItem.senderId === senderId
 
-                // Separateur de date : affiche si la date change par rapport au message precedent
+                readonly property string dayText: {
+                    if (!timestamp) return ""
+                    const label = root.dayLabel(timestamp)
+                    if (messageDelegate.prevItem && messageDelegate.prevItem.timestamp
+                            && root.dayLabel(messageDelegate.prevItem.timestamp) === label)
+                        return ""
+                    return label
+                }
+                readonly property bool groupStart: !messageDelegate.sameSenderAsPrev || messageDelegate.dayText.length > 0
+                readonly property bool groupEnd: !messageDelegate.sameSenderAsNext
+
+                // Separateur de date
                 Item {
                     width: parent.width
-                    height: dateSeparator.visible ? dateSeparator.implicitHeight + Theme.spacingMedium * 2 : 0
-
-                    readonly property string dateText: {
-                        if (!timestamp) return ""
-                        const dateStr = Qt.formatDate(timestamp, "dd MMMM yyyy")
-                        if (messageDelegate.prevItem && messageDelegate.prevItem.timestamp) {
-                            const prevDateStr = Qt.formatDate(messageDelegate.prevItem.timestamp, "dd MMMM yyyy")
-                            if (dateStr === prevDateStr) return ""
-                        }
-                        return dateStr
-                    }
+                    height: messageDelegate.dayText.length > 0 ? 44 : 0
+                    visible: messageDelegate.dayText.length > 0
 
                     Rectangle {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        height: 1
+                        color: Theme.line
+                    }
+                    Rectangle {
                         anchors.centerIn: parent
-                        visible: dateSeparator.visible
-                        radius: Theme.radiusPill
-                        color: Theme.surfaceAlt
-                        width: dateSeparator.implicitWidth + Theme.spacingMedium * 2
-                        height: dateSeparator.implicitHeight + Theme.spacingXs * 2
+                        width: dayLabel.implicitWidth + 20
+                        height: 22
+                        radius: 11
+                        color: Theme.bg
+                        border.width: 1
+                        border.color: Theme.line
 
-                        Label {
-                            id: dateSeparator
+                        Text {
+                            id: dayLabel
                             anchors.centerIn: parent
-                            text: parent.parent.dateText
-                            visible: text.length > 0
-                            font.pixelSize: Theme.fontSizeCaption
-                            font.bold: true
+                            text: messageDelegate.dayText
+                            color: Theme.ink3
+                            font.pixelSize: Theme.fs(11)
+                            font.weight: Theme.weightSemibold
                             font.family: Theme.fontFamily
-                            color: Theme.textSecondary
                         }
                     }
                 }
 
-                // Espace entre groupes de messages : resserre au sein d'une
-                // meme rafale (meme expediteur, meme jour), plus genereux
-                // entre deux interlocuteurs differents.
                 Item {
                     width: 1
-                    height: (messageDelegate.sameSenderAsPrev && dateSeparator.text.length === 0)
-                            ? Theme.spacingXs
-                            : Theme.spacingMedium
+                    height: messageDelegate.groupStart ? 10 : 2
                 }
 
                 RowLayout {
-                    id: messageRow
                     anchors.right: messageDelegate.isMine ? parent.right : undefined
                     anchors.left: messageDelegate.isMine ? undefined : parent.left
-                    spacing: Theme.spacingXs
+                    spacing: 8
                     layoutDirection: messageDelegate.isMine ? Qt.RightToLeft : Qt.LeftToRight
 
-                    // Avatar affiche uniquement sur le dernier message d'une
-                    // rafale (comme WhatsApp) : evite de repeter la meme
-                    // pastille a cote de chaque ligne d'une meme personne.
-                    // Un espaceur invisible de meme largeur garde les bulles
-                    // alignees pour le reste de la rafale.
-                    Avatar {
-                        Layout.alignment: Qt.AlignBottom
+                    Item {
                         visible: !messageDelegate.isMine && root.isGroup
-                        name: messagingContext ? messagingContext.userName(senderId) : ""
-                        size: 26
-                        opacity: !messageDelegate.sameSenderAsNext ? 1 : 0
+                        Layout.alignment: Qt.AlignBottom
+                        Layout.preferredWidth: 28
+                        Layout.preferredHeight: 28
+
+                        Avatar {
+                            anchors.fill: parent
+                            visible: messageDelegate.groupEnd
+                            name: messagingContext ? messagingContext.userName(senderId) : ""
+                            size: 28
+                        }
                     }
 
-                    // Plafond absolu (640px) en plus du pourcentage : sur un
-                    // ecran desktop tres large, une bulle a 72% de la
-                    // largeur de la liste peut depasser 1000px et devenir
-                    // difficile a lire malgre le wrapMode.
                     Rectangle {
                         id: bubble
-                        Layout.preferredWidth: Math.min(bubbleColumn.implicitWidth + 2 * Theme.spacingMedium,
-                                                         Math.min(messageListView.width * 0.72, 640))
-                        Layout.preferredHeight: bubbleColumn.implicitHeight + 2 * Theme.spacingSmall
-                        radius: Theme.radiusMedium
-                        color: messageDelegate.isMine ? Theme.primary : Theme.surface
+                        Layout.preferredWidth: Math.min(bubbleColumn.implicitWidth + 24,
+                                                         Math.min(messageListView.width * 0.68, 620))
+                        Layout.preferredHeight: bubbleColumn.implicitHeight + 16
+                        color: messageDelegate.isMine ? Theme.accentColor : Theme.surface0
                         border.width: messageDelegate.isMine ? 0 : 1
-                        border.color: Theme.border
-
-                        // Ombre douce simulee (meme technique que Toast.qml)
-                        // plutot qu'une bordure epaisse -- donne du relief
-                        // aux bulles sans alourdir visuellement le fil.
-                        Rectangle {
-                            anchors.fill: parent
-                            anchors.topMargin: 2
-                            radius: parent.radius
-                            color: Theme.shadowSoft
-                            z: -1
-                        }
+                        border.color: Theme.line
+                        // Angle "d'ancrage" reduit sur le dernier message
+                        // d'un groupe, du cote de l'expediteur.
+                        topLeftRadius: 14
+                        topRightRadius: 14
+                        bottomLeftRadius: (!messageDelegate.isMine && messageDelegate.groupEnd) ? 4 : 14
+                        bottomRightRadius: (messageDelegate.isMine && messageDelegate.groupEnd) ? 4 : 14
 
                         ColumnLayout {
                             id: bubbleColumn
                             anchors.fill: parent
-                            anchors.margins: Theme.spacingSmall
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 12
+                            anchors.topMargin: 8
+                            anchors.bottomMargin: 8
                             spacing: 2
 
-                            Label {
+                            Text {
                                 Layout.fillWidth: true
                                 text: messagingContext ? messagingContext.userName(senderId) : ""
-                                // Uniquement sur le premier message d'une rafale : le
-                                // nom de l'expediteur n'a pas besoin d'etre repete
-                                // sur chaque ligne d'une meme personne.
-                                visible: !messageDelegate.isMine && root.isGroup && !messageDelegate.sameSenderAsPrev
-                                font.pixelSize: Theme.fontSizeCaption
-                                font.bold: true
+                                visible: !messageDelegate.isMine && root.isGroup && messageDelegate.groupStart
+                                font.pixelSize: Theme.fs(12)
+                                font.weight: Theme.weightSemibold
                                 font.family: Theme.fontFamily
                                 color: Theme.colorForName(messagingContext ? messagingContext.userName(senderId) : "")
                             }
 
-                            Label {
+                            TextEdit {
                                 Layout.fillWidth: true
                                 text: content
-                                wrapMode: Text.WordWrap
-                                color: messageDelegate.isMine ? Theme.primaryText : Theme.text
-                                font.pixelSize: Theme.fontSizeBody
+                                readOnly: true
+                                selectByMouse: true
+                                wrapMode: Text.Wrap
+                                textFormat: TextEdit.PlainText
+                                color: messageDelegate.isMine ? Theme.accentInk : Theme.ink
+                                selectionColor: messageDelegate.isMine ? Theme.alpha(Theme.accentInk, 0.3) : Theme.accentMuted
+                                selectedTextColor: messageDelegate.isMine ? Theme.accentInk : Theme.ink
+                                font.pixelSize: Theme.fs(14)
                                 font.family: Theme.fontFamily
                             }
 
-                            Label {
+                            Text {
                                 Layout.alignment: Qt.AlignRight
-                                text: timestamp ? Qt.formatDateTime(timestamp, "hh:mm") : ""
-                                font.pixelSize: Theme.fontSizeCaption
+                                text: timestamp ? new Date(timestamp).toLocaleTimeString(Qt.locale(), "HH:mm") : ""
+                                font.pixelSize: Theme.fs(11)
                                 font.family: Theme.fontFamily
-                                color: messageDelegate.isMine ? "#FFFFFFB0" : Theme.textTertiary
+                                color: messageDelegate.isMine ? Theme.alpha(Theme.accentInk, 0.75) : Theme.ink3
                             }
                         }
                     }
                 }
             }
 
-            ScrollBar.vertical: ScrollBar {
-                policy: ScrollBar.AsNeeded
-            }
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-            // Etat vide : premiere ouverture d'une conversation sans historique.
-            ColumnLayout {
+            EmptyState {
                 anchors.centerIn: parent
+                width: Math.min(parent.width, 380)
+                height: 220
                 visible: messageListView.count === 0
-                spacing: Theme.spacingSmall
-
-                Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    width: 64
-                    height: 64
-                    radius: 32
-                    color: Theme.surfaceAlt
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\uf0e6"
-                        font.family: emptyStateIconFont.name
-                        font.pixelSize: 24
-                        color: Theme.textTertiary
-                    }
-                }
-
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("Aucun message pour le moment")
-                    font.pixelSize: Theme.fontSizeBody
-                    font.bold: true
-                    font.family: Theme.fontFamily
-                    color: Theme.textSecondary
-                }
-
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("Envoyez le premier message pour demarrer la conversation.")
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.family: Theme.fontFamily
-                    color: Theme.textTertiary
-                }
+                iconName: "chat"
+                title: qsTr("Aucun message pour le moment")
+                description: root.isGroup
+                             ? qsTr("Envoyez le premier message au groupe.")
+                             : qsTr("Envoyez le premier message pour démarrer la conversation avec %1.").arg(root.displayName)
             }
         }
 
-        // Zone de saisie de message -- pilule flottante (fond distinct du
-        // champ) plutot qu'un simple champ carre pose sur un filet, pour un
-        // rendu plus proche des messageries actuelles.
+        // ---- Redaction ------------------------------------------------------
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 80
-            color: Theme.surface
-            z: 2
+            Layout.preferredHeight: composerRow.implicitHeight + 24
+            color: Theme.surface0
 
             Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.bottom: parent.top
-                height: 8
-                z: -1
-                gradient: Gradient {
-                    orientation: Gradient.Vertical
-                    GradientStop { position: 0.0; color: "transparent" }
-                    GradientStop { position: 1.0; color: Theme.shadowSoft }
-                }
+                anchors.top: parent.top
+                height: 1
+                color: Theme.line
             }
 
             RowLayout {
-                anchors.fill: parent
-                anchors.margins: Theme.spacingMedium
-                spacing: Theme.spacingSmall
+                id: composerRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: Theme.cardPadding
+                anchors.rightMargin: Theme.cardPadding
+                spacing: 10
 
-                AppTextField {
-                    id: messageInput
+                Rectangle {
                     Layout.fillWidth: true
-                    placeholderText: qsTr("Ecrivez votre message...")
-                    onAccepted: sendButton.clicked()
+                    Layout.preferredHeight: Math.min(140, Math.max(Theme.controlHeight + 4, composer.implicitHeight + 4))
+                    radius: Theme.radiusMedium
+                    color: Theme.surface1
+                    border.width: 1
+                    border.color: composer.activeFocus ? Theme.accentColor : Theme.lineStrong
+
+                    ScrollView {
+                        anchors.fill: parent
+                        anchors.margins: 2
+                        clip: true
+
+                        TextArea {
+                            id: composer
+                            placeholderText: qsTr("Écrivez un message à %1…").arg(root.displayName)
+                            placeholderTextColor: Theme.ink3
+                            color: Theme.ink
+                            font.pixelSize: Theme.fs(14)
+                            font.family: Theme.fontFamily
+                            wrapMode: TextArea.Wrap
+                            selectByMouse: true
+                            selectionColor: Theme.accentColor
+                            selectedTextColor: Theme.accentInk
+                            leftPadding: 10
+                            rightPadding: 10
+                            topPadding: 9
+                            bottomPadding: 9
+                            background: Item {}
+                            Accessible.name: qsTr("Message")
+
+                            Keys.onPressed: function(event) {
+                                if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                        && !(event.modifiers & Qt.ShiftModifier)) {
+                                    root.sendCurrentMessage()
+                                    event.accepted = true
+                                }
+                            }
+                        }
+                    }
                 }
 
                 IconButton {
                     id: sendButton
-                    size: 44
-                    radius: Theme.radiusMedium
+                    Layout.alignment: Qt.AlignBottom
+                    Layout.bottomMargin: 2
+                    size: Theme.controlHeight + 2
                     variant: "primary"
-                    glyph: "\uf1d8"
-                    enabledLook: messageInput.text.trim().length > 0
-                    onClicked: {
-                        if (messageInput.text.trim() !== "" && messagingContext) {
-                            messagingContext.sendMessage(messageInput.text)
-                            messageInput.text = ""
-                            messageInput.field.forceActiveFocus()
-                        }
-                    }
+                    glyph: ""
+                    iconSize: Theme.fs(14)
+                    tooltip: qsTr("Envoyer (Entrée)")
+                    enabledLook: composer.text.trim().length > 0
+                    onClicked: root.sendCurrentMessage()
                 }
             }
         }
     }
 
-    // Charger la conversation au demarrage
     Component.onCompleted: {
         root.activateConversationIfVisible()
         root.refreshPresence()

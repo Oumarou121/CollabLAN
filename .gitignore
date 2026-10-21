@@ -37,3 +37,6 @@ Thumbs.db
 *.log
 *.sh
 *.gitkeep
+
+design/*
+*.zip

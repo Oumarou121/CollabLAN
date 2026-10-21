@@ -2,16 +2,12 @@ import QtQuick
 import Themes
 
 /*
- * Avatar - pastille circulaire avec initiale(s), couleur deterministe
- * derivee du nom (Theme.colorForName), et pastille de statut optionnelle.
- * Reutilisee dans Home, Conversations et Chat pour une identite visuelle
- * coherente d'un utilisateur a l'autre.
+ * Avatar - pastille circulaire avec initiale(s), teinte deterministe
+ * derivee du nom (Theme.colorForName : un meme utilisateur garde la meme
+ * couleur partout), pastille de statut optionnelle.
  *
- * CORRECTIF (juillet 2026) : quand `name` est vide (nom pas encore
- * resolu / conversation pas encore chargee), l'ancien fallback affichait
- * un simple "?" en texte brut -- visuellement discordant avec le reste
- * de l'app. On affiche desormais une icone "personne" (meme police
- * Font Awesome 4.7 que DashboardCard/IconButton) sur un fond neutre.
+ * Nom vide (pas encore resolu) : icone "personne" sur fond neutre plutot
+ * qu'un "?" litteral.
  */
 Item {
     id: root
@@ -20,17 +16,30 @@ Item {
     property int size: 40
     property bool showStatus: false
     property bool online: false
+    // Statut detaille optionnel ("online" | "away" | "busy" | "offline") ;
+    // prioritaire sur `online` quand il est renseigne.
+    property string status: ""
 
     implicitWidth: size
     implicitHeight: size
 
     readonly property bool hasName: name && name.length > 0
-    readonly property color bgColor: Theme.primary
-    readonly property string initial: root.hasName ? name.charAt(0).toUpperCase() : ""
-
-    FontLoader {
-        id: iconFont
-        source: "../Assets/fonts/fontawesome-webfont.ttf"
+    readonly property color bgColor: hasName ? Theme.colorForName(name) : Theme.sunken
+    // Deux initiales si le nom comporte plusieurs mots ("Awa Diallo" ->
+    // "AD"), sinon la premiere lettre.
+    readonly property string initials: {
+        if (!hasName)
+            return ""
+        const parts = name.trim().split(/[\s._-]+/).filter(function(p) { return p.length > 0 })
+        if (parts.length >= 2 && root.size >= 28)
+            return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase()
+        return name.charAt(0).toUpperCase()
+    }
+    readonly property color statusColor: {
+        const s = root.status.length > 0 ? root.status : (root.online ? "online" : "offline")
+        if (s === "online") return Theme.successColor
+        if (s === "away" || s === "busy") return Theme.markAway
+        return Theme.inkDisabled
     }
 
     Rectangle {
@@ -42,22 +51,18 @@ Item {
         Text {
             anchors.centerIn: parent
             visible: root.hasName
-            text: root.initial
+            text: root.initials
             color: "#FFFFFF"
             font.family: Theme.fontFamily
-            font.bold: true
-            font.pixelSize: Math.max(10, root.size * 0.4)
+            font.weight: Theme.weightSemibold
+            font.pixelSize: Math.max(10, Math.round(root.size * (root.initials.length > 1 ? 0.36 : 0.42)))
         }
 
-        // Icone "personne" (fa-user) : fallback neutre tant que le nom
-        // n'est pas encore disponible, plutot qu'un "?" litteral.
-        Text {
+        FaIcon {
             anchors.centerIn: parent
             visible: !root.hasName
-            text: "\uf007"
-            color: "#FFFFFF"
-            opacity: 0.85
-            font.family: iconFont.name
+            glyph: ""
+            color: Theme.ink3
             font.pixelSize: Math.max(10, root.size * 0.42)
         }
     }
@@ -67,9 +72,9 @@ Item {
         width: Math.max(8, root.size * 0.28)
         height: width
         radius: width / 2
-        color: root.online ? Theme.success : Theme.textTertiary
+        color: root.statusColor
         border.width: 2
-        border.color: Theme.surface
+        border.color: Theme.surface0
         anchors.right: circle.right
         anchors.bottom: circle.bottom
         anchors.rightMargin: -1

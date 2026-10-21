@@ -19,6 +19,8 @@ Column {
     property string localPeerStatusLabel: "Serveur actif"
     property var activeTransfers: []
     property var activeCalls: []
+    // Espace reserve en haut (titre de la carte en mode "chrome").
+    property real topSpacing: 50
 
     signal peerClicked(var peer)
     signal messageRequested(var peer)
@@ -28,7 +30,7 @@ Column {
     // Zone supérieure vide pour laisser l'espace au contrôle segmenté partagé
     Item {
         width: parent.width
-        height: 50
+        height: root.topSpacing
     }
 
     // Header du tableau - modernisation (priorité 17 du brief) : plus de
@@ -58,7 +60,7 @@ Column {
                 Layout.preferredWidth: 200
                 text: qsTr("Poste")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 11
+                font.pixelSize: Theme.fs(11)
                 font.weight: Theme.weightSemibold
                 font.family: Theme.fontFamily
             }
@@ -67,7 +69,7 @@ Column {
                 Layout.preferredWidth: 140
                 text: qsTr("Adresse IP")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 11
+                font.pixelSize: Theme.fs(11)
                 font.weight: Theme.weightSemibold
                 font.family: Theme.fontFamily
             }
@@ -76,7 +78,7 @@ Column {
                 Layout.preferredWidth: 120
                 text: qsTr("Statut")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 11
+                font.pixelSize: Theme.fs(11)
                 font.weight: Theme.weightSemibold
                 font.family: Theme.fontFamily
             }
@@ -89,7 +91,7 @@ Column {
                 Layout.preferredWidth: 80
                 text: qsTr("Actions")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 11
+                font.pixelSize: Theme.fs(11)
                 font.weight: Theme.weightSemibold
                 font.family: Theme.fontFamily
             }
@@ -99,7 +101,8 @@ Column {
     // Liste des postes
     ScrollView {
         width: parent.width
-        Layout.fillHeight: true
+        // Hauteur bornee a l'espace restant : la liste defile au lieu de deborder.
+        height: Math.max(0, root.height - root.topSpacing - header.height)
         clip: true
 
         ListView {
@@ -151,15 +154,15 @@ Column {
                         Layout.preferredWidth: 32
                         Layout.preferredHeight: 32
                         radius: 16
-                        color: isOnline ? Theme.dashboardPrimarySoft : "#F3F6F6"
+                        color: isOnline ? Theme.dashboardPrimarySoft : Theme.dashboardNodeOffline
                         border.width: 2
                         border.color: statusColor
 
                         Text {
                             anchors.centerIn: parent
                             text: "\uf108"
-                            color: isOnline ? Theme.dashboardPrimary : "#8A98A0"
-                            font.pixelSize: 14
+                            color: isOnline ? Theme.dashboardPrimary : Theme.dashboardNodeOfflineInk
+                            font.pixelSize: Theme.fs(14)
                             font.family: "FontAwesome"
                         }
                     }
@@ -169,7 +172,7 @@ Column {
                         Layout.preferredWidth: 200
                         text: peerName
                         color: Theme.dashboardInk
-                        font.pixelSize: 14
+                        font.pixelSize: Theme.fs(14)
                         font.weight: Theme.weightSemibold
                         font.family: Theme.fontFamily
                         elide: Text.ElideRight
@@ -180,7 +183,7 @@ Column {
                         Layout.preferredWidth: 140
                         text: peerData.address || ""
                         color: Theme.dashboardInkSecondary
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fs(12)
                         font.family: Theme.fontFamily
                         elide: Text.ElideRight
                     }
@@ -205,7 +208,7 @@ Column {
                             Label {
                                 text: statusLabel
                                 color: statusTextColor
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fs(11)
                                 font.weight: Theme.weightSemibold
                                 font.family: Theme.fontFamily
                             }
@@ -216,91 +219,47 @@ Column {
                         Layout.fillWidth: true
                     }
 
-                    // Actions - boutons ghost sans bordure, révélés par une
-                    // surface de survol plutôt qu'un contour permanent
-                    // (priorité 6/19 du brief), quasi invisibles jusqu'au
-                    // survol de la ligne.
+                    // Actions : boutons d'icone du design system (clavier,
+                    // info-bulle, nom accessible), jamais attenues : un bouton
+                    // grise se confondrait avec un bouton desactive.
                     Row {
-                        spacing: 4
-                        opacity: rowHover.hovered ? 1 : 0.35
-                        Behavior on opacity { NumberAnimation { duration: 120 } }
+                        spacing: 2
 
-                        Rectangle {
-                            id: msgBtn
-                            width: 30
-                            height: 30
-                            radius: 8
-                            color: msgHover.hovered && enabled ? Theme.surfaceLevel4 : "transparent"
+                        IconButton {
+                            id: msgAction
+                            glyph: ""
+                            size: 30
+                            iconSize: Theme.fs(13)
                             enabled: isOnline
-                            opacity: enabled ? 1 : 0.4
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "\uf0e0"
-                                color: isOnline ? Theme.dashboardPrimary : Theme.dashboardInkTertiary
-                                font.pixelSize: 13
-                                font.family: "FontAwesome"
-                            }
-
-                            MouseArea {
-                                id: msgHover
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: if (msgBtn.enabled) root.messageRequested(getPeerData())
-                            }
+                            tooltip: isOnline ? qsTr("Envoyer un message à %1").arg(peerName)
+                                              : qsTr("%1 est hors ligne").arg(peerName)
+                            Accessible.name: qsTr("Envoyer un message à %1").arg(peerName)
+                            onClicked: root.messageRequested(getPeerData())
                         }
 
-                        Rectangle {
-                            id: xferBtn
-                            width: 30
-                            height: 30
-                            radius: 8
-                            color: xferHover.hovered && enabled ? Theme.surfaceLevel4 : "transparent"
+                        IconButton {
+                            id: xferAction
+                            glyph: ""
+                            size: 30
+                            iconSize: Theme.fs(13)
                             enabled: isOnline
-                            opacity: enabled ? 1 : 0.4
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "\uf1d8"
-                                color: isOnline ? Theme.dashboardPrimary : Theme.dashboardInkTertiary
-                                font.pixelSize: 13
-                                font.family: "FontAwesome"
-                            }
-
-                            MouseArea {
-                                id: xferHover
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: if (xferBtn.enabled) root.transferRequested(getPeerData())
-                            }
+                            tooltip: isOnline ? qsTr("Envoyer un fichier à %1").arg(peerName)
+                                              : qsTr("%1 est hors ligne").arg(peerName)
+                            Accessible.name: qsTr("Envoyer un fichier à %1").arg(peerName)
+                            onClicked: root.transferRequested(getPeerData())
                         }
 
-                        Rectangle {
-                            id: callBtn
-                            width: 30
-                            height: 30
-                            radius: 8
-                            color: callHover.hovered && enabled ? Theme.surfaceLevel4 : "transparent"
+                        IconButton {
+                            id: callAction
+                            glyph: ""
+                            size: 30
+                            iconSize: Theme.fs(13)
                             enabled: isOnline && status !== "calling"
-                            opacity: enabled ? 1 : 0.4
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "\uf095"
-                                color: isOnline ? Theme.dashboardPrimary : Theme.dashboardInkTertiary
-                                font.pixelSize: 13
-                                font.family: "FontAwesome"
-                            }
-
-                            MouseArea {
-                                id: callHover
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: if (callBtn.enabled) root.callRequested(getPeerData())
-                            }
+                            tooltip: !isOnline ? qsTr("%1 est hors ligne").arg(peerName)
+                                   : status === "calling" ? qsTr("%1 est déjà en communication").arg(peerName)
+                                   : qsTr("Appeler %1").arg(peerName)
+                            Accessible.name: qsTr("Appeler %1").arg(peerName)
+                            onClicked: root.callRequested(getPeerData())
                         }
                     }
                 }
@@ -314,9 +273,9 @@ Column {
                     switch (status) {
                     case "transferring": return Theme.dashboardPrimary
                     case "calling": return Theme.dashboardCall
-                    case "away": return Theme.dashboardWarning
-                    case "busy": return Theme.dashboardWarning
-                    case "offline": return "#B4C1C5"
+                    case "away": return Theme.dashboardMarkAway
+                    case "busy": return Theme.dashboardMarkAway
+                    case "offline": return Theme.dashboardNodeOfflineLine
                     default: return Theme.dashboardSuccess
                     }
                 }
@@ -327,7 +286,7 @@ Column {
                     case "calling": return Theme.dashboardCallSoft
                     case "away": return Theme.dashboardWarningSoft
                     case "busy": return Theme.dashboardWarningSoft
-                    case "offline": return "#F3F6F6"
+                    case "offline": return Theme.dashboardNodeOffline
                     default: return Theme.dashboardSuccessSoft
                     }
                 }

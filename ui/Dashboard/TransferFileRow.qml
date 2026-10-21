@@ -90,7 +90,7 @@ Item {
                 Layout.fillWidth: true
                 text: root.fileName
                 color: Theme.dashboardInk
-                font.pixelSize: 14
+                font.pixelSize: Theme.fs(14)
                 font.weight: Theme.weightSemibold
                 font.family: Theme.fontFamily
                 elide: Text.ElideMiddle
@@ -119,7 +119,7 @@ Item {
                     text: (root.incoming ? qsTr("Reçu de %1") : qsTr("Envoyé à %1")).arg(root.peerLabel)
                           + (root.showSizeColumn ? "" : (root.sizeText.length > 0 ? "  ·  " + root.sizeText : ""))
                     color: Theme.dashboardInkSecondary
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fs(12)
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
                     maximumLineCount: 1
@@ -156,7 +156,7 @@ Item {
                 Label {
                     text: root.percent + " %"
                     color: Theme.dashboardPrimary
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fs(12)
                     font.weight: Font.Bold
                     font.family: Theme.fontFamily
                 }
@@ -165,7 +165,7 @@ Item {
                     Layout.fillWidth: true
                     text: root.progressText
                     color: Theme.dashboardInkTertiary
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fs(11)
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
                     maximumLineCount: 1
@@ -179,7 +179,7 @@ Item {
             Layout.alignment: Qt.AlignVCenter
             text: root.sizeText
             color: Theme.dashboardInkSecondary
-            font.pixelSize: 12
+            font.pixelSize: Theme.fs(12)
             font.family: Theme.fontFamily
         }
 
@@ -206,7 +206,7 @@ Item {
             Layout.alignment: Qt.AlignVCenter
             text: root.dateText
             color: Theme.dashboardInkTertiary
-            font.pixelSize: 12
+            font.pixelSize: Theme.fs(12)
             font.family: Theme.fontFamily
             elide: Text.ElideRight
         }

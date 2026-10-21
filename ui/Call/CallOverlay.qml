@@ -28,7 +28,7 @@ Item {
     readonly property string callState: root.call ? root.call.callState : "idle"
     readonly property bool inCall: root.callState !== "idle"
 
-    readonly property color blue600: Theme.darkMode ? "#4E86B8" : "#2E6BAA"
+    readonly property color blue600: Theme.accentColor
 
     FontLoader {
         id: iconFont
@@ -80,7 +80,7 @@ Item {
             id: errorLabel
             anchors.centerIn: parent
             width: parent.width - Theme.spacingLarge * 2
-            color: "#FFFFFF"
+            color: Theme.inkOnDanger
             font.pixelSize: Theme.fontSizeSmall
             font.family: Theme.fontFamily
             horizontalAlignment: Text.AlignHCenter
@@ -204,11 +204,11 @@ Item {
                 font.family: Theme.fontFamily
                 text: {
                     switch (root.callState) {
-                    case "calling":    return qsTr("Appel en cours...")
+                    case "calling":    return qsTr("Appel en cours…")
                     case "ringing":    return qsTr("Appel entrant")
-                    case "connecting": return qsTr("Connexion...")
+                    case "connecting": return qsTr("Connexion…")
                     case "connected":  return root.formatElapsed(root.connectedSeconds)
-                    case "ending":     return qsTr("Fin de l'appel...")
+                    case "ending":     return qsTr("Fin de l'appel…")
                     default:           return ""
                     }
                 }
@@ -225,14 +225,16 @@ Item {
                     glyph: "\uf095"
                     iconRotation: 135
                     label: qsTr("Refuser")
-                    bgColor: Theme.error
+                    bgColor: Theme.dangerColor
+                    iconColor: Theme.inkOnDanger
                     onClicked: root.call && root.call.hangUp()
                 }
 
                 CallActionButton {
                     glyph: "\uf095"
-                    label: qsTr("Repondre")
-                    bgColor: Theme.success
+                    label: qsTr("Répondre")
+                    bgColor: Theme.successColor
+                    iconColor: Theme.inkOnSuccess
                     diameter: 64
                     onClicked: root.call && root.call.acceptCall()
                 }
@@ -249,7 +251,8 @@ Item {
                     glyph: "\uf095"
                     iconRotation: 135
                     label: qsTr("Annuler")
-                    bgColor: Theme.error
+                    bgColor: Theme.dangerColor
+                    iconColor: Theme.inkOnDanger
                     diameter: 64
                     onClicked: root.call && root.call.hangUp()
                 }
@@ -264,9 +267,9 @@ Item {
 
                 CallActionButton {
                     glyph: root.call && root.call.muted ? "\uf131" : "\uf130"
-                    label: root.call && root.call.muted ? qsTr("Reactiver") : qsTr("Muet")
-                    bgColor: root.call && root.call.muted ? Theme.warning : Theme.surfaceAlt
-                    iconColor: root.call && root.call.muted ? Theme.primaryText : Theme.text
+                    label: root.call && root.call.muted ? qsTr("Réactiver le micro") : qsTr("Couper le micro")
+                    bgColor: root.call && root.call.muted ? Theme.warningColor : Theme.sunken
+                    iconColor: root.call && root.call.muted ? Theme.accentInk : Theme.ink
                     onClicked: root.call && root.call.toggleMute()
                 }
 
@@ -274,7 +277,8 @@ Item {
                     glyph: "\uf095"
                     iconRotation: 135
                     label: qsTr("Raccrocher")
-                    bgColor: Theme.error
+                    bgColor: Theme.dangerColor
+                    iconColor: Theme.inkOnDanger
                     diameter: 64
                     onClicked: root.call && root.call.hangUp()
                 }
@@ -282,15 +286,16 @@ Item {
         }
     }
 
-    // Bouton d'action rond (raccrocher/decrocher/mute...) avec libelle,
-    // en Font Awesome pour rester coherent avec le reste de l'application.
+    // Bouton d'action rond (raccrocher/decrocher/mute...) avec libelle.
+    // AbstractButton : utilisable au clavier (Tab, Espace/Entree) et
+    // annonce par son libelle aux lecteurs d'ecran.
     component CallActionButton: ColumnLayout {
         id: actionBtn
 
         property string glyph: ""
         property string label: ""
-        property color bgColor: Theme.primary
-        property color iconColor: "#FFFFFF"
+        property color bgColor: Theme.accentColor
+        property color iconColor: Theme.accentInk
         property int diameter: 56
         property real iconRotation: 0
 
@@ -298,39 +303,52 @@ Item {
 
         spacing: Theme.spacingXs
 
-        Rectangle {
+        AbstractButton {
+            id: btn
             Layout.alignment: Qt.AlignHCenter
-            width: actionBtn.diameter
-            height: actionBtn.diameter
-            radius: width / 2
-            color: btnArea.pressed ? Qt.darker(actionBtn.bgColor, 1.15)
-                   : (btnArea.containsMouse ? Qt.lighter(actionBtn.bgColor, 1.08) : actionBtn.bgColor)
+            implicitWidth: actionBtn.diameter
+            implicitHeight: actionBtn.diameter
+            hoverEnabled: true
+            focusPolicy: Qt.StrongFocus
+            Accessible.name: actionBtn.label
+            onClicked: actionBtn.clicked()
 
-            Behavior on color { ColorAnimation { duration: 100 } }
+            HoverHandler { cursorShape: Qt.PointingHandCursor }
 
-            Text {
-                anchors.centerIn: parent
+            background: Rectangle {
+                radius: width / 2
+                color: btn.down ? Qt.darker(actionBtn.bgColor, 1.15)
+                       : (btn.hovered ? Qt.lighter(actionBtn.bgColor, 1.08) : actionBtn.bgColor)
+
+                Behavior on color { ColorAnimation { duration: Theme.durationFast } }
+
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: -4
+                    radius: width / 2
+                    color: "transparent"
+                    border.width: 2
+                    border.color: Theme.focusRing
+                    visible: btn.visualFocus
+                }
+            }
+
+            contentItem: Text {
                 text: actionBtn.glyph
                 color: actionBtn.iconColor
                 font.family: root.iconFontFamily
                 font.pixelSize: actionBtn.diameter * 0.34
                 rotation: actionBtn.iconRotation
-            }
-
-            MouseArea {
-                id: btnArea
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: actionBtn.clicked()
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
             }
         }
 
-        Label {
+        Text {
             Layout.alignment: Qt.AlignHCenter
             text: actionBtn.label
-            color: Theme.textSecondary
-            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.ink2
+            font.pixelSize: Theme.fs(12)
             font.family: Theme.fontFamily
             visible: actionBtn.label.length > 0
         }

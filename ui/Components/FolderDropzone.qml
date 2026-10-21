@@ -125,7 +125,7 @@ Rectangle {
         FaIcon {
             Layout.alignment: Qt.AlignHCenter
             glyph: dragArea.containsDrag ? "\uf063" : "\uf07b"
-            font.pixelSize: 24
+            font.pixelSize: Theme.fs(24)
             color: Theme.primary
         }
         Label {
@@ -167,7 +167,7 @@ Rectangle {
             FaIcon {
                 anchors.centerIn: parent
                 glyph: "\uf07b"
-                font.pixelSize: 16
+                font.pixelSize: Theme.fs(16)
                 color: Theme.primary
             }
         }

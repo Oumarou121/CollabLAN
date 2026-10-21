@@ -14,6 +14,8 @@ ColumnLayout {
 
     property var transfers: []
     property bool loading: false
+    // false quand la liste est placee dans une Card qui porte deja le titre.
+    property bool showHeader: true
 
     // Deduction actif/historique à partir de state (repli sur status) -
     // meme logique que TransferRow.effectiveState, pour que le regroupement
@@ -32,9 +34,12 @@ ColumnLayout {
     signal openLocationRequested(var transfer)
     signal retryRequested(var transfer)
     signal newTransferRequested()
+    // Lien "Tous les transferts" de l'en-tete.
+    signal allTransfersRequested()
 
     // Header - height 30px
     Item {
+        visible: root.showHeader
         Layout.fillWidth: true
         Layout.preferredHeight: 30
 
@@ -45,7 +50,7 @@ ColumnLayout {
             Label {
                 text: qsTr("Transferts")
                 color: Theme.dashboardInk
-                font.pixelSize: 15
+                font.pixelSize: Theme.fs(15)
                 font.bold: true
                 font.family: Theme.fontFamily
             }
@@ -63,24 +68,31 @@ ColumnLayout {
                     return parts.join(" \u00B7 ")
                 }
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
             }
 
             Item { Layout.fillWidth: true }
 
             Button {
-                text: qsTr("Tous les transferts")
+                id: allTransfersButton
+                text: qsTr("Tous les transferts →")
                 flat: true
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
                 background: Rectangle { color: "transparent" }
                 contentItem: Label {
-                    text: parent.text
-                    color: Theme.dashboardPrimary
-                    font.pixelSize: 12
+                    text: allTransfersButton.text
+                    color: allTransfersButton.hovered ? Theme.dashboardPrimaryHover
+                                                      : Theme.dashboardPrimary
+                    font.pixelSize: Theme.fs(12)
+                    font.weight: Theme.weightSemibold
+                    font.underline: allTransfersButton.hovered
                     font.family: Theme.fontFamily
                 }
+                // Le bouton etait inerte : il ouvre maintenant l'ecran
+                // Transferts (signal traite par l'ecran hote).
+                onClicked: root.allTransfersRequested()
             }
         }
     }
@@ -122,7 +134,7 @@ ColumnLayout {
                 Layout.topMargin: 2
                 text: qsTr("Transferts actifs")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 11
+                font.pixelSize: Theme.fs(11)
                 font.bold: true
                 font.family: Theme.fontFamily
             }
@@ -138,7 +150,7 @@ ColumnLayout {
                     transferred: modelData.transferred || 0
                     total: modelData.total || 0
                     status: modelData.status || "En cours"
-                    state: modelData.state || ""
+                    transferState: modelData.state || ""
                     timestamp: modelData.timestamp || ""
                     isIncoming: modelData.isIncoming || false
 
@@ -154,7 +166,7 @@ ColumnLayout {
                 Layout.topMargin: 10
                 text: qsTr("Historique récent")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 11
+                font.pixelSize: Theme.fs(11)
                 font.bold: true
                 font.family: Theme.fontFamily
             }
@@ -170,7 +182,7 @@ ColumnLayout {
                     transferred: modelData.transferred || 0
                     total: modelData.total || 0
                     status: modelData.status || "En cours"
-                    state: modelData.state || ""
+                    transferState: modelData.state || ""
                     timestamp: modelData.timestamp || ""
                     isIncoming: modelData.isIncoming || false
 

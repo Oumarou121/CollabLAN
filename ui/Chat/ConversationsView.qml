@@ -6,8 +6,14 @@ import Core
 import "../Components"
 
 /*
- * ConversationsView - Vue de selection des conversations
- * Liste les conversations disponibles et permet d'en selectionner une
+ * ConversationsView - liste des conversations (panneau gauche de
+ * l'espace Discussions).
+ *
+ * Donnees : MessagingContext.conversationsList() (conversationId, name,
+ * lastMessage, timestamp, unreadCount), rechargee a chaque signal
+ * conversationsChanged. Recherche locale et filtre "Non lues".
+ * Aucun etat d'envoi/lecture n'est affiche : l'application ne le connait
+ * pas.
  */
 Item {
     id: root
@@ -15,149 +21,168 @@ Item {
     property var messagingContext: null
     property var _allConversations: []
 
-    // CORRECTIF (refonte UI type WhatsApp Web) : cette vue est desormais
-    // utilisee a la fois en plein ecran (navigation classique par pile,
-    // showBackButton: true) et comme panneau de gauche embarque dans
-    // ChatWorkspaceView (showBackButton: false, pas de "retour" au sens
-    // pile puisqu'il n'y a rien en dessous). selectedConversationId permet
-    // au panneau de gauche de surligner la conversation actuellement
-    // affichee a droite -- essentiel en vue cote-a-cote ou l'utilisateur
-    // doit voir en un coup d'oeil laquelle est active.
-    property bool showBackButton: true
+    // Conserves pour compatibilite (la navigation est fournie par AppShell).
+    property bool showBackButton: false
+    property bool compactActions: true
     property var selectedConversationId: null
-    // Bascule les actions d'en-tete en icones seules (voir plus bas) --
-    // active par defaut quand la vue est utilisee comme panneau de gauche
-    // etroit dans ChatWorkspaceView.
-    property bool compactActions: false
+    readonly property string iconFontFamily: "FontAwesome"
 
-    // Police d'icones Font Awesome 4.7.0, memes glyphes que Home
-    // (Components/DashboardCard.qml) - utilisee pour la loupe de recherche.
-    FontLoader {
-        id: iconFont
-        source: "../Assets/fonts/fontawesome-webfont.ttf"
-    }
-    readonly property string iconFontFamily: iconFont.name
+    property bool unreadOnly: false
 
     signal backRequested()
     signal conversationSelected(var conversationId, string name)
     signal createGroupRequested()
     signal newConversationRequested()
 
+    function timeLabel(value) {
+        if (!value)
+            return ""
+        const d = new Date(value)
+        if (isNaN(d.getTime()))
+            return ""
+        const now = new Date()
+        if (d.toDateString() === now.toDateString())
+            return d.toLocaleTimeString(Qt.locale(), "HH:mm")
+        const yesterday = new Date(now.getTime() - 86400000)
+        if (d.toDateString() === yesterday.toDateString())
+            return qsTr("Hier")
+        if (now.getTime() - d.getTime() < 6 * 86400000)
+            return d.toLocaleDateString(Qt.locale(), "ddd")
+        return d.toLocaleDateString(Qt.locale(), "d MMM")
+    }
+
+    readonly property int unreadConversations: {
+        let n = 0
+        for (let i = 0; i < root._allConversations.length; i++)
+            if ((root._allConversations[i].unreadCount || 0) > 0) n++
+        return n
+    }
+
     Rectangle {
         anchors.fill: parent
-        color: Theme.background
+        color: Theme.surface0
     }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // Header -- flotte au-dessus de la liste avec une ombre douce
-        // (meme technique que ChatView) plutot qu'un filet 1px, pour un
-        // rendu plus "carte" et coherent avec le reste du module chat.
+        // ---- En-tete ----------------------------------------------------
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.cardPadding
+            Layout.rightMargin: Theme.cardPadding - 4
+            Layout.topMargin: 14
+            Layout.bottomMargin: 10
+            spacing: 8
+
+            IconButton {
+                visible: root.showBackButton
+                glyph: ""
+                tooltip: qsTr("Retour")
+                onClicked: root.backRequested()
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Discussions")
+                color: Theme.ink
+                font.pixelSize: Theme.fs(16)
+                font.weight: Theme.weightBold
+                font.family: Theme.fontFamily
+                elide: Text.ElideRight
+                Accessible.role: Accessible.Heading
+            }
+
+            IconButton {
+                id: newButton
+                glyph: ""
+                variant: "soft"
+                size: Theme.controlHeightSmall + 2
+                iconSize: Theme.fs(13)
+                tooltip: qsTr("Nouvelle conversation ou nouveau groupe")
+                onClicked: newMenu.popup(newButton, newButton.width - newMenu.implicitWidth, newButton.height + 4)
+            }
+
+            AppMenu {
+                id: newMenu
+                AppMenuItem {
+                    text: qsTr("Nouvelle conversation")
+                    iconGlyph: ""
+                    onTriggered: root.newConversationRequested()
+                }
+                AppMenuItem {
+                    text: qsTr("Nouveau groupe")
+                    iconGlyph: ""
+                    onTriggered: root.createGroupRequested()
+                }
+            }
+        }
+
+        AppSearchField {
+            id: searchField
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.cardPadding
+            Layout.rightMargin: Theme.cardPadding
+            compact: true
+            placeholderText: qsTr("Rechercher une conversation")
+            onTextChanged: conversationsListView.applyFilter()
+        }
+
+        AppSegmentedControl {
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.cardPadding
+            Layout.rightMargin: Theme.cardPadding
+            Layout.topMargin: 10
+            Layout.bottomMargin: 8
+            small: true
+            model: [ { label: qsTr("Toutes") },
+                     { label: root.unreadConversations > 0 ? qsTr("Non lues (%1)").arg(root.unreadConversations)
+                                                           : qsTr("Non lues") } ]
+            currentIndex: root.unreadOnly ? 1 : 0
+            onActivated: function(index) {
+                root.unreadOnly = index === 1
+                conversationsListView.applyFilter()
+            }
+        }
+
         Rectangle {
-            id: header
             Layout.fillWidth: true
-            Layout.preferredHeight: 72
-            color: Theme.surface
-            z: 2
-
-            Rectangle {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.bottom
-                height: 8
-                z: -1
-                gradient: Gradient {
-                    orientation: Gradient.Vertical
-                    GradientStop { position: 0.0; color: Theme.shadowSoft }
-                    GradientStop { position: 1.0; color: "transparent" }
-                }
-            }
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: Theme.spacingLarge
-                anchors.rightMargin: Theme.spacingLarge
-                spacing: Theme.spacingSmall
-
-                IconButton {
-                    glyph: "\uf060"
-                    variant: "ghost"
-                    visible: root.showBackButton
-                    onClicked: root.backRequested()
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    text: qsTr("Discussions")
-                    font.pixelSize: Theme.fontSizeHeading
-                    font.bold: true
-                    font.family: Theme.fontFamily
-                    color: Theme.text
-                    elide: Text.ElideRight
-                }
-
-                // Bouton unique qui ouvre un modal pour choisir entre
-                // nouvelle conversation et nouveau groupe
-                IconButton {
-                    glyph: "\uf067"
-                    variant: "primary"
-                    iconSize: Theme.fontSizeHeading
-                    onClicked: actionMenu.visible = true
-                }
-            }
+            Layout.preferredHeight: 1
+            color: Theme.line
         }
 
-        // Barre de recherche
-        Item {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 75
-            Layout.margins: 0
-
-            AppSearchField {
-                id: searchField
-                anchors.fill: parent
-                anchors.margins: Theme.spacingMedium
-                placeholderText: qsTr("Rechercher une conversation...")
-                onTextChanged: conversationsListView.applyFilter(text)
-            }
-        }
-
-        // Liste des conversations
         ListView {
             id: conversationsListView
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.leftMargin: Theme.spacingMedium
-            Layout.rightMargin: Theme.spacingMedium
-            Layout.bottomMargin: Theme.spacingMedium
-            spacing: Theme.spacingSmall
+            Layout.topMargin: 6
             clip: true
+            spacing: 2
+            boundsBehavior: Flickable.StopAtBounds
 
-            model: ListModel {
-                id: conversationsModel
-            }
+            model: ListModel { id: conversationsModel }
 
             function reloadConversations() {
-                if (root.messagingContext) {
-                    root._allConversations = root.messagingContext.conversationsList()
-                }
-                applyFilter(searchField.text)
+                if (root.messagingContext)
+                    root._allConversations = root.messagingContext.conversationsList() || []
+                applyFilter()
             }
 
-            function applyFilter(query) {
+            function applyFilter() {
                 conversationsModel.clear()
-                const needle = (query || "").toLowerCase()
+                const needle = (searchField.text || "").toLowerCase()
                 for (let i = 0; i < root._allConversations.length; ++i) {
                     const item = root._allConversations[i]
-                    if (needle.length > 0 && item.name.toLowerCase().indexOf(needle) === -1)
+                    if (needle.length > 0 && (item.name || "").toLowerCase().indexOf(needle) === -1)
+                        continue
+                    if (root.unreadOnly && !(item.unreadCount > 0))
                         continue
                     conversationsModel.append({
                         conversationId: item.conversationId,
-                        name: item.name,
-                        lastMessage: item.lastMessage || qsTr("Aucun message"),
-                        timestamp: item.timestamp ? Qt.formatDateTime(item.timestamp, "hh:mm") : "",
+                        name: item.name || "",
+                        lastMessage: item.lastMessage || "",
+                        timeText: root.timeLabel(item.timestamp),
                         unreadCount: item.unreadCount || 0
                     })
                 }
@@ -165,231 +190,142 @@ Item {
 
             Component.onCompleted: reloadConversations()
 
-            // Sans cette Connections, la liste ne se rafraichissait qu'a
-            // l'ouverture de l'ecran (Component.onCompleted) : un nouveau
-            // message ou un nouveau groupe cree/recu pendant que l'on est
-            // deja sur cet ecran n'apparaissait qu'apres en etre sorti puis
-            // revenu (issue rapportee : "bugs UI necessitant de sortir et
-            // revenir pour les changements").
             Connections {
                 target: root.messagingContext
-                function onConversationsChanged() {
-                    conversationsListView.reloadConversations()
-                }
+                ignoreUnknownSignals: true
+                function onConversationsChanged() { conversationsListView.reloadConversations() }
             }
 
-            delegate: Rectangle {
-                id: conversationDelegate
+            delegate: ItemDelegate {
+                id: row
+                required property var conversationId
+                required property string name
+                required property string lastMessage
+                required property string timeText
+                required property int unreadCount
+
                 readonly property bool isSelected: root.selectedConversationId !== null
-                                                    && root.selectedConversationId !== undefined
-                                                    && conversationId === root.selectedConversationId
-                width: conversationsListView.width
-                height: 76
-                color: isSelected
-                       ? Theme.selectionBackground
-                       : (itemMouse.containsMouse ? Theme.surfaceHover : Theme.surface)
-                radius: Theme.radiusLarge
-                border.color: isSelected ? Theme.selectionBorder : "transparent"
-                border.width: isSelected ? 2 : 0
+                                                   && root.selectedConversationId !== undefined
+                                                   && row.conversationId === root.selectedConversationId
 
-                Behavior on color { ColorAnimation { duration: 100 } }
+                width: ListView.view.width
+                height: Theme.compact ? 54 : 62
+                leftPadding: Theme.cardPadding - 6
+                rightPadding: Theme.cardPadding - 6
+                leftInset: 8
+                rightInset: 8
+                hoverEnabled: true
+                highlighted: row.isSelected
+                Accessible.name: row.name + (row.unreadCount > 0 ? ", " + qsTr("%1 non lu(s)").arg(row.unreadCount) : "")
+                onClicked: root.conversationSelected(row.conversationId, row.name)
 
-                // Ombre douce simulee (meme technique que les bulles de
-                // ChatView / Toast.qml) plutot qu'une bordure -- carte plus
-                // "moderne" que "tableur", coherente avec le reste du module.
-                Rectangle {
-                    anchors.fill: parent
-                    anchors.topMargin: 2
-                    radius: parent.radius
-                    color: Theme.shadowSoft
-                    visible: !conversationDelegate.isSelected
-                    z: -1
+                HoverHandler { cursorShape: Qt.PointingHandCursor }
+
+                background: Rectangle {
+                    radius: Theme.radiusRow
+                    color: row.isSelected ? Theme.accentSoft : (row.hovered ? Theme.hover : "transparent")
+
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: -2
+                        radius: parent.radius + 2
+                        color: "transparent"
+                        border.width: 2
+                        border.color: Theme.focusRing
+                        visible: row.visualFocus
+                    }
                 }
 
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: Theme.spacingLarge
-                    anchors.rightMargin: Theme.spacingLarge
-                    anchors.topMargin: Theme.spacingMedium
-                    anchors.bottomMargin: Theme.spacingMedium
-                    spacing: Theme.spacingMedium
+                contentItem: RowLayout {
+                    spacing: 10
 
                     Avatar {
-                        name: name
-                        size: 44
-                        Layout.alignment: Qt.AlignVCenter
+                        Layout.leftMargin: 8
+                        name: row.name
+                        size: 36
                     }
 
                     ColumnLayout {
                         Layout.fillWidth: true
-                        Layout.alignment: Qt.AlignVCenter
                         spacing: 2
 
-                        Label {
-                            text: name
-                            font.pixelSize: Theme.fontSizeBody
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                            color: Theme.text
-                            elide: Text.ElideRight
+                        RowLayout {
                             Layout.fillWidth: true
-                        }
+                            spacing: 6
 
-                        Label {
-                            text: lastMessage
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: Theme.fontFamily
-                            // Non lu = plus contrasté, pour attirer l'oeil comme le badge.
-                            color: unreadCount > 0 ? Theme.text : Theme.textSecondary
-                            font.bold: unreadCount > 0
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.alignment: Qt.AlignTop
-                        spacing: 6
-
-                        Label {
-                            Layout.alignment: Qt.AlignRight
-                            text: timestamp
-                            font.pixelSize: Theme.fontSizeCaption
-                            font.family: Theme.fontFamily
-                            color: unreadCount > 0 ? Theme.primary : Theme.textTertiary
-                        }
-
-                        // Badge de messages non lus (issue : is_read n'était jamais
-                        // exploité côté UI, alors que le repository le gérait déjà).
-                        Rectangle {
-                            Layout.alignment: Qt.AlignRight
-                            visible: unreadCount > 0
-                            implicitWidth: Math.max(20, unreadCountLabel.implicitWidth + 12)
-                            implicitHeight: 20
-                            radius: 10
-                            color: Theme.primary
-
-                            Label {
-                                id: unreadCountLabel
-                                anchors.centerIn: parent
-                                text: unreadCount > 99 ? "99+" : unreadCount
-                                font.pixelSize: Theme.fontSizeCaption
-                                font.bold: true
+                            Text {
+                                text: row.name
+                                color: Theme.ink
+                                font.pixelSize: Theme.fs(13)
+                                font.weight: row.unreadCount > 0 ? Theme.weightSemibold : Theme.weightMedium
                                 font.family: Theme.fontFamily
-                                color: Theme.primaryText
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            Text {
+                                text: row.timeText
+                                color: row.unreadCount > 0 ? (Theme.darkMode ? Theme.accentHover : Theme.accentColor) : Theme.ink3
+                                font.pixelSize: Theme.fs(11)
+                                font.weight: row.unreadCount > 0 ? Theme.weightSemibold : Theme.weightRegular
+                                font.family: Theme.fontFamily
                             }
                         }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Text {
+                                text: row.lastMessage.length > 0 ? row.lastMessage : qsTr("Aucun message")
+                                color: row.unreadCount > 0 ? Theme.ink2 : Theme.ink3
+                                font.pixelSize: Theme.fs(12)
+                                font.italic: row.lastMessage.length === 0
+                                font.family: Theme.fontFamily
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            Rectangle {
+                                visible: row.unreadCount > 0
+                                Layout.rightMargin: 8
+                                Layout.preferredWidth: Math.max(18, unreadText.implicitWidth + 10)
+                                Layout.preferredHeight: 18
+                                radius: 9
+                                color: Theme.accentColor
+
+                                Text {
+                                    id: unreadText
+                                    anchors.centerIn: parent
+                                    text: row.unreadCount > 99 ? "99+" : row.unreadCount
+                                    color: Theme.accentInk
+                                    font.pixelSize: Theme.fs(10)
+                                    font.weight: Theme.weightBold
+                                    font.family: Theme.fontFamily
+                                }
+                            }
+                            Item { visible: row.unreadCount === 0; Layout.preferredWidth: 8 }
+                        }
                     }
                 }
-
-                MouseArea {
-                    id: itemMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.conversationSelected(conversationId, name)
-                }
             }
 
-            ScrollBar.vertical: ScrollBar {
-                policy: ScrollBar.AsNeeded
-            }
-
-            // Etat vide
-            Label {
-                anchors.centerIn: parent
-                visible: conversationsListView.count === 0
-                text: searchField.text.length > 0
-                      ? qsTr("Aucune conversation ne correspond a votre recherche.")
-                      : qsTr("Aucune conversation pour le moment.\nDemarrez-en une nouvelle !")
-                horizontalAlignment: Text.AlignHCenter
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeBody
-                font.family: Theme.fontFamily
-            }
-        }
-    }
-
-    // Modal de choix d'action (Rectangle plein-ecran + carte, pas un
-    // QQC2 Dialog -- ouvert/ferme via `visible`, pas open()/close() --
-    // donc laisse tel quel plutot que migre vers AppDialog, mais aligne
-    // sur Theme.overlay pour la coherence visuelle avec les autres
-    // modals de l'application.
-    Rectangle {
-        id: actionMenu
-        anchors.fill: parent
-        visible: false
-        color: Theme.overlay
-
-        MouseArea {
-            anchors.fill: parent
-            onClicked: actionMenu.visible = false
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
         }
 
-        Rectangle {
-            anchors.centerIn: parent
-            width: Math.min(320, parent.width - Theme.spacingXl * 2)
-            height: actionColumn.implicitHeight + Theme.spacingLarge * 2
-            radius: Theme.radiusLarge
-            color: Theme.surface
-            border.width: 0
-
-            Rectangle {
-                anchors.fill: parent
-                anchors.topMargin: 2
-                radius: parent.radius
-                color: Theme.shadowSoft
-                z: -1
-            }
-
-            ColumnLayout {
-                id: actionColumn
-                anchors.fill: parent
-                anchors.margins: Theme.spacingLarge
-                spacing: Theme.spacingMedium
-
-                Label {
-                    Layout.fillWidth: true
-                    text: qsTr("Nouvelle action")
-                    font.pixelSize: Theme.fontSizeSubheading
-                    font.bold: true
-                    font.family: Theme.fontFamily
-                    color: Theme.text
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 1
-                    color: Theme.border
-                }
-
-                AppButton {
-                    Layout.fillWidth: true
-                    variant: "ghost"
-                    text: qsTr("Nouvelle conversation")
-                    onClicked: {
-                        actionMenu.visible = false
-                        root.newConversationRequested()
-                    }
-                }
-
-                AppButton {
-                    Layout.fillWidth: true
-                    variant: "ghost"
-                    text: qsTr("Nouveau groupe")
-                    onClicked: {
-                        actionMenu.visible = false
-                        root.createGroupRequested()
-                    }
-                }
-
-                AppButton {
-                    Layout.fillWidth: true
-                    variant: "ghost"
-                    text: qsTr("Annuler")
-                    onClicked: actionMenu.visible = false
-                }
-            }
+        EmptyState {
+            visible: conversationsListView.count === 0
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.margins: Theme.cardPadding
+            compact: true
+            iconName: searchField.text.length > 0 || root.unreadOnly ? "search" : "chat"
+            title: searchField.text.length > 0 ? qsTr("Aucune conversation ne correspond")
+                 : root.unreadOnly ? qsTr("Aucun message non lu")
+                 : qsTr("Aucune conversation")
+            description: searchField.text.length > 0 ? qsTr("Vérifiez l'orthographe ou effacez la recherche.")
+                       : root.unreadOnly ? qsTr("Vous êtes à jour.")
+                       : qsTr("Démarrez une discussion avec un collègue connecté au réseau.")
+            actionText: searchField.text.length > 0 || root.unreadOnly ? "" : qsTr("Nouvelle conversation")
+            onActionClicked: root.newConversationRequested()
         }
     }
 }

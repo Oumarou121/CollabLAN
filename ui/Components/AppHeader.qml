@@ -3,127 +3,114 @@ import QtQuick.Layouts
 import Themes
 
 /*
- * AppHeader - barre superieure standard des ecrans secondaires (Postes
- * connectes, Parametres, Appels...).
+ * AppHeader - en-tete de page standard (refonte 2026).
  *
- * Factorise un motif jusque-la duplique a l'identique dans plusieurs
- * vues (Rectangle 64px + separateur 1px + bouton retour circulaire 36px
- * + titre + badge optionnel a droite) : le dupliquer rendait la moindre
- * evolution (hauteur, taille du bouton retour...) sujette a divergence
- * entre ecrans (cf. Home qui etait reste a 76px pendant que les autres
- * etaient a 64px).
+ * Depuis que la navigation est fournie par AppShell, l'en-tete de page
+ * n'est plus un bandeau avec bouton retour : c'est un titre de page
+ * (+ sous-titre) aligne sur la grille, avec les actions de la page a
+ * droite. Le bouton retour reste disponible pour les SOUS-pages
+ * (showBackButton: true).
  *
- * Usage minimal :
  *   AppHeader {
- *       title: qsTr("Parametres")
- *       onBackRequested: root.backRequested()
- *   }
- *
- * Avec une icone de contexte (comme le badge "Appels" dans CallView) et
- * du contenu a droite (badge, compteur...), a placer dans le slot par
- * defaut :
- *   AppHeader {
- *       title: qsTr("Appels")
- *       leadingIcon: "\uf095"
- *       leadingIconFontFamily: root.iconFontFamily
- *       onBackRequested: root.backRequested()
- *
- *       Rectangle { ... } // ajoute apres l'espace extensible
+ *       title: qsTr("Postes")
+ *       subtitle: qsTr("12 postes détectés sur le réseau")
+ *       AppButton { text: qsTr("Actualiser"); onClicked: ... }   // actions
  *   }
  */
-Rectangle {
+Item {
     id: root
 
-    // Propriete Layout habituelle : le parent (ColumnLayout) doit fixer
-    // Layout.fillWidth: true sur cet element, comme pour n'importe quel
-    // autre enfant de ColumnLayout.
     Layout.fillWidth: true
-    Layout.preferredHeight: 72
-    color: Theme.surface
+    implicitHeight: headerRow.implicitHeight + topPadding + bottomPadding
 
-    // Titre affiche apres le bouton retour / l'icone de contexte.
     property string title: ""
-
-    // Masque le bouton retour (ex : ecran racine, ou reutilisation en
-    // panneau embarque comme ConversationsView.showBackButton).
-    property bool showBackButton: true
-
-    // Icone de contexte optionnelle (glyphe Font Awesome) affichee dans
-    // un badge carre entre le bouton retour et le titre - ex. l'icone
-    // "telephone" de CallView. Vide = pas de badge.
+    property string subtitle: ""
+    property bool showBackButton: false
+    // Icone de contexte optionnelle (glyphe Font Awesome) devant le titre.
     property string leadingIcon: ""
     property string leadingIconFontFamily: ""
+    property bool showDivider: false
+    property int topPadding: Theme.compact ? 16 : 24
+    property int bottomPadding: Theme.compact ? 12 : 18
+    property int sidePadding: Theme.pagePadding
 
     signal backRequested()
 
-    // Separateur bas : desactivable quand l'ecran appelant empile un
-    // second bandeau juste en dessous (ex. la ligne d'onglets d'AdminView)
-    // et prefere garder un seul trait, place plus bas, plutot que deux.
-    property bool showDivider: true
-
-    // Emplacement libre pour le contenu de droite (badge de comptage,
-    // pastille de statut...), ajoute apres l'espace extensible. Toute
-    // Item declaree comme enfant direct de AppHeader dans le QML
-    // appelant atterrit ici plutot que d'etre un enfant classique de
-    // Rectangle, via cet alias sur le default property.
+    // Actions de droite : tout enfant declare dans AppHeader { ... }.
     default property alias trailingContent: trailingRow.data
 
-    // Separateur bas, identique sur tous les ecrans qui utilisaient deja
-    // ce motif.
     Rectangle {
         visible: root.showDivider
         anchors.bottom: parent.bottom
         width: parent.width
         height: 1
-        color: Theme.border
+        color: Theme.line
     }
 
     RowLayout {
-        anchors.fill: parent
-        anchors.leftMargin: Theme.spacingLarge
-        anchors.rightMargin: Theme.spacingLarge
-        spacing: Theme.spacingMedium
+        id: headerRow
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.leftMargin: root.sidePadding
+        anchors.rightMargin: root.sidePadding
+        anchors.topMargin: root.topPadding
+        spacing: 12
 
         IconButton {
             visible: root.showBackButton
-            glyph: "\uf060"
-            variant: "ghost"
-            size: 40
+            Layout.alignment: Qt.AlignTop
+            glyph: ""
+            variant: "secondary"
+            size: Theme.controlHeight
+            tooltip: qsTr("Retour")
             onClicked: root.backRequested()
         }
 
         Rectangle {
             visible: root.leadingIcon.length > 0
+            Layout.alignment: Qt.AlignTop
             Layout.preferredWidth: 40
             Layout.preferredHeight: 40
             radius: Theme.radiusMedium
-            color: Theme.primaryMuted
+            color: Theme.accentSoft
 
-            Text {
+            FaIcon {
                 anchors.centerIn: parent
-                text: root.leadingIcon
-                font.family: root.leadingIconFontFamily
-                font.pixelSize: 15
-                color: Theme.primary
+                glyph: root.leadingIcon
+                color: Theme.darkMode ? Theme.accentHover : Theme.accentColor
+                font.pixelSize: Theme.fs(16)
             }
         }
 
-        Text {
-            text: root.title
-            font.pixelSize: Theme.fontSizeHeading
-            font.bold: true
-            font.family: Theme.fontFamily
-            color: Theme.text
-            elide: Text.ElideRight
-            verticalAlignment: Text.AlignVCenter
-            // Ne s'etire jamais : c'est l'Item suivant (spacer) qui
-            // absorbe l'espace disponible, pour que le titre garde une
-            // largeur naturelle et que trailingContent reste colle a
-            // droite quelle que soit la resolution.
-            Layout.fillWidth: false
-        }
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 3
 
-        Item { Layout.fillWidth: true }
+            Text {
+                text: root.title
+                color: Theme.ink
+                font.pixelSize: Theme.fontSizeTitle
+                font.weight: Theme.weightBold
+                font.letterSpacing: -0.4
+                font.family: Theme.fontFamily
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+                Accessible.role: Accessible.Heading
+            }
+
+            Text {
+                visible: root.subtitle.length > 0
+                text: root.subtitle
+                color: Theme.ink2
+                font.pixelSize: Theme.fs(13)
+                font.family: Theme.fontFamily
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+            }
+        }
 
         RowLayout {
             id: trailingRow

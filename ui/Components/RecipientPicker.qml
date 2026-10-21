@@ -129,7 +129,7 @@ Item {
                                 text: (modelData.name && modelData.name.length > 0
                                        ? modelData.name.charAt(0) : "?").toUpperCase()
                                 color: "#FFFFFF"
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fs(12)
                                 font.bold: true
                                 font.family: Theme.fontFamily
                             }

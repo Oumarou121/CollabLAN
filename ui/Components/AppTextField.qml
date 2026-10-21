@@ -4,23 +4,12 @@ import QtQuick.Layouts
 import Themes
 
 /*
- * AppTextField - champ de formulaire standard (label + champ + texte
- * d'aide optionnel), a la place du motif Label/TextField/background
- * duplique a l'identique dans chaque dialog (AdminView notamment).
+ * AppTextField - champ de saisie du design system : libelle au-dessus,
+ * aide ou erreur en dessous.
  *
- * Ajoute un anneau de focus (absent des TextField "bruts" utilises
- * jusqu'ici) et un texte d'aide sous le champ, comme dans les
- * maquettes des modales Admin.
- *
- * Usage :
- *   AppTextField {
- *       label: qsTr("Nom d'utilisateur")
- *       placeholderText: qsTr("marie.dupont")
- *       Layout.fillWidth: true
- *   }
- *
- * `text`/`echoMode`/`validator` etc. se passent directement (alias sur
- * le TextField interne), exactement comme sur un TextField normal.
+ * Focus : filet d'accent + anneau doux exterieur (le texte ne bouge pas,
+ * contrairement a un changement d'epaisseur de bordure). Erreur : filet
+ * rouge + message precede d'une icone (jamais la couleur seule).
  */
 ColumnLayout {
     id: root
@@ -28,6 +17,7 @@ ColumnLayout {
     property string label: ""
     property string helperText: ""
     property bool hasError: false
+    property bool isRequired: false
     property alias placeholderText: field.placeholderText
     property alias text: field.text
     property alias echoMode: field.echoMode
@@ -36,50 +26,81 @@ ColumnLayout {
     property alias fontFamily: field.font.family
     property alias field: field
     property alias rightPadding: field.rightPadding
+    property alias readOnly: field.readOnly
     signal accepted
 
-    spacing: Theme.spacingXs
+    spacing: 6
 
-    Label {
+    Text {
         visible: root.label.length > 0
-        text: root.label
-        font.pixelSize: Theme.fontSizeSmall
+        text: root.label + (root.isRequired ? " *" : "")
+        color: Theme.ink2
+        font.pixelSize: Theme.fs(12)
+        font.weight: Theme.weightSemibold
         font.family: Theme.fontFamily
-        color: Theme.textSecondary
     }
 
     TextField {
         id: field
         Layout.fillWidth: true
-        Layout.preferredHeight: 48
-        color: Theme.text
-        font.pixelSize: Theme.fontSizeBody
+        Layout.preferredHeight: Theme.controlHeight
+        color: field.enabled ? Theme.ink : Theme.inkDisabled
+        font.pixelSize: Theme.fs(13)
         font.family: Theme.fontFamily
-        leftPadding: Theme.spacingMedium
-        rightPadding: Theme.spacingMedium
+        leftPadding: 12
+        rightPadding: 12
+        verticalAlignment: TextInput.AlignVCenter
         selectByMouse: true
-        placeholderTextColor: Theme.textTertiary
+        selectionColor: Theme.accentColor
+        selectedTextColor: Theme.accentInk
+        placeholderTextColor: Theme.ink3
+        Accessible.name: root.label.length > 0 ? root.label : field.placeholderText
+        Accessible.description: root.helperText
         onAccepted: root.accepted()
 
         background: Rectangle {
-            radius: Theme.radiusMedium
-            color: Theme.colorTextField
-            border.width: (field.activeFocus || root.hasError) ? 2 : 1
-            border.color: field.activeFocus
-                          ? (root.hasError ? Theme.error : Theme.primary)
-                          : (root.hasError ? Theme.error : Theme.border)
+            radius: Theme.radiusControl
+            color: field.enabled ? Theme.surface0 : Theme.sunken
+            border.width: 1
+            border.color: root.hasError ? Theme.dangerColor
+                        : field.activeFocus ? Theme.accentColor
+                        : (field.hovered ? Theme.ink3 : Theme.lineStrong)
 
-            Behavior on border.color { ColorAnimation { duration: 100 } }
+            Behavior on border.color { ColorAnimation { duration: Theme.durationFast } }
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -3
+                radius: parent.radius + 3
+                color: "transparent"
+                border.width: 3
+                border.color: Theme.alpha(root.hasError ? Theme.dangerColor : Theme.accentColor, 0.18)
+                visible: field.activeFocus
+            }
         }
     }
 
-    Label {
+    RowLayout {
         visible: root.helperText.length > 0
-        text: root.helperText
-        font.pixelSize: Theme.fontSizeCaption
-        font.family: Theme.fontFamily
-        color: root.hasError ? Theme.error : Theme.textTertiary
-        wrapMode: Text.WordWrap
         Layout.fillWidth: true
+        spacing: 6
+
+        FaIcon {
+            visible: root.hasError
+            glyph: ""
+            color: Theme.dangerInk
+            font.pixelSize: Theme.fs(11)
+            Layout.alignment: Qt.AlignTop
+            Layout.topMargin: 1
+        }
+
+        Text {
+            text: root.helperText
+            font.pixelSize: Theme.fs(12)
+            font.family: Theme.fontFamily
+            color: root.hasError ? Theme.dangerInk : Theme.ink3
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
     }
 }

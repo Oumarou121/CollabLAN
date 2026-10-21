@@ -122,7 +122,7 @@ Item {
                 width: 21
                 height: 21
                 radius: 11
-                color: "#C07000" // Ambre
+                color: Theme.warningColor
                 border.width: 2
                 border.color: Theme.surface
                 anchors.left: folderShape.left
@@ -133,10 +133,10 @@ Item {
                 Text {
                     anchors.centerIn: parent
                     text: "⚠"
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fs(11)
                     font.bold: true
                     font.family: Theme.fontFamily
-                    color: "#FFFFFF"
+                    color: Theme.inkOnDanger
                 }
             }
 
@@ -157,7 +157,7 @@ Item {
                 Text {
                     anchors.centerIn: parent
                     text: root.count > 99 ? "99+" : root.count
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fs(10)
                     font.bold: true
                     font.family: Theme.fontFamily
                     color: Theme.primaryText

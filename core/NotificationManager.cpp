@@ -43,7 +43,7 @@ void NotificationManager::onTransferCompleted(const QString &transferKey, const 
         return;
     }
 
-    const QString title = QStringLiteral("Transfert termine");
+    const QString title = QStringLiteral("Transfert terminé");
     // filePath est le chemin complet ; seul le nom de fichier interesse
     // l'utilisateur dans la notification.
     const QString fileName = filePath.section(QLatin1Char('/'), -1).section(QLatin1Char('\\'), -1);
@@ -59,7 +59,7 @@ void NotificationManager::onTransferFailed(const QString &transferKey, const QSt
         return;
     }
 
-    const QString title = QStringLiteral("Echec du transfert");
+    const QString title = QStringLiteral("Échec du transfert");
 
     emit notificationRequested(title, errorString, QStringLiteral("transfer"));
 }
@@ -70,7 +70,7 @@ void NotificationManager::onPeerConnected(const QString &peerName)
         return;
     }
 
-    const QString title = QStringLiteral("Poste connecte");
+    const QString title = QStringLiteral("Poste connecté");
 
     emit notificationRequested(title, peerName, QStringLiteral("connection"));
 }
@@ -81,7 +81,7 @@ void NotificationManager::onPeerDisconnected(const QString &peerName)
         return;
     }
 
-    const QString title = QStringLiteral("Poste deconnecte");
+    const QString title = QStringLiteral("Poste déconnecté");
 
     emit notificationRequested(title, peerName, QStringLiteral("disconnection"));
 }
@@ -93,7 +93,7 @@ void NotificationManager::onGroupCreated(const models::Group &group)
     }
 
     const QString title = QStringLiteral("Nouveau groupe");
-    const QString message = QStringLiteral("Vous avez ete ajoute au groupe \"%1\"").arg(group.name());
+    const QString message = QStringLiteral("Vous avez été ajouté au groupe \"%1\"").arg(group.name());
 
     emit notificationRequested(title, message, QStringLiteral("group"));
 }

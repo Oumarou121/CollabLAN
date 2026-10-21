@@ -21,7 +21,7 @@ import "transferFormat.js" as Fmt
  *  - badge de statut colore (pastille + texte), coherent avec le meme
  *    systeme de couleurs "soft/text" que le reste du dashboard ;
  *  - barre de progression uniquement pour un transfert reellement actif
- *    (state === "in_progress") - les entrees d'historique (termine/
+ *    (transferState === "in_progress") - les entrees d'historique (termine/
  *    echoue/annule/interrompu) affichent a la place la taille totale et
  *    la date/heure du transfert ;
  *  - icone de fichier teintee selon le statut (memes couleurs que le
@@ -37,10 +37,10 @@ Rectangle {
     property var transferred: 0
     property var total: 0
     property string status: "En cours"
-    // state technique (in_progress/completed/failed/cancelled/interrupted) -
+    // etat technique (in_progress/completed/failed/cancelled/interrupted) -
     // pilote l'affichage barre de progression vs meta historique. Replie sur
     // une deduction depuis `status` si non fourni (compatibilite ascendante).
-    property string state: ""
+    property string transferState: ""
     property bool isIncoming: false
     // Date ISO du transfert (entry.timestamp) - affichee pour les entrees
     // d'historique (pas de barre de progression a montrer a la place).
@@ -50,7 +50,7 @@ Rectangle {
     signal openLocationRequested()
     signal retryRequested()
 
-    readonly property string effectiveState: root.state.length > 0 ? root.state : {
+    readonly property string effectiveState: root.transferState.length > 0 ? root.transferState : {
         "En cours": "in_progress",
         "Terminé": "completed",
         "Échoué": "failed",
@@ -115,6 +115,7 @@ Rectangle {
 
             // Icône fichier, teintée selon le statut du transfert.
             Rectangle {
+                id: fileIconChip
                 Layout.preferredWidth: 36
                 Layout.preferredHeight: 36
                 radius: 10
@@ -122,7 +123,10 @@ Rectangle {
 
                 LineIcon {
                     anchors.centerIn: parent
-                    path: fileIcon
+                    // Qualifie : fileIcon est declare sur cette pastille, pas
+                    // sur la racine du composant, donc un acces non qualifie
+                    // depuis l'enfant echoue (ReferenceError a l'execution).
+                    path: fileIconChip.fileIcon
                     color: root.statusText
                     size: 18
                     strokeWidth: 1.8
@@ -150,7 +154,7 @@ Rectangle {
                 Label {
                     text: root.fileName
                     color: Theme.dashboardInk
-                    font.pixelSize: 15
+                    font.pixelSize: Theme.fs(15)
                     font.weight: Theme.weightSemibold
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
@@ -163,7 +167,7 @@ Rectangle {
                     Label {
                         text: root.isIncoming ? qsTr("Réception") : qsTr("Envoi")
                         color: Theme.dashboardInkTertiary
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fs(12)
                         font.family: Theme.fontFamily
                     }
 
@@ -178,7 +182,7 @@ Rectangle {
                     Label {
                         text: root.peerName
                         color: Theme.dashboardInkSecondary
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fs(12)
                         font.weight: Theme.weightMedium
                         font.family: Theme.fontFamily
                     }
@@ -208,7 +212,7 @@ Rectangle {
                     Label {
                         text: root.status
                         color: root.statusText
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fs(11)
                         font.bold: true
                         font.family: Theme.fontFamily
                     }
@@ -229,7 +233,9 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 6
                 radius: 99
-                color: Theme.dashboardLine
+                // Piste de progression : jeton "creux" de la refonte 2026
+                // (dashboardLine est un filet, trop clair pour une piste).
+                color: Theme.dashboardSurfaceSunken
 
                 Rectangle {
                     anchors.left: parent.left
@@ -244,14 +250,14 @@ Rectangle {
             Label {
                 text: formatBytes(root.transferred) + " / " + formatBytes(root.total)
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 11
+                font.pixelSize: Theme.fs(11)
                 font.family: Theme.fontFamily
             }
 
             Label {
                 text: Math.round(root.progress * 100) + " %"
                 color: Theme.dashboardPrimary
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.bold: true
                 font.family: Theme.fontFamily
             }
@@ -266,7 +272,7 @@ Rectangle {
             Label {
                 text: formatBytes(root.total) + (root.formattedDate.length > 0 ? " \u00B7 " + root.formattedDate : "")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 11
+                font.pixelSize: Theme.fs(11)
                 font.family: Theme.fontFamily
                 Layout.fillWidth: true
                 elide: Text.ElideRight

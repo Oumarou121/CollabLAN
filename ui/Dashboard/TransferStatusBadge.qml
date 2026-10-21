@@ -86,7 +86,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             text: root.label
             color: root.tint
-            font.pixelSize: 11
+            font.pixelSize: Theme.fs(11)
             font.weight: Font.DemiBold
             font.family: Theme.fontFamily
         }

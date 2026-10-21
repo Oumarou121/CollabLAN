@@ -30,7 +30,7 @@ Rectangle {
 
         Text {
             text: root.icon
-            font.pixelSize: 17
+            font.pixelSize: Theme.fs(17)
             color: Theme.sidebarText
             Layout.preferredWidth: 20
             horizontalAlignment: Text.AlignHCenter

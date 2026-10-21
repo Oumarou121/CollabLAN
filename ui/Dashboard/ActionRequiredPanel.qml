@@ -6,21 +6,29 @@ import "../Components"
 import "../Components/icons.js" as Icons
 
 /*
- * ActionRequiredPanel - Zone "À traiter" selon la maquette HTML exacte
- * Background: transparent (le fond vient du parent)
- * Header: "À traiter" + badge compteur
- * Items: Design avec border-left couleur + icône + texte + boutons
+ * ActionRequiredPanel - Zone "À traiter" du Dashboard, refonte 2026.
+ *
+ * Chaque demande est une carte : filet gauche de 3 px a la couleur de
+ * l'urgence, pastille d'icone voilee, titre + description, badge
+ * d'urgence, puis une action pleine largeur ("Examiner"). Le fond vient
+ * du parent (carte du dashboard).
+ *
+ * Aucun bouton decoratif : "Examiner" est la seule action reellement
+ * cablee (voir HomeView.adminSectionRequested).
  */
 ColumnLayout {
     id: root
     spacing: 0
 
     property var actions: []
+    // false quand le panneau est place dans une Card qui porte deja le titre.
+    property bool showHeader: true
 
     signal actionRequested(var action, string actionType)
 
     // Header - height 32px
     RowLayout {
+        visible: root.showHeader
         Layout.fillWidth: true
         Layout.preferredHeight: 32
         spacing: 8
@@ -28,31 +36,34 @@ ColumnLayout {
         Label {
             text: qsTr("À traiter")
             color: Theme.dashboardInk
-            font.pixelSize: 15
-            font.weight: Theme.weightSemibold
+            font.pixelSize: Theme.fontSizeCardTitle
+            font.bold: true
+            font.letterSpacing: -0.15
             font.family: Theme.fontFamily
+        }
+
+        // Badge compteur - voile plutot qu'aplat (la couleur signale, elle
+        // ne crie pas).
+        Rectangle {
+            Layout.preferredWidth: Math.max(20, countLabel.implicitWidth + 12)
+            Layout.preferredHeight: 20
+            radius: Theme.radiusPill
+            color: Theme.dashboardWarningSoft
+            visible: root.actions.length > 0
+
+            Label {
+                id: countLabel
+                anchors.centerIn: parent
+                text: root.actions.length > 99 ? "99+" : root.actions.length
+                color: Theme.dashboardWarningText
+                font.pixelSize: Theme.fs(11)
+                font.bold: true
+                font.family: Theme.fontFamily
+            }
         }
 
         Item {
             Layout.fillWidth: true
-        }
-
-        // Badge compteur
-        Rectangle {
-            Layout.preferredWidth: 20
-            Layout.preferredHeight: 20
-            radius: 10
-            color: Theme.dashboardWarning
-            visible: root.actions.length > 0
-
-            Label {
-                anchors.centerIn: parent
-                text: root.actions.length > 99 ? "99+" : root.actions.length
-                color: Theme.dashboardSurface
-                font.pixelSize: 11
-                font.bold: true
-                font.family: Theme.fontFamily
-            }
         }
     }
 
@@ -77,159 +88,153 @@ ColumnLayout {
             // implicite du contenu - d'où des cartes plus étroites que la
             // colonne. availableWidth = largeur réelle du viewport.
             width: itemsScroll.availableWidth
-            spacing: 14
+            spacing: 8
 
             Repeater {
                 model: root.actions
-                delegate: ColumnLayout {
+
+                delegate: Rectangle {
+                    id: card
+                    required property var modelData
+
                     Layout.fillWidth: true
-                    spacing: 8
+                    implicitHeight: cardColumn.implicitHeight + 24
+                    radius: Theme.radiusRow
+                    color: Theme.dashboardSurfaceAlt
+                    border.width: 1
+                    border.color: Theme.dashboardLine
 
                     readonly property color actionColor: {
-                        switch(modelData.urgency) {
-                            case "high": return Theme.dashboardError
-                            case "medium": return Theme.dashboardWarning
-                            default: return Theme.dashboardInfo
+                        switch (card.modelData.urgency) {
+                        case "high": return Theme.dashboardError
+                        case "medium": return Theme.dashboardWarning
+                        default: return Theme.dashboardInfo
                         }
                     }
 
                     readonly property color actionColorSoft: {
-                        switch(modelData.urgency) {
-                            case "high": return Theme.dashboardErrorSoft
-                            case "medium": return Theme.dashboardWarningSoft
-                            default: return Theme.dashboardInfoSoft
+                        switch (card.modelData.urgency) {
+                        case "high": return Theme.dashboardErrorSoft
+                        case "medium": return Theme.dashboardWarningSoft
+                        default: return Theme.dashboardInfoSoft
+                        }
+                    }
+
+                    readonly property color actionColorText: {
+                        switch (card.modelData.urgency) {
+                        case "high": return Theme.dashboardErrorText
+                        case "medium": return Theme.dashboardWarningText
+                        default: return Theme.dashboardInfoText
                         }
                     }
 
                     readonly property string urgencyIcon: {
-                        switch(modelData.urgency) {
-                            case "high": return Icons.alertTriangle
-                            case "medium": return Icons.bell
-                            default: return Icons.messageCircle
+                        switch (card.modelData.urgency) {
+                        case "high": return Icons.ban
+                        case "medium": return Icons.alertTriangle
+                        default: return Icons.messageCircle
                         }
                     }
 
                     readonly property string urgencyLabel: {
-                        switch(modelData.urgency) {
-                            case "high": return "Alerte"
-                            case "medium": return "Action requise"
-                            default: return "Information"
+                        switch (card.modelData.urgency) {
+                        case "high": return qsTr("Alerte")
+                        case "medium": return qsTr("Action requise")
+                        default: return qsTr("Information")
                         }
                     }
 
-                    // Item avec border-left couleur
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 60
-                        color: actionColorSoft
-                        radius: 8
-
-                        Rectangle {
-                            anchors.left: parent.left
-                            anchors.top: parent.top
-                            anchors.bottom: parent.bottom
-                            width: 3
-                            color: actionColor
-                            radius: 2
-                        }
+                    ColumnLayout {
+                        id: cardColumn
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        anchors.topMargin: 12
+                        spacing: 9
 
                         RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 12
-                            anchors.rightMargin: 12
-                            spacing: 10
+                            id: cardRow
+                            Layout.fillWidth: true
+                            spacing: 9
+                            // Panneau etroit (petite fenetre, texte agrandi) : le badge passe
+                            // sous la description pour laisser toute la largeur au titre.
+                            readonly property bool stackBadge: width < 300
 
-                            // Icône
                             Rectangle {
-                                Layout.preferredWidth: 28
-                                Layout.preferredHeight: 28
-                                radius: 7
-                                color: actionColor
+                                Layout.preferredWidth: 26
+                                Layout.preferredHeight: 26
+                                Layout.alignment: Qt.AlignTop
+                                radius: 8
+                                color: card.actionColorSoft
 
                                 LineIcon {
                                     anchors.centerIn: parent
-                                    path: urgencyIcon
-                                    color: Theme.dashboardSurface
+                                    path: card.urgencyIcon
+                                    color: card.actionColorText
                                     size: 14
                                     strokeWidth: 1.9
                                 }
                             }
 
-                            // Contenu
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: 4
+                                spacing: 2
 
                                 Label {
-                                    text: modelData.title || ""
+                                    text: card.modelData.title || ""
                                     color: Theme.dashboardInk
-                                    font.pixelSize: 13
+                                    font.pixelSize: Theme.fs(13)
                                     font.weight: Theme.weightSemibold
                                     font.family: Theme.fontFamily
+                                    wrapMode: Text.WordWrap
+                                    maximumLineCount: 2
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
                                 }
 
                                 Label {
-                                    text: modelData.description || ""
+                                    visible: text.length > 0
+                                    text: card.modelData.description || ""
                                     color: Theme.dashboardInkSecondary
-                                    font.pixelSize: 12
+                                    font.pixelSize: Theme.fs(12)
                                     font.family: Theme.fontFamily
+                                    wrapMode: Text.WordWrap
+                                    maximumLineCount: 2
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
-                                    maximumLineCount: 2
+                                }
+
+                                UrgencyBadge {
+                                    visible: cardRow.stackBadge
+                                    Layout.topMargin: 4
+                                    label: card.urgencyLabel
+                                    soft: card.actionColorSoft
+                                    ink: card.actionColorText
                                 }
                             }
-                        }
-                    }
 
-                    // Boutons d'action
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-
-                        Item {
-                            Layout.fillWidth: true
-                        }
-
-                        Button {
-                            text: qsTr("Examiner")
-                            flat: true
-                            font.pixelSize: 12
-                            font.family: Theme.fontFamily
-                            background: Rectangle {
-                                color: parent.hovered ? Theme.surfaceLevel3 : "transparent"
-                                radius: 6
+                            // Badge d'urgence - voile + texte, jamais un aplat.
+                            UrgencyBadge {
+                                visible: !cardRow.stackBadge
+                                Layout.alignment: Qt.AlignTop
+                                label: card.urgencyLabel
+                                soft: card.actionColorSoft
+                                ink: card.actionColorText
                             }
-                            contentItem: Label {
-                                text: parent.text
-                                color: Theme.dashboardPrimary
-                                font.pixelSize: 12
-                                font.family: Theme.fontFamily
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            onClicked: root.actionRequested(modelData, "examine")
                         }
 
-                        // Badge urgence - soft/texte plutôt qu'aplat coloré
-                        // (priorité 18 du brief : la couleur signale, elle
-                        // ne décore pas).
-                        Rectangle {
-                            implicitWidth: urgencyLabelText.implicitWidth + 18
-                            Layout.preferredHeight: 22
-                            radius: Theme.radiusPill
-                            color: actionColorSoft
-
-                            Label {
-                                id: urgencyLabelText
-                                anchors.centerIn: parent
-                                text: urgencyLabel
-                                color: actionColor
-                                font.pixelSize: 11
-                                font.weight: Theme.weightSemibold
-                                font.family: Theme.fontFamily
-                            }
+                        // Action unique, secondaire : plusieurs demandes ne doivent
+                        // pas aligner plusieurs boutons pleins concurrents.
+                        AppButton {
+                            Layout.alignment: Qt.AlignRight
+                            text: card.modelData.type === "authorization" ? qsTr("Examiner la demande")
+                                                                           : qsTr("Voir le journal")
+                            iconGlyph: ""
+                            variant: "soft"
+                            size: "small"
+                            onClicked: root.actionRequested(card.modelData, "examine")
                         }
                     }
                 }
@@ -245,32 +250,63 @@ ColumnLayout {
 
         ColumnLayout {
             anchors.centerIn: parent
-            spacing: 12
+            spacing: 10
 
-            LineIcon {
-                path: Icons.checkCircle
-                color: Theme.dashboardInkTertiary
-                size: 28
-                strokeWidth: 1.6
+            Rectangle {
                 Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: 48
+                Layout.preferredHeight: 48
+                radius: 24
+                color: Theme.dashboardSuccessSoft
+
+                LineIcon {
+                    anchors.centerIn: parent
+                    path: Icons.checkCircle
+                    color: Theme.dashboardSuccessText
+                    size: 24
+                    strokeWidth: 1.8
+                }
             }
 
             Label {
-                text: qsTr("Rien à traiter")
-                color: Theme.dashboardInkTertiary
-                font.pixelSize: 14
+                text: qsTr("Tout est en ordre")
+                color: Theme.dashboardInk
+                font.pixelSize: Theme.fs(14)
                 font.weight: Theme.weightSemibold
                 font.family: Theme.fontFamily
                 Layout.alignment: Qt.AlignHCenter
             }
 
             Label {
-                text: qsTr("Tout est en ordre")
-                color: Theme.dashboardInkSecondary
-                font.pixelSize: 12
+                text: qsTr("Aucune autorisation en attente,\naucune connexion refusée récente.")
+                color: Theme.dashboardInkTertiary
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
+                horizontalAlignment: Text.AlignHCenter
                 Layout.alignment: Qt.AlignHCenter
             }
+        }
+    }
+
+    // Badge d'urgence - voile + texte, jamais un aplat.
+    component UrgencyBadge: Rectangle {
+        property string label: ""
+        property color soft: "transparent"
+        property color ink: Theme.ink
+
+        implicitWidth: badgeText.implicitWidth + 16
+        implicitHeight: 20
+        radius: Theme.radiusPill
+        color: soft
+
+        Label {
+            id: badgeText
+            anchors.centerIn: parent
+            text: parent.label
+            color: parent.ink
+            font.pixelSize: Theme.fs(11)
+            font.weight: Theme.weightSemibold
+            font.family: Theme.fontFamily
         }
     }
 }

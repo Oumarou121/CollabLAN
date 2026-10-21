@@ -61,6 +61,12 @@ Item {
     readonly property bool compactList: root.width < 900
 
     signal backRequested()
+
+    // Fil d'Ariane de la barre superieure globale (AppShell) :
+    // "Transferts / <correspondant ouvert>" ; un clic sur "Transferts"
+    // referme le correspondant sans quitter l'ecran.
+    readonly property string breadcrumbLeaf: root.currentGroup ? root.currentGroup.peerLabel : ""
+    function breadcrumbRootClicked() { root.openedPeerKey = "" }
     // Navigation Sidebar relayee comme dans HomeView (voir Main.qml).
     // "Vue d'ensemble" reutilise backRequested() : l'ecran est empile par-
     // dessus HomeView, y revenir est un simple pop().
@@ -85,9 +91,9 @@ Item {
         return qsTr("Connecté au serveur")
     }
     readonly property color serverStatusColorValue: {
-        if (!root.election) return "#2E9A66"
-        if (root.election.roleLabel === "TEMP_SERVER") return "#C27A0E"
-        return "#2E9A66"
+        if (!root.election) return Theme.successColor
+        if (root.election.roleLabel === "TEMP_SERVER") return Theme.warningColor
+        return Theme.successColor
     }
     readonly property int activeTransferCount: {
         const all = root.context ? (root.context.activeTransfers || []) : []
@@ -894,54 +900,21 @@ Item {
 
                 ColumnLayout {
                 id: pageColumn
-                x: 24
-                width: pageScroll.width - 48
+                x: Theme.pagePadding
+                width: pageScroll.width - 2 * Theme.pagePadding
                 spacing: 0
 
-                // ---- Titre de page (meme rythme que "Bonjour, ..." du Dashboard) ----
-                Item {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 62
-                    Layout.topMargin: 8
+                // ---- En-tete de page (composant standard) ----
+                AppHeader {
+                    sidePadding: 0
+                    title: qsTr("Transferts")
+                    subtitle: qsTr("Envoyez des fichiers aux postes du réseau local et suivez leur progression.")
 
-                    ColumnLayout {
-                        anchors.left: parent.left
-                        anchors.right: newTransferBtn.left
-                        anchors.rightMargin: 16
-                        anchors.bottom: parent.bottom
-                        clip: true
-                        spacing: 5
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: qsTr("Transfert de fichiers")
-                            color: Theme.dashboardInk
-                            font.pixelSize: 26
-                            font.weight: Font.Bold
-                            font.family: Theme.fontFamily
-                            font.letterSpacing: -0.52
-                            lineHeight: 32
-                            lineHeightMode: Text.FixedHeight
-                            elide: Text.ElideRight
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            text: qsTr("Envoyez et suivez vos fichiers sur votre réseau local.")
-                            color: Theme.dashboardInkSecondary
-                            font.pixelSize: 14
-                            font.family: Theme.fontFamily
-                            elide: Text.ElideRight
-                        }
-                    }
-
-                    DashboardButton {
+                    AppButton {
                         id: newTransferBtn
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        variant: "primary"
-                        iconPath: Icons.plus
                         text: qsTr("Nouveau transfert")
+                        iconGlyph: ""
+                        variant: "primary"
                         onClicked: root.openPanel()
                     }
                 }
@@ -997,7 +970,7 @@ Item {
                             horizontalAlignment: Text.AlignHCenter
                             text: qsTr("Aucun transfert")
                             color: Theme.dashboardInk
-                            font.pixelSize: 14
+                            font.pixelSize: Theme.fs(14)
                             font.weight: Font.Bold
                             font.family: Theme.fontFamily
                         }
@@ -1007,7 +980,7 @@ Item {
                             wrapMode: Text.WordWrap
                             text: qsTr("Les fichiers envoyés et reçus apparaîtront ici.")
                             color: Theme.dashboardInkTertiary
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fs(12)
                             font.family: Theme.fontFamily
                         }
                         DashboardButton {
@@ -1031,86 +1004,21 @@ Item {
                     columnSpacing: 16
                     rowSpacing: 8
 
-                    // Filtres traités comme une navigation segmentée : un seul
-                    // "rail" (surfaceLevel2) portant les options, au lieu d'une
-                    // rangée de pills individuellement bordées (priorité 15 du
-                    // brief). Seul le filtre actif porte une pastille pleine ;
-                    // les autres restent du texte nu, sans contour.
-                    Row {
-                        Layout.fillWidth: true
-                        Layout.alignment: Qt.AlignVCenter
-                        spacing: 2
-                        padding: 3
-                        topPadding: 3
-
-                        Rectangle {
-                            anchors.fill: parent
-                            anchors.margins: -3
-                            radius: Theme.radiusPill
-                            color: Theme.surfaceLevel2
-                            z: -1
-                        }
-
-                        Repeater {
-                            model: [
-                                { key: "all",      label: qsTr("Tous") },
-                                { key: "active",   label: qsTr("En cours") },
-                                { key: "received", label: qsTr("Reçus") },
-                                { key: "sent",     label: qsTr("Envoyés") },
-                                { key: "failed",   label: qsTr("Échoués") }
-                            ]
-
-                            delegate: Rectangle {
-                                id: chip
-                                readonly property bool isActive: root.activeFilter === modelData.key
-                                readonly property bool hovered: chipMouse.containsMouse
-                                readonly property int count: root.filterCounts[modelData.key]
-                                // Texte sur fond primaire (primaryText de la maquette, clair et sombre).
-                                readonly property color activeText: Theme.darkMode ? Theme.dashboardBackground
-                                                                                   : Theme.dashboardPrimaryText
-
-                                height: 26
-                                width: chipRow.implicitWidth + 20
-                                radius: Theme.radiusPill
-                                color: chip.isActive ? Theme.dashboardPrimary
-                                       : (chip.hovered ? Theme.surfaceLevel3 : "transparent")
-                                Behavior on color { ColorAnimation { duration: 100 } }
-
-                                Accessible.role: Accessible.Button
-                                Accessible.name: modelData.label
-
-                                Row {
-                                    id: chipRow
-                                    anchors.centerIn: parent
-                                    spacing: 6
-
-                                    Label {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: modelData.label
-                                        color: chip.isActive ? chip.activeText : Theme.dashboardInkSecondary
-                                        font.pixelSize: 12
-                                        font.weight: chip.isActive ? Font.DemiBold : Font.Medium
-                                        font.family: Theme.fontFamily
-                                    }
-                                    Label {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: chip.count
-                                        opacity: chip.isActive ? 0.75 : 1
-                                        color: chip.isActive ? chip.activeText : Theme.dashboardInkTertiary
-                                        font.pixelSize: 11
-                                        font.family: Theme.fontFamily
-                                    }
-                                }
-
-                                MouseArea {
-                                    id: chipMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.activeFilter = modelData.key
-                                }
-                            }
-                        }
+                    // Filtres : controle segmente du design system, avec le
+                    // nombre d'elements de chaque categorie.
+                    AppSegmentedControl {
+                        Layout.alignment: Qt.AlignVCenter | Qt.AlignLeft
+                        stretch: false
+                        readonly property var keys: ["all", "active", "received", "sent", "failed"]
+                        model: [
+                            { label: qsTr("Tous"),     count: root.filterCounts["all"] },
+                            { label: qsTr("En cours"), count: root.filterCounts["active"] },
+                            { label: qsTr("Reçus"),    count: root.filterCounts["received"] },
+                            { label: qsTr("Envoyés"),  count: root.filterCounts["sent"] },
+                            { label: qsTr("Échoués"),  count: root.filterCounts["failed"] }
+                        ]
+                        currentIndex: Math.max(0, keys.indexOf(root.activeFilter))
+                        onActivated: function(index) { root.activeFilter = keys[index] }
                     }
 
                     RowLayout {
@@ -1149,7 +1057,7 @@ Item {
                                     text: root.searchText
                                     onTextChanged: root.searchText = text
                                     color: Theme.dashboardInk
-                                    font.pixelSize: 12
+                                    font.pixelSize: Theme.fs(12)
                                     font.family: Theme.fontFamily
                                     selectByMouse: true
                                     leftPadding: 0
@@ -1214,14 +1122,14 @@ Item {
                     Label {
                         text: qsTr("Correspondants")
                         color: Theme.dashboardInk
-                        font.pixelSize: 15
+                        font.pixelSize: Theme.fs(15)
                         font.weight: Font.Bold
                         font.family: Theme.fontFamily
                     }
                     Label {
                         text: root.filteredPeerGroups.length
                         color: Theme.dashboardInkTertiary
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fs(12)
                         font.family: Theme.fontFamily
                     }
 
@@ -1297,14 +1205,14 @@ Item {
                     Label {
                         text: qsTr("Transferts")
                         color: Theme.dashboardInk
-                        font.pixelSize: 15
+                        font.pixelSize: Theme.fs(15)
                         font.weight: Font.Bold
                         font.family: Theme.fontFamily
                     }
                     Label {
                         text: qsTr("%1 en cours").arg(root.activeTransferCount)
                         color: Theme.dashboardInkTertiary
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fs(12)
                         font.family: Theme.fontFamily
                     }
 
@@ -1326,7 +1234,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: root.currentGroup ? root.currentGroup.peerLabel : ""
                                 color: Theme.dashboardPrimary
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fs(12)
                                 font.weight: Font.DemiBold
                                 font.family: Theme.fontFamily
                                 elide: Text.ElideRight
@@ -1350,7 +1258,7 @@ Item {
                         visible: !page.narrow && root.totalTransferredBytes > 0
                         text: qsTr("%1 transférés").arg(root.formatBytes(root.totalTransferredBytes))
                         color: Theme.dashboardInkTertiary
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fs(12)
                         font.family: Theme.fontFamily
                     }
                 }
@@ -1398,7 +1306,7 @@ Item {
                                 Layout.leftMargin: 44
                                 text: qsTr("Nom")
                                 color: Theme.dashboardInkTertiary
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fs(11)
                                 font.weight: Font.DemiBold
                                 font.family: Theme.fontFamily
                             }
@@ -1407,7 +1315,7 @@ Item {
                                 Layout.preferredWidth: tablePanel.sizeColumnWidth
                                 text: qsTr("Taille")
                                 color: Theme.dashboardInkTertiary
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fs(11)
                                 font.weight: Font.DemiBold
                                 font.family: Theme.fontFamily
                             }
@@ -1415,7 +1323,7 @@ Item {
                                 Layout.preferredWidth: tablePanel.statusColumnWidth
                                 text: qsTr("Statut")
                                 color: Theme.dashboardInkTertiary
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fs(11)
                                 font.weight: Font.DemiBold
                                 font.family: Theme.fontFamily
                             }
@@ -1424,7 +1332,7 @@ Item {
                                 Layout.preferredWidth: tablePanel.dateColumnWidth
                                 text: qsTr("Date")
                                 color: Theme.dashboardInkTertiary
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fs(11)
                                 font.weight: Font.DemiBold
                                 font.family: Theme.fontFamily
                             }
@@ -1549,7 +1457,7 @@ Item {
                                             Layout.fillWidth: true
                                             text: model.fileName
                                             color: Theme.dashboardInk
-                                            font.pixelSize: 12
+                                            font.pixelSize: Theme.fs(12)
                                             font.weight: Font.Bold
                                             font.family: Theme.fontFamily
                                             elide: Text.ElideRight
@@ -1564,7 +1472,7 @@ Item {
                                             Layout.fillWidth: true
                                             text: root.formatBytes(model.totalBytes) + " · " + model.peerLabel
                                             color: Theme.dashboardInkTertiary
-                                            font.pixelSize: 11
+                                            font.pixelSize: Theme.fs(11)
                                             font.family: Theme.fontFamily
                                             elide: Text.ElideRight
                                             maximumLineCount: 1
@@ -1635,7 +1543,7 @@ Item {
                                     horizontalAlignment: Text.AlignHCenter
                                     text: qsTr("Aucun transfert ne correspond")
                                     color: Theme.dashboardInk
-                                    font.pixelSize: 14
+                                    font.pixelSize: Theme.fs(14)
                                     font.weight: Font.Bold
                                     font.family: Theme.fontFamily
                                 }
@@ -1645,7 +1553,7 @@ Item {
                                     wrapMode: Text.WordWrap
                                     text: qsTr("Modifiez la recherche ou les filtres.")
                                     color: Theme.dashboardInkTertiary
-                                    font.pixelSize: 12
+                                    font.pixelSize: Theme.fs(12)
                                     font.family: Theme.fontFamily
                                 }
                                 DashboardButton {
@@ -1716,7 +1624,7 @@ Item {
                     Label {
                         text: qsTr("Déposez vos fichiers pour les envoyer")
                         color: Theme.dashboardPrimary
-                        font.pixelSize: 16
+                        font.pixelSize: Theme.fs(16)
                         font.weight: Font.Bold
                         font.family: Theme.fontFamily
                     }

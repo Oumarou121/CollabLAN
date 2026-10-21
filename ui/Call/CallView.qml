@@ -57,11 +57,11 @@ Item {
     // ---- Historique : formatage / libelles --------------------------------
     function statusLabel(status) {
         switch (status) {
-        case "completed": return qsTr("Termine")
-        case "missed": return qsTr("Manque")
-        case "rejected": return qsTr("Refuse")
-        case "cancelled": return qsTr("Annule")
-        case "failed": return qsTr("Echoue")
+        case "completed": return qsTr("Terminé")
+        case "missed": return qsTr("Manqué")
+        case "rejected": return qsTr("Refusé")
+        case "cancelled": return qsTr("Annulé")
+        case "failed": return qsTr("Échoué")
         default: return qsTr("En cours")
         }
     }
@@ -128,7 +128,7 @@ Item {
             id: errorLabel
             anchors.centerIn: parent
             width: parent.width - Theme.spacingLarge * 2
-            color: "#FFFFFF"
+            color: Theme.inkOnDanger
             font.pixelSize: Theme.fontSizeSmall
             font.family: Theme.fontFamily
             horizontalAlignment: Text.AlignHCenter
@@ -154,24 +154,12 @@ Item {
 
         AppHeader {
             title: qsTr("Appels")
+            subtitle: qsTr("Appels vocaux de poste à poste sur le réseau local, sans passer par Internet.")
             onBackRequested: root.backRequested()
 
-            Rectangle {
-                Layout.preferredWidth: peersCountLabel.implicitWidth + Theme.spacingMedium * 2
-                Layout.preferredHeight: 28
-                radius: Theme.radiusPill
-                color: Theme.surfaceAlt
-                border.color: Theme.border
-                border.width: 1
-
-                Label {
-                    id: peersCountLabel
-                    anchors.centerIn: parent
-                    text: root.peers ? qsTr("%n poste(s) en ligne", "", root.peers.count) : qsTr("0 poste")
-                    color: Theme.textSecondary
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.family: Theme.fontFamily
-                }
+            StatusBadge {
+                text: root.peers ? (root.peers.count === 1 ? qsTr("1 poste joignable") : qsTr("%1 postes joignables").arg(root.peers.count)) : qsTr("Aucun poste")
+                tone: root.peers && root.peers.count > 0 ? "success" : "neutral"
             }
         }
 
@@ -183,10 +171,10 @@ Item {
 
             ColumnLayout {
                 id: contentColumn
-                width: Math.min(parent.width - 2 * Theme.spacingXl, 1200)
-                height: parent.height - 2 * Theme.spacingLarge
-                x: (parent.width - width) / 2
-                y: Theme.spacingLarge
+                width: parent.width - 2 * Theme.pagePadding
+                height: parent.height - Theme.pagePadding
+                x: Theme.pagePadding
+                y: 0
                 spacing: 0
 
                 GridLayout {
@@ -205,9 +193,9 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        radius: Theme.radiusLarge
-                        color: Theme.surface
-                        border.color: Theme.border
+                        radius: Theme.radiusCard
+                        color: Theme.surface0
+                        border.color: Theme.line
                         border.width: 1
                         clip: true
 
@@ -232,7 +220,7 @@ Item {
                                         anchors.centerIn: parent
                                         text: "\uf0c0"
                                         font.family: root.iconFontFamily
-                                        font.pixelSize: 13
+                                        font.pixelSize: Theme.fs(13)
                                         color: Theme.primary
                                     }
                                 }
@@ -253,32 +241,13 @@ Item {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
 
-                                ColumnLayout {
+                                EmptyState {
                                     anchors.centerIn: parent
-                                    spacing: Theme.spacingSmall
-                                    visible: contactsListView.count === 0
                                     width: parent.width * 0.8
-
-                                    Label {
-                                        Layout.alignment: Qt.AlignHCenter
-                                        text: qsTr("Aucun poste detecte pour le moment")
-                                        font.pixelSize: Theme.fontSizeBody
-                                        font.bold: true
-                                        font.family: Theme.fontFamily
-                                        color: Theme.text
-                                        horizontalAlignment: Text.AlignHCenter
-                                    }
-
-                                    Label {
-                                        Layout.alignment: Qt.AlignHCenter
-                                        Layout.fillWidth: true
-                                        text: qsTr("Choisissez un poste des que quelqu'un est detecte pour l'appeler.")
-                                        color: Theme.textSecondary
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        font.family: Theme.fontFamily
-                                        horizontalAlignment: Text.AlignHCenter
-                                        wrapMode: Text.WordWrap
-                                    }
+                                    visible: contactsListView.count === 0
+                                    iconName: "peers"
+                                    title: qsTr("Aucun poste détecté pour le moment")
+                                    description: qsTr("Les postes du réseau local apparaissent ici dès qu'ils sont détectés.")
                                 }
 
                                 ListView {
@@ -312,10 +281,12 @@ Item {
                                             spacing: Theme.spacingMedium
 
                                             Avatar {
-                                                name: name
+                                                // model.name et non `name` : a l'interieur d'Avatar, `name`
+                                                // designe sa propre propriete (auto-liaison, nom vide).
+                                                name: model.name
+                                                status: model.status || "online"
                                                 size: 42
                                                 showStatus: true
-                                                online: true
                                             }
 
                                             ColumnLayout {
@@ -367,9 +338,9 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        radius: Theme.radiusLarge
-                        color: Theme.surface
-                        border.color: Theme.border
+                        radius: Theme.radiusCard
+                        color: Theme.surface0
+                        border.color: Theme.line
                         border.width: 1
                         clip: true
 
@@ -394,13 +365,13 @@ Item {
                                         anchors.centerIn: parent
                                         text: "\uf1da"
                                         font.family: root.iconFontFamily
-                                        font.pixelSize: 13
+                                        font.pixelSize: Theme.fs(13)
                                         color: Theme.primary
                                     }
                                 }
 
                                 Label {
-                                    text: qsTr("Recents")
+                                    text: qsTr("Récents")
                                     font.pixelSize: Theme.fontSizeSubheading
                                     font.bold: true
                                     font.family: Theme.fontFamily
@@ -426,32 +397,13 @@ Item {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
 
-                                ColumnLayout {
+                                EmptyState {
                                     anchors.centerIn: parent
-                                    spacing: Theme.spacingSmall
-                                    visible: recentsListView.count === 0
                                     width: parent.width * 0.8
-
-                                    Label {
-                                        Layout.alignment: Qt.AlignHCenter
-                                        text: qsTr("Aucun appel dans l'historique")
-                                        font.pixelSize: Theme.fontSizeBody
-                                        font.bold: true
-                                        font.family: Theme.fontFamily
-                                        color: Theme.text
-                                        horizontalAlignment: Text.AlignHCenter
-                                    }
-
-                                    Label {
-                                        Layout.alignment: Qt.AlignHCenter
-                                        Layout.fillWidth: true
-                                        text: qsTr("Vos appels emis et recus apparaitront ici automatiquement.")
-                                        color: Theme.textSecondary
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        font.family: Theme.fontFamily
-                                        horizontalAlignment: Text.AlignHCenter
-                                        wrapMode: Text.WordWrap
-                                    }
+                                    visible: recentsListView.count === 0
+                                    iconName: "call"
+                                    title: qsTr("Aucun appel dans l'historique")
+                                    description: qsTr("Vos appels émis et reçus apparaîtront ici automatiquement.")
                                 }
 
                                 ListView {
@@ -500,9 +452,9 @@ Item {
                                                         anchors.centerIn: parent
                                                         text: root.directionGlyph(direction)
                                                         rotation: root.directionRotation(direction)
-                                                        color: "#FFFFFF"
+                                                        color: Theme.inkOnDanger
                                                         font.family: root.iconFontFamily
-                                                        font.pixelSize: 8
+                                                        font.pixelSize: Theme.fs(8)
                                                     }
                                                 }
                                             }

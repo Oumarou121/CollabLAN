@@ -32,6 +32,10 @@ Item {
     property string currentConversationName: ""
 
     signal backRequested()
+
+    // Fil d Ariane global (AppShell) : "Discussions / <conversation>".
+    readonly property string breadcrumbLeaf: chatPanel.visible ? chatPanel.displayName : ""
+    function breadcrumbRootClicked() { root.currentConversationId = null }
     signal newConversationRequested()
     signal createGroupRequested()
 
@@ -85,7 +89,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.background
+        color: Theme.surface0
     }
 
     RowLayout {
@@ -100,7 +104,7 @@ Item {
             Layout.fillHeight: true
 
             messagingContext: root.messagingContext
-            showBackButton: true
+            showBackButton: false
             compactActions: true
             selectedConversationId: root.currentConversationId
 
@@ -117,18 +121,10 @@ Item {
         // Separateur vertical entre les deux panneaux -- ombre douce plutot
         // qu'un filet 1px plein, pour rester coherent avec le reste du
         // module chat (header/zone de saisie/cartes de conversation).
-        Item {
-            Layout.preferredWidth: 8
+        Rectangle {
+            Layout.preferredWidth: 1
             Layout.fillHeight: true
-
-            Rectangle {
-                anchors.fill: parent
-                gradient: Gradient {
-                    orientation: Gradient.Horizontal
-                    GradientStop { position: 0.0; color: Theme.shadowSoft }
-                    GradientStop { position: 1.0; color: "transparent" }
-                }
-            }
+            color: Theme.line
         }
 
         // Panneau de droite : conversation active, ou etat vide si rien
@@ -154,49 +150,18 @@ Item {
             // Etat vide : invite a choisir une conversation, plutot qu'un
             // panneau de droite completement vide et silencieux au premier
             // lancement du workspace.
-            ColumnLayout {
+            EmptyState {
                 anchors.centerIn: parent
-                width: parent.width * 0.6
-                spacing: Theme.spacingMedium
+                width: Math.min(parent.width - 48, 420)
+                height: 260
                 visible: !chatPanel.visible
-
-                Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    width: 88
-                    height: 88
-                    radius: 44
-                    color: Theme.primaryMuted
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "\uf0e0"
-                        font.family: root.iconFontFamily
-                        font.pixelSize: 36
-                        color: Theme.primary
-                    }
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignHCenter
-                    horizontalAlignment: Text.AlignHCenter
-                    text: qsTr("Selectionnez une conversation")
-                    font.pixelSize: Theme.fontSizeHeading
-                    font.bold: true
-                    font.family: Theme.fontFamily
-                    color: Theme.text
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignHCenter
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.WordWrap
-                    text: qsTr("Choisissez une discussion dans la liste de gauche, ou demarrez-en une nouvelle pour commencer a echanger.")
-                    font.pixelSize: Theme.fontSizeBody
-                    font.family: Theme.fontFamily
-                    color: Theme.textSecondary
-                }
+                iconName: "chat"
+                title: qsTr("Sélectionnez une conversation")
+                description: qsTr("Choisissez une discussion dans la liste, ou démarrez-en une nouvelle avec un collègue du réseau local.")
+                actionText: qsTr("Nouvelle conversation")
+                secondaryActionText: qsTr("Nouveau groupe")
+                onActionClicked: root.newConversationRequested()
+                onSecondaryActionClicked: root.createGroupRequested()
             }
         }
     }

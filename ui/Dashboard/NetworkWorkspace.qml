@@ -48,6 +48,14 @@ Rectangle {
     // apparaît à la jonction. Par défaut : arrondi sur les deux côtés.
     property real leftRadius: Theme.radiusMedium
     property real rightRadius: Theme.radiusMedium
+    // Rayons par coin, dérivés de leftRadius/rightRadius par défaut mais
+    // surchargeables individuellement (ex. HomeView.qml carre les coins bas
+    // quand le panneau « À traiter » est affiché juste en dessous, en
+    // résolution réduite, plutôt qu'accolé sur le côté).
+    property real cornerTopLeftRadius: leftRadius
+    property real cornerTopRightRadius: rightRadius
+    property real cornerBottomLeftRadius: leftRadius
+    property real cornerBottomRightRadius: rightRadius
 
     // Mode de validation visuelle (doc §37) : désactivé par défaut, ne doit
     // jamais être activé en production.
@@ -56,6 +64,32 @@ Rectangle {
     // Mode demo : utilise les données de la maquette HTML pour validation
     property bool demoMode: false
     property string viewMode: "map"
+    // false quand l hote (carte "Reseau local" du tableau de bord) porte
+    // deja le titre et le choix Carte / Liste dans son en-tete.
+    property bool showChrome: true
+    // Options du tableau de bord "supervision" (par defaut : comportement
+    // d'origine inchange).
+    // showLegend    : legende interne (la page peut afficher ses propres filtres).
+    // inlineDetails : panneau de details flottant sur la carte ; a false, la
+    //                 selection est exploitee par un panneau exterieur et un
+    //                 clic sur le fond ne la retire pas.
+    // offlineSelectable : les postes hors ligne sont aussi selectionnables.
+    // hiddenStatuses : etats masques sur la carte (online, away, busy,
+    //                  transferring, calling, offline).
+    property bool showLegend: true
+    property bool inlineDetails: true
+    property bool offlineSelectable: false
+    property var hiddenStatuses: []
+    // preferTopOffline : postes hors ligne places de preference sur la moitie
+    // haute de l'orbite (le bas reste libre pour l'etiquette du hub).
+    // bottomReserve : marge basse reservee (legende, texte d'aide...).
+    // mapBackground : fond uni a la place du degrade (transparent = degrade).
+    // maxScale : agrandissement maximal des orbites quand la place le permet.
+    property bool preferTopOffline: false
+    property real bottomReserve: showLegend ? 40 : 0
+    property color mapBackground: "transparent"
+    property real maxScale: 1
+    function statusHidden(s) { return root.hiddenStatuses.indexOf(s) >= 0 }
 
     // Données de démo de la maquette HTML
     property var demoPeers: [
@@ -96,11 +130,15 @@ Rectangle {
     readonly property real refIry: 104
     readonly property real refOrx: 312
     readonly property real refOry: 138
-    readonly property real fitY: Math.max(0.6, Math.min(1,
-            Math.min(cy - 47, height - 83 - cy) / refOry))
-    readonly property real irx: refIrx
+    readonly property real fitY: Math.max(0.6, Math.min(root.maxScale, root.fitX,
+            Math.min(cy - 47, height - 43 - root.bottomReserve - cy) / refOry))
+    // Horizontalement : rayons de reference tant que l'orbite exterieure et
+    // ses etiquettes (60 px de part et d'autre) tiennent ; en dessous, les
+    // orbites se resserrent (jamais sous 75 %) plutot que d'etre rognees.
+    readonly property real fitX: Math.max(0.75, Math.min(root.maxScale, (width / 2 - 64) / refOrx))
+    readonly property real irx: refIrx * fitX
     readonly property real iry: refIry * fitY
-    readonly property real orx: refOrx
+    readonly property real orx: refOrx * fitX
     readonly property real ory: refOry * fitY
 
     property string selectedId: ""
@@ -191,9 +229,16 @@ Rectangle {
     // deux arcs, à droite et à gauche du hub, à égale distance le long de
     // l'ellipse. L'axe vertical n'est utilisé que si la place manque.
     // Tailles (px) d'un poste : icône + libellés ; hub : halo + libellés.
-    readonly property real peerBoxW: 80
-    readonly property real peerBoxH: 67
-    readonly property real peerBoxDy: 16.5   // centre de la boîte sous le centre de l'icône
+    // Refonte 2026 : l'etiquette d'un poste passe de 86 a 120 px (plus
+    // d'elision sur "PC-COMMERCIAL-04"), donc la boite de collision
+    // s'elargit d'autant - sinon deux postes voisins se chevauchent.
+    // Boite de collision d'un poste : noeud (34 px) + etiquette sur deux
+    // lignes au maximum + statut. Largeur alignee sur NetworkPeer (148 px,
+    // moins la marge de 8). Hauteur : -17 (haut du noeud) a +65 sous son
+    // centre, soit 82, centree 24 px sous le centre de l'icone.
+    readonly property real peerBoxW: 140
+    readonly property real peerBoxH: 82
+    readonly property real peerBoxDy: 24   // centre de la boîte sous le centre de l'icône
     readonly property real hubBoxW: 92
     readonly property real hubBoxH: 120
     readonly property real hubBoxDy: 16
@@ -277,10 +322,43 @@ Rectangle {
     // Ils vont donc naturellement dans les vides, souvent en haut et en bas.
     function offlineAngles(m, orx, ory, fixedItems) {
         var placed = [root.hubBox()].concat(fixedItems)
+        // Preference "haut" : repartition reguliere sur l'arc superieur (2 postes
+        // en haut a gauche et a droite, comme la maquette), si aucun poste ne
+        // s'y chevauche ; sinon placement glouton ci-dessous.
+        // minBoxGap est un rapport : >= 1 signifie "aucun recouvrement".
+        if (root.preferTopOffline && m > 0) {
+            var steps = m > 1 ? [44, 36, 52, 60, 28, 68] : [0]
+            for (var si = 0; si < steps.length; si++) {
+                var step = Math.min(steps[si], m > 1 ? 150 / (m - 1) : 0)
+                var spread = []
+                var tmp = placed.slice()
+                var ok = true
+                for (var t = 0; t < m; t++) {
+                    var at = -90 + (t - (m - 1) / 2) * step
+                    var rt = at * Math.PI / 180
+                    var it = root.boxItem(orx * Math.cos(rt), ory * Math.sin(rt))
+                    if (root.minBoxGap(it, tmp) < 1) { ok = false; break }
+                    tmp.push(it)
+                    spread.push(at)
+                }
+                if (ok)
+                    return spread
+            }
+        }
         var out = []
         for (var i = 0; i < m; i++) {
             var bestA = -90
             var bestS = -1
+            // Moitie haute d'abord (si demandee et assez degagee).
+            if (root.preferTopOffline) {
+                for (var u = 0; u <= 180; u += 6) {
+                    var au = -180 + u
+                    var ru = au * Math.PI / 180
+                    var su = root.minBoxGap(root.boxItem(orx * Math.cos(ru), ory * Math.sin(ru)), placed)
+                    if (su > bestS + 1e-6) { bestS = su; bestA = au }
+                }
+            }
+            if (!root.preferTopOffline || bestS < 1)
             for (var d = 0; d < 360; d += 6) {
                 var a = -90 + d
                 var r = a * Math.PI / 180
@@ -410,8 +488,20 @@ Rectangle {
         return list
     }
 
-    function selectedPeer() { return root.livePeer(root.selectedId) }
-    function hoveredPeer() { return root.livePeer(root.hoveredId) }
+    // Poste (present ou, si offlineSelectable, hors ligne) par identifiant.
+    function peerById(id) {
+        const live = root.livePeer(id)
+        if (live || !root.offlineSelectable) return live
+        for (var i = 0; i < root.offlinePeersPositioned.length; i++) {
+            const o = root.offlinePeersPositioned[i]
+            if (o.id === id)
+                return { id: o.id, name: o.name, address: o.address, userUuid: "",
+                         userName: "", status: "offline", direction: "", transfer: null, x: o.x, y: o.y }
+        }
+        return null
+    }
+    function selectedPeer() { return root.peerById(root.selectedId) }
+    function hoveredPeer() { return root.peerById(root.hoveredId) }
 
     function clearSelection() { root.selectedId = "" }
 
@@ -469,7 +559,8 @@ Rectangle {
     onViewModeChanged: {
         if (root.viewMode !== "map") {
             root.hoveredId = ""
-            root.clearSelection()
+            if (root.inlineDetails)
+                root.clearSelection()
         }
     }
 
@@ -483,10 +574,10 @@ Rectangle {
         // Coins arrondis alignés sur la surface englobante (HomeView.qml) :
         // sans ces rayons, ce fond opaque recouvrirait les coins arrondis du
         // conteneur parent et les rendrait carrés. Côté « À traiter » : 0.
-        topLeftRadius: root.leftRadius
-        bottomLeftRadius: root.leftRadius
-        topRightRadius: root.rightRadius
-        bottomRightRadius: root.rightRadius
+        topLeftRadius: root.cornerTopLeftRadius
+        bottomLeftRadius: root.cornerBottomLeftRadius
+        topRightRadius: root.cornerTopRightRadius
+        bottomRightRadius: root.cornerBottomRightRadius
         // Les 2 arrets etaient restes en hex clair fige : la surface reseau
         // ne changeait quasiment pas en mode sombre. Repris avec les jetons
         // Theme.dashboardXxx deja definis (meme hierarchie surface -> surface
@@ -496,6 +587,16 @@ Rectangle {
             GradientStop { position: 0.7; color: Theme.dashboardSurfaceAlt }
             GradientStop { position: 1.0; color: Theme.dashboardBackground }
         }
+    }
+    // Fond uni optionnel (mapBackground), par-dessus le degrade.
+    Rectangle {
+        anchors.fill: parent
+        visible: root.mapBackground.a > 0
+        color: root.mapBackground
+        topLeftRadius: root.cornerTopLeftRadius
+        bottomLeftRadius: root.cornerBottomLeftRadius
+        topRightRadius: root.cornerTopRightRadius
+        bottomRightRadius: root.cornerBottomRightRadius
     }
 
     // Grille de points 22×22, masque radial - CSS :
@@ -537,26 +638,27 @@ Rectangle {
     Column {
         x: 20
         y: 16
-        visible: root.viewMode === "map"
+        visible: root.showChrome && root.viewMode === "map"
         spacing: 2
 
         Label {
             text: qsTr("Réseau local")
             color: Theme.dashboardInk
-            font.pixelSize: 15
+            font.pixelSize: Theme.fs(15)
             font.bold: true
             font.family: Theme.fontFamily
         }
         Label {
             text: qsTr("Postes détectés autour de ce poste, disposition indicative")
             color: Theme.dashboardInkTertiary
-            font.pixelSize: 12
+            font.pixelSize: Theme.fs(12)
             font.family: Theme.fontFamily
         }
     }
 
     // Contrôle segmenté Carte/Liste - right 16, top 14 (visible dans les deux modes)
     Row {
+        visible: root.showChrome
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.topMargin: 14
@@ -575,7 +677,7 @@ Rectangle {
                 anchors.centerIn: parent
                 text: qsTr("Carte")
                 color: root.viewMode === "map" ? Theme.dashboardSurface : Theme.dashboardInkSecondary
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.bold: true
                 font.family: Theme.fontFamily
             }
@@ -601,7 +703,7 @@ Rectangle {
                 anchors.centerIn: parent
                 text: qsTr("Liste")
                 color: root.viewMode === "list" ? Theme.dashboardSurface : Theme.dashboardInkSecondary
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.bold: true
                 font.family: Theme.fontFamily
             }
@@ -629,12 +731,12 @@ Rectangle {
             // Context2D de Qt Quick : ellipse(x, y, w, h) prend le rectangle
             // ENGLOBANT (coin haut-gauche + largeur/hauteur), et non
             // (cx, cy, rx, ry) comme en HTML5.
-            ctx.strokeStyle = Theme.darkMode ? "#3B5057" : "#B9CBCF"
+            ctx.strokeStyle = Theme.dashboardOrbitInner
             ctx.beginPath()
             ctx.ellipse(root.cx - root.irx, root.cy - root.iry, 2 * root.irx, 2 * root.iry)
             ctx.stroke()
 
-            ctx.strokeStyle = Theme.darkMode ? "#2C3F45" : "#CBD6D8"
+            ctx.strokeStyle = Theme.dashboardOrbitOuter
             ctx.beginPath()
             ctx.ellipse(root.cx - root.orx, root.cy - root.ory, 2 * root.orx, 2 * root.ory)
             ctx.stroke()
@@ -655,7 +757,9 @@ Rectangle {
         anchors.fill: parent
         anchors.topMargin: 0
         visible: root.viewMode === "list"
-        peers: root.effectivePeers
+        topSpacing: root.showChrome ? 50 : 0
+        // Etats effectifs (transfert, appel), comme sur la carte.
+        peers: root.demoMode ? root.effectivePeers : root.presentPeers
         offlinePeers: root.effectiveOfflinePeers
         localPeerName: root.localPeerName
         localPeerStatusLabel: root.localPeerStatusLabel
@@ -679,7 +783,7 @@ Rectangle {
         property real dashPhase: 0
 
         NumberAnimation on dashPhase {
-            from: 0; to: 13; duration: 3400
+            from: 0; to: 11; duration: 3400
             loops: Animation.Infinite
             running: true
         }
@@ -687,6 +791,7 @@ Rectangle {
         Connections {
             target: root
             function onPresentPeersChanged() { connectionsCanvas.requestPaint() }
+            function onHiddenStatusesChanged() { connectionsCanvas.requestPaint() }
         }
 
         function curveFor(px, py, idx) {
@@ -754,25 +859,29 @@ Rectangle {
             for (var i = 0; i < list.length; i++) {
                 var n = list[i]
                 if (n.status !== "transferring" && n.status !== "calling") continue
+                if (root.statusHidden(n.status)) continue
                 var q = curveFor(n.x, n.y, n.index)
                 ctx.beginPath()
                 ctx.moveTo(root.cx, root.cy)
                 ctx.quadraticCurveTo(q.qx, q.qy, n.x, n.y)
                 if (n.status === "transferring") {
                     var reverse = n.direction === qsTr("Réception")
-                    ctx.strokeStyle = Theme.dashboardPrimary
-                    ctx.lineWidth = 1.6
-                    ctx.globalAlpha = 0.75
-                    ctx.setLineDash([3, 10])
+                    // Couleur de la marque "transfert" (meme teinte que la pastille du
+                    // noeud), tirets 6/5 de la maquette retenue.
+                    ctx.strokeStyle = Theme.dashboardMarkTransfer
+                    ctx.lineWidth = 1.8
+                    ctx.globalAlpha = 0.9
+                    ctx.setLineDash([6, 5])
                     ctx.lineDashOffset = reverse ? dashPhase : -dashPhase
                     ctx.stroke()
                     var arrowLen = Math.max(1, Math.hypot(n.x - root.cx, n.y - root.cy))
-                    drawArrow(ctx, q, n, arrowParam(n.x, n.y, arrowLen), !reverse, Theme.dashboardPrimary)
+                    drawArrow(ctx, q, n, arrowParam(n.x, n.y, arrowLen), !reverse, Theme.dashboardMarkTransfer)
                 } else {
                     ctx.strokeStyle = Theme.dashboardCall
                     ctx.lineWidth = 1.8
-                    ctx.globalAlpha = 0.85
-                    ctx.setLineDash([])
+                    ctx.globalAlpha = 0.9
+                    ctx.setLineDash([6, 5])
+                    ctx.lineDashOffset = -dashPhase
                     ctx.stroke()
                 }
                 ctx.globalAlpha = 1
@@ -802,14 +911,14 @@ Rectangle {
             anchors.centerIn: parent
             width: 50; height: 50; radius: 25
             gradient: Gradient {
-                GradientStop { position: 0.0; color: "#1B7C93" }
+                GradientStop { position: 0.0; color: Theme.dashboardHubGradient }
                 GradientStop { position: 1.0; color: Theme.dashboardPrimary }
             }
             Label {
                 anchors.centerIn: parent
                 text: "\uf108"
                 color: Theme.dashboardSurface
-                font.pixelSize: 22
+                font.pixelSize: Theme.fs(22)
                 font.family: "FontAwesome"
             }
         }
@@ -819,7 +928,7 @@ Rectangle {
             anchors.topMargin: 4
             text: root.localPeerName
             color: Theme.dashboardInk
-            font.pixelSize: 12
+            font.pixelSize: Theme.fs(12)
             font.bold: true
             font.family: Theme.fontFamily
         }
@@ -829,7 +938,7 @@ Rectangle {
             anchors.topMargin: 17
             text: root.localPeerStatusLabel
             color: Theme.dashboardInkTertiary
-            font.pixelSize: 11
+            font.pixelSize: Theme.fs(11)
             font.family: Theme.fontFamily
         }
     }
@@ -845,7 +954,19 @@ Rectangle {
             label: modelData.name
             address: modelData.address
             status: "offline"
-            visible: root.viewMode === "map"
+            visible: root.viewMode === "map" && !root.statusHidden("offline")
+            selectable: root.offlineSelectable
+            isSelected: root.selectedId === modelData.id
+            isHovered: root.hoveredId === modelData.id
+            // Infobulle (nom complet) aussi pour un poste hors ligne.
+            onEntered: root.hoveredId = modelData.id
+            onExited: if (root.hoveredId === modelData.id) root.hoveredId = ""
+            onClicked: {
+                root.forceActiveFocus()
+                root.hoveredId = ""
+                root.selectedId = (root.selectedId === modelData.id && root.inlineDetails) ? "" : modelData.id
+                root.peerClicked(root.peerById(modelData.id))
+            }
         }
     }
 
@@ -866,7 +987,7 @@ Rectangle {
             label: modelData.name
             address: modelData.address
             status: live ? live.status : modelData.baseStatus
-            visible: root.viewMode === "map"
+            visible: root.viewMode === "map" && !root.statusHidden(peerDelegate.status)
             isSelected: root.selectedId === modelData.id
             isHovered: root.hoveredId === modelData.id
 
@@ -875,7 +996,8 @@ Rectangle {
             onClicked: {
                 root.forceActiveFocus()
                 root.hoveredId = ""
-                root.selectedId = (root.selectedId === modelData.id) ? "" : modelData.id
+                // Avec un panneau exterieur, un second clic garde la selection.
+                root.selectedId = (root.selectedId === modelData.id && root.inlineDetails) ? "" : modelData.id
                 root.peerClicked(peerDelegate.live || modelData)
             }
         }
@@ -904,14 +1026,18 @@ Rectangle {
                     Label {
                         text: peer ? peer.name : ""
                         color: Theme.dashboardSurface
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fs(12)
                         font.bold: true
                         font.family: Theme.fontFamily
                     }
                     Label {
                         text: peer ? (statusLabelFor(peer.status) + " · " + peer.address) : ""
-                        color: "#B3C2C8"
-                        font.pixelSize: 11
+                        // Ligne secondaire de l'infobulle : le fond est
+                        // dashboardInk (sombre en clair, clair en sombre), donc
+                        // la couleur de texte doit suivre la surface, atténuée.
+                        color: Theme.dashboardSurface
+                        opacity: 0.72
+                        font.pixelSize: Theme.fs(11)
                         font.family: Theme.fontFamily
                     }
                 }
@@ -934,7 +1060,7 @@ Rectangle {
     // droite si la place le permet, sinon gauche ; clamp vertical.
     Loader {
         id: detailsLoader
-        active: root.viewMode === "map" && root.selectedId.length > 0
+        active: root.viewMode === "map" && root.selectedId.length > 0 && root.inlineDetails
                 && root.selectedPeer() !== null
         z: 5
         sourceComponent: detailsComponent
@@ -982,12 +1108,14 @@ Rectangle {
         enabled: root.viewMode === "map"
         onClicked: {
             root.forceActiveFocus()
-            root.clearSelection()
+            if (root.inlineDetails)
+                root.clearSelection()
         }
     }
 
     // Légende - height 40
     Rectangle {
+        visible: root.showLegend
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -1000,8 +1128,8 @@ Rectangle {
         // haut de la légende touche la zone de grille, pas un coin).
         topLeftRadius: 0
         topRightRadius: 0
-        bottomLeftRadius: root.leftRadius
-        bottomRightRadius: root.rightRadius
+        bottomLeftRadius: root.cornerBottomLeftRadius
+        bottomRightRadius: root.cornerBottomRightRadius
         z: 6
 
         Rectangle {
@@ -1052,13 +1180,13 @@ Rectangle {
                             width: 8; height: 8; radius: 4
                             color: modelData.hasBorder ? "transparent" : modelData.color
                             border.width: modelData.hasBorder ? 1.5 : 0
-                            border.color: "#B4C1C5"
+                            border.color: Theme.dashboardNodeOfflineLine
                             anchors.verticalCenter: parent.verticalCenter
                         }
                         Label {
                             text: modelData.label
                             color: Theme.dashboardInkSecondary
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fs(12)
                             font.bold: true
                             font.family: Theme.fontFamily
                             anchors.verticalCenter: parent.verticalCenter
@@ -1066,7 +1194,7 @@ Rectangle {
                         Label {
                             text: modelData.count
                             color: Theme.dashboardInkTertiary
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fs(12)
                             font.weight: Font.Medium
                             font.family: Theme.fontFamily
                             anchors.verticalCenter: parent.verticalCenter
@@ -1106,7 +1234,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: modelData.t
                     color: Theme.dashboardSurface
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fs(10)
                     font.family: Theme.fontFamily
                 }
                 MouseArea {

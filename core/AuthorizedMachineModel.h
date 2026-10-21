@@ -31,12 +31,28 @@ public:
         AddedAtRole,
         ReasonRole
     };
-    // Expose les valeurs de l'enum comme proprietes accessibles depuis QML
-    // (ex. authorizedMachineModel.AuthorizedRole) : sans Q_ENUM, ces
-    // accesseurs valent "undefined" cote QML et data() retombe alors
-    // silencieusement sur Qt::DisplayRole (voir HomeView.qml,
-    // refreshActionRequired()/refreshNetworkOfflinePeers()).
     Q_ENUM(Roles)
+
+    // Identifiants de roles lisibles depuis QML via l'instance
+    // (ex. authorizedMachineModel.AuthorizedRole). Q_ENUM seul ne suffit
+    // PAS : pour un objet expose par setContextProperty, une valeur d'enum
+    // lue via l'instance vaut "undefined" en QML (verifie sous Qt 6.11), et
+    // data() interrogeait alors Qt::DisplayRole -> QVariant() (compteurs de
+    // machines autorisees, badges et liste des postes hors ligne faux).
+    Q_PROPERTY(int IdRole READ idRoleId CONSTANT)
+    Q_PROPERTY(int IpAddressRole READ ipAddressRoleId CONSTANT)
+    Q_PROPERTY(int MachineIdRole READ machineIdRoleId CONSTANT)
+    Q_PROPERTY(int CertificateFingerprintRole READ certificateFingerprintRoleId CONSTANT)
+    Q_PROPERTY(int HostnameRole READ hostnameRoleId CONSTANT)
+    Q_PROPERTY(int AuthorizedRole READ authorizedRoleId CONSTANT)
+    Q_PROPERTY(int StatusRole READ statusRoleId CONSTANT)
+    int idRoleId() const { return IdRole; }
+    int ipAddressRoleId() const { return IpAddressRole; }
+    int machineIdRoleId() const { return MachineIdRole; }
+    int certificateFingerprintRoleId() const { return CertificateFingerprintRole; }
+    int hostnameRoleId() const { return HostnameRole; }
+    int authorizedRoleId() const { return AuthorizedRole; }
+    int statusRoleId() const { return StatusRole; }
 
     explicit AuthorizedMachineModel(QObject *parent = nullptr);
     ~AuthorizedMachineModel() override;

@@ -36,6 +36,23 @@ function formatBytes(bytes) {
     return value.toLocaleString(Qt.locale(), "f", digits) + " " + units[unit]
 }
 
+// Variante plus precise pour les progressions ("32,8 Mo sur 48,2 Mo") :
+// une decimale jusqu'a 100.
+function formatBytesPrecise(bytes) {
+    if (!bytes || bytes <= 0)
+        return "0 o"
+    var units = ["o", "Ko", "Mo", "Go", "To"]
+    var value = bytes
+    var unit = 0
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024
+        unit++
+    }
+    if (unit === 0)
+        return Math.round(value) + " o"
+    return value.toLocaleString(Qt.locale(), "f", value < 100 ? 1 : 0) + " " + units[unit]
+}
+
 // "doc" | "sheet" | "slides" | "image" | "archive" | "media" | "file"
 function fileKind(fileName) {
     var parts = String(fileName || "").split(".")

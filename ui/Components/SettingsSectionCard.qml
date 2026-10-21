@@ -4,19 +4,9 @@ import QtQuick.Layouts
 import Themes
 
 /*
- * SettingsSectionCard - carte de section utilisee par l'ecran "Parametres"
- * (SettingsView.qml), alignee sur AdminView.qml.
- *
- * Reprend le pattern deja utilise ailleurs dans l'app (icone dans un
- * badge colore + titre, cf. DashboardCard sur HomeView) pour une hierarchie
- * visuelle coherente entre l'ecran d'accueil, l'administration et les
- * parametres. Utilise la meme police d'icones Font Awesome 4.7.0 que
- * DashboardCard (glyphes fa fa-*) plutot qu'un caractere Unicode brut, pour
- * un rendu identique sur tous les postes (refonte design juillet 2026,
- * alignement complet des ecrans Parametres sur Login/Home).
- *
- * Le contenu de la section (champs, cases a cocher...) se place comme
- * enfants normaux du composant, empiles verticalement sous l'en-tete.
+ * SettingsSectionCard - section de la page Parametres : carte avec pastille
+ * d'icone, titre, sous-titre, puis le contenu declare dans
+ * SettingsSectionCard { ... } (empile verticalement).
  */
 ColumnLayout {
     id: root
@@ -28,62 +18,60 @@ ColumnLayout {
 
     spacing: 0
 
-    FontLoader {
-        id: iconFont
-        source: "../Assets/fonts/fontawesome-webfont.ttf"
-    }
-    readonly property string iconFontFamily: iconFont.name
+    // Conservee pour compatibilite (police d'icones desormais globale).
+    readonly property string iconFontFamily: "FontAwesome"
 
     Rectangle {
         Layout.fillWidth: true
-        Layout.preferredHeight: cardColumn.implicitHeight + Theme.spacingLarge * 2
-        radius: Theme.radiusSmall
-        color: Theme.surface
+        Layout.preferredHeight: cardColumn.implicitHeight + Theme.cardPadding * 2
+        radius: Theme.radiusCard
+        color: Theme.surface0
         border.width: 1
-        border.color: Theme.border
-        antialiasing: true
+        border.color: Theme.line
 
         ColumnLayout {
             id: cardColumn
             anchors.fill: parent
-            anchors.margins: Theme.spacingLarge
+            anchors.margins: Theme.cardPadding
             spacing: Theme.spacingMedium
 
             RowLayout {
-                spacing: Theme.spacingMedium
-                Layout.bottomMargin: Theme.spacingXs
+                Layout.fillWidth: true
+                spacing: 12
 
                 Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    radius: Theme.radiusMedium
-                    color: Theme.primaryMuted
+                    Layout.alignment: Qt.AlignTop
+                    Layout.preferredWidth: 34
+                    Layout.preferredHeight: 34
+                    radius: 9
+                    color: Theme.accentSoft
                     visible: root.icon.length > 0
 
-                    Text {
+                    FaIcon {
                         anchors.centerIn: parent
-                        text: root.icon
-                        font.family: root.iconFontFamily
-                        font.pixelSize: 15
-                        color: Theme.primary
+                        glyph: root.icon
+                        font.pixelSize: Theme.fs(14)
+                        color: Theme.darkMode ? Theme.accentHover : Theme.accentColor
                     }
                 }
 
                 ColumnLayout {
-                    spacing: 1
-                    Label {
+                    Layout.fillWidth: true
+                    spacing: 2
+                    Text {
                         text: root.title
-                        font.pixelSize: Theme.fontSizeSubheading
-                        font.bold: true
+                        font.pixelSize: Theme.fontSizeCardTitle
+                        font.weight: Theme.weightSemibold
                         font.family: Theme.fontFamily
-                        color: Theme.text
+                        color: Theme.ink
+                        Accessible.role: Accessible.Heading
                     }
-                    Label {
+                    Text {
                         text: root.subtitle
                         visible: root.subtitle.length > 0
-                        font.pixelSize: Theme.fontSizeSmall
+                        font.pixelSize: Theme.fs(12)
                         font.family: Theme.fontFamily
-                        color: Theme.textTertiary
+                        color: Theme.ink3
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }

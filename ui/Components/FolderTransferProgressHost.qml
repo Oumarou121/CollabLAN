@@ -17,7 +17,7 @@ import Themes
  * disparait au profit de la notification finale existante (ToastHost).
  *
  * Ecoute sharedFolderContext.folderTransferProgress (mise a jour en temps
- * reel) et sharedFolderContext.folderTransferBatchFinished (fin de rafale,
+ * reel) et sharedFolderContext.folderTransferComplete (fin de rafale,
  * cf. core::sync::FolderSyncService) -- expose globalement en contexte QML
  * sous le nom "sharedFolderContext" (voir app/main.cpp).
  *

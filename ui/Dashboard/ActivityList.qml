@@ -14,9 +14,15 @@ ColumnLayout {
 
     property var activities: []
     property bool loading: false
+    // false quand la liste est placee dans une Card qui porte deja le titre.
+    property bool showHeader: true
+
+    // Lien "Voir le journal" de l'en-tete (etait inerte).
+    signal journalRequested()
 
     // Header - height 30px
     Item {
+        visible: root.showHeader
         Layout.fillWidth: true
         Layout.preferredHeight: 30
 
@@ -27,7 +33,7 @@ ColumnLayout {
             Label {
                 text: qsTr("Activité récente")
                 color: Theme.dashboardInk
-                font.pixelSize: 15
+                font.pixelSize: Theme.fs(15)
                 font.bold: true
                 font.family: Theme.fontFamily
             }
@@ -39,25 +45,30 @@ ColumnLayout {
                       ? qsTr("Aujourd'hui \u00B7 %1 événement%2").arg(root.activities.length).arg(root.activities.length > 1 ? "s" : "")
                       : ""
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
             }
 
             Item { Layout.fillWidth: true }
 
             Button {
+                id: journalButton
                 visible: !root.loading && root.activities.length > 0
-                text: qsTr("Voir le journal")
+                text: qsTr("Voir le journal →")
                 flat: true
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
                 background: Rectangle { color: "transparent" }
                 contentItem: Label {
-                    text: parent.text
-                    color: Theme.dashboardPrimary
-                    font.pixelSize: 12
+                    text: journalButton.text
+                    color: journalButton.hovered ? Theme.dashboardPrimaryHover
+                                                 : Theme.dashboardPrimary
+                    font.pixelSize: Theme.fs(12)
+                    font.weight: Theme.weightSemibold
+                    font.underline: journalButton.hovered
                     font.family: Theme.fontFamily
                 }
+                onClicked: root.journalRequested()
             }
         }
     }

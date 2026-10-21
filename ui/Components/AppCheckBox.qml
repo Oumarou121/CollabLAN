@@ -42,8 +42,8 @@ CheckBox {
             anchors.centerIn: parent
             visible: root.checked
             text: "\u2713"
-            color: "#FFFFFF"
-            font.pixelSize: 13
+            color: Theme.inkOnAccent
+            font.pixelSize: Theme.fs(13)
             font.bold: true
         }
     }

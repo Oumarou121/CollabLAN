@@ -1,89 +1,104 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import Themes
 
 /*
- * IconButton - bouton circulaire/carre a glyphe unique, reutilise partout
- * ou l'on avait auparavant une Rectangle + Text + MouseArea dupliquee
- * (fleche retour, actions compactes, bouton d'envoi...).
+ * IconButton - bouton a glyphe unique (Font Awesome 4.7) du design system.
  *
- * Utilise la meme police d'icones Font Awesome 4.7.0 que les cartes de
- * Home (Components/DashboardCard.qml), pour un rendu coherent d'un ecran
- * a l'autre au lieu des glyphes Unicode "systeme" (rendu variable selon
- * l'OS/la police par defaut).
+ * variant : "ghost" (defaut, transparent) | "secondary" (contour)
+ *           | "soft" (voile d'accent) | "primary" (plein accent)
+ *           | "danger" (voile rouge)
+ * tooltip : libelle affiche au survol ET nom accessible (lecteurs
+ *           d'ecran) - obligatoire pour un bouton sans texte.
+ * enabledLook : decouple l'aspect "actif" de `enabled` (ex. bouton
+ *           d'envoi cliquable au clavier mais grise tant que le champ est
+ *           vide).
  *
- * variant: "ghost" (transparent, survol discret) | "primary" (fond accent)
- *          | "danger" (fond erreur attenue)
- * enabledLook: decouple l'etat visuel "actif" de `enabled` Qt classique --
- * utile pour le bouton d'envoi, qui reste cliquable au clavier (Enter)
- * mais doit visuellement paraitre inactif tant que le champ est vide.
+ * Base AbstractButton : focus clavier (Tab), activation Espace/Entree et
+ * anneau de focus, contrairement a l'ancienne version Item + MouseArea.
  */
-Item {
+AbstractButton {
     id: root
 
     property string glyph: ""
     property string variant: "ghost"
-    property int size: 40
+    property int size: Theme.controlHeight
     property int iconSize: Math.round(size * 0.42)
-    property int radius: Theme.radiusSmall
+    property int radius: Theme.radiusControl
     property bool enabledLook: true
     property bool bold: false
+    property string tooltip: ""
+    // Couleur de glyphe imposee (ex. statut) - vide = selon la variante.
+    property color glyphColorOverride: "transparent"
 
-    // Permet d'attacher un ToolTip depuis l'exterieur (ex. CallView) sans
-    // dupliquer de MouseArea par-dessus le composant.
-    readonly property alias hovered: mouseArea.containsMouse
-
-    signal clicked()
-
-    FontLoader {
-        id: iconFont
-        source: "../Assets/fonts/fontawesome-webfont.ttf"
-    }
-    readonly property string iconFontFamily: iconFont.name
+    readonly property bool isPrimary: variant === "primary"
+    readonly property bool isDanger: variant === "danger"
+    readonly property bool isSoft: variant === "soft"
 
     Layout.preferredWidth: size
     Layout.preferredHeight: size
     implicitWidth: size
     implicitHeight: size
+    hoverEnabled: true
+    focusPolicy: Qt.TabFocus
+    padding: 0
+    Accessible.name: root.tooltip.length > 0 ? root.tooltip : root.text
+    Accessible.role: Accessible.Button
 
-    readonly property bool isPrimary: variant === "primary"
-    readonly property bool isDanger: variant === "danger"
+    HoverHandler {
+        cursorShape: root.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+    }
+
+    ToolTip.visible: root.tooltip.length > 0 && root.hovered
+    ToolTip.text: root.tooltip
+    ToolTip.delay: 400
 
     readonly property color baseColor: {
-        if (!root.enabledLook) return Theme.surfaceAlt
-        if (isPrimary) return mouseArea.pressed ? Theme.primaryHover : Theme.primary
-        if (isDanger) return mouseArea.pressed ? Theme.error : Theme.errorMuted
-        return mouseArea.containsMouse ? Theme.surfaceHover : "transparent"
+        if (!root.enabledLook || !root.enabled)
+            return (isPrimary || isDanger) ? Theme.sunken : "transparent"
+        if (isPrimary) return root.down ? Theme.accentHover : (root.hovered ? Theme.accentHover : Theme.accentColor)
+        if (isDanger) return root.hovered ? Theme.dangerColor : Theme.dangerSoft
+        if (isSoft) return root.hovered ? Theme.accentMuted : Theme.accentSoft
+        if (variant === "secondary") return root.hovered ? Theme.hover : Theme.surface0
+        return root.hovered || root.down ? Theme.hover : "transparent"
     }
 
     readonly property color glyphColor: {
-        if (!root.enabledLook) return Theme.textTertiary
-        if (isPrimary || isDanger) return Theme.primaryText
-        return Theme.text
+        if (root.glyphColorOverride.a > 0) return root.glyphColorOverride
+        if (!root.enabledLook || !root.enabled) return Theme.inkDisabled
+        if (isPrimary) return Theme.accentInk
+        if (isDanger) return root.hovered ? (Theme.darkMode ? "#0B1018" : "#FFFFFF") : Theme.dangerInk
+        if (isSoft) return Theme.darkMode ? Theme.accentHover : Theme.accentColor
+        return root.hovered ? Theme.ink : Theme.ink2
     }
 
-    Rectangle {
-        anchors.fill: parent
+    background: Rectangle {
         radius: root.radius
         color: root.baseColor
+        border.width: root.variant === "secondary" ? 1 : 0
+        border.color: Theme.line
 
-        Behavior on color { ColorAnimation { duration: 100 } }
+        Behavior on color { ColorAnimation { duration: Theme.durationFast } }
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -3
+            radius: parent.radius + 3
+            color: "transparent"
+            border.width: 2
+            border.color: Theme.focusRing
+            visible: root.visualFocus
+        }
     }
 
-    Text {
-        anchors.centerIn: parent
-        text: root.glyph
-        color: root.glyphColor
-        font.family: root.iconFontFamily
-        font.pixelSize: root.iconSize
-        font.bold: root.bold
-    }
-
-    MouseArea {
-        id: mouseArea
-        anchors.fill: parent
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onClicked: root.clicked()
+    contentItem: Item {
+        FaIcon {
+            anchors.centerIn: parent
+            glyph: root.glyph
+            color: root.glyphColor
+            font.pixelSize: root.iconSize
+            font.bold: root.bold
+        }
     }
 }

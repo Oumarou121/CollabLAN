@@ -16,7 +16,18 @@ import Themes
 SpinBox {
     id: root
 
-    implicitHeight: 40
+    // false pour les identifiants numeriques (ports...) : pas de
+    // separateur de milliers ("7845", pas "7 845").
+    property bool groupDigits: true
+
+    textFromValue: function(value, locale) {
+        return root.groupDigits ? Number(value).toLocaleString(locale, "f", 0) : value.toString()
+    }
+    valueFromText: function(text, locale) {
+        return root.groupDigits ? Number.fromLocaleString(locale, text) : parseInt(text.replace(/[^0-9-]/g, ""), 10)
+    }
+
+    implicitHeight: Theme.controlHeight
     implicitWidth: 140
     font.pixelSize: Theme.fontSizeBody
     font.family: Theme.fontFamily

@@ -81,7 +81,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: Fmt.initialOf(root.peerLabel)
                     color: Theme.dashboardPrimary
-                    font.pixelSize: 15
+                    font.pixelSize: Theme.fs(15)
                     font.weight: Font.Bold
                     font.family: Theme.fontFamily
                 }
@@ -123,7 +123,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: root.peerLabel
                     color: Theme.dashboardInk
-                    font.pixelSize: 14
+                    font.pixelSize: Theme.fs(14)
                     font.weight: Font.Bold
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
@@ -134,7 +134,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text: root.metaText
                     color: Theme.dashboardInkTertiary
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fs(12)
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
                     maximumLineCount: 1
@@ -154,7 +154,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: qsTr("%1 en cours").arg(root.activeCount)
                     color: Theme.dashboardPrimary
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fs(11)
                     font.weight: Font.DemiBold
                     font.family: Theme.fontFamily
                 }
@@ -182,7 +182,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: root.lastFileName
                 color: Theme.dashboardInkSecondary
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
                 elide: Text.ElideMiddle
                 maximumLineCount: 1

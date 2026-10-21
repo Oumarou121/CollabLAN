@@ -25,6 +25,10 @@ Item {
 
     signal backRequested()
 
+    // Fil d Ariane global (AppShell) : "Dossiers partages / <dossier ouvert>".
+    readonly property string breadcrumbLeaf: root.openedFolderId >= 0 ? root.openedFolderName : ""
+    function breadcrumbRootClicked() { root.openedFolderId = -1 }
+
     property string openedFolderUuid: ""
     property var openedFolderName: ""
     property var openedFolderId: -1
@@ -360,7 +364,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         height: conflictLabel.implicitHeight + Theme.spacingMedium
-        color: "#C07000"   // ambre — distinct de la bannière d'erreur rouge
+        color: Theme.warningColor
         visible: opacity > 0
         opacity: 0
         z: 11              // au-dessus de la bannière d'erreur (z=10)
@@ -369,7 +373,7 @@ Item {
             id: conflictLabel
             anchors.centerIn: parent
             width: parent.width - Theme.spacingLarge
-            color: "#FFFFFF"
+            color: Theme.inkOnDanger
             font.pixelSize: Theme.fontSizeSmall
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
@@ -407,7 +411,7 @@ Item {
             id: errorLabel
             anchors.centerIn: parent
             width: parent.width - Theme.spacingLarge
-            color: "#FFFFFF"
+            color: Theme.inkOnDanger
             font.pixelSize: Theme.fontSizeSmall
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
@@ -789,7 +793,7 @@ Item {
                             Text {
                                 text: "\u2715"
                                 color: Theme.primaryDeep
-                                font.pixelSize: 10
+                                font.pixelSize: Theme.fs(10)
                                 MouseArea {
                                     anchors.fill: parent
                                     anchors.margins: -4
@@ -1033,7 +1037,7 @@ Item {
 
                         FaIcon {
                             glyph: shareConfirmDialog.allowWrite ? "\uf044" : "\uf06e"
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.fs(10)
                             color: shareConfirmDialog.allowWrite ? Theme.success : Theme.textSecondary
                         }
                         Label {
@@ -1405,7 +1409,7 @@ Item {
                     FaIcon {
                         anchors.centerIn: parent
                         glyph: "\uf071"
-                        font.pixelSize: 15
+                        font.pixelSize: Theme.fs(15)
                         color: Theme.error
                     }
                 }
@@ -1456,33 +1460,53 @@ Item {
         anchors.fill: parent
         spacing: 0
 
+        // En-tete de page (racine uniquement) : titre + action principale.
+        AppHeader {
+            visible: root.openedFolderId < 0
+            title: qsTr("Dossiers partagés")
+            subtitle: qsTr("Dossiers synchronisés entre les postes du réseau local, avec des droits par membre.")
+            bottomPadding: 12
+
+            AppButton {
+                text: qsTr("Nouveau dossier")
+                iconGlyph: ""
+                variant: "primary"
+                onClicked: createDialog.open()
+            }
+        }
+
         // =========================================================
-        // Barre d'adresse personnalisée (custom, meme principe que
+        // Barre d.adresse personnalisée (custom, meme principe que
         // FileTransferView) : navigation + fil d'Ariane pilule +
         // recherche + bascule grille/liste + actions propres a l'ecran.
         // =========================================================
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 56
-            color: Theme.addressBarBackground
+            Layout.preferredHeight: 52
+            color: root.openedFolderId >= 0 ? Theme.surface0 : "transparent"
 
             Rectangle {
+                visible: root.openedFolderId >= 0
                 anchors.bottom: parent.bottom
                 width: parent.width
                 height: 1
-                color: Theme.border
+                color: Theme.line
             }
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 12
-                anchors.rightMargin: 12
+                anchors.leftMargin: Theme.pagePadding - (root.openedFolderId >= 0 ? 10 : 0)
+                anchors.rightMargin: Theme.pagePadding
                 spacing: 8
 
                 IconButton {
+                    // A la racine, la navigation laterale suffit : le
+                    // retour ne sert qu'a remonter dans un dossier ouvert.
+                    visible: root.openedFolderId >= 0
                     glyph: "\uf060"
                     variant: "ghost"
                     size: 30
+                    tooltip: qsTr("Dossier parent")
                     onClicked: {
                         if (root.openedFolderId >= 0) {
                             if (root.browsedRelativePath.length > 0) {
@@ -1500,6 +1524,7 @@ Item {
                     glyph: "\uf021"
                     variant: "ghost"
                     size: 30
+                    tooltip: qsTr("Actualiser")
                     onClicked: {
                         if (root.openedFolderId >= 0) {
                             root.refreshFiles()
@@ -1582,9 +1607,9 @@ Item {
                             visible: root.openedFolderId >= 0 && root.indexingFolderIds.indexOf(root.openedFolderId) !== -1
                             spacing: 6
 
-                            BusyIndicator {
-                                implicitWidth: 14
-                                implicitHeight: 14
+                            Spinner {
+                                implicitWidth: 13
+                                implicitHeight: 13
                                 running: parent.visible
                             }
 
@@ -1659,7 +1684,7 @@ Item {
                         id: clearIcon
                         visible: root.searchText.length > 0
                         glyph: "\uf00d"
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fs(11)
                         color: Theme.textTertiary
                         anchors.right: parent.right
                         anchors.rightMargin: 8
@@ -1696,7 +1721,7 @@ Item {
                         FaIcon {
                             anchors.centerIn: parent
                             glyph: "\uf009"
-                            font.pixelSize: 15
+                            font.pixelSize: Theme.fs(15)
                             color: root.viewMode === "grid" ? Theme.primary : Theme.textTertiary
                         }
 
@@ -1720,7 +1745,7 @@ Item {
                         FaIcon {
                             anchors.centerIn: parent
                             glyph: "\uf0ca"
-                            font.pixelSize: 15
+                            font.pixelSize: Theme.fs(15)
                             color: root.viewMode === "list" ? Theme.primary : Theme.textTertiary
                         }
 
@@ -1905,13 +1930,6 @@ Item {
                         }
                     }
                 }
-
-                AppButton {
-                    visible: root.openedFolderId < 0
-                    text: qsTr("+ Nouveau dossier")
-                    variant: "primary"
-                    onClicked: createDialog.open()
-                }
             }
         }
 
@@ -1923,52 +1941,23 @@ Item {
         RowLayout {
             visible: root.openedFolderId < 0
             Layout.fillWidth: true
-            Layout.leftMargin: Theme.spacingMedium
-            Layout.rightMargin: Theme.spacingMedium
-            Layout.topMargin: Theme.spacingSmall
+            Layout.leftMargin: Theme.pagePadding
+            Layout.rightMargin: Theme.pagePadding
+            Layout.topMargin: 2
+            Layout.bottomMargin: 6
             spacing: 6
 
-            Repeater {
+            AppSegmentedControl {
+                stretch: false
+                small: true
+                readonly property var keys: ["all", "mine", "received"]
                 model: [
-                    { key: "all",      label: qsTr("Tout") },
-                    { key: "mine",     label: qsTr("Mes dossiers") },
-                    { key: "received", label: qsTr("Reçus") }
+                    { label: qsTr("Tous"), glyph: root.filterIconGlyph("all") },
+                    { label: qsTr("Partagés par moi"), glyph: root.filterIconGlyph("mine") },
+                    { label: qsTr("Reçus"), glyph: root.filterIconGlyph("received") }
                 ]
-
-                delegate: Rectangle {
-                    height: 24
-                    width: filterChipRow.implicitWidth + 20
-                    radius: Theme.radiusSmall
-                    color: root.activeFilter === modelData.key ? Theme.primaryMuted : Theme.surfaceAlt
-                    border.width: 1
-                    border.color: root.activeFilter === modelData.key ? Theme.primary : Theme.border
-                    Behavior on color { ColorAnimation { duration: 100 } }
-
-                    RowLayout {
-                        id: filterChipRow
-                        anchors.centerIn: parent
-                        spacing: 5
-
-                        FaIcon {
-                            glyph: root.filterIconGlyph(modelData.key)
-                            font.pixelSize: 9
-                            color: root.activeFilter === modelData.key ? Theme.primary : root.filterIconColor(modelData.key)
-                        }
-                        Label {
-                            text: modelData.label
-                            color: root.activeFilter === modelData.key ? Theme.primary : Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeCaption
-                            font.weight: root.activeFilter === modelData.key ? Font.Medium : Font.Normal
-                            font.family: Theme.fontFamily
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.activeFilter = modelData.key
-                    }
-                }
+                currentIndex: Math.max(0, keys.indexOf(root.activeFilter))
+                onActivated: function(index) { root.activeFilter = keys[index] }
             }
 
             Item { Layout.fillWidth: true }
@@ -2015,7 +2004,7 @@ Item {
                     FaIcon {
                         anchors.centerIn: parent
                         glyph: "\uf07b"
-                        font.pixelSize: 26
+                        font.pixelSize: Theme.fs(26)
                         color: Theme.primary
                     }
                 }
@@ -2046,7 +2035,7 @@ Item {
                         id: emptyCtaRow
                         anchors.centerIn: parent
                         spacing: 6
-                        FaIcon { glyph: "\uf07b"; font.pixelSize: 12; color: Theme.primaryText }
+                        FaIcon { glyph: "\uf07b"; font.pixelSize: Theme.fs(12); color: Theme.primaryText }
                         Label {
                             text: qsTr("Nouveau dossier")
                             color: Theme.primaryText
@@ -2077,9 +2066,10 @@ Item {
                 Item { Layout.preferredHeight: 16 }
 
                 Label {
-                    Layout.leftMargin: 16
+                    Layout.leftMargin: Theme.pagePadding
                     Layout.bottomMargin: 10
-                    text: qsTr("DOSSIERS PARTAGÉS")
+                    text: qsTr("Dossiers partagés")
+                    font.capitalization: Font.AllUppercase
                     color: Theme.textTertiary
                     font.pixelSize: Theme.fontSizeCaption
                     font.weight: Font.Medium
@@ -2091,8 +2081,8 @@ Item {
                     id: gridView
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
+                    Layout.leftMargin: Theme.pagePadding - 12
+                    Layout.rightMargin: Theme.pagePadding - 12
                     visible: root.viewMode === "grid"
                     readonly property int columns: Math.max(2, Math.floor(width / 160))
                     cellWidth: Math.floor(width / columns)
@@ -2111,7 +2101,7 @@ Item {
                         clip: true
 
                         // readonly property color accentColor: Theme.colorForName(model.name)
-                        readonly property color accentColor: "#FFC83D"   // jaune dossier façon Windows
+                        readonly property color accentColor: Theme.folderColor
                         readonly property bool hovered: tileArea.containsMouse
 
                         // ---- Fond de la tuile (survol / selection), meme
@@ -2226,7 +2216,7 @@ Item {
                                 //             anchors.centerIn: parent
                                 //             text: model.name.length > 0 ? model.name.charAt(0).toUpperCase() : "?"
                                 //             color: folderTile.accentColor
-                                //             font.pixelSize: 10
+                                //             font.pixelSize: Theme.fs(10)
                                 //             font.bold: true
                                 //             font.family: Theme.fontFamily
                                 //         }
@@ -2250,8 +2240,8 @@ Item {
                                     FaIcon {
                                         anchors.centerIn: parent
                                         glyph: "\uf071"
-                                        font.pixelSize: 9
-                                        color: "#FFFFFF"
+                                        font.pixelSize: Theme.fs(9)
+                                        color: Theme.inkOnDanger
                                     }
                                 }
 
@@ -2273,7 +2263,7 @@ Item {
                                         id: countLabel
                                         anchors.centerIn: parent
                                         text: model.fileCount > 99 ? "99+" : model.fileCount
-                                        font.pixelSize: 10
+                                        font.pixelSize: Theme.fs(10)
                                         font.bold: true
                                         font.family: Theme.fontFamily
                                         color: Theme.primaryText
@@ -2334,8 +2324,8 @@ Item {
                     id: foldersListView
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
+                    Layout.leftMargin: Theme.pagePadding
+                    Layout.rightMargin: Theme.pagePadding
                     visible: root.viewMode === "list"
                     spacing: 2
                     clip: true
@@ -2353,7 +2343,7 @@ Item {
                         color: folderRowArea.containsMouse ? Theme.surfaceHover : "transparent"
                         Behavior on color { ColorAnimation { duration: 100 } }
 
-                        readonly property color accentColor: "#FFC83D"
+                        readonly property color accentColor: Theme.folderColor
 
                         RowLayout {
                             anchors.fill: parent
@@ -2372,7 +2362,7 @@ Item {
                                 FaIcon {
                                     anchors.centerIn: parent
                                     glyph: "\uf114"
-                                    font.pixelSize: 15
+                                    font.pixelSize: Theme.fs(15)
                                     color: folderRow.accentColor
                                 }
                             }
@@ -2419,7 +2409,7 @@ Item {
 
                             FaIcon {
                                 glyph: "\uf105"
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.fs(13)
                                 color: Theme.textTertiary
                             }
                         }
@@ -2483,7 +2473,7 @@ Item {
                             anchors.centerIn: parent
                             text: root.openedFolderName.length > 0 ? root.openedFolderName.charAt(0).toUpperCase() : "?"
                             color: "#FFFFFF"
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fs(11)
                             font.bold: true
                             font.family: Theme.fontFamily
                         }
@@ -2535,7 +2525,7 @@ Item {
                             && root.conflictedFiles.hasOwnProperty(modelData.relativePath)
                         readonly property string conflictPath: hasConflict ? root.conflictedFiles[modelData.relativePath] : ""
                         readonly property var kind: isFolder ? null : root.fileKindFor(modelData.name)
-                        readonly property color folderAccent: "#FFC83D"
+                        readonly property color folderAccent: Theme.folderColor
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -2560,14 +2550,14 @@ Item {
                                     FaIcon {
                                         anchors.centerIn: parent
                                         glyph: "\uf114"
-                                        font.pixelSize: 15
+                                        font.pixelSize: Theme.fs(15)
                                         color: fileRow.folderAccent
                                     }
                                 }
                                 FaIcon {
                                     visible: !fileRow.isFolder
                                     glyph: fileRow.kind ? fileRow.kind.glyph : "\uf016"
-                                    font.pixelSize: 15
+                                    font.pixelSize: Theme.fs(15)
                                     color: fileRow.kind ? fileRow.kind.color : Theme.textSecondary
                                 }
 
@@ -2580,8 +2570,8 @@ Item {
                                     Label {
                                         anchors.centerIn: parent
                                         text: "!"
-                                        color: "#FFFFFF"
-                                        font.pixelSize: 11
+                                        color: Theme.inkOnDanger
+                                        font.pixelSize: Theme.fs(11)
                                         font.bold: true
                                     }
                                 }
@@ -2639,7 +2629,7 @@ Item {
                                 FaIcon {
                                     visible: fileRow.isFolder
                                     glyph: "\uf105"
-                                    font.pixelSize: 13
+                                    font.pixelSize: Theme.fs(13)
                                     color: Theme.textTertiary
                                 }
                             }
@@ -2735,7 +2725,7 @@ Item {
                         readonly property bool hasConflict: !isFolder
                             && root.conflictedFiles.hasOwnProperty(modelData.relativePath)
                         readonly property var kind: isFolder ? null : root.fileKindFor(modelData.name)
-                        readonly property color tileColor: isFolder ? "#FFC83D"
+                        readonly property color tileColor: isFolder ? Theme.folderColor
                                                                      : (fileTile.kind ? fileTile.kind.color : Theme.textSecondary)
                         readonly property bool tileHovered: fileTileArea.containsMouse
 
@@ -2805,7 +2795,7 @@ Item {
                                     FaIcon {
                                         anchors.centerIn: parent
                                         glyph: fileTile.kind ? fileTile.kind.glyph : "\uf016"
-                                        font.pixelSize: 20
+                                        font.pixelSize: Theme.fs(20)
                                         color: fileTile.tileColor
                                     }
                                 }
@@ -2839,7 +2829,7 @@ Item {
                                     Text {
                                         anchors.centerIn: parent
                                         text: (modelData.count !== undefined && modelData.count > 9) ? "9+" : (modelData.count !== undefined ? modelData.count : "")
-                                        font.pixelSize: 8
+                                        font.pixelSize: Theme.fs(8)
                                         font.bold: true
                                         font.family: Theme.fontFamily
                                         color: Theme.primaryText
@@ -2979,7 +2969,7 @@ Item {
                             anchors.centerIn: parent
                             text: root.openedFolderName.length > 0 ? root.openedFolderName.charAt(0).toUpperCase() : "?"
                             color: "#FFFFFF"
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fs(11)
                             font.bold: true
                             font.family: Theme.fontFamily
                         }
@@ -3124,20 +3114,25 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 28
             color: Theme.statusBarBackground
-            border.width: 1
-            border.color: Theme.border
             visible: gridView.count > 0 || root.openedFolderId >= 0
+
+            Rectangle {
+                anchors.top: parent.top
+                width: parent.width
+                height: 1
+                color: Theme.line
+            }
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 16
-                anchors.rightMargin: 16
+                anchors.leftMargin: Theme.pagePadding
+                anchors.rightMargin: Theme.pagePadding
                 spacing: 16
 
                 RowLayout {
                     visible: root.openedFolderId < 0
                     spacing: 4
-                    FaIcon { glyph: "\uf07b"; font.pixelSize: 12; color: Theme.textSecondary }
+                    FaIcon { glyph: "\uf07b"; font.pixelSize: Theme.fs(12); color: Theme.textSecondary }
                     Label {
                         text: qsTr("%n dossier(s)", "", gridView.count)
                         font.pixelSize: Theme.fontSizeCaption
@@ -3148,7 +3143,7 @@ Item {
                 RowLayout {
                     visible: root.openedFolderId >= 0 && !root.showHistory
                     spacing: 4
-                    FaIcon { glyph: "\uf0f6"; font.pixelSize: 12; color: Theme.textSecondary }
+                    FaIcon { glyph: "\uf0f6"; font.pixelSize: Theme.fs(12); color: Theme.textSecondary }
                     Label {
                         text: qsTr("%n élément(s)", "", filesListView.count)
                         font.pixelSize: Theme.fontSizeCaption
@@ -3159,7 +3154,7 @@ Item {
                 RowLayout {
                     visible: root.openedFolderId >= 0 && root.showHistory
                     spacing: 4
-                    FaIcon { glyph: "\uf1da"; font.pixelSize: 12; color: Theme.textSecondary }
+                    FaIcon { glyph: "\uf1da"; font.pixelSize: Theme.fs(12); color: Theme.textSecondary }
                     Label {
                         text: qsTr("%n entrée(s) d'historique", "", historyListView.count)
                         font.pixelSize: Theme.fontSizeCaption

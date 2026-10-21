@@ -192,7 +192,7 @@ Item {
                 //                         anchors.centerIn: parent
                 //                         text: modelData.icon
                 //                         font.family: root.iconFontFamily
-                //                         font.pixelSize: 13
+                //                         font.pixelSize: Theme.fs(13)
                 //                         color: Theme.primary
                 //                     }
                 //                 }

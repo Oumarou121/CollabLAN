@@ -59,7 +59,7 @@ Rectangle {
             Layout.alignment: Qt.AlignVCenter
             text: root.text
             color: root.ink
-            font.pixelSize: 13
+            font.pixelSize: Theme.fs(13)
             font.family: Theme.fontFamily
             wrapMode: Text.WordWrap
         }

@@ -129,7 +129,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: "\uf108"
                     color: Theme.dashboardPrimary
-                    font.pixelSize: 18
+                    font.pixelSize: Theme.fs(18)
                     font.family: "FontAwesome"
                 }
             }
@@ -141,7 +141,7 @@ Rectangle {
                 Label {
                     text: root.peerName
                     color: Theme.dashboardInk
-                    font.pixelSize: 14
+                    font.pixelSize: Theme.fs(14)
                     font.bold: true
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
@@ -150,7 +150,7 @@ Rectangle {
                 Label {
                     text: root.peerAddress
                     color: Theme.dashboardInkTertiary
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fs(12)
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
                     Layout.fillWidth: true
@@ -169,7 +169,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: "\uf00d"
                     color: Theme.dashboardInkTertiary
-                    font.pixelSize: 14
+                    font.pixelSize: Theme.fs(14)
                     font.family: "FontAwesome"
                 }
 
@@ -199,7 +199,7 @@ Rectangle {
                 Label {
                     text: root.statusLabel
                     color: Theme.dashboardInkSecondary
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fs(12)
                     font.bold: true
                     font.family: Theme.fontFamily
                 }
@@ -208,7 +208,7 @@ Rectangle {
                     visible: root.activeTransfer !== null
                     text: root.activeTransfer ? (root.activeTransfer.percent + " %") : ""
                     color: Theme.dashboardInk
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fs(12)
                     font.bold: true
                     font.family: Theme.fontFamily
                 }
@@ -218,7 +218,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 4
                 radius: 2
-                color: "#D9E2E0"
+                color: Theme.dashboardSurfaceSunken
                 visible: root.activeTransfer !== null
 
                 Rectangle {
@@ -237,7 +237,7 @@ Rectangle {
                       ? ((root.activeTransfer.direction === "Réception" ? qsTr("Envoi de ") : qsTr("Réception de ")) + root.activeTransfer.fileName)
                       : ""
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 11
+                font.pixelSize: Theme.fs(11)
                 font.family: Theme.fontFamily
             }
 
@@ -247,7 +247,7 @@ Rectangle {
                 elide: Text.ElideRight
                 text: qsTr("Compte connecté : ") + root.accountName
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 11
+                font.pixelSize: Theme.fs(11)
                 font.family: Theme.fontFamily
             }
         }
@@ -274,14 +274,14 @@ Rectangle {
                     Text {
                         text: "\uf1d8"
                         color: Theme.dashboardSurface
-                        font.pixelSize: 14
+                        font.pixelSize: Theme.fs(14)
                         font.family: "FontAwesome"
                     }
 
                     Label {
                         text: qsTr("Envoyer un fichier")
                         color: Theme.dashboardSurface
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.fs(13)
                         font.bold: true
                         font.family: Theme.fontFamily
                         Layout.fillWidth: true
@@ -316,14 +316,14 @@ Rectangle {
                         Text {
                             text: "\uf095"
                             color: Theme.dashboardPrimary
-                            font.pixelSize: 14
+                            font.pixelSize: Theme.fs(14)
                             font.family: "FontAwesome"
                         }
 
                         Label {
                             text: qsTr("Appeler")
                             color: Theme.dashboardPrimary
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.fs(13)
                             font.bold: true
                             font.family: Theme.fontFamily
                             Layout.fillWidth: true
@@ -352,14 +352,14 @@ Rectangle {
                         Text {
                             text: "\uf0e0"
                             color: Theme.dashboardPrimary
-                            font.pixelSize: 14
+                            font.pixelSize: Theme.fs(14)
                             font.family: "FontAwesome"
                         }
 
                         Label {
                             text: qsTr("Message")
                             color: Theme.dashboardPrimary
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.fs(13)
                             font.bold: true
                             font.family: Theme.fontFamily
                             Layout.fillWidth: true

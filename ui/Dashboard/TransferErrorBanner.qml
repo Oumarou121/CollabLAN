@@ -54,7 +54,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: root.title
                 color: Theme.dashboardErrorText
-                font.pixelSize: 14
+                font.pixelSize: Theme.fs(14)
                 font.weight: Font.Bold
                 font.family: Theme.fontFamily
                 elide: Text.ElideRight
@@ -63,7 +63,7 @@ Rectangle {
                 Layout.fillWidth: true
                 text: root.message
                 color: Theme.dashboardErrorText
-                font.pixelSize: 13
+                font.pixelSize: Theme.fs(13)
                 font.family: Theme.fontFamily
                 wrapMode: Text.WordWrap
             }

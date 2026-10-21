@@ -13,12 +13,9 @@ import "../Components"
  * il n'y a plus de validation "mock" locale, seule une authentification
  * reelle contre la base Users permet d'acceder a l'ecran Home.
  *
- * Design v2 (split-screen) : remplace la carte flottante par une mise en
- * page en deux volets - panneau de marque (contexte produit) a gauche,
- * formulaire epure sans carte a droite. Repli responsive sous 900px :
- * le panneau de marque disparait, seul le formulaire reste visible.
- * Toute la logique d'authentification ci-dessous est inchangee ; seules
- * les proprietes visuelles ont ete retravaillees.
+ * Mise en page en deux volets : panneau de marque a gauche, formulaire
+ * dans une carte a droite ; sous 900 px le panneau de marque disparait.
+ * Toute la logique d'authentification est inchangee.
  */
 Item {
     id: root
@@ -76,35 +73,24 @@ Item {
         userManager.login(username, password)
     }
 
-    // ---- Jetons locaux (palette pro/corporate, sensibles au theme) ----
-    readonly property color paper: Theme.background
-    readonly property color ink: Theme.text
-    readonly property color inkMuted: Theme.textSecondary
-    readonly property color inkFaint: Theme.textTertiary
-    readonly property color blue700: Theme.primaryDeep
-    readonly property color blue600: Theme.primary
-    readonly property color borderCol: Theme.border
-    readonly property color errorText: Theme.darkMode ? "#FF9A8A" : "#E5484D"
-    readonly property color onAccent: "#FFFFFF"
-    readonly property color disabledBg: Theme.darkMode ? "#3A4048" : "#9CA3AF"
-
-    // Panneau de marque : bleu profond institutionnel, quasi noir en dark mode.
-    readonly property color brandBg: Theme.darkMode ? "#0F1720" : "#1E3A5F"
+    // ---- Panneau de marque -------------------------------------------------
+    // Fond profond et fixe (identite produit), independant du theme ; textes
+    // clairs verifies en contraste AA sur ce fond (#F5F7FA : 15.6:1,
+    // #B9C6D6 : 9.4:1).
+    readonly property color brandBg: Theme.darkMode ? "#121B2E" : "#0F2747"
     readonly property color brandInk: "#F5F7FA"
-    readonly property color brandInkMuted: Theme.darkMode ? "#B8B9D6" : "#AEC2D4"
-    readonly property color accentSky: Theme.primary
+    readonly property color brandInkMuted: "#B9C6D6"
+    readonly property color brandMark: Theme.accentPalettes[Theme.accentName].dark[1]
 
-    // Police d'accent embarquee (evite les alea de resolution de "serif"
-    // selon les postes / OS constate en test).
-    FontLoader {
-        id: serifFont
-        source: "../Assets/fonts/PTSerif-Bold.ttf"
-    }
-    readonly property string displayFont: serifFont.status === FontLoader.Ready ? serifFont.name : "serif"
+    readonly property bool hasPendingServer: typeof application !== "undefined" && application
+                                             && application.pendingServerFingerprint.length > 0
+    readonly property bool needsInitialAdmin: typeof application !== "undefined" && application
+                                              && application.needsInitialAdmin
+    readonly property bool loginBusy: typeof userManager !== "undefined" && userManager && userManager.busy === true
 
     Rectangle {
         anchors.fill: parent
-        color: root.paper
+        color: Theme.bg
     }
 
     // Focus automatique sur le champ nom d'utilisateur des l'ouverture de
@@ -125,135 +111,292 @@ Item {
         }
     }
 
-    ThemeToggleButton {
+    // ---- Barre d'outils (haut droite) -----------------------------------------
+    RowLayout {
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.margins: Theme.spacingLarge
         z: 10
+        spacing: Theme.spacingSmall
+
+        // Accessible sans session : la confiance envers le certificat d'un
+        // serveur est une decision locale de connexion, pas une action d'admin.
+        AppButton {
+            visible: root.hasPendingServer
+            variant: "soft"
+            iconGlyph: ""
+            text: qsTr("Serveur à approuver")
+            tooltip: qsTr("Vérifier le certificat du serveur détecté")
+            onClicked: serverTrustDialog.open()
+        }
+
+        AppButton {
+            variant: "ghost"
+            iconGlyph: ""
+            text: qsTr("Mode réseau")
+            tooltip: qsTr("Rôle de ce poste sur le réseau local")
+            onClicked: networkModeDialog.open()
+        }
+
+        ThemeToggleButton {}
     }
 
-    // Accessible sans session : la confiance envers le certificat d'un
-    // serveur est une decision locale de connexion, pas une action d'admin.
-    Button {
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.topMargin: Theme.spacingLarge
-        anchors.rightMargin: Theme.spacingLarge + 54
-        z: 10
-        visible: application.pendingServerFingerprint.length > 0
-        text: qsTr("Connexion réseau")
-        onClicked: serverTrustDialog.open()
-    }
-
-    Button {
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.topMargin: Theme.spacingLarge
-        anchors.rightMargin: Theme.spacingLarge + 202
-        z: 10
-        text: qsTr("Mode réseau")
-        onClicked: networkModeDialog.open()
-    }
-
-    Dialog {
+    // ---- Mode reseau de ce poste ------------------------------------------------
+    AppDialog {
         id: networkModeDialog
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(parent.width - 40, 460)
         title: qsTr("Mode réseau de ce poste")
-        standardButtons: Dialog.Close
+        headerIcon: ""
+        dialogWidth: 480
 
-        contentItem: ColumnLayout {
+        readonly property string role: (typeof electionService !== "undefined" && electionService)
+                                        ? electionService.roleLabel : ""
+
+        ColumnLayout {
+            anchors.fill: parent
             spacing: Theme.spacingMedium
-            implicitWidth: 400
 
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("Rôle actuel : %1").arg(electionService ? electionService.roleLabel : qsTr("inconnu"))
-                color: Theme.text
-                font.bold: true
+            RowLayout {
+                spacing: Theme.spacingSmall
+                Text {
+                    text: qsTr("Rôle actuel")
+                    color: Theme.ink2
+                    font.pixelSize: Theme.fs(13)
+                    font.family: Theme.fontFamily
+                }
+                StatusBadge {
+                    tone: networkModeDialog.role === "SERVER" ? "accent"
+                        : networkModeDialog.role === "TEMP_SERVER" ? "warning"
+                        : networkModeDialog.role === "CLIENT" ? "neutral" : "neutral"
+                    text: networkModeDialog.role === "SERVER" ? qsTr("Serveur")
+                        : networkModeDialog.role === "TEMP_SERVER" ? qsTr("Serveur de secours")
+                        : networkModeDialog.role === "CLIENT" ? qsTr("Client") : qsTr("Inconnu")
+                }
             }
-            Label {
+
+            Text {
                 Layout.fillWidth: true
-                text: qsTr("Choisis Server pour que ce poste écoute les autres machines. Choisis Client pour qu’il se connecte au serveur détecté sur le réseau.")
+                text: qsTr("En mode serveur, ce poste accepte les connexions des autres machines du réseau. En mode client, il se connecte au serveur détecté sur le réseau.")
                 wrapMode: Text.WordWrap
-                color: Theme.textSecondary
+                color: Theme.ink2
+                font.pixelSize: Theme.fs(13)
+                font.family: Theme.fontFamily
             }
-            Label {
+
+            Rectangle {
+                visible: typeof application !== "undefined" && application && application.pendingClientCount > 0
                 Layout.fillWidth: true
-                visible: application.pendingClientCount > 0
-                text: qsTr("%1 client(s) en attente d’autorisation. Connecte-toi avec un compte administrateur pour les valider.").arg(application.pendingClientCount)
-                wrapMode: Text.WordWrap
-                color: Theme.primary
+                implicitHeight: pendingText.implicitHeight + 20
+                radius: Theme.radiusControl
+                color: Theme.infoSoft
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 8
+                    FaIcon {
+                        Layout.alignment: Qt.AlignTop
+                        glyph: ""
+                        color: Theme.infoInk
+                        font.pixelSize: Theme.fs(13)
+                    }
+                    Text {
+                        id: pendingText
+                        Layout.fillWidth: true
+                        text: (typeof application !== "undefined" && application)
+                              ? qsTr("%n poste(s) en attente d'autorisation. Connectez-vous avec un compte administrateur pour les examiner.", "", application.pendingClientCount)
+                              : ""
+                        wrapMode: Text.WordWrap
+                        color: Theme.infoInk
+                        font.pixelSize: Theme.fs(12)
+                        font.family: Theme.fontFamily
+                    }
+                }
             }
+
             RowLayout {
                 Layout.fillWidth: true
+                Layout.topMargin: Theme.spacingSmall
                 spacing: Theme.spacingSmall
-                Button {
-                    Layout.fillWidth: true
-                    text: qsTr("Devenir serveur")
-                    enabled: electionService && electionService.roleLabel !== "SERVER"
-                    onClicked: application.promoteToServer()
+
+                Item { Layout.fillWidth: true }
+
+                AppButton {
+                    text: qsTr("Passer en client")
+                    enabled: networkModeDialog.role !== "CLIENT"
+                    onClicked: becomeClientConfirm.open()
                 }
-                Button {
-                    Layout.fillWidth: true
-                    text: qsTr("Devenir client")
-                    enabled: electionService && electionService.roleLabel !== "CLIENT"
-                    onClicked: application.demoteToClient()
+                AppButton {
+                    variant: "primary"
+                    text: qsTr("Passer en serveur")
+                    enabled: networkModeDialog.role !== "SERVER"
+                    onClicked: becomeServerConfirm.open()
                 }
             }
         }
     }
 
-    Dialog {
-        id: serverTrustDialog
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(parent.width - 40, 520)
-        title: qsTr("Approbation du serveur")
-        standardButtons: Dialog.Ok | Dialog.Cancel
-
-        onAccepted: {
-            if (!application.approvePendingServerCertificate())
-                trustError.text = qsTr("Impossible d’approuver ce certificat. Réessaie la connexion.")
+    ConfirmDialog {
+        id: becomeServerConfirm
+        title: qsTr("Faire de ce poste le serveur ?")
+        message: qsTr("Les autres postes du réseau se connecteront à cette machine.")
+        detail: qsTr("Un seul poste devrait être serveur sur le réseau local.")
+        confirmText: qsTr("Passer en serveur")
+        onConfirmed: {
+            application.promoteToServer()
+            networkModeDialog.close()
         }
+    }
 
-        contentItem: ColumnLayout {
+    ConfirmDialog {
+        id: becomeClientConfirm
+        title: qsTr("Repasser ce poste en client ?")
+        message: qsTr("Ce poste cessera d'accepter les connexions et se connectera au serveur détecté sur le réseau.")
+        confirmText: qsTr("Passer en client")
+        destructive: true
+        onConfirmed: {
+            application.demoteToClient()
+            networkModeDialog.close()
+        }
+    }
+
+    // ---- Approbation du certificat d'un serveur inconnu -------------------------
+    AppDialog {
+        id: serverTrustDialog
+        title: qsTr("Approuver ce serveur ?")
+        headerIcon: ""
+        headerTone: "warning"
+        dialogWidth: 540
+
+        ColumnLayout {
+            anchors.fill: parent
             spacing: Theme.spacingMedium
-            implicitWidth: 460
 
-            Label {
+            Text {
                 Layout.fillWidth: true
-                text: qsTr("Ce serveur présente un certificat encore inconnu sur ce poste. Vérifie son empreinte avec la personne qui administre le serveur avant de l’approuver.")
+                text: qsTr("Ce serveur présente un certificat encore inconnu sur ce poste. Comparez son empreinte avec celle affichée par la personne qui administre le serveur avant de l'approuver.")
                 wrapMode: Text.WordWrap
-                color: Theme.textSecondary
+                color: Theme.ink2
+                font.pixelSize: Theme.fs(13)
+                font.family: Theme.fontFamily
             }
-            Label {
-                text: qsTr("Adresse : %1:%2").arg(application.pendingServerAddress).arg(application.pendingServerPort)
-                color: Theme.text
-            }
-            TextEdit {
+
+            GridLayout {
                 Layout.fillWidth: true
-                text: application.pendingServerFingerprint
-                readOnly: true
-                selectByMouse: true
-                wrapMode: TextEdit.WrapAnywhere
-                font.family: "monospace"
-                color: Theme.text
+                columns: 2
+                columnSpacing: Theme.spacingMedium
+                rowSpacing: 6
+
+                Text {
+                    text: qsTr("Adresse")
+                    color: Theme.ink3
+                    font.pixelSize: Theme.fs(12)
+                    font.family: Theme.fontFamily
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: root.hasPendingServer
+                          ? application.pendingServerAddress + ":" + application.pendingServerPort : ""
+                    color: Theme.ink
+                    font.pixelSize: Theme.fs(13)
+                    font.family: Theme.fontFamily
+                }
+                Text {
+                    Layout.alignment: Qt.AlignTop
+                    Layout.topMargin: 8
+                    text: qsTr("Empreinte")
+                    color: Theme.ink3
+                    font.pixelSize: Theme.fs(12)
+                    font.family: Theme.fontFamily
+                }
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: fingerprintText.implicitHeight + 16
+                    radius: Theme.radiusControl
+                    color: Theme.sunken
+                    border.width: 1
+                    border.color: Theme.line
+
+                    TextEdit {
+                        id: fingerprintText
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        text: root.hasPendingServer ? application.pendingServerFingerprint : ""
+                        readOnly: true
+                        selectByMouse: true
+                        wrapMode: TextEdit.WrapAnywhere
+                        font.family: "Consolas"
+                        font.pixelSize: Theme.fs(12)
+                        color: Theme.ink
+                        selectionColor: Theme.accentColor
+                        selectedTextColor: Theme.accentInk
+                        Accessible.name: qsTr("Empreinte du certificat du serveur")
+                    }
+                }
             }
-            Label {
-                id: trustError
+
+            Rectangle {
+                visible: trustError.text.length > 0
                 Layout.fillWidth: true
-                visible: text.length > 0
-                text: ""
-                color: root.errorText
-                wrapMode: Text.WordWrap
+                implicitHeight: trustError.implicitHeight + 20
+                radius: Theme.radiusControl
+                color: Theme.dangerSoft
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 8
+                    FaIcon {
+                        Layout.alignment: Qt.AlignTop
+                        glyph: ""
+                        color: Theme.dangerInk
+                        font.pixelSize: Theme.fs(13)
+                    }
+                    Text {
+                        id: trustError
+                        Layout.fillWidth: true
+                        text: ""
+                        color: Theme.dangerInk
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: Theme.fs(12)
+                        font.family: Theme.fontFamily
+                        Accessible.role: Accessible.AlertMessage
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: Theme.spacingSmall
+                spacing: Theme.spacingSmall
+
+                Item { Layout.fillWidth: true }
+
+                AppButton {
+                    text: qsTr("Annuler")
+                    variant: "ghost"
+                    onClicked: serverTrustDialog.close()
+                }
+                AppButton {
+                    variant: "primary"
+                    iconGlyph: ""
+                    text: qsTr("Approuver ce serveur")
+                    // Le dialogue reste ouvert en cas d'echec pour que
+                    // l'erreur soit lisible.
+                    onClicked: {
+                        if (application.approvePendingServerCertificate()) {
+                            trustError.text = ""
+                            serverTrustDialog.close()
+                        } else {
+                            trustError.text = qsTr("Impossible d'approuver ce certificat. Relancez la connexion au serveur puis réessayez.")
+                        }
+                    }
+                }
             }
         }
     }
 
     Connections {
-        target: application
+        target: (typeof application !== "undefined") ? application : null
 
         function onPendingServerChanged() {
             if (application.pendingServerFingerprint.length > 0) {
@@ -274,121 +417,113 @@ Item {
             id: brandPanel
             visible: root.showBrandPanel
             Layout.fillHeight: true
-            Layout.preferredWidth: root.width * 0.42
+            Layout.preferredWidth: Math.min(root.width * 0.42, 620)
             color: root.brandBg
+            clip: true
 
-            // Texture "grille" discrete, coherente avec l'identite
-            // "dossier / portail institutionnel" du projet.
+            // Motif discret de reseau (noeuds relies), rappel de la carte
+            // reseau de l'application.
             Canvas {
                 anchors.fill: parent
-                opacity: 0.5
+                opacity: 0.55
                 onPaint: {
                     const ctx = getContext("2d")
                     ctx.clearRect(0, 0, width, height)
-                    ctx.strokeStyle = "rgba(79,195,247,0.08)"
-                    ctx.lineWidth = 1
-                    const step = 28
-                    for (let x = 0; x <= width; x += step) {
-                        ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, height); ctx.stroke()
-                    }
-                    for (let y = 0; y <= height; y += step) {
-                        ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(width, y + 0.5); ctx.stroke()
+                    const step = 56
+                    ctx.fillStyle = "rgba(185,198,214,0.16)"
+                    for (let x = step / 2; x <= width; x += step) {
+                        for (let y = step / 2; y <= height; y += step) {
+                            ctx.beginPath(); ctx.arc(x, y, 1.4, 0, Math.PI * 2); ctx.fill()
+                        }
                     }
                 }
                 onWidthChanged: requestPaint()
                 onHeightChanged: requestPaint()
             }
 
-            // Liseré or vertical côté formulaire, seule touche de couleur
-            // vive du panneau.
-            Rectangle {
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                width: 3
-                color: root.accentSky
-            }
-
             ColumnLayout {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                anchors.leftMargin: Theme.spacingXl * 1.4
-                anchors.rightMargin: Theme.spacingXl * 1.4
+                anchors.leftMargin: 56
+                anchors.rightMargin: 56
                 spacing: Theme.spacingXl
 
                 RowLayout {
-                    spacing: Theme.spacingSmall
+                    spacing: 12
 
                     BrandMark {
-                        size: 56
+                        size: 48
                     }
 
-                    Label {
+                    Text {
                         text: "LocaLink"
-                        font.pixelSize: 28
-                        font.family: root.displayFont
+                        font.pixelSize: Theme.fs(26)
+                        font.weight: Theme.weightBold
+                        font.family: Theme.fontFamily
                         color: root.brandInk
                     }
                 }
 
-                Label {
+                Text {
                     text: qsTr("La collaboration de votre équipe, entièrement sur votre réseau local.")
-                    font.pixelSize: 20
-                    font.family: root.displayFont
+                    font.pixelSize: Theme.fs(26)
+                    font.weight: Theme.weightSemibold
+                    font.family: Theme.fontFamily
                     color: root.brandInk
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
-                    lineHeight: 1.25
+                    lineHeight: 1.2
                 }
 
-                Label {
-                    text: qsTr("Aucune dépendance à Internet. Vos données restent sur votre réseau.")
-                    font.pixelSize: Theme.fontSizeBody
+                Text {
+                    text: qsTr("Aucune dépendance à Internet : vos messages, fichiers et appels restent sur votre réseau.")
+                    font.pixelSize: Theme.fs(15)
                     font.family: Theme.fontFamily
                     color: root.brandInkMuted
                     wrapMode: Text.WordWrap
                     Layout.fillWidth: true
+                    lineHeight: 1.3
                 }
 
                 ColumnLayout {
-                    Layout.topMargin: Theme.spacingMedium
-                    spacing: Theme.spacingMedium
+                    Layout.topMargin: Theme.spacingSmall
+                    spacing: 14
 
                     Repeater {
                         model: [
-                            qsTr("Découverte automatique des collègues sur le réseau"),
-                            qsTr("Messagerie individuelle et de groupe"),
-                            qsTr("Partage de fichiers et de dossiers"),
-                            qsTr("Appels vocaux intégrés")
+                            { glyph: "", label: qsTr("Découverte automatique des postes du réseau") },
+                            { glyph: "", label: qsTr("Messagerie individuelle et de groupe") },
+                            { glyph: "", label: qsTr("Transferts de fichiers et dossiers partagés") },
+                            { glyph: "", label: qsTr("Appels vocaux sur le réseau local") }
                         ]
 
                         RowLayout {
+                            required property var modelData
                             Layout.fillWidth: true
-                            spacing: Theme.spacingSmall
+                            spacing: 12
 
                             Rectangle {
-                                Layout.preferredWidth: 20
-                                Layout.preferredHeight: 20
-                                radius: 4
-                                color: "transparent"
-                                border.width: 1.4
-                                border.color: root.accentSky
+                                Layout.preferredWidth: 32
+                                Layout.preferredHeight: 32
+                                radius: 8
+                                color: Qt.rgba(1, 1, 1, 0.08)
+                                border.width: 1
+                                border.color: Qt.rgba(1, 1, 1, 0.12)
 
-                                Text {
+                                FaIcon {
                                     anchors.centerIn: parent
-                                    text: "\u2713"
-                                    color: root.accentSky
-                                    font.pixelSize: 12
-                                    font.bold: true
+                                    glyph: modelData.glyph
+                                    color: root.brandMark
+                                    font.pixelSize: Theme.fs(14)
                                 }
                             }
 
-                            Label {
-                                text: modelData
-                                font.pixelSize: Theme.fontSizeSmall
+                            Text {
+                                text: modelData.label
+                                font.pixelSize: Theme.fs(14)
                                 font.family: Theme.fontFamily
-                                color: root.brandInkMuted
+                                color: root.brandInk
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true
                             }
@@ -397,42 +532,47 @@ Item {
                 }
             }
 
-            Label {
+            RowLayout {
                 anchors.left: parent.left
                 anchors.bottom: parent.bottom
-                anchors.margins: Theme.spacingXl * 1.4
-                text: qsTr("Connexion sécurisée sur votre réseau local").toUpperCase()
-                font.pixelSize: 10
-                font.family: "monospace"
-                font.letterSpacing: 0.6
-                color: root.brandInkMuted
+                anchors.leftMargin: 56
+                anchors.bottomMargin: 32
+                spacing: 8
+
+                FaIcon {
+                    glyph: ""
+                    color: root.brandInkMuted
+                    font.pixelSize: Theme.fs(12)
+                }
+                Text {
+                    text: qsTr("Connexions chiffrées entre les postes autorisés")
+                    font.pixelSize: Theme.fs(12)
+                    font.family: Theme.fontFamily
+                    color: root.brandInkMuted
+                }
             }
         }
 
         // ---------------------------------------------------------------
-        // Panneau droit : formulaire presente dans une carte (ombre legere,
-        // coins arrondis), plutot que directement sur le fond.
+        // Panneau droit : formulaire dans une carte
         // ---------------------------------------------------------------
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            // Ombre portee : rectangle legerement plus grand, decale,
-            // avec une opacite faible - simule une elevation douce sans
-            // dependre d'un effet graphique externe.
             // Premier lancement du serveur principal : aucun compte n'existe encore. Plus de compte
             // "admin"/"admin123" par defaut : la personne qui installe choisit le nom et le mot de
             // passe du premier administrateur (Application::createInitialAdmin).
             Rectangle {
                 id: setupCard
-                visible: application.needsInitialAdmin
+                visible: root.needsInitialAdmin
                 anchors.centerIn: parent
-                width: Math.min(460, parent.width - Theme.spacingXl * 2)
-                height: setupColumn.implicitHeight + Theme.spacingXl * 2.2
+                width: Math.min(440, parent.width - Theme.spacingXl * 2)
+                height: setupColumn.implicitHeight + 72
                 radius: Theme.radiusLarge
-                color: Theme.darkMode ? "#1C232D" : "#FFFFFF"
+                color: Theme.surface0
                 border.width: 1
-                border.color: root.borderCol
+                border.color: Theme.line
 
                 function submit() {
                     const error = application.createInitialAdmin(setupName.text, setupPassword.text, setupConfirm.text)
@@ -446,23 +586,40 @@ Item {
                 ColumnLayout {
                     id: setupColumn
                     anchors.centerIn: parent
-                    width: Math.min(360, parent.width - Theme.spacingXl * 2)
+                    width: parent.width - 72
                     spacing: Theme.spacingMedium
 
-                    Label {
-                        text: qsTr("Créer le compte administrateur")
-                        font.pixelSize: 24
-                        font.family: root.displayFont
-                        color: root.ink
-                        wrapMode: Text.WordWrap
-                        Layout.fillWidth: true
+                    Rectangle {
+                        Layout.preferredWidth: 40
+                        Layout.preferredHeight: 40
+                        radius: 10
+                        color: Theme.accentSoft
+                        FaIcon {
+                            anchors.centerIn: parent
+                            glyph: ""
+                            color: Theme.navActiveInk
+                            font.pixelSize: Theme.fs(17)
+                        }
                     }
-                    Label {
-                        text: qsTr("Premier démarrage : choisissez l'identifiant et le mot de passe du premier administrateur du réseau (8 caractères minimum).")
-                        font.pixelSize: Theme.fontSizeBody
-                        color: root.inkMuted
+
+                    Text {
+                        text: qsTr("Créer le compte administrateur")
+                        font.pixelSize: Theme.fs(22)
+                        font.weight: Theme.weightSemibold
+                        font.family: Theme.fontFamily
+                        color: Theme.ink
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
+                        Accessible.role: Accessible.Heading
+                    }
+                    Text {
+                        text: qsTr("Premier démarrage : choisissez l'identifiant et le mot de passe du premier administrateur du réseau (8 caractères minimum).")
+                        font.pixelSize: Theme.fs(13)
+                        font.family: Theme.fontFamily
+                        color: Theme.ink2
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: Theme.spacingSmall
                     }
                     AppTextField {
                         id: setupName
@@ -482,260 +639,198 @@ Item {
                         Layout.fillWidth: true
                         onAccepted: setupCard.submit()
                     }
-                    Label {
-                        id: setupError
-                        visible: text.length > 0
-                        color: root.errorText
-                        wrapMode: Text.WordWrap
+                    Rectangle {
+                        visible: setupError.text.length > 0
                         Layout.fillWidth: true
+                        implicitHeight: setupError.implicitHeight + 20
+                        radius: Theme.radiusControl
+                        color: Theme.dangerSoft
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 8
+                            FaIcon {
+                                Layout.alignment: Qt.AlignTop
+                                glyph: ""
+                                color: Theme.dangerInk
+                                font.pixelSize: Theme.fs(13)
+                            }
+                            Text {
+                                id: setupError
+                                Layout.fillWidth: true
+                                color: Theme.dangerInk
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: Theme.fs(12)
+                                font.family: Theme.fontFamily
+                                Accessible.role: Accessible.AlertMessage
+                            }
+                        }
                     }
                     AppButton {
                         variant: "primary"
+                        size: "large"
                         text: qsTr("Créer le compte")
                         Layout.fillWidth: true
+                        Layout.topMargin: Theme.spacingSmall
                         onClicked: setupCard.submit()
                     }
                 }
             }
 
             Rectangle {
-                visible: formCard.visible
-                anchors.centerIn: formCard
-                width: formCard.width + 8
-                height: formCard.height + 8
-                radius: Theme.radiusMedium + 4
-                color: Theme.darkMode ? "#00000000" : "#0F1E30"
-                opacity: Theme.darkMode ? 0 : 0.06
-                y: formCard.y + 6
-            }
-
-            Rectangle {
                 id: formCard
-                visible: !application.needsInitialAdmin
+                visible: !root.needsInitialAdmin
                 anchors.centerIn: parent
-                width: Math.min(460, parent.width - Theme.spacingXl * 2)
-                height: formColumn.implicitHeight + Theme.spacingXl * 2.2
+                width: Math.min(420, parent.width - Theme.spacingXl * 2)
+                height: formColumn.implicitHeight + 80
                 radius: Theme.radiusLarge
-                color: Theme.darkMode ? "#1C232D" : "#FFFFFF"
+                color: Theme.surface0
                 border.width: 1
-                border.color: root.borderCol
+                border.color: Theme.line
+
+                // Elevation douce (deux halos superposes, sans effet graphique).
+                Rectangle {
+                    z: -1
+                    anchors.fill: parent
+                    anchors.margins: -1
+                    anchors.topMargin: 1
+                    anchors.bottomMargin: -3
+                    radius: parent.radius + 1
+                    color: Theme.alpha(Theme.shadowStrong, 0.10)
+                }
+                Rectangle {
+                    z: -2
+                    anchors.fill: parent
+                    anchors.margins: -6
+                    anchors.topMargin: 2
+                    anchors.bottomMargin: -14
+                    radius: parent.radius + 6
+                    color: Theme.alpha(Theme.shadowStrong, 0.05)
+                }
 
                 ColumnLayout {
-                id: formColumn
-                anchors.centerIn: parent
-                width: Math.min(360, parent.width - Theme.spacingXl * 2)
-                spacing: Theme.spacingMedium
+                    id: formColumn
+                    anchors.centerIn: parent
+                    width: parent.width - 80
+                    spacing: Theme.spacingMedium
 
-                // En-tete visible uniquement quand le panneau de marque est
-                // replie, pour ne pas perdre l'identite produit.
-                RowLayout {
-                    visible: !root.showBrandPanel
-                    Layout.bottomMargin: Theme.spacingLarge
-                    Layout.alignment: Qt.AlignHCenter
-                    spacing: Theme.spacingSmall
-
-                    BrandMark {
-                        size: 44
-                    }
-
-                    Label {
-                        text: "LocaLink"
-                        font.pixelSize: 22
-                        font.family: root.displayFont
-                        color: root.ink
-                    }
-                }
-
-                Label {
-                    text: qsTr("Connexion")
-                    font.pixelSize: 24
-                    font.family: root.displayFont
-                    color: root.ink
-                }
-
-                Label {
-                    text: qsTr("Connectez-vous à votre espace")
-                    font.pixelSize: Theme.fontSizeBody
-                    font.family: Theme.fontFamily
-                    color: root.inkMuted
-                    Layout.bottomMargin: Theme.spacingMedium
-                }
-
-                AppTextField {
-                    id: usernameAppField
-                    label: qsTr("Nom d'utilisateur")
-                    placeholderText: qsTr("Votre nom d'utilisateur")
-                    hasError: errorLabel.text.length > 0
-                    Layout.fillWidth: true
-                    onAccepted: passwordAppField.field.forceActiveFocus()
-                }
-
-                Item {
-                    id: passwordFieldContainer
-                    Layout.topMargin: Theme.spacingSmall
-                    Layout.fillWidth: true
-                    implicitHeight: passwordAppField.implicitHeight
-
-                    AppPasswordField {
-                        id: passwordAppField
-                        anchors.fill: parent
-                        label: qsTr("Mot de passe")
-                        placeholderText: qsTr("Votre mot de passe")
-                        onAccepted: root.attemptLogin()
-                    }
-                }
-
-                Item {
-                    Layout.topMargin: Theme.spacingSmall
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: rememberRow.implicitHeight
-
+                    // Identite produit quand le panneau de marque est replie.
                     RowLayout {
-                        id: rememberRow
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        spacing: Theme.spacingSmall
+                        visible: !root.showBrandPanel
+                        Layout.bottomMargin: Theme.spacingSmall
+                        spacing: 10
 
-                        Rectangle {
-                            id: rememberCheckbox
-                            Layout.preferredWidth: 18
-                            Layout.preferredHeight: 18
-                            radius: 4
-                            color: root.rememberMe ? root.blue700 : "transparent"
-                            border.width: 1.4
-                            border.color: root.rememberMe ? root.blue700 : root.borderCol
-                            Behavior on color { ColorAnimation { duration: 150 } }
-                            Behavior on border.color { ColorAnimation { duration: 150 } }
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "\u2713"
-                                color: root.onAccent
-                                font.pixelSize: 11
-                                font.bold: true
-                                visible: root.rememberMe
-                            }
-                        }
-
-                        Label {
-                            text: qsTr("Se souvenir de moi")
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: Theme.fontFamily
-                            color: root.inkMuted
-                        }
-
-                        Item { Layout.fillWidth: true }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.rememberMe = !root.rememberMe
-                    }
-                }
-
-                
-                Rectangle {
-                    id: loginButton
-                    Layout.topMargin: Theme.spacingSmall
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 44
-                    radius: Theme.radiusSmall
-                    color: userManager.busy ? root.disabledBg : (loginMouseArea.containsMouse ? root.blue600 : root.blue700)
-                    Behavior on color { ColorAnimation { duration: 100 } }
-
-                    RowLayout {
-                        anchors.centerIn: parent
-                        spacing: 8
-
-                        Item {
-                            visible: userManager.busy
-                            Layout.preferredWidth: 15
-                            Layout.preferredHeight: 15
-
-                            Canvas {
-                                id: spinnerCanvas
-                                anchors.fill: parent
-                                onPaint: {
-                                    const ctx = getContext("2d")
-                                    ctx.clearRect(0, 0, width, height)
-                                    ctx.lineWidth = 2
-                                    ctx.lineCap = "round"
-                                    ctx.strokeStyle = root.onAccent
-                                    ctx.beginPath()
-                                    ctx.arc(width / 2, height / 2, width / 2 - 1.5, 0, Math.PI * 1.4)
-                                    ctx.stroke()
-                                }
-                            }
-
-                            RotationAnimation on rotation {
-                                target: spinnerCanvas
-                                running: userManager.busy
-                                loops: Animation.Infinite
-                                from: 0
-                                to: 360
-                                duration: 700
-                            }
+                        BrandMark {
+                            size: 36
                         }
 
                         Text {
-                            text: userManager.busy ? qsTr("Connexion...") : qsTr("Se connecter")
-                            color: root.onAccent
-                            font.pixelSize: Theme.fontSizeBody
-                            font.bold: true
+                            text: "LocaLink"
+                            font.pixelSize: Theme.fs(20)
+                            font.weight: Theme.weightBold
                             font.family: Theme.fontFamily
+                            color: Theme.ink
                         }
                     }
 
-                    MouseArea {
-                        id: loginMouseArea
-                        anchors.fill: parent
-                        enabled: !userManager.busy
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.attemptLogin()
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: Theme.spacingSmall
+                        spacing: 4
+
+                        Text {
+                            text: qsTr("Connexion")
+                            font.pixelSize: Theme.fs(24)
+                            font.weight: Theme.weightSemibold
+                            font.family: Theme.fontFamily
+                            color: Theme.ink
+                            Accessible.role: Accessible.Heading
+                        }
+
+                        Text {
+                            text: qsTr("Connectez-vous avec votre compte LocaLink.")
+                            font.pixelSize: Theme.fs(14)
+                            font.family: Theme.fontFamily
+                            color: Theme.ink2
+                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                        }
                     }
-                }
 
+                    AppTextField {
+                        id: usernameAppField
+                        label: qsTr("Nom d'utilisateur")
+                        placeholderText: qsTr("Votre nom d'utilisateur")
+                        hasError: errorLabel.text.length > 0
+                        Layout.fillWidth: true
+                        onAccepted: passwordAppField.field.forceActiveFocus()
+                    }
 
-                RowLayout {
-                    id: errorRow
+                    Item {
+                        id: passwordFieldContainer
+                        Layout.fillWidth: true
+                        implicitHeight: passwordAppField.implicitHeight
 
-                    Layout.fillWidth: true
-                    Layout.topMargin: errorLabel.text.length > 0
-                                    ? Theme.spacingSmall
-                                    : 0
-                    Layout.preferredHeight: errorLabel.text.length > 0
-                                            ? implicitHeight
-                                            : 0
-                    visible: errorLabel.text.length > 0
+                        AppPasswordField {
+                            id: passwordAppField
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            label: qsTr("Mot de passe")
+                            placeholderText: qsTr("Votre mot de passe")
+                            hasError: errorLabel.text.length > 0
+                            onAccepted: root.attemptLogin()
+                        }
+                    }
 
-                    spacing: Theme.spacingXs
+                    AppCheckBox {
+                        text: qsTr("Se souvenir de moi sur ce poste")
+                        checked: root.rememberMe
+                        onToggled: root.rememberMe = checked
+                    }
 
                     Rectangle {
-                        Layout.preferredWidth: 4
-                        Layout.preferredHeight: errorLabel.implicitHeight
-                        radius: 2
-                        color: root.errorText
-                    }
-
-                    Label {
-                        id: errorLabel
-                        text: ""
-                        color: root.errorText
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: Theme.fontFamily
-                        wrapMode: Text.WordWrap
+                        id: errorRow
+                        visible: errorLabel.text.length > 0
                         Layout.fillWidth: true
+                        implicitHeight: errorLabel.implicitHeight + 20
+                        radius: Theme.radiusControl
+                        color: Theme.dangerSoft
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 8
+                            FaIcon {
+                                Layout.alignment: Qt.AlignTop
+                                Layout.topMargin: 1
+                                glyph: ""
+                                color: Theme.dangerInk
+                                font.pixelSize: Theme.fs(13)
+                            }
+                            Text {
+                                id: errorLabel
+                                Layout.fillWidth: true
+                                text: ""
+                                color: Theme.dangerInk
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: Theme.fs(13)
+                                font.family: Theme.fontFamily
+                                Accessible.role: Accessible.AlertMessage
+                            }
+                        }
                     }
-                }
 
-                Label {
-                    visible: errorLabel.text.length === 0
-                    Layout.topMargin: Theme.spacingSmall
-                    Layout.preferredHeight: errorLabel.implicitHeight
-                }
-
+                    AppButton {
+                        id: loginButton
+                        Layout.fillWidth: true
+                        Layout.topMargin: Theme.spacingSmall
+                        variant: "primary"
+                        size: "large"
+                        text: root.loginBusy ? qsTr("Connexion…") : qsTr("Se connecter")
+                        loading: root.loginBusy
+                        onClicked: root.attemptLogin()
+                    }
                 }
             }
         }

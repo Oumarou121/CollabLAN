@@ -2,30 +2,29 @@ import QtQuick
 import Themes
 
 /*
- * BrandMark - Logo de marque LocaLink
- *
- * Composant reutilisable affichant le logo fourni par l'equipe dans un
- * badge clair, pour rester lisible aussi bien en theme clair qu'en theme
- * sombre. Utilise sur l'ecran Login et l'ecran Home.
+ * BrandMark - logo LocaLink (deux silhouettes bleues), sans cadre : le
+ * dessin est lisible aussi bien sur fond clair que sombre. Utilise par la
+ * navigation, la connexion et "A propos".
  */
-Rectangle {
+Item {
     id: root
 
     property int size: 40
 
+    implicitWidth: size
+    implicitHeight: size
     width: size
     height: size
-    radius: size * 0.28
-    color: Theme.darkMode ? "#232A35" : "#FFFFFF"
-    border.width: 1
-    border.color: Theme.border
 
     Image {
         anchors.fill: parent
-        anchors.margins: root.size * 0.12
         source: "../Assets/logo.png"
+        sourceSize.width: root.size * 2
+        sourceSize.height: root.size * 2
         fillMode: Image.PreserveAspectFit
         smooth: true
         mipmap: true
+        Accessible.role: Accessible.Graphic
+        Accessible.name: "LocaLink"
     }
 }

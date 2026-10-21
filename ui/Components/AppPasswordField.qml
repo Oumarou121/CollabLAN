@@ -4,15 +4,12 @@ import QtQuick.Layouts
 import Themes
 
 /*
- * AppPasswordField - meme style qu'AppTextField, avec un bouton
- * "afficher/masquer" (glyphe oeil / oeil barre Font Awesome) integre a
- * droite du champ, plutot qu'un mot de passe en clair perpetuellement
- * masque comme c'etait le cas jusqu'ici (echoMode fige a Password).
+ * AppPasswordField - meme rendu qu'AppTextField (libelle, focus, erreur),
+ * avec un bouton "afficher / masquer le mot de passe" integre a droite.
  *
- * Usage :
  *   AppPasswordField {
  *       label: qsTr("Mot de passe")
- *       placeholderText: qsTr("8 caracteres minimum")
+ *       placeholderText: qsTr("8 caractères minimum")
  *       Layout.fillWidth: true
  *   }
  */
@@ -21,70 +18,101 @@ ColumnLayout {
 
     property string label: ""
     property string helperText: ""
+    property bool hasError: false
+    property bool isRequired: false
     property alias placeholderText: field.placeholderText
     property alias text: field.text
     property alias field: field
     signal accepted()
 
-    spacing: Theme.spacingXs
+    spacing: 6
 
-    FontLoader {
-        id: iconFont
-        source: "../Assets/fonts/fontawesome-webfont.ttf"
-    }
-
-    Label {
+    Text {
         visible: root.label.length > 0
-        text: root.label
-        font.pixelSize: Theme.fontSizeSmall
+        text: root.label + (root.isRequired ? " *" : "")
+        color: Theme.ink2
+        font.pixelSize: Theme.fs(12)
+        font.weight: Theme.weightSemibold
         font.family: Theme.fontFamily
-        color: Theme.textSecondary
     }
 
     TextField {
         id: field
         Layout.fillWidth: true
-        Layout.preferredHeight: 48
-        color: Theme.text
-        font.pixelSize: Theme.fontSizeBody
+        Layout.preferredHeight: Theme.controlHeight
+        color: field.enabled ? Theme.ink : Theme.inkDisabled
+        font.pixelSize: Theme.fs(13)
         font.family: Theme.fontFamily
-        leftPadding: Theme.spacingMedium
+        leftPadding: 12
         rightPadding: 40
+        verticalAlignment: TextInput.AlignVCenter
         selectByMouse: true
-        placeholderTextColor: Theme.textTertiary
+        selectionColor: Theme.accentColor
+        selectedTextColor: Theme.accentInk
+        placeholderTextColor: Theme.ink3
         echoMode: revealButton.revealed ? TextInput.Normal : TextInput.Password
+        Accessible.name: root.label.length > 0 ? root.label : field.placeholderText
+        Accessible.description: root.helperText
 
         background: Rectangle {
-            radius: Theme.radiusMedium
-            color: Theme.colorTextField
-            border.width: field.activeFocus ? 2 : 1
-            border.color: field.activeFocus ? Theme.primary : Theme.border
+            radius: Theme.radiusControl
+            color: field.enabled ? Theme.surface0 : Theme.sunken
+            border.width: 1
+            border.color: root.hasError ? Theme.dangerColor
+                        : field.activeFocus ? Theme.accentColor
+                        : (field.hovered ? Theme.ink3 : Theme.lineStrong)
 
-            Behavior on border.color { ColorAnimation { duration: 100 } }
+            Behavior on border.color { ColorAnimation { duration: Theme.durationFast } }
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -3
+                radius: parent.radius + 3
+                color: "transparent"
+                border.width: 3
+                border.color: Theme.alpha(root.hasError ? Theme.dangerColor : Theme.accentColor, 0.18)
+                visible: field.activeFocus
+            }
         }
 
         IconButton {
             id: revealButton
+            property bool revealed: false
             anchors.right: parent.right
             anchors.rightMargin: 4
             anchors.verticalCenter: parent.verticalCenter
-            property bool revealed: false
-            glyph: revealed ? "\uf070" : "\uf06e"
-            variant: "ghost"
-            size: 30
+            glyph: revealed ? "" : ""
+            size: Theme.controlHeight - 8
+            iconSize: Theme.fs(13)
+            tooltip: revealed ? qsTr("Masquer le mot de passe") : qsTr("Afficher le mot de passe")
+            focusPolicy: Qt.TabFocus
             onClicked: revealed = !revealed
         }
 
         onAccepted: root.accepted()
     }
 
-    Label {
+    RowLayout {
         visible: root.helperText.length > 0
-        text: root.helperText
-        font.pixelSize: Theme.fontSizeCaption
-        font.family: Theme.fontFamily
-        color: Theme.textTertiary
-        wrapMode: Text.WordWrap
         Layout.fillWidth: true
+        spacing: 6
+
+        FaIcon {
+            visible: root.hasError
+            glyph: ""
+            color: Theme.dangerInk
+            font.pixelSize: Theme.fs(11)
+            Layout.alignment: Qt.AlignTop
+            Layout.topMargin: 1
+        }
+
+        Text {
+            text: root.helperText
+            font.pixelSize: Theme.fs(12)
+            font.family: Theme.fontFamily
+            color: root.hasError ? Theme.dangerInk : Theme.ink3
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
     }
 }

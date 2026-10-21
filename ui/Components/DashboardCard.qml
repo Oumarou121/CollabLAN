@@ -112,7 +112,7 @@ Rectangle {
                     anchors.margins: Theme.spacingMedium
                     font.family: root.iconFontFamily
                     text: root.icon
-                    font.pixelSize: 34
+                    font.pixelSize: Theme.fs(34)
                     color: "#ffffff"
                     opacity: 0.94
                 }
@@ -124,7 +124,7 @@ Rectangle {
                 //     anchors.top: parent.top
                 //     anchors.margins: Theme.spacingMedium
                 //     text: "\u261D"
-                //     font.pixelSize: 22
+                //     font.pixelSize: Theme.fs(22)
                 //     color: "#ffffff"
                 //     opacity: mouseArea.containsMouse ? 0.9 : 0.5
                 //     x: mouseArea.containsMouse ? 2 : 0
@@ -193,7 +193,7 @@ Rectangle {
                     anchors.centerIn: parent
                     text: "→"
                     color: mouseArea.containsMouse ? "#ffffff" : root.primary
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.fs(13)
                     font.bold: true
                 }
             }

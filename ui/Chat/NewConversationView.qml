@@ -6,16 +6,9 @@ import Core
 import "../Components"
 
 /*
- * NewConversationView - Ecran de demarrage d'une conversation individuelle
- * Permet de choisir un utilisateur et de creer (ou recuperer) la
- * conversation individuelle correspondante via
+ * NewConversationView - sous-page "Nouvelle conversation" : choisir un
+ * utilisateur et ouvrir (ou retrouver) la conversation individuelle via
  * MessagingContext::startConversationWith().
- *
- * Refonte design (juillet 2026) : alignement sur le style deja retenu pour
- * ConversationsView/ChatView/UsersView -- en-tete 64px a bordure basse
- * seule, recherche integree, lignes de liste "carte" (avec survol et
- * Avatar partage), et contenu centre a largeur maximale pour rester
- * lisible sur les grands ecrans desktop.
  */
 Item {
     id: root
@@ -23,234 +16,191 @@ Item {
     property var messagingContext: null
     property var _allUsers: []
 
-    // Police d'icones Font Awesome 4.7.0, memes glyphes que Home.
-    FontLoader {
-        id: iconFont
-        source: "../Assets/fonts/fontawesome-webfont.ttf"
-    }
-    readonly property string iconFontFamily: iconFont.name
-
     signal backRequested()
     signal conversationStarted(var conversationId)
 
+    readonly property string breadcrumbLeaf: qsTr("Nouvelle conversation")
+
+    function statusLabel(status) {
+        switch (status) {
+        case "online": return qsTr("En ligne")
+        case "away": return qsTr("Absent")
+        case "busy": return qsTr("Occupé")
+        default: return qsTr("Hors ligne")
+        }
+    }
+
+    function startWith(userId) {
+        if (!root.messagingContext)
+            return
+        const conversationId = root.messagingContext.startConversationWith(userId)
+        if (conversationId > 0)
+            root.conversationStarted(conversationId)
+    }
+
     Rectangle {
         anchors.fill: parent
-        color: Theme.background
+        color: Theme.bg
     }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // ---- En-tete (aligne sur ChatView/ConversationsView : ombre douce
-        // flottante plutot qu'un filet 1px) ----
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 72
-            color: Theme.surface
-            z: 2
-
-            Rectangle {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.bottom
-                height: 8
-                z: -1
-                gradient: Gradient {
-                    orientation: Gradient.Vertical
-                    GradientStop { position: 0.0; color: Theme.shadowSoft }
-                    GradientStop { position: 1.0; color: "transparent" }
-                }
-            }
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: Theme.spacingLarge
-                anchors.rightMargin: Theme.spacingLarge
-                spacing: Theme.spacingSmall
-
-                IconButton {
-                    glyph: "\uf060"
-                    variant: "ghost"
-                    onClicked: root.backRequested()
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    text: qsTr("Nouvelle conversation")
-                    font.pixelSize: Theme.fontSizeHeading
-                    font.bold: true
-                    font.family: Theme.fontFamily
-                    color: Theme.text
-                    elide: Text.ElideRight
-                }
-            }
+        AppHeader {
+            title: qsTr("Nouvelle conversation")
+            subtitle: qsTr("Choisissez la personne à qui écrire. Si une conversation existe déjà, elle sera rouverte.")
+            showBackButton: true
+            onBackRequested: root.backRequested()
         }
 
-        // ---- Contenu principal : liste centree, largeur maximale ---------
-        Item {
+        Card {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.maximumWidth: 760
+            Layout.leftMargin: Theme.pagePadding
+            Layout.rightMargin: Theme.pagePadding
+            Layout.bottomMargin: Theme.pagePadding
+            contentPadding: 0
 
-            ColumnLayout {
-                id: contentColumn
-                width: Math.min(parent.width - 2 * Theme.spacingXl, 720)
-                height: parent.height - 2 * Theme.spacingLarge
-                x: (parent.width - width) / 2
-                y: Theme.spacingLarge
-                spacing: Theme.spacingMedium
+            AppSearchField {
+                id: searchField
+                Layout.fillWidth: true
+                Layout.margins: Theme.cardPadding
+                placeholderText: qsTr("Rechercher un utilisateur")
+                onTextChanged: usersListView.applyFilter(text)
+                Component.onCompleted: field.forceActiveFocus()
+            }
 
-                Label {
-                    text: qsTr("Choisissez un utilisateur")
-                    font.pixelSize: Theme.fontSizeSubheading
-                    font.bold: true
-                    font.family: Theme.fontFamily
-                    color: Theme.text
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+                color: Theme.line
+            }
+
+            ListView {
+                id: usersListView
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                keyNavigationEnabled: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                model: ListModel { id: availableUsersModel }
+
+                Component.onCompleted: reloadUsers()
+
+                Connections {
+                    target: root.messagingContext
+                    ignoreUnknownSignals: true
+                    function onAvailableUsersChanged() { usersListView.reloadUsers() }
                 }
 
-                AppSearchField {
-                    id: searchField
-                    Layout.fillWidth: true
-                    placeholderText: qsTr("Rechercher un utilisateur...")
-                    onTextChanged: usersListView.applyFilter(text)
+                function reloadUsers() {
+                    if (root.messagingContext)
+                        root._allUsers = root.messagingContext.availableUsers() || []
+                    applyFilter(searchField.text)
                 }
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    radius: Theme.radiusLarge
-                    color: Theme.surface
-                    border.width: 0
-                    clip: true
+                function applyFilter(query) {
+                    availableUsersModel.clear()
+                    const needle = (query || "").toLowerCase()
+                    for (let i = 0; i < root._allUsers.length; ++i) {
+                        const u = root._allUsers[i]
+                        if (needle.length > 0 && u.username.toLowerCase().indexOf(needle) === -1)
+                            continue
+                        availableUsersModel.append({
+                            userId: u.userId,
+                            username: u.username,
+                            status: root.messagingContext ? root.messagingContext.userStatus(u.userId) : ""
+                        })
+                    }
+                }
 
-                    Rectangle {
-                        anchors.fill: parent
-                        anchors.topMargin: 2
-                        radius: parent.radius
-                        color: Theme.shadowSoft
-                        z: -1
+                delegate: ItemDelegate {
+                    id: userRow
+                    required property var userId
+                    required property string username
+                    required property string status
+
+                    width: ListView.view.width
+                    height: Theme.rowHeight
+                    leftPadding: Theme.cardPadding
+                    rightPadding: Theme.cardPadding
+                    hoverEnabled: true
+                    highlighted: ListView.isCurrentItem && usersListView.activeFocus
+                    Accessible.name: qsTr("Écrire à %1").arg(userRow.username)
+                    onClicked: root.startWith(userRow.userId)
+                    Keys.onReturnPressed: root.startWith(userRow.userId)
+
+                    HoverHandler { cursorShape: Qt.PointingHandCursor }
+
+                    background: Rectangle {
+                        color: userRow.hovered || userRow.highlighted ? Theme.hover : "transparent"
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            height: 1
+                            color: Theme.line
+                        }
                     }
 
-                    // Etat vide : affiche tant qu'aucun autre utilisateur n'existe.
-                    ColumnLayout {
-                        anchors.centerIn: parent
-                        spacing: Theme.spacingSmall
-                        visible: usersListView.count === 0
-                        width: parent.width * 0.7
+                    contentItem: RowLayout {
+                        spacing: 12
 
-                        Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: searchField.text.length > 0
-                                  ? qsTr("Aucun utilisateur ne correspond a votre recherche.")
-                                  : qsTr("Aucun autre utilisateur disponible")
-                            font.pixelSize: Theme.fontSizeBody
-                            font.family: Theme.fontFamily
-                            color: Theme.textSecondary
-                            horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.WordWrap
-                        }
-                    }
-
-                    ListView {
-                        id: usersListView
-                        anchors.fill: parent
-                        anchors.margins: Theme.spacingMedium
-                        spacing: Theme.spacingSmall
-                        clip: true
-
-                        model: ListModel {
-                            id: availableUsersModel
+                        Avatar {
+                            name: userRow.username
+                            size: 34
+                            showStatus: userRow.status.length > 0
+                            status: userRow.status
                         }
 
-                        Component.onCompleted: reloadUsers()
-
-                        Connections {
-                            target: root.messagingContext
-                            function onAvailableUsersChanged() {
-                                usersListView.reloadUsers()
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 1
+                            Text {
+                                text: userRow.username
+                                color: Theme.ink
+                                font.pixelSize: Theme.fs(14)
+                                font.weight: Theme.weightMedium
+                                font.family: Theme.fontFamily
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            Text {
+                                visible: userRow.status.length > 0
+                                text: root.statusLabel(userRow.status)
+                                color: Theme.ink3
+                                font.pixelSize: Theme.fs(12)
+                                font.family: Theme.fontFamily
                             }
                         }
 
-                        function reloadUsers() {
-                            if (root.messagingContext) {
-                                root._allUsers = root.messagingContext.availableUsers()
-                            }
-                            applyFilter(searchField.text)
-                        }
-
-                        function applyFilter(query) {
-                            availableUsersModel.clear()
-                            const needle = (query || "").toLowerCase()
-                            for (let i = 0; i < root._allUsers.length; ++i) {
-                                const u = root._allUsers[i]
-                                if (needle.length > 0 && u.username.toLowerCase().indexOf(needle) === -1)
-                                    continue
-                                availableUsersModel.append({
-                                    userId: u.userId,
-                                    username: u.username
-                                })
-                            }
-                        }
-
-                        delegate: Rectangle {
-                            id: userDelegate
-                            width: usersListView.width
-                            height: 60
-                            color: itemMouse.containsMouse ? Theme.surfaceHover : Theme.surfaceAlt
-                            radius: Theme.radiusMedium
-                            border.width: 0
-
-                            Behavior on color { ColorAnimation { duration: 100 } }
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: Theme.spacingMedium
-                                anchors.rightMargin: Theme.spacingMedium
-                                spacing: Theme.spacingMedium
-
-                                Avatar {
-                                    name: username
-                                    size: 38
-                                }
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: username
-                                    font.pixelSize: Theme.fontSizeBody
-                                    font.family: Theme.fontFamily
-                                    color: Theme.text
-                                    elide: Text.ElideRight
-                                }
-
-                                Text {
-                                    text: "\uf054"
-                                    color: Theme.textTertiary
-                                    font.family: root.iconFontFamily
-                                    font.pixelSize: 13
-                                }
-                            }
-
-                            MouseArea {
-                                id: itemMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (root.messagingContext) {
-                                        const conversationId = root.messagingContext.startConversationWith(userId)
-                                        if (conversationId > 0) {
-                                            root.conversationStarted(conversationId)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        ScrollBar.vertical: ScrollBar {
-                            policy: ScrollBar.AsNeeded
+                        AppButton {
+                            text: qsTr("Écrire")
+                            iconGlyph: ""
+                            variant: userRow.hovered ? "soft" : "ghost"
+                            size: "small"
+                            focusPolicy: Qt.NoFocus
+                            onClicked: root.startWith(userRow.userId)
                         }
                     }
                 }
+
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            }
+
+            EmptyState {
+                visible: usersListView.count === 0
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                iconName: searchField.text.length > 0 ? "search" : "users"
+                title: searchField.text.length > 0 ? qsTr("Aucun utilisateur ne correspond")
+                                                   : qsTr("Aucun autre utilisateur")
+                description: searchField.text.length > 0
+                             ? qsTr("Vérifiez l'orthographe du nom ou effacez la recherche.")
+                             : qsTr("Les comptes créés sur ce réseau apparaîtront ici.")
             }
         }
     }

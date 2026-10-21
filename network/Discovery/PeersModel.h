@@ -35,6 +35,20 @@ public:
     };
     Q_ENUM(Roles)
 
+    // Identifiants de roles lisibles depuis QML via l'instance
+    // (peersModel.StatusRole) : une valeur d'enum lue via l'instance d'un
+    // objet de contexte vaut "undefined" en QML, Q_ENUM seul ne suffit pas.
+    Q_PROPERTY(int IdRole READ idRoleId CONSTANT)
+    Q_PROPERTY(int NameRole READ nameRoleId CONSTANT)
+    Q_PROPERTY(int UserUuidRole READ userUuidRoleId CONSTANT)
+    Q_PROPERTY(int StatusRole READ statusRoleId CONSTANT)
+    Q_PROPERTY(int AddressRole READ addressRoleId CONSTANT)
+    int idRoleId() const { return IdRole; }
+    int nameRoleId() const { return NameRole; }
+    int userUuidRoleId() const { return UserUuidRole; }
+    int statusRoleId() const { return StatusRole; }
+    int addressRoleId() const { return AddressRole; }
+
     explicit PeersModel(DiscoveryService *discoveryService, QObject *parent = nullptr);
 
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;

@@ -55,7 +55,7 @@ Popup {
         }
     }
 
-    Overlay.modal: Rectangle { color: "#00000066" }
+    Overlay.modal: Rectangle { color: Theme.scrim }
 
     contentItem: ColumnLayout {
         spacing: 14
@@ -75,7 +75,7 @@ Popup {
                     Layout.fillWidth: true
                     text: root.item ? root.item.fileName : ""
                     color: Theme.dashboardInk
-                    font.pixelSize: 14
+                    font.pixelSize: Theme.fs(14)
                     font.weight: Font.Bold
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
@@ -88,7 +88,7 @@ Popup {
                                                  : qsTr("Envoyé à %1").arg(root.item.peerLabel))
                           : ""
                     color: Theme.dashboardInkTertiary
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fs(12)
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
                     maximumLineCount: 1
@@ -115,7 +115,7 @@ Popup {
             Label {
                 text: qsTr("Statut")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
             }
             TransferStatusBadge {
@@ -127,14 +127,14 @@ Popup {
             Label {
                 text: qsTr("Taille")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
             }
             Label {
                 Layout.alignment: Qt.AlignRight
                 text: root.item ? Fmt.formatBytes(root.item.totalBytes) : ""
                 color: Theme.dashboardInk
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.weight: Font.DemiBold
                 font.family: Theme.fontFamily
             }
@@ -143,7 +143,7 @@ Popup {
                 visible: root.item && root.item.state === "in_progress"
                 text: qsTr("Transféré")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
             }
             Label {
@@ -154,21 +154,21 @@ Popup {
                             .arg(Fmt.formatBytes(root.item.totalBytes)).arg(root.item.percent)
                       : ""
                 color: Theme.dashboardInk
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
             }
 
             Label {
                 text: qsTr("Date")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
             }
             Label {
                 Layout.alignment: Qt.AlignRight
                 text: root.item ? root.item.timestamp : ""
                 color: Theme.dashboardInk
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
             }
 
@@ -176,7 +176,7 @@ Popup {
                 visible: root.item && root.item.filePath.length > 0
                 text: qsTr("Emplacement")
                 color: Theme.dashboardInkTertiary
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
             }
             Label {
@@ -186,7 +186,7 @@ Popup {
                 horizontalAlignment: Text.AlignRight
                 text: root.item ? root.item.filePath : ""
                 color: Theme.dashboardInk
-                font.pixelSize: 11
+                font.pixelSize: Theme.fs(11)
                 font.family: Theme.fontFamily
                 elide: Text.ElideLeft
                 maximumLineCount: 1
@@ -198,7 +198,7 @@ Popup {
             Layout.fillWidth: true
             text: root.item ? root.item.errorString : ""
             color: Theme.dashboardErrorText
-            font.pixelSize: 12
+            font.pixelSize: Theme.fs(12)
             font.family: Theme.fontFamily
             wrapMode: Text.WordWrap
         }

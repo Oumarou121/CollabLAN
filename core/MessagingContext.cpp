@@ -142,6 +142,9 @@ QVariantList MessagingContext::availableUsers() const
         QVariantMap entry;
         entry[QStringLiteral("userId")] = user.id();
         entry[QStringLiteral("username")] = user.name();
+        // Permet de relier un poste du reseau (PeersModel::UserUuidRole) a
+        // son compte, startConversationWith() attendant l'identifiant numerique.
+        entry[QStringLiteral("userUuid")] = user.uuid();
         list.append(entry);
     }
 

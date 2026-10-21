@@ -21,8 +21,8 @@ Rectangle {
     Text {
         anchors.centerIn: parent
         text: Theme.darkMode ? "\u263E" : "\u2600"
-        font.pixelSize: 18
-        color: Theme.darkMode ? "#F2C94C" : "#F2994A"
+        font.pixelSize: Theme.fs(18)
+        color: Theme.darkMode ? Theme.warningColor : Theme.accentColor
     }
 
     MouseArea {
@@ -35,5 +35,5 @@ Rectangle {
 
     ToolTip.visible: mouseArea.containsMouse
     ToolTip.delay: 400
-    ToolTip.text: Theme.darkMode ? qsTr("Passer au theme clair") : qsTr("Passer au theme sombre")
+    ToolTip.text: Theme.darkMode ? qsTr("Passer au thème clair") : qsTr("Passer au thème sombre")
 }

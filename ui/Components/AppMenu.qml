@@ -3,32 +3,49 @@ import QtQuick.Controls
 import Themes
 
 /*
- * AppMenu - menu contextuel stylise, a la place du Menu "brut" utilise
- * jusqu'ici dans SharedFolderView (menu clic droit sur un dossier/fichier).
+ * AppMenu - menu contextuel / deroulant du design system.
  *
- * Ne stylise que le fond du popup : les items doivent etre declares avec
- * AppMenuItem (voir AppMenuItem.qml) et non MenuItem, car `delegate:` ne
- * s'applique pas aux MenuItem declares directement comme enfants QML.
+ * Les entrees se declarent avec AppMenuItem (pas MenuItem : `delegate:` ne
+ * s'applique pas aux MenuItem declares directement comme enfants), et les
+ * separateurs avec AppMenuSeparator.
  *
- * Usage :
  *   AppMenu {
- *       id: myMenu
- *       AppMenuItem { text: qsTr("Renommer"); onTriggered: ... }
+ *       AppMenuItem { text: qsTr("Renommer"); iconGlyph: ""; onTriggered: ... }
+ *       AppMenuSeparator {}
  *       AppMenuItem { text: qsTr("Supprimer"); danger: true; onTriggered: ... }
  *   }
  */
 Menu {
     id: root
 
-    padding: Theme.spacingXs
+    padding: 5
+    implicitWidth: 220
+
+    enter: Transition {
+        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.durationFast }
+    }
+    exit: Transition {
+        NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Theme.durationFast }
+    }
 
     background: Rectangle {
-        implicitWidth: 200
+        implicitWidth: 220
         radius: Theme.radiusMedium
-        color: Theme.surface
+        color: Theme.surface0
         border.width: 1
-        border.color: Theme.border
+        border.color: Theme.line
 
-        layer.enabled: true
+        // Ombre portee legere (deux couches decalees, sans effet graphique
+        // supplementaire).
+        Rectangle {
+            z: -1
+            anchors.fill: parent
+            anchors.topMargin: 3
+            anchors.bottomMargin: -6
+            anchors.leftMargin: 1
+            anchors.rightMargin: -1
+            radius: parent.radius + 2
+            color: Theme.shadowColor
+        }
     }
 }

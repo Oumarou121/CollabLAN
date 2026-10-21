@@ -3,39 +3,35 @@ import QtQuick.Controls
 import Themes
 
 /*
- * AppSwitch - interrupteur on/off stylise, a la place du Switch "brut"
- * utilise jusqu'ici dans SettingsView.
- *
- * Usage :
- *   AppSwitch {
- *       checked: someProperty
- *       onToggled: someProperty = checked
- *   }
+ * AppSwitch - interrupteur du design system (reglages on/off appliques
+ * immediatement). Etat porte aussi par la position de la pastille, pas
+ * seulement par la couleur.
  */
 Switch {
     id: root
 
-    implicitWidth: 44
     implicitHeight: 26
     spacing: Theme.spacingSmall
-    font.pixelSize: Theme.fontSizeBody
+    font.pixelSize: Theme.fs(13)
     font.family: Theme.fontFamily
+    focusPolicy: Qt.StrongFocus
 
     HoverHandler {
-        cursorShape: Qt.PointingHandCursor
+        cursorShape: root.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
     }
 
     indicator: Rectangle {
         x: 0
         y: (root.height - height) / 2
-        width: 44
+        width: 42
         height: 24
         radius: height / 2
-        color: root.checked ? Theme.primary : Theme.surfaceAlt
+        color: root.checked ? Theme.accentColor : Theme.sunken
         border.width: root.checked ? 0 : 1
-        border.color: Theme.border
+        border.color: Theme.lineStrong
+        opacity: root.enabled ? 1 : 0.5
 
-        Behavior on color { ColorAnimation { duration: 120 } }
+        Behavior on color { ColorAnimation { duration: Theme.durationFast } }
 
         Rectangle {
             width: 18
@@ -44,15 +40,27 @@ Switch {
             anchors.verticalCenter: parent.verticalCenter
             x: root.checked ? parent.width - width - 3 : 3
             color: "#FFFFFF"
+            border.width: root.checked ? 0 : 1
+            border.color: Theme.lineStrong
 
-            Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutQuad } }
+            Behavior on x { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutQuad } }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -3
+            radius: parent.radius + 3
+            color: "transparent"
+            border.width: 2
+            border.color: Theme.focusRing
+            visible: root.visualFocus
         }
     }
 
     contentItem: Text {
         visible: root.text.length > 0
         text: root.text
-        color: Theme.text
+        color: root.enabled ? Theme.ink : Theme.inkDisabled
         font: root.font
         leftPadding: root.indicator.width + root.spacing
         verticalAlignment: Text.AlignVCenter

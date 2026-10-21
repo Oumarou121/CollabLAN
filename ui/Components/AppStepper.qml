@@ -75,7 +75,7 @@ RowLayout {
                     anchors.centerIn: parent
                     text: stepDelegate.isDone ? "\u2713" : String(stepDelegate.stepNumber)
                     color: stepDelegate.isCurrent || stepDelegate.isDone ? Theme.primaryText : Theme.textTertiary
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fs(11)
                     font.bold: true
                 }
             }

@@ -1,54 +1,79 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import Themes
 
 /*
- * AppMenuItem - entree de menu stylisee, a utiliser a l'interieur d'un
- * AppMenu (voir AppMenu.qml) a la place de MenuItem.
+ * AppMenuItem - entree d'AppMenu.
  *
- * iconGlyph : glyphe unicode optionnel affiche avant le texte.
- * danger    : true pour les actions destructrices (ex. "Supprimer"),
- *             colore le texte/icone en rouge (Theme.error).
+ * iconGlyph : glyphe Font Awesome optionnel avant le texte.
+ * danger    : action destructrice (texte et icone rouges).
+ * shortcutText : raccourci affiche a droite (purement informatif).
+ * checkable/checked (MenuItem) : coche a gauche, pour les choix exclusifs
+ *              (ex. statut En ligne / Absent / Occupe).
  */
 MenuItem {
     id: root
 
     property string iconGlyph: ""
     property bool danger: false
+    property string shortcutText: ""
 
-    implicitHeight: 34
-    implicitWidth: 200
+    implicitHeight: Theme.compact ? 30 : 34
+    implicitWidth: 210
+    leftPadding: 10
+    rightPadding: 10
 
     HoverHandler {
-        cursorShape: Qt.PointingHandCursor
+        cursorShape: root.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
     }
 
-    contentItem: Row {
-        spacing: Theme.spacingSmall
-        leftPadding: Theme.spacingSmall
-        rightPadding: Theme.spacingSmall
+    readonly property color tone: !root.enabled ? Theme.inkDisabled
+                                  : (root.danger ? Theme.dangerInk : Theme.ink)
 
-        Text {
-            visible: root.iconGlyph.length > 0
-            text: root.iconGlyph
-            font.pixelSize: Theme.fontSizeBody
-            color: root.danger ? Theme.error : Theme.textSecondary
-            anchors.verticalCenter: parent.verticalCenter
+    indicator: Item {}
+    arrow: Item {}
+
+    contentItem: RowLayout {
+        spacing: 9
+
+        Item {
+            Layout.preferredWidth: 16
+            Layout.preferredHeight: 16
+            visible: root.iconGlyph.length > 0 || root.checkable
+
+            FaIcon {
+                anchors.centerIn: parent
+                glyph: root.checkable ? (root.checked ? "" : "") : root.iconGlyph
+                color: root.checkable ? Theme.accentColor
+                                      : (root.danger ? Theme.dangerInk : Theme.ink2)
+                font.pixelSize: Theme.fs(13)
+            }
         }
 
         Text {
             text: root.text
-            font.pixelSize: Theme.fontSizeBody
+            color: root.tone
+            font.pixelSize: Theme.fs(13)
             font.family: Theme.fontFamily
-            color: root.danger ? Theme.error : Theme.text
-            anchors.verticalCenter: parent.verticalCenter
+            font.weight: root.checked ? Theme.weightSemibold : Theme.weightRegular
+            elide: Text.ElideRight
+            Layout.fillWidth: true
+        }
+
+        Text {
+            visible: root.shortcutText.length > 0
+            text: root.shortcutText
+            color: Theme.ink3
+            font.pixelSize: Theme.fs(11)
+            font.family: Theme.fontFamily
         }
     }
 
     background: Rectangle {
         radius: Theme.radiusSmall
         color: root.highlighted
-               ? (root.danger ? Theme.errorMuted : Theme.surfaceHover)
+               ? (root.danger ? Theme.dangerSoft : Theme.hover)
                : "transparent"
     }
 }

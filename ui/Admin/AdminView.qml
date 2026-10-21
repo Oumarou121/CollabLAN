@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 import Themes
 import "../Components"
+import "../Dashboard" as Dash
 
 /*
  * AdminView - ecran "Admin" (issues #65, #68)
@@ -38,6 +39,8 @@ Item {
     signal backRequested()
 
     property int currentTab: 0  // 0 = Audit log, 1 = Machines autorisées, 2 = Utilisateurs, 3 = Bascule serveur
+    // Section "Journal d audit" de la navigation (onglet 0) : pas d onglets.
+    readonly property bool journalMode: root.currentTab === 0
     // Note : l'onglet "Paramètres" (Préférences / Ports
     // réseau) a été retiré d'ici et déplacé dans SettingsView.qml,
     // désormais accessible à tous les utilisateurs depuis le menu profil
@@ -68,9 +71,9 @@ Item {
         if (typeof peersModel !== "undefined" && peersModel) {
             for (let i = 0; i < peersModel.count; ++i) {
                 const index = peersModel.index(i, 0)
-                const peerUserUuid = peersModel.data(index, Qt.UserRole + 3)
+                const peerUserUuid = peersModel.data(index, peersModel.UserUuidRole || Qt.UserRole + 3)
                 if (peerUserUuid === userUuid)
-                    return peersModel.data(index, Qt.UserRole + 4) || "offline"
+                    return peersModel.data(index, peersModel.StatusRole || Qt.UserRole + 4) || "offline"
             }
         }
         return "offline"
@@ -107,6 +110,208 @@ Item {
         case "access_denied": return qsTr("Accès refusé")
         default: return eventType
         }
+    }
+
+    // ---- Machines : actions sensibles toujours confirmees ---------------
+    // Autoriser donne a un poste le droit d'echanger avec le reseau :
+    // l'empreinte du certificat est affichee pour verification avant de
+    // confirmer. Revoquer et supprimer sont confirmes comme destructeurs.
+    function askMachineAction(action, machineId, machineName, fingerprint) {
+        machineConfirm.action = action
+        machineConfirm.machineId = machineId
+        if (action === "authorize") {
+            machineConfirm.title = qsTr("Autoriser %1 ?").arg(machineName)
+            machineConfirm.message = qsTr("Ce poste pourra échanger messages, fichiers et appels avec le réseau. Vérifiez que l'empreinte ci-dessous correspond bien à celle affichée sur le poste.")
+            machineConfirm.detail = fingerprint.length > 0 ? fingerprint : qsTr("Aucune empreinte enregistrée pour ce poste.")
+            machineConfirm.confirmText = qsTr("Autoriser")
+            machineConfirm.destructive = false
+        } else if (action === "revoke") {
+            machineConfirm.title = qsTr("Révoquer %1 ?").arg(machineName)
+            machineConfirm.message = qsTr("Ce poste ne pourra plus communiquer avec le réseau tant qu'il n'aura pas été réautorisé.")
+            machineConfirm.detail = ""
+            machineConfirm.confirmText = qsTr("Révoquer")
+            machineConfirm.destructive = true
+        } else {
+            machineConfirm.title = qsTr("Supprimer %1 ?").arg(machineName)
+            machineConfirm.message = qsTr("La machine sera retirée de la liste. Si elle se reconnecte, elle réapparaîtra en attente d'autorisation.")
+            machineConfirm.detail = ""
+            machineConfirm.confirmText = qsTr("Supprimer")
+            machineConfirm.destructive = true
+        }
+        machineConfirm.open()
+    }
+
+    function copyToClipboard(text) {
+        clipboardHelper.text = text
+        clipboardHelper.selectAll()
+        clipboardHelper.copy()
+    }
+
+    TextEdit {
+        id: clipboardHelper
+        visible: false
+    }
+
+    ConfirmDialog {
+        id: machineConfirm
+        property string action: ""
+        property var machineId: -1
+        onConfirmed: {
+            let ok = false
+            if (action === "authorize")
+                ok = authorizedMachineModel.authorizeMachine(machineId, "Autorisé par admin")
+            else if (action === "revoke")
+                ok = authorizedMachineModel.revokeMachine(machineId, "Révoqué par admin")
+            else if (action === "remove")
+                ok = authorizedMachineModel.removeMachine(machineId)
+            // Le modele ne signale pas ses echecs autrement : sans ce message,
+            // un refus metier passait inapercu.
+            if (!ok)
+                root.showAdminNotice(action === "authorize" ? qsTr("La machine n'a pas pu être autorisée.")
+                                   : action === "revoke" ? qsTr("La machine n'a pas pu être révoquée.")
+                                   : qsTr("La machine n'a pas pu être retirée."))
+        }
+    }
+
+    AppMenu {
+        id: machineMenu
+        property var machineId: -1
+        property string machineName: ""
+        property string fingerprint: ""
+
+        AppMenuItem {
+            text: qsTr("Copier l'empreinte")
+            iconGlyph: ""
+            enabled: machineMenu.fingerprint.length > 0
+            onTriggered: root.copyToClipboard(machineMenu.fingerprint)
+        }
+        AppMenuSeparator {}
+        AppMenuItem {
+            text: qsTr("Supprimer la machine")
+            iconGlyph: ""
+            danger: true
+            onTriggered: root.askMachineAction("remove", machineMenu.machineId, machineMenu.machineName, "")
+        }
+    }
+
+    // ---- Comptes : role et suppression confirmes, refus metier affiches -
+    // Les regles (dernier administrateur, compte courant...) restent
+    // appliquees cote metier : l'interface se contente d'en rendre compte.
+    property string adminNotice: ""
+
+    function askUserAction(action, userId, userName, isAdmin) {
+        userConfirm.action = action
+        userConfirm.userId = userId
+        userConfirm.userIsAdmin = isAdmin
+        if (action === "role") {
+            userConfirm.title = isAdmin ? qsTr("Retirer les droits d'administration de %1 ?").arg(userName)
+                                        : qsTr("Nommer %1 administrateur ?").arg(userName)
+            userConfirm.message = isAdmin
+                ? qsTr("%1 n'aura plus accès au journal d'audit ni à l'administration.").arg(userName)
+                : qsTr("%1 pourra autoriser des machines, gérer les comptes et consulter le journal d'audit.").arg(userName)
+            userConfirm.confirmText = isAdmin ? qsTr("Retirer les droits") : qsTr("Nommer administrateur")
+            userConfirm.destructive = isAdmin
+        } else {
+            userConfirm.title = qsTr("Supprimer le compte de %1 ?").arg(userName)
+            userConfirm.message = qsTr("Cette personne ne pourra plus se connecter. Cette action est définitive.")
+            userConfirm.confirmText = qsTr("Supprimer le compte")
+            userConfirm.destructive = true
+        }
+        userConfirm.open()
+    }
+
+    Timer {
+        id: adminNoticeTimer
+        interval: 6000
+        onTriggered: root.adminNotice = ""
+    }
+
+    function showAdminNotice(text) {
+        root.adminNotice = text
+        adminNoticeTimer.restart()
+    }
+
+    ConfirmDialog {
+        id: userConfirm
+        property string action: ""
+        property var userId: -1
+        property bool userIsAdmin: false
+        onConfirmed: {
+            if (action === "role") {
+                if (!userManagementModel.changeRole(userId, !userIsAdmin))
+                    root.showAdminNotice(qsTr("Le rôle n'a pas été modifié : il doit toujours rester au moins un administrateur."))
+            } else if (action === "delete") {
+                if (!userManagementModel.deleteUser(userId))
+                    root.showAdminNotice(qsTr("Le compte n’a pas été supprimé : il doit toujours rester au moins un administrateur."))
+            }
+        }
+    }
+
+    AppMenu {
+        id: userMenu
+        property var userId: -1
+        property string userName: ""
+        property bool userIsAdmin: false
+        property bool isSelf: false
+
+        AppMenuItem {
+            text: userMenu.userIsAdmin ? qsTr("Retirer les droits d'administration") : qsTr("Nommer administrateur")
+            iconGlyph: ""
+            enabled: !userMenu.isSelf
+            onTriggered: root.askUserAction("role", userMenu.userId, userMenu.userName, userMenu.userIsAdmin)
+        }
+        AppMenuSeparator {}
+        AppMenuItem {
+            text: qsTr("Supprimer le compte")
+            iconGlyph: ""
+            danger: true
+            enabled: !userMenu.isSelf
+            onTriggered: root.askUserAction("delete", userMenu.userId, userMenu.userName, userMenu.userIsAdmin)
+        }
+    }
+
+    // ---- Journal : recherche locale, selection, presentation ------------
+    property string auditSearch: ""
+    property var selectedAudit: null
+
+    // Ton + icone par type : un refus d'acces ne doit pas ressembler a un
+    // message (le statut n'est jamais porte par la couleur seule).
+    function eventTypeTone(eventType) {
+        switch (eventType) {
+        case "access_denied": return "danger"
+        case "connection": return "success"
+        case "transfer": return "accent"
+        case "call": return "call"
+        default: return "neutral"
+        }
+    }
+    function eventTypeGlyph(eventType) {
+        switch (eventType) {
+        case "access_denied": return ""
+        case "connection": return ""
+        case "transfer": return ""
+        case "call": return ""
+        case "message": return ""
+        default: return ""
+        }
+    }
+    // Horodatage ISO du modele -> "20 oct. 18:41" (aujourd'hui : "18:41").
+    function auditDateLabel(iso) {
+        const d = new Date(iso)
+        if (isNaN(d.getTime()))
+            return iso || ""
+        const now = new Date()
+        const time = d.toLocaleTimeString(Qt.locale(), "HH:mm")
+        if (d.toDateString() === now.toDateString())
+            return qsTr("Aujourd'hui %1").arg(time)
+        return d.toLocaleDateString(Qt.locale(), "d MMM yyyy") + " " + time
+    }
+    function auditFullDate(iso) {
+        const d = new Date(iso)
+        if (isNaN(d.getTime()))
+            return iso || ""
+        const s = d.toLocaleDateString(Qt.locale(), "dddd d MMMM yyyy")
+        return s.charAt(0).toUpperCase() + s.slice(1) + qsTr(" à ") + d.toLocaleTimeString(Qt.locale(), "HH:mm:ss")
     }
 
     function auditDescriptionLabel(description) {
@@ -180,892 +385,798 @@ Item {
         spacing: 0
 
         // ---- Header personnalisé pour Administration -----------------------
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            color: Theme.surface
+        // ---- En-tete de page --------------------------------------------
+        // Le journal d'audit et l'administration sont deux sections de la
+        // navigation : en mode journal (onglet 0), pas d'onglets ; en mode
+        // administration, onglets Machines / Utilisateurs / Bascule.
+        AppHeader {
+            title: root.journalMode ? qsTr("Journal d'audit") : qsTr("Administration")
+            subtitle: root.journalMode
+                      ? qsTr("Historique des connexions, transferts, appels et accès refusés sur ce réseau.")
+                      : root.currentTab === 1 ? qsTr("Seules les machines autorisées peuvent échanger avec ce poste. Toute nouvelle machine reste en attente jusqu'à validation.")
+                      : root.currentTab === 2 ? qsTr("Comptes utilisateurs de l'espace et leurs rôles.")
+                      : qsTr("Historique des élections et bascules du serveur du réseau local.")
+            bottomPadding: root.journalMode ? 14 : 10
 
-            // Séparateur bas
-            Rectangle {
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 1
-                color: Theme.border
+            AppButton {
+                visible: root.currentTab === 0
+                text: root.headerCompact ? "" : qsTr("Exporter en CSV")
+                tooltip: qsTr("Exporter le journal en CSV")
+                iconGlyph: ""
+                variant: "secondary"
+                onClicked: exportDialog.open()
             }
+            AppButton {
+                visible: root.currentTab === 1
+                text: root.headerCompact ? "" : qsTr("Ajouter une machine")
+                tooltip: qsTr("Ajouter une machine")
+                iconGlyph: ""
+                variant: "primary"
+                onClicked: addMachineDialog.open()
+            }
+            AppButton {
+                visible: root.currentTab === 2
+                text: root.headerCompact ? "" : qsTr("Nouvel utilisateur")
+                tooltip: qsTr("Nouvel utilisateur")
+                iconGlyph: ""
+                variant: "primary"
+                onClicked: addUserDialog.open()
+            }
+            AppButton {
+                visible: root.currentTab === 3
+                text: root.headerCompact ? "" : qsTr("Actualiser")
+                tooltip: qsTr("Actualiser l'historique")
+                iconGlyph: ""
+                variant: "secondary"
+                onClicked: root.refreshElectionHistory()
+            }
+        }
+
+        AppSegmentedControl {
+            visible: !root.journalMode
+            Layout.leftMargin: Theme.pagePadding
+            Layout.bottomMargin: Theme.spacingMedium
+            stretch: false
+            model: [
+                { label: qsTr("Machines autorisées"), glyph: "" },
+                { label: qsTr("Utilisateurs"), glyph: "" },
+                { label: qsTr("Bascule serveur"), glyph: "" }
+            ]
+            currentIndex: Math.max(0, root.currentTab - 1)
+            onActivated: function(index) { root.currentTab = index + 1 }
+        }
+
+        // Refus metier d une action d administration (role, suppression).
+        Rectangle {
+            visible: root.adminNotice.length > 0
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.pagePadding
+            Layout.rightMargin: Theme.pagePadding
+            Layout.bottomMargin: Theme.spacingMedium
+            implicitHeight: noticeRow.implicitHeight + 20
+            radius: Theme.radiusControl
+            color: Theme.warningSoft
+            border.width: 1
+            border.color: Theme.alpha(Theme.warningColor, 0.35)
 
             RowLayout {
+                id: noticeRow
                 anchors.fill: parent
-                anchors.leftMargin: Theme.spacingMedium
-                anchors.rightMargin: Theme.spacingMedium
-                spacing: Theme.spacingMedium
-
-                // Navigation compacte : retour, onglets, actions
-                RowLayout {
-                    Layout.fillWidth: false
-                    Layout.preferredHeight: 48
-                    spacing: Theme.spacingMedium
-
-                    IconButton {
-                        variant: "ghost"
-                        glyph: "\uf060"
-                        size: 40
-                        onClicked: root.backRequested()
-                    }
-
-                    ColumnLayout {
-                        visible: false
-                        Layout.fillWidth: false
-                        spacing: Theme.spacingXs
-
-                        Text {
-                            text: qsTr("Administration")
-                            font.pixelSize: Theme.fontSizeHeading
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                            color: Theme.text
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                        }
-
-                        Text {
-                            text: qsTr("Supervisez les activités et la sécurité du réseau")
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: Theme.fontFamily
-                            color: Theme.textSecondary
-                            elide: Text.ElideRight
-                            visible: !root.headerCompact
-                            Layout.fillWidth: true
-                        }
-                    }
-
-                    RowLayout {
-                        visible: false
-                        spacing: Theme.spacingSmall
-
-                        Rectangle {
-                            visible: false
-                            implicitWidth: adminBadge.implicitWidth + Theme.spacingMedium * 2
-                            implicitHeight: 30
-                            radius: Theme.radiusPill
-                            color: Theme.primaryMuted
-
-                            Label {
-                                id: adminBadge
-                                anchors.centerIn: parent
-                                text: qsTr("ADMINISTRATEUR")
-                                color: Theme.primary
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSizeCaption
-                                font.bold: true
-                            }
-                        }
-
-                        IconButton {
-                            variant: "secondary"
-                            glyph: "\u21E9"
-                            size: 36
-                            visible: root.currentTab === 0
-                            onClicked: exportDialog.open()
-                        }
-
-                        IconButton {
-                            variant: "primary"
-                            glyph: "+"
-                            size: 36
-                            visible: root.currentTab === 1
-                            onClicked: addMachineDialog.open()
-                        }
-
-                        IconButton {
-                            variant: "primary"
-                            glyph: "+"
-                            size: 36
-                            visible: root.currentTab === 2
-                            onClicked: addUserDialog.open()
-                        }
-
-                        IconButton {
-                            variant: "secondary"
-                            glyph: "\u21BB"
-                            size: 36
-                            visible: root.currentTab === 3
-                            onClicked: root.refreshElectionHistory()
-                        }
-                    }
+                anchors.margins: 10
+                anchors.leftMargin: 14
+                spacing: 10
+                FaIcon {
+                    glyph: ""
+                    color: Theme.warningInk
+                    font.pixelSize: Theme.fs(13)
                 }
-
-                // Ligne inférieure : onglets
-                Rectangle {
+                Text {
                     Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    Layout.preferredHeight: 48
-                    Layout.minimumHeight: 48
-                    Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
-                    radius: Theme.radiusMedium
-                    color: Theme.surfaceAlt
-                    clip: true
-
-                    Flickable {
-                        anchors.fill: parent
-                        anchors.margins: Theme.spacingXs
-                        contentWidth: Math.max(width, tabRow.implicitWidth)
-                        contentHeight: height
-                        clip: true
-                        interactive: tabRow.implicitWidth > width
-                        boundsBehavior: Flickable.StopAtBounds
-
-                        Row {
-                            id: tabRow
-                            anchors.centerIn: parent
-                            spacing: 2
-
-                            TabPill { glyph: "\uf1ea"; label: qsTr("Journal d'audit"); active: root.currentTab === 0; onClicked: root.currentTab = 0 }
-                            TabPill { glyph: "\uf233"; label: qsTr("Machines autorisées"); active: root.currentTab === 1; onClicked: root.currentTab = 1 }
-                            TabPill { glyph: "\uf0c0"; label: qsTr("Utilisateurs"); active: root.currentTab === 2; onClicked: root.currentTab = 2 }
-                            TabPill { glyph: "\uf021"; label: qsTr("Bascule serveur"); active: root.currentTab === 3; onClicked: root.currentTab = 3 }
-                        }
-                    }
+                    text: root.adminNotice
+                    color: Theme.warningInk
+                    font.pixelSize: Theme.fs(13)
+                    font.family: Theme.fontFamily
+                    wrapMode: Text.WordWrap
                 }
-
-                // Actions toujours alignées à l'extrémité droite.
-                RowLayout {
-                    Layout.alignment: Qt.AlignVCenter
-                    spacing: Theme.spacingSmall
-
-                    AppButton {
-                        variant: "secondary"
-                        iconGlyph: "\u21E9"
-                        text: root.headerCompact ? "" : qsTr("Exporter")
-                        visible: root.currentTab === 0
-                        onClicked: exportDialog.open()
-                    }
-
-                    AppButton {
-                        variant: "primary"
-                        iconGlyph: "+"
-                        text: root.headerCompact ? "" : qsTr("Ajouter")
-                        visible: root.currentTab === 1
-                        onClicked: addMachineDialog.open()
-                    }
-
-                    AppButton {
-                        variant: "primary"
-                        iconGlyph: "+"
-                        text: root.headerCompact ? "" : qsTr("Ajouter")
-                        visible: root.currentTab === 2
-                        onClicked: addUserDialog.open()
-                    }
-
-                    AppButton {
-                        variant: "secondary"
-                        iconGlyph: "\u21BB"
-                        text: root.headerCompact ? "" : qsTr("Actualiser")
-                        visible: root.currentTab === 3
-                        onClicked: root.refreshElectionHistory()
-                    }
+                IconButton {
+                    glyph: ""
+                    size: 26
+                    iconSize: Theme.fs(11)
+                    tooltip: qsTr("Fermer")
+                    onClicked: root.adminNotice = ""
                 }
             }
         }
 
-        // ---- Contenu de l'onglet Journal d'audit --------------------------
+        // ==================================================================
+        // Journal d'audit
+        // ==================================================================
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.currentTab === 0
 
             ColumnLayout {
-                width: Math.min(parent.width - 2 * Theme.spacingLarge, 1200)
-                height: parent.height - Theme.spacingLarge
-                x: (parent.width - width) / 2
-                y: Theme.spacingMedium
+                width: parent.width - 2 * Theme.pagePadding
+                height: parent.height - Theme.pagePadding
+                x: Theme.pagePadding
+                y: 0
                 spacing: Theme.spacingMedium
 
-                // Filtres : Flow plutot que RowLayout, pour que les
-                // groupes label+champ passent a la ligne des que la
-                // largeur disponible ne suffit plus (au lieu de deborder
-                // ou de se tasser illisiblement sur un petit ecran).
-                Rectangle {
+                // ---- Filtres ----
+                Flow {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: filterFlow.height + Theme.spacingMedium * 2
-                    radius: Theme.radiusLarge
-                    color: Theme.surface
-                    border.width: 1
-                    border.color: Theme.border
+                    spacing: 10
 
-                    Flow {
-                        id: filterFlow
-                        x: Theme.spacingMedium
-                        y: Theme.spacingMedium
-                        width: parent.width - Theme.spacingMedium * 2
-                        spacing: Theme.spacingMedium
+                    AppSearchField {
+                        width: 260
+                        placeholderText: qsTr("Rechercher un événement ou un acteur")
+                        onTextChanged: root.auditSearch = text.trim().toLowerCase()
+                    }
 
-                        RowLayout {
-                            spacing: Theme.spacingSmall
-                            Label {
-                                Layout.alignment: Qt.AlignVCenter
-                                text: qsTr("Type")
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.family: Theme.fontFamily
-                                font.bold: true
-                            }
-                            ComboBox {
-                                id: eventTypeFilter
-                                palette.window: Theme.surface
-                                palette.base: Theme.surfaceAlt
-                                palette.button: Theme.surfaceAlt
-                                palette.text: Theme.text
-                                palette.buttonText: Theme.text
-                                palette.highlight: Theme.primary
-                                palette.highlightedText: Theme.primaryText
-                                displayText: root.eventTypeLabel(currentText)
-                                Layout.alignment: Qt.AlignVCenter
-                                Layout.preferredWidth: 180
-                                Layout.preferredHeight: 40
-                                model: ["Tous", "connection", "message", "transfer", "call", "access_denied"]
-                                background: Rectangle {
-                                    radius: Theme.radiusMedium
-                                    color: Theme.background
-                                    border.width: 1
-                                    border.color: Theme.border
-                                }
-                                delegate: ItemDelegate {
-                                    width: eventTypeFilter.width
-                                    highlighted: eventTypeFilter.highlightedIndex === index
-                                    background: Rectangle {
-                                        color: eventTypeFilter.highlightedIndex === index ? Theme.primaryMuted
-                                               : (hovered ? Theme.surfaceHover : Theme.surface)
-                                    }
-                                    contentItem: Label {
-                                        text: root.eventTypeLabel(modelData)
-                                        color: Theme.text
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        verticalAlignment: Text.AlignVCenter
-                                        leftPadding: Theme.spacingSmall
-                                    }
-                                }
-                                popup: Popup {
-                                    y: eventTypeFilter.height
-                                    width: eventTypeFilter.width
-                                    implicitHeight: contentItem.implicitHeight
-                                    padding: 1
-                                    contentItem: ListView {
-                                        clip: true
-                                        implicitHeight: contentHeight
-                                        model: eventTypeFilter.popup.visible ? eventTypeFilter.delegateModel : null
-                                        currentIndex: eventTypeFilter.highlightedIndex
-                                        ScrollIndicator.vertical: ScrollIndicator { }
-                                    }
-                                    background: Rectangle {
-                                        color: Theme.surface
-                                        border.width: 1
-                                        border.color: Theme.border
-                                        radius: Theme.radiusMedium
-                                    }
-                                }
-                                onCurrentTextChanged: {
-                                    if (currentIndex === 0)
-                                        auditLogModel.clearFilters()
-                                    else
-                                        auditLogModel.setEventTypeFilter(currentText)
-                                }
-                            }
+                    AppComboBox {
+                        id: eventTypeFilter
+                        width: 190
+                        textRole: "label"
+                        valueRole: "value"
+                        model: [
+                            { value: "", label: qsTr("Tous les types") },
+                            { value: "connection", label: qsTr("Connexions") },
+                            { value: "message", label: qsTr("Messages") },
+                            { value: "transfer", label: qsTr("Transferts") },
+                            { value: "call", label: qsTr("Appels") },
+                            { value: "access_denied", label: qsTr("Accès refusés") }
+                        ]
+                        onActivated: function(index) {
+                            const value = eventTypeFilter.model[index].value
+                            if (value.length === 0)
+                                auditLogModel.clearFilters()
+                            else
+                                auditLogModel.setEventTypeFilter(value)
                         }
+                    }
 
-                        RowLayout {
-                            spacing: Theme.spacingSmall
-                            Label {
-                                Layout.alignment: Qt.AlignVCenter
-                                text: qsTr("Du")
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.family: Theme.fontFamily
-                                font.bold: true
-                            }
-                            AppTextField {
-                                id: dateFrom
-                                Layout.alignment: Qt.AlignVCenter
-                                Layout.preferredWidth: 150
-                                placeholderText: "YYYY-MM-DD"
-                            }
-                        }
-
-                        RowLayout {
-                            spacing: Theme.spacingSmall
-                            Label {
-                                Layout.alignment: Qt.AlignVCenter
-                                text: qsTr("Au")
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.family: Theme.fontFamily
-                                font.bold: true
-                            }
-                            AppTextField {
-                                id: dateTo
-                                Layout.alignment: Qt.AlignVCenter
-                                Layout.preferredWidth: 150
-                                placeholderText: "YYYY-MM-DD"
-                            }
-                        }
-
-                        RowLayout {
-                            spacing: Theme.spacingSmall
-                            AppButton {
-                                Layout.alignment: Qt.AlignVCenter
-                                variant: "primary"
-                                text: qsTr("Filtrer")
-                                onClicked: auditLogModel.setDateRange(dateFrom.text, dateTo.text)
-                            }
-                            AppButton {
-                                Layout.alignment: Qt.AlignVCenter
-                                variant: "ghost"
-                                text: qsTr("Réinitialiser")
-                                onClicked: {
-                                    eventTypeFilter.currentIndex = 0
-                                    dateFrom.text = ""
-                                    dateTo.text = ""
-                                    auditLogModel.clearFilters()
-                                }
-                            }
+                    AppTextField {
+                        id: dateFrom
+                        width: 150
+                        placeholderText: qsTr("Du (AAAA-MM-JJ)")
+                    }
+                    AppTextField {
+                        id: dateTo
+                        width: 150
+                        placeholderText: qsTr("Au (AAAA-MM-JJ)")
+                        onAccepted: auditLogModel.setDateRange(dateFrom.text, dateTo.text)
+                    }
+                    AppButton {
+                        variant: "secondary"
+                        text: qsTr("Appliquer la période")
+                        enabled: dateFrom.text.length > 0 || dateTo.text.length > 0
+                        onClicked: auditLogModel.setDateRange(dateFrom.text, dateTo.text)
+                    }
+                    AppButton {
+                        variant: "ghost"
+                        text: qsTr("Réinitialiser")
+                        visible: eventTypeFilter.currentIndex > 0 || dateFrom.text.length > 0
+                                 || dateTo.text.length > 0
+                        onClicked: {
+                            eventTypeFilter.currentIndex = 0
+                            dateFrom.text = ""
+                            dateTo.text = ""
+                            auditLogModel.clearFilters()
                         }
                     }
                 }
 
-                // Liste des entrées d'audit : chaque entree est empilee
-                // verticalement (horodatage + type, description, acteur)
-                // plutot que reparties sur des colonnes de largeur fixe,
-                // et la hauteur suit le contenu (le texte peut s'etaler
-                // sur plusieurs lignes sans etre tronque a l'ecran).
-                ScrollView {
+                RowLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    contentWidth: availableWidth
-                    clip: true
+                    spacing: Theme.spacingGutter
 
-                    ListView {
-                        id: auditListView
-                        anchors.fill: parent
-                        model: auditLogModel
-                        spacing: Theme.spacingMedium
+                    // ---- Tableau ----
+                    Card {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        contentPadding: 0
                         clip: true
-                        delegate: Rectangle {
-                            width: auditListView.width
-                            height: auditEntryColumn.implicitHeight + Theme.spacingLarge * 2
-                            radius: Theme.radiusLarge
-                            color: Theme.surface
-                            border.width: 1
-                            border.color: Theme.border
 
-                            ColumnLayout {
-                                id: auditEntryColumn
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.top: parent.top
-                                anchors.margins: Theme.spacingLarge
-                                spacing: Theme.spacingSmall
+                        TableHeader {
+                            Layout.fillWidth: true
+                            columns: [
+                                { title: qsTr("Date"), width: 120 },
+                                { title: qsTr("Type"), width: 140 },
+                                { title: qsTr("Événement"), fill: true },
+                                { title: qsTr("Acteur"), width: 170, visible: root.width >= 1000 }
+                            ]
+                        }
 
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: Theme.spacingSmall
+                        ListView {
+                            id: auditListView
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            model: auditLogModel
+                            clip: true
+                            boundsBehavior: Flickable.StopAtBounds
+                            ScrollBar.vertical: ScrollBar {}
 
-                                    Label {
-                                        text: model.timestamp
-                                        font.pixelSize: Theme.fontSizeCaption
-                                        color: Theme.textTertiary
-                                        font.family: Theme.fontFamily
-                                    }
+                            delegate: ItemDelegate {
+                                id: auditRow
+                                required property int index
+                                required property var model
 
+                                readonly property string actor: root.actorLabelFor(auditRow.model)
+                                readonly property string label: root.auditDescriptionLabel(auditRow.model.description)
+                                readonly property bool matches: root.auditSearch.length === 0
+                                    || auditRow.label.toLowerCase().indexOf(root.auditSearch) >= 0
+                                    || auditRow.actor.toLowerCase().indexOf(root.auditSearch) >= 0
+                                readonly property bool selected: root.selectedAudit !== null
+                                                                 && root.selectedAudit.id === auditRow.model.id
+
+                                visible: auditRow.matches
+                                width: ListView.view.width
+                                height: auditRow.matches ? Theme.rowHeight - 4 : 0
+                                leftPadding: Theme.cardPadding
+                                rightPadding: Theme.cardPadding
+                                hoverEnabled: true
+                                Accessible.name: root.eventTypeLabel(auditRow.model.eventType) + ", " + auditRow.label
+                                onClicked: root.selectedAudit = {
+                                    id: auditRow.model.id, eventType: auditRow.model.eventType,
+                                    timestamp: auditRow.model.timestamp, description: auditRow.label,
+                                    actor: auditRow.actor
+                                }
+
+                                HoverHandler { cursorShape: Qt.PointingHandCursor }
+
+                                background: Rectangle {
+                                    color: auditRow.selected ? Theme.accentSoft : (auditRow.hovered ? Theme.hover : "transparent")
                                     Rectangle {
-                                        implicitWidth: eventTypeLabel.implicitWidth + Theme.spacingMedium
-                                        implicitHeight: 24
-                                        radius: Theme.radiusPill
-                                        color: Theme.primaryMuted
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.bottom: parent.bottom
+                                        height: 1
+                                        color: Theme.line
+                                    }
+                                }
 
-                                        Label {
-                                            id: eventTypeLabel
-                                            anchors.centerIn: parent
-                                            text: root.eventTypeLabel(model.eventType)
-                                            font.pixelSize: Theme.fontSizeCaption
-                                            font.bold: true
-                                            color: Theme.primary
+                                contentItem: RowLayout {
+                                    spacing: 12
+
+                                    Text {
+                                        Layout.preferredWidth: 120
+                                        Layout.minimumWidth: 120
+                                        text: root.auditDateLabel(auditRow.model.timestamp)
+                                        color: Theme.ink2
+                                        font.pixelSize: Theme.fs(12)
+                                        font.family: Theme.fontFamily
+                                        font.features: ({ "tnum": 1 })
+                                    }
+                                    Item {
+                                        Layout.preferredWidth: 140
+                                        Layout.minimumWidth: 140
+                                        Layout.fillHeight: true
+                                        StatusBadge {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: root.eventTypeLabel(auditRow.model.eventType)
+                                            tone: root.eventTypeTone(auditRow.model.eventType)
+                                            glyph: root.eventTypeGlyph(auditRow.model.eventType)
+                                            compact: true
                                         }
                                     }
-
-                                    Item { Layout.fillWidth: true }
-                                }
-
-                                Label {
-                                    text: root.auditDescriptionLabel(model.description)
-                                    font.pixelSize: Theme.fontSizeBody
-                                    color: Theme.text
-                                    wrapMode: Text.WordWrap
-                                    Layout.fillWidth: true
-                                    font.family: Theme.fontFamily
-                                }
-
-                                Label {
-                                    text: qsTr("Acteur : %1").arg(root.actorLabelFor(model))
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.textSecondary
-                                    font.family: Theme.fontFamily
-                                    Layout.topMargin: Theme.spacingXs
+                                    Text {
+                                        Layout.fillWidth: true
+                                        Layout.preferredWidth: 100
+                                        text: auditRow.label
+                                        color: Theme.ink
+                                        font.pixelSize: Theme.fs(13)
+                                        font.family: Theme.fontFamily
+                                        elide: Text.ElideRight
+                                    }
+                                    Text {
+                                        visible: root.width >= 1000
+                                        Layout.preferredWidth: 170
+                                        Layout.minimumWidth: 170
+                                        text: auditRow.actor
+                                        color: Theme.ink2
+                                        font.pixelSize: Theme.fs(12)
+                                        font.family: Theme.fontFamily
+                                        elide: Text.ElideRight
+                                    }
                                 }
                             }
                         }
+
+                        EmptyState {
+                            visible: auditListView.count === 0
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            iconName: "log"
+                            title: eventTypeFilter.currentIndex > 0 || dateFrom.text.length > 0
+                                   ? qsTr("Aucun événement pour ces filtres")
+                                   : qsTr("Aucun événement enregistré")
+                            description: eventTypeFilter.currentIndex > 0 || dateFrom.text.length > 0
+                                         ? qsTr("Élargissez la période ou choisissez un autre type.")
+                                         : qsTr("Les connexions, transferts, appels et refus d'accès apparaîtront ici.")
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 1
+                            color: Theme.line
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            Layout.margins: 10
+                            Layout.leftMargin: Theme.cardPadding
+                            text: auditLogModel.count === 1 ? qsTr("1 événement") : qsTr("%1 événements").arg(auditLogModel.count)
+                            color: Theme.ink3
+                            font.pixelSize: Theme.fs(12)
+                            font.family: Theme.fontFamily
+                        }
+                    }
+
+                    // ---- Detail de l'evenement selectionne ----
+                    Card {
+                        visible: root.selectedAudit !== null && root.width >= 900
+                        Layout.preferredWidth: 320
+                        Layout.fillHeight: true
+                        title: qsTr("Détail de l'événement")
+                        headerActions: [
+                            IconButton {
+                                glyph: ""
+                                size: 28
+                                iconSize: Theme.fs(11)
+                                tooltip: qsTr("Fermer le détail")
+                                onClicked: root.selectedAudit = null
+                            }
+                        ]
+
+                        StatusBadge {
+                            text: root.selectedAudit ? root.eventTypeLabel(root.selectedAudit.eventType) : ""
+                            tone: root.selectedAudit ? root.eventTypeTone(root.selectedAudit.eventType) : "neutral"
+                            glyph: root.selectedAudit ? root.eventTypeGlyph(root.selectedAudit.eventType) : ""
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            Layout.topMargin: 6
+                            text: root.selectedAudit ? root.selectedAudit.description : ""
+                            color: Theme.ink
+                            font.pixelSize: Theme.fs(14)
+                            font.family: Theme.fontFamily
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Repeater {
+                            model: root.selectedAudit ? [
+                                { k: qsTr("Date"), v: root.auditFullDate(root.selectedAudit.timestamp) },
+                                { k: qsTr("Acteur"), v: root.selectedAudit.actor },
+                                { k: qsTr("Référence"), v: "#" + root.selectedAudit.id }
+                            ] : []
+                            delegate: ColumnLayout {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                Layout.topMargin: 8
+                                spacing: 2
+                                Text {
+                                    text: modelData.k
+                                    color: Theme.ink3
+                                    font.pixelSize: Theme.fs(11)
+                                    font.weight: Theme.weightSemibold
+                                    font.family: Theme.fontFamily
+                                }
+                                TextEdit {
+                                    Layout.fillWidth: true
+                                    text: modelData.v
+                                    readOnly: true
+                                    selectByMouse: true
+                                    wrapMode: Text.Wrap
+                                    color: Theme.ink
+                                    font.pixelSize: Theme.fs(13)
+                                    font.family: Theme.fontFamily
+                                }
+                            }
+                        }
+
+                        Item { Layout.fillHeight: true }
                     }
                 }
             }
         }
 
-        // ---- Contenu de l'onglet Machines autorisées (issue #68) ---------
-        // Grille de cartes (au lieu d'un tableau a colonnes figees), sur le
-        // meme principe que la grille "Postes connectés" de UsersView :
-        // 3/2/1 colonnes selon la largeur disponible.
+        // ==================================================================
+        // Machines autorisees
+        // ==================================================================
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.currentTab === 1
 
-            Item {
-                width: Math.min(parent.width - 2 * Theme.spacingLarge, 1200)
-                height: parent.height - Theme.spacingLarge
-                x: (parent.width - width) / 2
-                y: Theme.spacingMedium
+            Card {
+                width: parent.width - 2 * Theme.pagePadding
+                height: parent.height - Theme.pagePadding
+                x: Theme.pagePadding
+                y: 0
+                contentPadding: 0
+                clip: true
 
-                Rectangle {
-                    anchors.fill: parent
-                    radius: Theme.radiusLarge
-                    color: Theme.surface
-                    border.width: 1
-                    border.color: Theme.border
+                TableHeader {
+                    visible: machinesList.count > 0
+                    Layout.fillWidth: true
+                    columns: [
+                        { title: qsTr("Machine"), fill: true },
+                        { title: qsTr("Adresse"), width: 130, visible: root.width >= 900 },
+                        { title: qsTr("État"), width: 120 },
+                        { title: qsTr("Ajoutée"), width: 140, visible: root.width >= 1100 },
+                        { title: qsTr("Empreinte du certificat"), width: 170, visible: root.width >= 1000 },
+                        { title: "", width: 168 }
+                    ]
+                }
+
+                ListView {
+                    id: machinesList
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
                     clip: true
+                    model: authorizedMachineModel
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {}
 
-                    ColumnLayout {
-                        anchors.centerIn: parent
-                        spacing: Theme.spacingMedium
-                        visible: machinesGrid.count === 0
-                        width: parent.width * 0.6
+                    delegate: ItemDelegate {
+                        id: machineRow
+                        required property var model
+                        readonly property string machineName: machineRow.model.hostname || machineRow.model.machineUuid || qsTr("Machine inconnue")
+                        readonly property string fingerprint: machineRow.model.certificateFingerprint || ""
+                        readonly property string status: machineRow.model.status || ""
 
-                        Rectangle {
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.preferredWidth: 80
-                            Layout.preferredHeight: 80
-                            radius: 40
-                            color: Theme.surfaceAlt
+                        width: ListView.view.width
+                        height: Theme.rowHeight + 6
+                        leftPadding: Theme.cardPadding
+                        rightPadding: Theme.cardPadding
+                        hoverEnabled: true
+                        Accessible.name: machineRow.machineName
 
-                            Text {
-                                anchors.centerIn: parent
-                                text: "\uf109"
-                                font.family: root.iconFontFamily
-                                font.pixelSize: 32
-                                color: Theme.textSecondary
+                        background: Rectangle {
+                            color: machineRow.status === "pending" ? Theme.alpha(Theme.warningColor, 0.06)
+                                   : (machineRow.hovered ? Theme.hover : "transparent")
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                height: 1
+                                color: Theme.line
                             }
                         }
 
-                        Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: qsTr("Aucune machine autorisée")
-                            font.pixelSize: Theme.fontSizeSubheading
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                            color: Theme.text
-                            horizontalAlignment: Text.AlignHCenter
-                        }
+                        contentItem: RowLayout {
+                            spacing: 12
 
-                        Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.fillWidth: true
-                            text: qsTr("Utilisez le bouton « Ajouter machine » pour autoriser un certificat connu.")
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: Theme.fontFamily
-                            horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.WordWrap
-                        }
-                    }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 100
+                                spacing: 10
 
-                    GridView {
-                        id: machinesGrid
-                        anchors.fill: parent
-                        anchors.margins: Theme.spacingMedium
-                        clip: true
-                        model: authorizedMachineModel
-
-                        readonly property int columns: width > 900 ? 3 : (width > 560 ? 2 : 1)
-                        cellWidth: width / columns
-                        cellHeight: 270
-
-                        delegate: Item {
-                            width: machinesGrid.cellWidth
-                            height: machinesGrid.cellHeight
-
-                            Rectangle {
-                                anchors.fill: parent
-                                anchors.margins: Theme.spacingSmall / 2
-                                radius: Theme.radiusLarge
-                                color: Theme.surface
-                                border.width: 1
-                                border.color: Theme.border
-
+                                Rectangle {
+                                    Layout.preferredWidth: 32
+                                    Layout.preferredHeight: 32
+                                    radius: 8
+                                    color: Theme.sunken
+                                    FaIcon {
+                                        anchors.centerIn: parent
+                                        glyph: ""
+                                        color: Theme.ink2
+                                        font.pixelSize: Theme.fs(13)
+                                    }
+                                }
                                 ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: Theme.spacingLarge
-                                    spacing: Theme.spacingMedium
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: Theme.spacingMedium
-
-                                        Rectangle {
-                                            Layout.preferredWidth: 48
-                                            Layout.preferredHeight: 48
-                                            radius: Theme.radiusMedium
-                                            color: Theme.surfaceAlt
-
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: "\uf109"
-                                                font.family: root.iconFontFamily
-                                                font.pixelSize: 20
-                                                color: Theme.textSecondary
-                                            }
-                                        }
-
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            spacing: 2
-
-                                            Label {
-                                                text: model.hostname || model.machineUuid || qsTr("Machine inconnue")
-                                                font.pixelSize: Theme.fontSizeBody
-                                                font.bold: true
-                                                font.family: Theme.fontFamily
-                                                color: Theme.text
-                                                elide: Text.ElideRight
-                                                Layout.fillWidth: true
-                                            }
-
-                                            Label {
-                                                text: model.lastIpAddress || model.ipAddress || "N/A"
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                font.family: Theme.fontFamily
-                                                color: Theme.textSecondary
-                                                elide: Text.ElideRight
-                                                Layout.fillWidth: true
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            Layout.alignment: Qt.AlignTop
-                                            implicitWidth: machineStatusLabel.implicitWidth + Theme.spacingMedium
-                                            implicitHeight: 24
-                                            radius: Theme.radiusPill
-                                            color: model.status === "pending" ? Theme.warningMuted
-                                                   : (model.status === "authorized" ? Theme.successMuted : Theme.errorMuted)
-
-                                            Label {
-                                                id: machineStatusLabel
-                                                anchors.centerIn: parent
-                                                text: model.status === "pending" ? qsTr("En attente")
-                                                      : (model.status === "authorized" ? qsTr("Autorisée") : qsTr("Révoquée"))
-                                                font.pixelSize: Theme.fontSizeCaption
-                                                font.bold: true
-                                                color: model.status === "pending" ? Theme.warning
-                                                       : (model.status === "authorized" ? Theme.success : Theme.error)
-                                            }
-                                        }
-                                    }
-
-                                    Label {
-                                        visible: model.status === "pending"
-                                        text: qsTr("Machine détectée — autorisation requise")
-                                        font.pixelSize: Theme.fontSizeCaption
-                                        font.italic: true
-                                        color: Theme.warning
-                                        wrapMode: Text.WordWrap
-                                        Layout.fillWidth: true
-                                    }
-
-                                    Label {
-                                        text: qsTr("Ajoutée le %1").arg(model.addedAt)
-                                        font.pixelSize: Theme.fontSizeCaption
+                                    Layout.fillWidth: true
+                                    spacing: 1
+                                    Text {
+                                        text: machineRow.machineName
+                                        color: Theme.ink
+                                        font.pixelSize: Theme.fs(13)
+                                        font.weight: Theme.weightMedium
                                         font.family: Theme.fontFamily
-                                        color: Theme.textTertiary
-                                    }
-
-                                    Label {
-                                        text: model.certificateFingerprint
-                                              ? qsTr("Certificat : %1…").arg(model.certificateFingerprint.substring(0, 12))
-                                              : qsTr("Certificat non enregistré")
-                                        font.pixelSize: Theme.fontSizeCaption
-                                        color: Theme.textTertiary
                                         elide: Text.ElideRight
                                         Layout.fillWidth: true
                                     }
-
-                                    Item { Layout.fillHeight: true }
-
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: Theme.spacingSmall
-
-                                        AppButton {
-                                            variant: "secondary"
-                                            fullWidth: true
-                                            text: model.status === "pending" ? qsTr("Autoriser")
-                                                  : (model.status === "authorized" ? qsTr("Révoquer") : qsTr("Réautoriser"))
-                                            onClicked: {
-                                                if (model.status === "authorized") {
-                                                    authorizedMachineModel.revokeMachine(model.id, "Révoqué par admin")
-                                                } else {
-                                                    authorizedMachineModel.authorizeMachine(model.id, "Autorisé par admin")
-                                                }
-                                            }
-                                        }
-
-                                        RowLayout {
-                                            Layout.fillWidth: true
-                                            spacing: Theme.spacingSmall
-
-                                            AppButton {
-                                                variant: "secondary"
-                                                Layout.fillWidth: true
-                                                text: qsTr("Copier")
-                                                onClicked: {
-                                                    fingerprintCopyField.text = model.certificateFingerprint
-                                                    fingerprintCopyField.selectAll()
-                                                    fingerprintCopyField.copy()
-                                                }
-                                            }
-
-                                            AppButton {
-                                                variant: "danger"
-                                                Layout.fillWidth: true
-                                                text: qsTr("Supprimer")
-                                                onClicked: authorizedMachineModel.removeMachine(model.id)
-                                            }
-                                        }
+                                    Text {
+                                        visible: root.width < 900
+                                        text: machineRow.model.lastIpAddress || machineRow.model.ipAddress || ""
+                                        color: Theme.ink3
+                                        font.pixelSize: Theme.fs(11)
+                                        font.family: Theme.fontFamily
                                     }
+                                }
+                            }
 
-                                    TextEdit {
-                                        id: fingerprintCopyField
-                                        visible: false
-                                        text: ""
+                            Text {
+                                visible: root.width >= 900
+                                Layout.preferredWidth: 130
+                                Layout.minimumWidth: 130
+                                text: machineRow.model.lastIpAddress || machineRow.model.ipAddress || "—"
+                                color: Theme.ink2
+                                font.pixelSize: Theme.fs(12)
+                                font.family: Theme.fontFamily
+                                font.features: ({ "tnum": 1 })
+                            }
+
+                            Item {
+                                Layout.preferredWidth: 120
+                                Layout.minimumWidth: 120
+                                Layout.fillHeight: true
+                                StatusBadge {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: machineRow.status === "pending" ? qsTr("En attente")
+                                        : machineRow.status === "authorized" ? qsTr("Autorisée") : qsTr("Révoquée")
+                                    tone: machineRow.status === "pending" ? "warning"
+                                        : machineRow.status === "authorized" ? "success" : "danger"
+                                    glyph: machineRow.status === "pending" ? ""
+                                         : machineRow.status === "authorized" ? "" : ""
+                                    compact: true
+                                }
+                            }
+
+                            Text {
+                                visible: root.width >= 1100
+                                Layout.preferredWidth: 140
+                                Layout.minimumWidth: 140
+                                text: root.auditDateLabel(machineRow.model.addedAt)
+                                color: Theme.ink3
+                                font.pixelSize: Theme.fs(12)
+                                font.family: Theme.fontFamily
+                            }
+
+                            RowLayout {
+                                visible: root.width >= 1000
+                                Layout.preferredWidth: 170
+                                Layout.minimumWidth: 170
+                                Layout.maximumWidth: 170
+                                spacing: 4
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: machineRow.fingerprint.length > 0
+                                          ? machineRow.fingerprint.substring(0, 17) + "…" : qsTr("Non enregistrée")
+                                    color: machineRow.fingerprint.length > 0 ? Theme.ink2 : Theme.ink3
+                                    font.pixelSize: Theme.fs(12)
+                                    font.family: "Consolas"
+                                    elide: Text.ElideRight
+                                }
+                                IconButton {
+                                    visible: machineRow.fingerprint.length > 0
+                                    glyph: ""
+                                    size: 26
+                                    iconSize: Theme.fs(11)
+                                    tooltip: qsTr("Copier l'empreinte complète")
+                                    onClicked: root.copyToClipboard(machineRow.fingerprint)
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.preferredWidth: 168
+                                Layout.minimumWidth: 168
+                                Layout.maximumWidth: 168
+                                spacing: 4
+
+                                Item { Layout.fillWidth: true }
+
+                                AppButton {
+                                    size: "small"
+                                    text: machineRow.status === "authorized" ? qsTr("Révoquer")
+                                        : machineRow.status === "pending" ? qsTr("Autoriser") : qsTr("Réautoriser")
+                                    variant: machineRow.status === "authorized" ? "dangerGhost"
+                                           : machineRow.status === "pending" ? "primary" : "secondary"
+                                    onClicked: root.askMachineAction(
+                                                   machineRow.status === "authorized" ? "revoke" : "authorize",
+                                                   machineRow.model.id, machineRow.machineName, machineRow.fingerprint)
+                                }
+                                IconButton {
+                                    glyph: ""
+                                    size: 30
+                                    iconSize: Theme.fs(13)
+                                    tooltip: qsTr("Plus d'actions")
+                                    onClicked: {
+                                        machineMenu.machineId = machineRow.model.id
+                                        machineMenu.machineName = machineRow.machineName
+                                        machineMenu.fingerprint = machineRow.fingerprint
+                                        machineMenu.popup()
                                     }
                                 }
                             }
                         }
                     }
                 }
+
+                EmptyState {
+                    visible: machinesList.count === 0
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    iconName: "lock"
+                    title: qsTr("Aucune machine enregistrée")
+                    description: qsTr("Les postes qui tentent de rejoindre le réseau apparaissent ici en attente. Vous pouvez aussi ajouter une machine à partir de l'empreinte de son certificat.")
+                    actionText: qsTr("Ajouter une machine")
+                    onActionClicked: addMachineDialog.open()
+                }
             }
         }
 
-        // ---- Contenu de l'onglet Gestion des utilisateurs (issue #69) ----
-        // Meme principe de grille responsive que l'onglet Machines.
+        // ==================================================================
+        // Utilisateurs
+        // ==================================================================
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.currentTab === 2
 
-            Item {
-                width: Math.min(parent.width - 2 * Theme.spacingLarge, 1200)
-                height: parent.height - Theme.spacingLarge
-                x: (parent.width - width) / 2
-                y: Theme.spacingMedium
+            Card {
+                width: parent.width - 2 * Theme.pagePadding
+                height: parent.height - Theme.pagePadding
+                x: Theme.pagePadding
+                y: 0
+                contentPadding: 0
+                clip: true
 
-                Rectangle {
-                    anchors.fill: parent
-                    radius: Theme.radiusLarge
-                    color: Theme.surface
-                    border.width: 1
-                    border.color: Theme.border
+                TableHeader {
+                    visible: usersGrid.count > 0
+                    Layout.fillWidth: true
+                    columns: [
+                        { title: qsTr("Utilisateur"), fill: true },
+                        { title: qsTr("Rôle"), width: 140 },
+                        { title: qsTr("Présence"), width: 130 },
+                        { title: "", width: 250 }
+                    ]
+                }
+
+                ListView {
+                    // Id conserve : le Timer de presence force un relayout.
+                    id: usersGrid
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
                     clip: true
+                    model: userManagementModel
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {}
 
-                    ColumnLayout {
-                        anchors.centerIn: parent
-                        spacing: Theme.spacingMedium
-                        visible: usersGrid.count === 0
-                        width: parent.width * 0.6
+                    delegate: ItemDelegate {
+                        id: userRow
+                        required property var model
+                        readonly property bool isSelf: typeof userManager !== "undefined"
+                                                       && userManager.currentUsername === userRow.model.name
+                        readonly property string presence: root.liveUserStatus(userRow.model.name, userRow.model.uuid)
 
-                        Rectangle {
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.preferredWidth: 80
-                            Layout.preferredHeight: 80
-                            radius: 40
-                            color: Theme.surfaceAlt
+                        width: ListView.view.width
+                        height: Theme.rowHeight + 4
+                        leftPadding: Theme.cardPadding
+                        rightPadding: Theme.cardPadding
+                        hoverEnabled: true
+                        Accessible.name: userRow.model.name
 
-                            Text {
-                                anchors.centerIn: parent
-                                text: "\uf234"
-                                font.family: root.iconFontFamily
-                                font.pixelSize: 32
-                                color: Theme.textSecondary
+                        background: Rectangle {
+                            color: userRow.hovered ? Theme.hover : "transparent"
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                height: 1
+                                color: Theme.line
                             }
                         }
 
-                        Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: qsTr("Aucun utilisateur")
-                            font.pixelSize: Theme.fontSizeSubheading
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                            color: Theme.text
-                            horizontalAlignment: Text.AlignHCenter
-                        }
+                        contentItem: RowLayout {
+                            spacing: 12
 
-                        Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.fillWidth: true
-                            text: qsTr("Utilisez le bouton « Ajouter utilisateur » pour créer un compte.")
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: Theme.fontFamily
-                            horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.WordWrap
-                        }
-                    }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 100
+                                spacing: 10
+                                Avatar {
+                                    name: userRow.model.name
+                                    size: 32
+                                }
+                                Text {
+                                    text: userRow.model.name
+                                    color: Theme.ink
+                                    font.pixelSize: Theme.fs(13)
+                                    font.weight: Theme.weightMedium
+                                    font.family: Theme.fontFamily
+                                    elide: Text.ElideRight
+                                }
+                                StatusBadge {
+                                    visible: userRow.isSelf
+                                    text: qsTr("Vous")
+                                    showDot: false
+                                    compact: true
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
 
-                    GridView {
-                        id: usersGrid
-                        anchors.fill: parent
-                        anchors.margins: Theme.spacingMedium
-                        clip: true
-                        model: userManagementModel
+                            Item {
+                                Layout.preferredWidth: 140
+                                Layout.minimumWidth: 140
+                                Layout.fillHeight: true
+                                StatusBadge {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: userRow.model.isAdmin ? qsTr("Administrateur") : qsTr("Utilisateur")
+                                    tone: userRow.model.isAdmin ? "accent" : "neutral"
+                                    glyph: userRow.model.isAdmin ? "" : ""
+                                    compact: true
+                                }
+                            }
 
-                        readonly property int columns: width > 900 ? 3 : (width > 560 ? 2 : 1)
-                        cellWidth: width / columns
-                        cellHeight: 300
+                            Item {
+                                Layout.preferredWidth: 130
+                                Layout.minimumWidth: 130
+                                Layout.fillHeight: true
+                                StatusBadge {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: userRow.presence === "online" ? qsTr("En ligne")
+                                        : userRow.presence === "away" ? qsTr("Absent")
+                                        : userRow.presence === "busy" ? qsTr("Occupé") : qsTr("Hors ligne")
+                                    tone: userRow.presence === "online" ? "success"
+                                        : (userRow.presence === "away" || userRow.presence === "busy") ? "warning" : "neutral"
+                                    compact: true
+                                }
+                            }
 
-                        delegate: Item {
-                            width: usersGrid.cellWidth
-                            height: usersGrid.cellHeight
+                            RowLayout {
+                                Layout.preferredWidth: 250
+                                Layout.minimumWidth: 250
+                                Layout.maximumWidth: 250
+                                spacing: 4
 
-                            Rectangle {
-                                anchors.fill: parent
-                                anchors.margins: Theme.spacingSmall / 2
-                                radius: Theme.radiusLarge
-                                color: Theme.surface
-                                border.width: 1
-                                border.color: Theme.border
+                                Item { Layout.fillWidth: true }
 
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: Theme.spacingLarge
-                                    spacing: Theme.spacingMedium
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: Theme.spacingMedium
-
-                                        Avatar {
-                                            name: model.name
-                                            size: 48
-                                        }
-
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            spacing: 2
-
-                                            Label {
-                                                text: model.name
-                                                font.pixelSize: Theme.fontSizeBody
-                                                font.bold: true
-                                                font.family: Theme.fontFamily
-                                                color: Theme.text
-                                                elide: Text.ElideRight
-                                                Layout.fillWidth: true
-                                            }
-
-                                            Label {
-                                                text: model.ipAddress || "N/A"
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                font.family: Theme.fontFamily
-                                                color: Theme.textSecondary
-                                                elide: Text.ElideRight
-                                                Layout.fillWidth: true
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            Layout.alignment: Qt.AlignTop
-                                            implicitWidth: roleLabel.implicitWidth + Theme.spacingMedium
-                                            implicitHeight: 24
-                                            radius: Theme.radiusPill
-                                            color: model.isAdmin ? Theme.primaryMuted : Theme.surfaceAlt
-
-                                            Label {
-                                                id: roleLabel
-                                                anchors.centerIn: parent
-                                                text: model.isAdmin ? qsTr("Admin") : qsTr("Utilisateur")
-                                                font.pixelSize: Theme.fontSizeCaption
-                                                font.bold: true
-                                                color: model.isAdmin ? Theme.primary : Theme.textSecondary
-                                            }
-                                        }
+                                IconButton {
+                                    glyph: ""
+                                    size: 30
+                                    iconSize: Theme.fs(13)
+                                    tooltip: qsTr("Réinitialiser le mot de passe de %1").arg(userRow.model.name)
+                                    Accessible.name: tooltip
+                                    onClicked: {
+                                        root.passwordResetUserId = userRow.model.id
+                                        root.passwordResetUsername = userRow.model.name
+                                        resetPasswordDialog.open()
                                     }
-
-                                    Label {
-                                        text: qsTr("Statut : %1").arg(root.liveUserStatus(model.name, model.uuid))
-                                        font.pixelSize: Theme.fontSizeCaption
-                                        font.family: Theme.fontFamily
-                                        color: Theme.textTertiary
-                                    }
-
-                                    Item { Layout.fillHeight: true }
-
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: Theme.spacingSmall
-
-                                        AppButton {
-                                            variant: "secondary"
-                                            fullWidth: true
-                                            text: model.isAdmin ? qsTr("Rétrograder") : qsTr("Promouvoir")
-                                            onClicked: userManagementModel.changeRole(model.id, !model.isAdmin)
-                                        }
-
-                                        AppButton {
-                                            variant: "secondary"
-                                            fullWidth: true
-                                            text: qsTr("Réinitialiser le mot de passe")
-                                            onClicked: {
-                                                root.passwordResetUserId = model.id
-                                                root.passwordResetUsername = model.name
-                                                resetPasswordDialog.open()
-                                            }
-                                        }
-
-                                        AppButton {
-                                            variant: "danger"
-                                            fullWidth: true
-                                            text: qsTr("Supprimer")
-                                            onClicked: userManagementModel.deleteUser(model.id)
-                                        }
+                                }
+                                IconButton {
+                                    glyph: ""
+                                    size: 30
+                                    iconSize: Theme.fs(13)
+                                    tooltip: qsTr("Plus d'actions pour %1").arg(userRow.model.name)
+                                    onClicked: {
+                                        userMenu.userId = userRow.model.id
+                                        userMenu.userName = userRow.model.name
+                                        userMenu.userIsAdmin = userRow.model.isAdmin
+                                        userMenu.isSelf = userRow.isSelf
+                                        userMenu.popup()
                                     }
                                 }
                             }
                         }
                     }
                 }
+
+                EmptyState {
+                    visible: usersGrid.count === 0
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    iconName: "users"
+                    title: qsTr("Aucun utilisateur")
+                    description: qsTr("Créez les comptes de votre équipe pour qu'ils puissent se connecter depuis leur poste.")
+                    actionText: qsTr("Nouvel utilisateur")
+                    onActionClicked: addUserDialog.open()
+                }
             }
         }
 
-        // ---- Contenu de l'onglet "Bascule serveur" ------------------------
-        // (HYBRID_SERVER_FAILOVER.md section 9, etape 5) : historique des
-        // elections/reconciliations (ServerElectionLog), utile pour
-        // diagnostiquer une instabilite reseau. Entrees empilees
-        // verticalement (au lieu de colonnes de largeur fixe) pour rester
-        // lisibles a toute largeur.
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.currentTab === 3
 
 ColumnLayout {
-    width: Math.min(parent.width - 2 * Theme.spacingLarge, 1200)
-    height: parent.height - Theme.spacingLarge
-    x: (parent.width - width) / 2
-    y: Theme.spacingMedium
+    width: parent.width - 2 * Theme.pagePadding
+    height: parent.height - Theme.pagePadding
+    x: Theme.pagePadding
+    y: 0
     spacing: Theme.spacingMedium
 
     // Bloc titre + sous-titre : espacement resserré, indépendant
@@ -1114,7 +1225,7 @@ ColumnLayout {
                             anchors.centerIn: parent
                             text: "\uf021"
                             font.family: root.iconFontFamily
-                            font.pixelSize: 32
+                            font.pixelSize: Theme.fs(32)
                             color: Theme.textSecondary
                         }
                     }
@@ -1311,6 +1422,8 @@ ColumnLayout {
 
     AppDialog {
         id: addMachineDialog
+        property string errorText: ""
+        onAboutToShow: errorText = ""
         title: qsTr("Ajouter une machine autorisée")
         headerIcon: "\uf109"
         dialogWidth: 460
@@ -1355,63 +1468,16 @@ ColumnLayout {
                             color: Theme.textSecondary
                         }
 
-                        ComboBox {
+                        AppComboBox {
                             id: detectedMachineSelector
-                            palette.window: Theme.surface
-                            palette.base: Theme.surfaceAlt
-                            palette.button: Theme.surfaceAlt
-                            palette.text: Theme.text
-                            palette.buttonText: Theme.text
-                            palette.highlight: Theme.primary
-                            palette.highlightedText: Theme.primaryText
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 40
-                            model: (typeof discoveryService !== "undefined" && discoveryService)
-                                   ? discoveryService.machineCandidates() : []
-                            textRole: "name"
-                            displayText: currentIndex >= 0 && currentIndex < count
-                                         ? (model[currentIndex].name + " — " + model[currentIndex].ip) : qsTr("Sélectionner un poste détecté")
-                            background: Rectangle {
-                                radius: Theme.radiusMedium
-                                color: Theme.surface
-                                border.width: 1
-                                border.color: Theme.border
-                            }
-                            delegate: ItemDelegate {
-                                width: detectedMachineSelector.width
-                                highlighted: detectedMachineSelector.highlightedIndex === index
-                                background: Rectangle {
-                                    color: detectedMachineSelector.highlightedIndex === index ? Theme.primaryMuted
-                                           : (hovered ? Theme.surfaceHover : Theme.surface)
-                                }
-                                contentItem: Label {
-                                    text: modelData.name + " — " + modelData.ip
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    verticalAlignment: Text.AlignVCenter
-                                    leftPadding: Theme.spacingSmall
-                                    elide: Text.ElideRight
-                                }
-                            }
-                            popup: Popup {
-                                y: detectedMachineSelector.height
-                                width: detectedMachineSelector.width
-                                implicitHeight: contentItem.implicitHeight
-                                padding: 1
-                                contentItem: ListView {
-                                    clip: true
-                                    implicitHeight: contentHeight
-                                    model: detectedMachineSelector.popup.visible ? detectedMachineSelector.delegateModel : null
-                                    currentIndex: detectedMachineSelector.highlightedIndex
-                                    ScrollIndicator.vertical: ScrollIndicator { }
-                                }
-                                background: Rectangle {
-                                    color: Theme.surface
-                                    border.width: 1
-                                    border.color: Theme.border
-                                    radius: Theme.radiusMedium
-                                }
-                            }
+                            Accessible.name: qsTr("Poste détecté sur le réseau")
+                            model: ((typeof discoveryService !== "undefined" && discoveryService)
+                                    ? discoveryService.machineCandidates() : [])
+                                   .map(function(c) { return Object.assign({}, c, { label: c.name + " — " + c.ip }) })
+                            textRole: "label"
+                            currentIndex: -1
+                            displayText: currentIndex >= 0 ? currentText : qsTr("Sélectionner un poste détecté")
                             onActivated: {
                                 const candidate = model[index]
                                 if (!candidate) return
@@ -1487,6 +1553,13 @@ ColumnLayout {
                     wrapMode: Text.WordWrap
                 }
 
+                Dash.InlineAlert {
+                    visible: text.length > 0
+                    Layout.fillWidth: true
+                    text: addMachineDialog.errorText
+                    onCloseRequested: addMachineDialog.errorText = ""
+                }
+
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.topMargin: Theme.spacingSmall
@@ -1504,11 +1577,15 @@ ColumnLayout {
                         variant: "primary"
                         text: qsTr("Ajouter la machine")
                         onClicked: {
-                            authorizedMachineModel.addMachineByCertificate(
+                            const ok = authorizedMachineModel.addMachineByCertificate(
                                 newMachineFingerprint.text, newMachineUuid.text,
                                 newMachineIp.text, newMachineHostname.text,
                                 "Ajouté par admin")
-                            addMachineDialog.close()
+                            // En cas de refus, la saisie est conservee et l'erreur affichee.
+                            if (ok)
+                                addMachineDialog.close()
+                            else
+                                addMachineDialog.errorText = qsTr("La machine n'a pas été ajoutée : l'empreinte du certificat est obligatoire. Si elle est renseignée, l'enregistrement a échoué ; réessayez.")
                         }
                     }
                 }
@@ -1518,6 +1595,8 @@ ColumnLayout {
 
     AppDialog {
         id: addUserDialog
+        property string errorText: ""
+        onAboutToShow: errorText = ""
         title: qsTr("Ajouter un utilisateur")
         headerIcon: "\uf234"
         dialogWidth: 380
@@ -1569,6 +1648,13 @@ ColumnLayout {
                 }
             }
 
+            Dash.InlineAlert {
+                visible: text.length > 0
+                Layout.fillWidth: true
+                text: addUserDialog.errorText
+                onCloseRequested: addUserDialog.errorText = ""
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Theme.spacingSmall
@@ -1586,8 +1672,11 @@ ColumnLayout {
                     text: qsTr("Ajouter")
                     onClicked: {
                         const isAdmin = newUserRole.currentIndex === 1
-                        userManagementModel.createUser(newUserName.text, newUserPassword.text, isAdmin)
-                        addUserDialog.close()
+                        const ok = userManagementModel.createUser(newUserName.text, newUserPassword.text, isAdmin)
+                        if (ok)
+                            addUserDialog.close()
+                        else
+                            addUserDialog.errorText = qsTr("Le compte n'a pas été créé. Vérifiez que le nom est renseigné et pas déjà utilisé, et que le mot de passe contient au moins 4 caractères.")
                     }
                 }
             }
@@ -1631,7 +1720,7 @@ ColumnLayout {
                     anchors.centerIn: parent
                     text: "\uf023"
                     font.family: accessDeniedIconFont.name
-                    font.pixelSize: 20
+                    font.pixelSize: Theme.fs(20)
                     color: Theme.error
                 }
             }

@@ -4,90 +4,162 @@ import QtQuick.Layouts
 import Themes
 
 /*
- * AppButton - bouton reutilisable avec variantes coherentes dans toute
- * l'application (evite de redefinir background/contentItem a chaque
- * ecran, comme c'etait le cas auparavant).
+ * AppButton - bouton texte du design system LocaLink.
  *
- * variant: "primary" | "secondary" | "ghost" | "danger" | "outline"
- * iconGlyph: glyphe unicode optionnel affiche avant le texte
+ * variant : "primary"   action principale de l'ecran (une seule par zone)
+ *           "secondary" action courante (contour neutre) - defaut
+ *           "ghost"     action tertiaire, sans contour (alias "tertiary")
+ *           "soft"      action accentuee discrete (voile d'accent)
+ *           "outline"   contour d'accent
+ *           "danger"    action destructrice (plein rouge)
+ *           "dangerGhost" action destructrice discrete (texte rouge)
+ * size    : "normal" (Theme.controlHeight) | "small" | "large"
+ * iconGlyph : glyphe Font Awesome optionnel avant le texte.
+ * loading : affiche un indicateur et bloque les clics.
  *
- * Note: on utilise "iconGlyph" et non "icon" car Button expose deja
- * une propriete groupee "icon" (icon.name, icon.source, ...) declaree
- * FINAL depuis Qt 6.3 ; la redefinir provoque une erreur QML fatale
- * ("Cannot override FINAL property") qui rend AppButton indisponible.
+ * "iconGlyph" et non "icon" : Button expose deja une propriete groupee
+ * "icon" declaree FINAL depuis Qt 6.3.
  */
 Button {
     id: root
 
     property string variant: "secondary"
+    property string size: "normal"
     property string iconGlyph: ""
     property bool fullWidth: false
+    property bool loading: false
+    property string tooltip: ""
 
     readonly property bool isPrimary: variant === "primary"
     readonly property bool isDanger: variant === "danger"
-    readonly property bool isGhost: variant === "ghost"
+    readonly property bool isDangerGhost: variant === "dangerGhost"
+    readonly property bool isGhost: variant === "ghost" || variant === "tertiary"
     readonly property bool isOutline: variant === "outline"
+    readonly property bool isSoft: variant === "soft"
+    readonly property bool filled: isPrimary || isDanger
+
+    readonly property int controlHeight: size === "small" ? Theme.controlHeightSmall
+                                         : size === "large" ? Theme.controlHeight + 6
+                                         : Theme.controlHeight
+    readonly property int hPad: size === "small" ? 10 : (size === "large" ? 18 : 14)
+
+    // Texte sur fond plein : en sombre, l'accent et le rouge s'eclaircissent,
+    // le texte passe donc en encre foncee (contraste >= 4,5:1).
+    readonly property color inkOnFill: Theme.darkMode ? "#0B1018" : "#FFFFFF"
 
     readonly property color baseColor: {
-        if (isPrimary) return Theme.primary
-        if (isDanger) return Theme.error
+        if (isPrimary) return Theme.accentColor
+        if (isDanger) return Theme.dangerColor
+        if (isSoft) return Theme.accentSoft
+        if (variant === "secondary") return Theme.surface0
         return "transparent"
     }
     readonly property color hoverColor: {
-        if (isPrimary) return Theme.primaryHover
-        if (isDanger) return Theme.error
-        if (isOutline) return Theme.primaryMuted
-        if (isGhost) return Theme.surfaceHover
-        return Theme.surfaceHover
+        if (isPrimary) return Theme.accentHover
+        if (isDanger) return Theme.dangerHover
+        if (isSoft) return Theme.accentMuted
+        if (isOutline) return Theme.accentSoft
+        if (isDangerGhost) return Theme.dangerSoft
+        return Theme.hover
     }
     readonly property color labelColor: {
-        if (isPrimary || isDanger) return "#FFFFFF"
-        if (isOutline) return Theme.primary
-        return Theme.text
+        if (!root.enabled) return Theme.inkDisabled
+        if (filled) return inkOnFill
+        if (isOutline || isSoft) return Theme.darkMode ? Theme.accentHover : Theme.accentColor
+        if (isDangerGhost) return Theme.dangerInk
+        return Theme.ink
     }
 
     Layout.fillWidth: fullWidth
-    implicitHeight: 44
-    implicitWidth: contentItem.implicitWidth + Theme.spacingLarge
+    implicitHeight: controlHeight
+    implicitWidth: Math.max(controlHeight, contentRow.implicitWidth + 2 * hPad)
+    leftPadding: hPad
+    rightPadding: hPad
+    topPadding: 0
+    bottomPadding: 0
     hoverEnabled: true
-    opacity: enabled ? 1.0 : 0.55
+    focusPolicy: Qt.StrongFocus
+    Accessible.name: root.text.length > 0 ? root.text : root.tooltip
 
-    // Note: Control/Item n'exposent pas "cursorShape" directement en QML
-    // (c'est une propriete C++ de QQuickItem, non exposee sur Control).
-    // On passe par HoverHandler, qui expose cursorShape depuis Qt 5.15.
     HoverHandler {
-        cursorShape: Qt.PointingHandCursor
+        cursorShape: root.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
     }
+
+    // Pendant le chargement, les clics sont absorbes (sans toucher a
+    // `enabled`, que l'ecran hote peut deja piloter).
+    MouseArea {
+        anchors.fill: parent
+        visible: root.loading
+        acceptedButtons: Qt.AllButtons
+        cursorShape: Qt.BusyCursor
+    }
+
+    ToolTip.visible: root.tooltip.length > 0 && root.hovered
+    ToolTip.text: root.tooltip
+    ToolTip.delay: 400
 
     background: Rectangle {
-        radius: Theme.radiusSmall
-        color: root.pressed ? Qt.darker(root.hovered ? root.hoverColor : root.baseColor, 1.08)
-                             : (root.hovered ? root.hoverColor : root.baseColor)
-        border.width: (root.isGhost || root.variant === "secondary" || root.isOutline) ? 1 : 0
-        border.color: root.isOutline ? Theme.primary : Theme.border
+        radius: Theme.radiusControl
+        color: {
+            if (!root.enabled)
+                return root.filled ? Theme.sunken : "transparent"
+            if (root.down)
+                return Qt.darker(root.hoverColor, Theme.darkMode ? 0.92 : 1.06)
+            return root.hovered ? root.hoverColor : root.baseColor
+        }
+        border.width: (root.variant === "secondary" || root.isOutline) ? 1 : 0
+        border.color: root.isOutline ? Theme.accentColor
+                                     : (root.hovered ? Theme.lineStrong : Theme.line)
 
-        Behavior on color { ColorAnimation { duration: 100 } }
+        Behavior on color { ColorAnimation { duration: Theme.durationFast } }
+
+        // Anneau de focus clavier (jamais au clic souris).
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -3
+            radius: parent.radius + 3
+            color: "transparent"
+            border.width: 2
+            border.color: Theme.focusRing
+            visible: root.visualFocus
+        }
     }
 
-    contentItem: Row {
-        spacing: Theme.spacingXs
-        anchors.centerIn: parent
+    contentItem: Item {
+        implicitWidth: contentRow.implicitWidth
+        implicitHeight: contentRow.implicitHeight
 
-        Text {
-            visible: root.iconGlyph.length > 0
-            text: root.iconGlyph
-            font.pixelSize: Theme.fontSizeBody
-            color: root.labelColor
-            anchors.verticalCenter: parent.verticalCenter
-        }
+        RowLayout {
+            id: contentRow
+            anchors.centerIn: parent
+            spacing: 7
 
-        Text {
-            text: root.text
-            color: root.labelColor
-            font.pixelSize: Theme.fontSizeBody
-            font.bold: root.isPrimary || root.isDanger
-            font.family: Theme.fontFamily
-            anchors.verticalCenter: parent.verticalCenter
+            // En cours : l'indicateur remplace l'icone, le libelle reste lisible
+            // (ex. "Connexion…").
+            Spinner {
+                visible: root.loading
+                running: root.loading
+                color: root.labelColor
+                Layout.preferredWidth: Theme.fs(root.size === "small" ? 12 : 14)
+                Layout.preferredHeight: Layout.preferredWidth
+            }
+
+            FaIcon {
+                visible: root.iconGlyph.length > 0 && !root.loading
+                glyph: root.iconGlyph
+                color: root.labelColor
+                font.pixelSize: Theme.fs(root.size === "small" ? 12 : 13)
+            }
+
+            Text {
+                visible: root.text.length > 0
+                text: root.text
+                color: root.labelColor
+                font.pixelSize: Theme.fs(root.size === "small" ? 12 : 13)
+                font.weight: Theme.weightSemibold
+                font.family: Theme.fontFamily
+                elide: Text.ElideRight
+            }
         }
     }
 }

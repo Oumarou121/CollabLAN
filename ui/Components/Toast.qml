@@ -102,7 +102,7 @@ Rectangle {
 
     FontLoader {
         id: iconFont
-        source: "qrc:/ui/Assets/fonts/fontawesome-webfont.ttf"
+        source: "../Assets/fonts/fontawesome-webfont.ttf"
     }
 
     function initials(name) {
@@ -208,7 +208,7 @@ Rectangle {
             Text {
                 anchors.centerIn: parent
                 text: root.isMessageCategory ? root.initials(root.title) : root.iconGlyph
-                color: "#FFFFFF"
+                color: root.isMessageCategory ? "#FFFFFF" : Theme.accentInk
                 font.pixelSize: root.isMessageCategory ? Theme.fontSizeSmall : Theme.fontSizeBody
                 font.bold: true
                 font.family: root.isMessageCategory ? Theme.fontFamily : iconFont.name

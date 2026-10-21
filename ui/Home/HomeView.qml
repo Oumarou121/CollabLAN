@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Themes
 import "../Components"
 import "../Dashboard"
+import "../Dashboard/transferFormat.js" as Fmt
 
 /*
  * HomeView - Dashboard principal LocaLink selon la maquette V2.1
@@ -79,7 +80,7 @@ Item {
     readonly property color call: Theme.dashboardCall
     readonly property color callSoft: Theme.dashboardCallSoft
     readonly property color callText: Theme.dashboardCallText
-    readonly property color track: "#D9E2E0"
+    readonly property color track: Theme.dashboardSurfaceSunken
 
     readonly property bool isAdmin: (typeof userManager !== "undefined" && userManager)
                                     ? userManager.currentUserIsAdmin : false
@@ -128,19 +129,71 @@ Item {
     // completer la liste (voir refreshTransfers()).
     property int activeTransferCount: 0
 
+    // ---- Bandeau d'indicateurs (refonte 2026) ---------------------------
+    // activeTransferCount est plafonne a 4 (la liste du dashboard n'affiche
+    // que 4 lignes) : le bandeau a besoin des totaux reels.
+    property int totalActiveTransferCount: 0
+    property int activeSendCount: 0
+    property int activeReceiveCount: 0
+    // Progression (0..1) de chaque transfert en cours, pour les mini
+    // barres de la tuile "Transferts actifs" - 6 au maximum.
+    property var activeTransferProgress: []
+    // Machines autorisees (administrateur uniquement, 0 sinon).
+    property int authorizedMachineCount: 0
+    // Nombre d'evenements charges dans le journal d'audit.
+    readonly property int auditEventCount: (typeof auditLogModel !== "undefined" && auditLogModel)
+                                           ? auditLogModel.count : 0
+
+    function refreshAuthorizedMachineCount() {
+        if (!root.isAdmin || typeof authorizedMachineModel === "undefined" || !authorizedMachineModel) {
+            authorizedMachineCount = 0
+            return
+        }
+        let total = authorizedMachineModel.rowCount ? authorizedMachineModel.rowCount() : 0
+        let authorized = 0
+        for (let i = 0; i < total; i++) {
+            const idx = authorizedMachineModel.index(i, 0)
+            if (authorizedMachineModel.data(idx, authorizedMachineModel.AuthorizedRole))
+                authorized++
+        }
+        authorizedMachineCount = authorized
+    }
+
     function refreshTransfers() {
         if (typeof transferContext === "undefined" || !transferContext) {
             transferItems = []
             activeTransferCount = 0
+            totalActiveTransferCount = 0
+            activeSendCount = 0
+            activeReceiveCount = 0
+            activeTransferProgress = []
             return
         }
         const all = transferContext.activeTransfers || []
         // state est la valeur technique non localisee ("in_progress"),
         // contrairement a statusText qui est traduit et donc fragile a
         // comparer ici (voir TransferContext::onTransferStarted()).
-        const active = all.filter(function(item) {
+        const running = all.filter(function(item) {
             return item && item.state === "in_progress"
-        }).slice(-4).reverse()
+        })
+        // Totaux reels (bandeau d'indicateurs), avant troncature a 4.
+        totalActiveTransferCount = running.length
+        let sends = 0
+        let receives = 0
+        const progress = []
+        for (let k = 0; k < running.length; k++) {
+            if (running[k].incoming)
+                receives++
+            else
+                sends++
+            if (progress.length < 6)
+                progress.push(Math.max(0, Math.min(100, running[k].percent || 0)) / 100)
+        }
+        activeSendCount = sends
+        activeReceiveCount = receives
+        activeTransferProgress = progress
+
+        const active = running.slice(-4).reverse()
         activeTransferCount = active.length
 
         // Complete avec les derniers transferts termines/echoues/annules
@@ -224,13 +277,18 @@ Item {
             const address = peersModel.data(index, peersModel.AddressRole || 261) || ""
             const status = peersModel.data(index, peersModel.StatusRole || 260) || "online"
             const userUuid = peersModel.data(index, peersModel.UserUuidRole || 259) || ""
+            // PortRole = UserRole + 6, LastSeenMsRole = UserRole + 9 (PeersModel).
+            const port = peersModel.data(index, 262) || 0
+            const lastSeenMs = peersModel.data(index, 265) || 0
 
             peers.push({
                 id: id,
                 name: name || ("Poste " + (i + 1)),
                 address: address,
                 status: status,
-                userUuid: userUuid
+                userUuid: userUuid,
+                port: port,
+                lastSeenMs: lastSeenMs
             })
         }
         networkPeers = peers
@@ -306,9 +364,10 @@ Item {
                 const midx = authorizedMachineModel.index(j, 0)
                 const authorized = authorizedMachineModel.data(midx, authorizedMachineModel.AuthorizedRole)
                 const ip = authorizedMachineModel.data(midx, authorizedMachineModel.IpAddressRole) || ""
+                const status = authorizedMachineModel.data(midx, authorizedMachineModel.StatusRole) || ""
                 const host = authorizedMachineModel.data(midx, authorizedMachineModel.HostnameRole) || ""
 
-                if (!authorized && ip) {
+                if ((status === "pending" || (!status && !authorized)) && ip) {
                     pendingCount++
                     pendingHosts.push(host || ip)
                 }
@@ -317,7 +376,8 @@ Item {
             if (pendingCount > 0) {
                 items.push({
                     urgency: "medium",
-                    title: pendingCount + " " + qsTr("poste(s) demandent une autorisation"),
+                    title: pendingCount === 1 ? qsTr("1 poste demande une autorisation")
+                                           : qsTr("%1 postes demandent une autorisation").arg(pendingCount),
                     description: pendingHosts.slice(0, 3).join(", ") + (pendingHosts.length > 3 ? "..." : ""),
                     type: "authorization"
                 })
@@ -348,7 +408,8 @@ Item {
                 const timeStr = lastDenied.timestamp ? new Date(lastDenied.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ""
                 items.push({
                     urgency: "high",
-                    title: deniedCount + " " + qsTr("connexion(s) refusée(s)"),
+                    title: deniedCount === 1 ? qsTr("1 connexion refusée")
+                                          : qsTr("%1 connexions refusées").arg(deniedCount),
                     description: lastDenied.message || qsTr("Certificat inconnu") + (timeStr ? ", " + timeStr : ""),
                     type: "access_denied"
                 })
@@ -365,6 +426,14 @@ Item {
         refreshNetworkOfflinePeers()
         refreshNetworkActiveCalls()
         refreshActionRequired()
+        refreshAuthorizedMachineCount()
+        refreshNow()
+        refreshUserDirectory()
+        refreshInterventions()
+        refreshRecentCalls()
+        // Etat initial de la carte reseau : la vue Liste prend le relais
+        // sous 900 px (onListFallbackChanged ne couvre que les changements).
+        networkWorkspace.viewMode = root.listFallback ? "list" : "map"
     }
 
     Connections {
@@ -400,10 +469,12 @@ Item {
         function onModelReset() {
             root.refreshNetworkOfflinePeers()
             root.refreshActionRequired()
+            root.refreshAuthorizedMachineCount()
         }
         function onDataChanged() {
             root.refreshNetworkOfflinePeers()
             root.refreshActionRequired()
+            root.refreshAuthorizedMachineCount()
         }
     }
 
@@ -416,6 +487,12 @@ Item {
     Connections {
         target: (typeof auditLogModel !== "undefined") ? auditLogModel : null
         function onModelReset() {
+            root.refreshActivities()
+            root.refreshActionRequired()
+        }
+        // Le compteur de la tuile Journal suit `count` : la liste d'activite
+        // doit suivre aussi, quelle que soit la facon dont le modele change.
+        function onCountChanged() {
             root.refreshActivities()
             root.refreshActionRequired()
         }
@@ -445,7 +522,7 @@ Item {
             anchors.centerIn: parent
             width: parent.width - 32
             color: Theme.dashboardSurface
-            font.pixelSize: 13
+            font.pixelSize: Theme.fs(13)
             font.family: Theme.fontFamily
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
@@ -466,576 +543,1172 @@ Item {
         }
     }
 
-    RowLayout {
-        anchors.fill: parent
-        spacing: 0
+    // ======================================================================
+    // Mise en page (refonte 2026)
+    //
+    // Meme grille pour tous les roles : 4 indicateurs, puis deux rangees
+    // [panneau large | panneau lateral]. Seul le CONTENU des panneaux
+    // depend des droits :
+    //   administrateur : A traiter, Journal d'audit, Activite recente
+    //   utilisateur    : Messages non lus, Dossiers partages, Conversations
+    // ======================================================================
+    signal conversationRequested(int conversationId)
 
-        // Sidebar
-        DashboardSidebar {
-            id: sidebar
-            Layout.fillHeight: true
-            // Largeur réduite à 150px quand le panneau "À traiter" disparait (< 1050px)
-            // Sinon 180px normal
-            isCompact: root.isMobile || root.width < 1050
-            username: root.username
-            serverStatus: root.serverStatusLabel
-            serverStatusColor: root.serverStatusColor
-            activeTransfers: root.activeTransferCount
-            pendingAdmin: root.isAdmin ? root.pendingAuthorizationCount : 0
-            isAdmin: root.isAdmin
+    // Deux colonnes des que la page (hors navigation) le permet.
+    readonly property bool twoColumns: root.width >= 900
+    readonly property bool metricsWrapped: root.width < 1060
+    // Sous 760 px de page, la carte radiale devient illisible : la vue
+    // Liste prend le relais (l'utilisateur peut revenir a la carte).
+    readonly property bool listFallback: root.width < 760
 
-            onHomeRequested: { /* Déjà sur home */ }
-            onChatRequested: root.chatRequested()
-            onTransferRequested: root.fileTransferRequested(false, null)
-            onFoldersRequested: root.sharedFoldersRequested()
-            onCallRequested: root.callRequested()
-            onPeersRequested: root.usersRequested()
-            onAdminRequested: root.adminRequested()
-            onSettingsRequested: root.settingsRequested()
-            onLogoutRequested: root.logoutRequested()
+    onListFallbackChanged: networkWorkspace.viewMode = root.listFallback ? "list" : "map"
+
+    // ---- Donnees du role "utilisateur" -----------------------------------
+    property int unreadTotal: 0
+    property var recentConversations: []
+    property int folderCount: 0
+    property int folderConflictCount: 0
+
+    function refreshConversations() {
+        if (typeof messagingContext === "undefined" || !messagingContext) {
+            root.unreadTotal = 0
+            root.recentConversations = []
+            return
         }
+        const convs = (messagingContext.conversationsList() || []).slice()
+        let unread = 0
+        for (let i = 0; i < convs.length; i++)
+            unread += convs[i].unreadCount || 0
+        convs.sort(function(a, b) {
+            return new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
+        })
+        root.unreadTotal = unread
+        root.recentConversations = convs.slice(0, 5)
+    }
 
-        // Zone principale
-        ColumnLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: 0
+    readonly property var folderModel: (typeof sharedFolderContext !== "undefined" && sharedFolderContext)
+                                       ? sharedFolderContext.folderModel : null
 
-            // Header
-            DashboardHeader {
-                Layout.fillWidth: true
-                // Même remarque que la sidebar : implicitHeight d'un Item nu
-                // vaut 0, donc il faut fixer explicitement la hauteur ici.
-                Layout.preferredHeight: 52
-                breadcrumb: "LocaLink / Vue d'ensemble"
+    function refreshFolders() {
+        if (!root.folderModel) {
+            root.folderCount = 0
+            root.folderConflictCount = 0
+            return
+        }
+        const total = root.folderModel.rowCount()
+        let conflicts = 0
+        // HasConflictRole = Qt.UserRole + 9 (voir SharedFolderModel).
+        for (let i = 0; i < total; i++)
+            if (root.folderModel.data(root.folderModel.index(i, 0), 257 + 8))
+                conflicts++
+        root.folderCount = total
+        root.folderConflictCount = conflicts
+    }
 
-                onSearchRequested: function(query) {
-                    console.log("Search requested:", query)
+    Connections {
+        target: root.folderModel
+        function onModelReset() { root.refreshFolders() }
+        function onRowsInserted() { root.refreshFolders() }
+        function onRowsRemoved() { root.refreshFolders() }
+        function onDataChanged() { root.refreshFolders() }
+    }
+
+    // Les non-lus evoluent a chaque message : lecture locale periodique.
+    Timer {
+        interval: 5000
+        running: root.visible
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: {
+            root.refreshConversations()
+            root.refreshFolders()
+            root.refreshNow()
+        }
+    }
+
+    // ---- Utilitaires d'affichage ----------------------------------------
+    property string nowText: ""
+
+    function refreshNow() {
+        const now = new Date()
+        const day = now.toLocaleDateString(Qt.locale(), "dddd d MMMM")
+        root.nowText = day.charAt(0).toUpperCase() + day.slice(1)
+    }
+
+    function relativeTime(value) {
+        if (!value)
+            return ""
+        const date = (value instanceof Date) ? value : new Date(value)
+        if (isNaN(date.getTime()))
+            return ""
+        const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000))
+        if (seconds < 60) return qsTr("à l'instant")
+        const minutes = Math.round(seconds / 60)
+        if (minutes < 60) return qsTr("il y a %1 min").arg(minutes)
+        const hours = Math.round(minutes / 60)
+        if (hours < 24) return qsTr("il y a %1 h").arg(hours)
+        return date.toLocaleDateString(Qt.locale(), "d MMM")
+    }
+
+    readonly property var actionChips: {
+        let authorizations = 0
+        let denied = 0
+        for (let i = 0; i < root.actionRequiredItems.length; i++) {
+            const item = root.actionRequiredItems[i]
+            if (!item) continue
+            if (item.type === "authorization") authorizations++
+            else if (item.type === "access_denied") denied++
+        }
+        const chips = []
+        if (authorizations > 0)
+            chips.push({ text: authorizations > 1 ? qsTr("%1 autorisations").arg(authorizations)
+                                                  : qsTr("1 autorisation"), tone: "warning" })
+        if (denied > 0)
+            chips.push({ text: denied > 1 ? qsTr("%1 refus").arg(denied) : qsTr("1 refus"), tone: "danger" })
+        return chips
+    }
+
+    // transferItems vient de transferContext ; TransferList attend
+    // progress 0..1, address, transferred/total, status, isIncoming.
+    readonly property var transferRowItems: root.transferItems.map(function(item) {
+        return {
+            fileName: item.fileName || "",
+            peerName: item.peerName || "",
+            address: item.peerAddress || "",
+            progress: Math.max(0, Math.min(100, item.percent || 0)) / 100,
+            transferred: item.bytesTransferred || 0,
+            total: item.totalBytes || 0,
+            status: item.statusText || "",
+            state: item.state || "",
+            timestamp: item.timestamp || "",
+            isIncoming: item.incoming === true,
+            transferKey: item.transferKey || "",
+            filePath: item.filePath || ""
+        }
+    })
+
+    function retryTransfer(row) {
+        if (!row || !row.transferKey || typeof transferContext === "undefined" || !transferContext)
+            return
+        if (!transferContext.retryTransfer(row.transferKey))
+            errorBanner.show(qsTr("Impossible de relancer le transfert."))
+    }
+
+    function openTransferLocation(row) {
+        if (!row || !row.filePath || typeof transferContext === "undefined" || !transferContext)
+            return
+        if (!transferContext.openFileLocation(row.filePath))
+            errorBanner.show(qsTr("Impossible d'ouvrir l'emplacement du fichier."))
+    }
+
+    // ======================================================================
+    // Supervision du reseau (maquette 2 retenue, design/dashboard-mockups)
+    //
+    //   [Titre + contexte .......................... 4 indicateurs compacts]
+    //   [Carte reseau (filtres, Carte/Liste)  ][Poste selectionne         ]
+    //   [                                     ][Interventions requises    ]
+    //   [Echanges en cours ][Evenements recents]
+    //
+    // Sous 1000 px de page : carte pleine largeur, puis les panneaux par
+    // paires (detail + interventions, echanges + evenements).
+    // ======================================================================
+
+    // ---- Donnees propres a la supervision -------------------------------
+    // Annuaire uuid -> nom du compte (pour "Utilisateur" du poste selectionne).
+    property var userNameByUuid: ({})
+
+    function refreshUserDirectory() {
+        if (typeof messagingContext === "undefined" || !messagingContext || !messagingContext.availableUsers) {
+            root.userNameByUuid = {}
+            return
+        }
+        const users = messagingContext.availableUsers() || []
+        const map = {}
+        for (let i = 0; i < users.length; i++)
+            if (users[i].userUuid)
+                map[users[i].userUuid] = users[i].username || ""
+        root.userNameByUuid = map
+    }
+
+    // Etat de confiance d'une machine (administrateur uniquement).
+    function machineTrust(id, address) {
+        if (!root.isAdmin || typeof authorizedMachineModel === "undefined" || !authorizedMachineModel)
+            return ""
+        const total = authorizedMachineModel.rowCount ? authorizedMachineModel.rowCount() : 0
+        for (let i = 0; i < total; i++) {
+            const idx = authorizedMachineModel.index(i, 0)
+            const mid = authorizedMachineModel.data(idx, authorizedMachineModel.MachineIdRole) || ""
+            const ip = authorizedMachineModel.data(idx, authorizedMachineModel.IpAddressRole) || ""
+            if ((id && mid === id) || (!id && address && ip === address)) {
+                const status = authorizedMachineModel.data(idx, authorizedMachineModel.StatusRole) || ""
+                if (status === "revoked") return qsTr("Révoqué")
+                if (status === "pending") return qsTr("En attente d'autorisation")
+                return authorizedMachineModel.data(idx, authorizedMachineModel.AuthorizedRole)
+                       ? qsTr("Autorisé") : qsTr("Non autorisé")
+            }
+        }
+        return qsTr("Non enregistré")
+    }
+
+    function networkPeerEntry(id) {
+        for (let i = 0; i < root.networkPeers.length; i++)
+            if (root.networkPeers[i].id === id)
+                return root.networkPeers[i]
+        return null
+    }
+
+    // Interventions : une ligne par element reel demandant une action.
+    property var interventions: []
+    property int pendingRequestCount: 0
+
+    function refreshInterventions() {
+        const items = []
+        let requests = 0
+        if (root.isAdmin && typeof authorizedMachineModel !== "undefined" && authorizedMachineModel) {
+            const total = authorizedMachineModel.rowCount ? authorizedMachineModel.rowCount() : 0
+            for (let j = 0; j < total; j++) {
+                const midx = authorizedMachineModel.index(j, 0)
+                const status = authorizedMachineModel.data(midx, authorizedMachineModel.StatusRole) || ""
+                const authorized = authorizedMachineModel.data(midx, authorizedMachineModel.AuthorizedRole)
+                if (!(status === "pending" || (!status && !authorized)))
+                    continue
+                const ip = authorizedMachineModel.data(midx, authorizedMachineModel.IpAddressRole) || ""
+                const host = authorizedMachineModel.data(midx, authorizedMachineModel.HostnameRole) || ""
+                requests++
+                items.push({ kind: "authorization", glyph: "", tone: "warning",
+                             title: host || ip, meta: qsTr("Demande d'autorisation") + (ip ? " · " + ip : ""),
+                             action: qsTr("Examiner"), tip: qsTr("Ouvrir les machines autorisées") })
+            }
+        }
+        if (root.isAdmin && typeof auditLogModel !== "undefined" && auditLogModel) {
+            const count = Math.min(auditLogModel.count, 10)
+            let shown = 0
+            for (let i = 0; i < count && shown < 2; i++) {
+                const e = auditLogModel.get(i)
+                if (!e || e.eventType !== "access_denied")
+                    continue
+                requests++
+                shown++
+                items.push({ kind: "denied", glyph: "", tone: "danger",
+                             title: e.actorLabel || qsTr("Connexion refusée"),
+                             meta: e.description || qsTr("Connexion refusée"),
+                             action: qsTr("Journal"), tip: qsTr("Ouvrir le journal d'audit") })
+            }
+        }
+        if (typeof transferContext !== "undefined" && transferContext) {
+            const all = (transferContext.activeTransfers || []).slice().reverse()
+            let failed = 0
+            for (let k = 0; k < all.length && failed < 2; k++) {
+                const t = all[k]
+                if (!t || (t.state !== "failed" && t.state !== "interrupted"))
+                    continue
+                failed++
+                items.push({ kind: "transfer", glyph: "", tone: "danger", transferKey: t.transferKey || "",
+                             title: t.fileName || qsTr("Transfert"),
+                             meta: qsTr("Échec") + " · " + (t.errorString || t.statusText || t.peerName || ""),
+                             action: qsTr("Réessayer"), tip: qsTr("Relancer le transfert") })
+            }
+        }
+        if (!root.isAdmin && root.folderModel) {
+            const total = root.folderModel.rowCount()
+            for (let f = 0; f < total; f++) {
+                const fidx = root.folderModel.index(f, 0)
+                // HasConflictRole = UserRole + 9, NameRole = UserRole + 3 (SharedFolderModel).
+                if (!root.folderModel.data(fidx, 257 + 8))
+                    continue
+                items.push({ kind: "conflict", glyph: "", tone: "warning",
+                             title: root.folderModel.data(fidx, 257 + 2) || qsTr("Dossier partagé"),
+                             meta: qsTr("Conflit de synchronisation"),
+                             action: qsTr("Résoudre"), tip: qsTr("Ouvrir les dossiers partagés") })
+            }
+        }
+        for (let o = 0; o < root.networkOfflinePeers.length && o < 3; o++) {
+            const p = root.networkOfflinePeers[o]
+            items.push({ kind: "offline", glyph: "", tone: "neutral", peerId: p.id || p.address,
+                         title: p.name, meta: qsTr("Hors ligne") + (p.address ? " · " + p.address : ""),
+                         action: qsTr("Détails"), tip: qsTr("Sélectionner ce poste sur la carte") })
+        }
+        root.interventions = items
+        root.pendingRequestCount = requests
+    }
+
+    function runIntervention(item) {
+        if (!item)
+            return
+        switch (item.kind) {
+        case "authorization": root.adminSectionRequested(1); break
+        case "denied": root.adminSectionRequested(0); break
+        case "transfer": root.retryTransfer({ transferKey: item.transferKey }); break
+        case "conflict": root.sharedFoldersRequested(); break
+        case "offline":
+            networkWorkspace.viewMode = "map"
+            networkWorkspace.selectedId = item.peerId
+            break
+        }
+    }
+
+    // Appels recents (utilisateur standard ; roles de CallHistoryModel :
+    // UserRole+2 direction, +4 nom, +5 statut, +6 debut, +7 duree).
+    property var recentCalls: []
+
+    function refreshRecentCalls() {
+        if (root.isAdmin || typeof callHistoryModel === "undefined" || !callHistoryModel) {
+            root.recentCalls = []
+            return
+        }
+        const out = []
+        const total = Math.min(callHistoryModel.rowCount(), 5)
+        for (let i = 0; i < total; i++) {
+            const idx = callHistoryModel.index(i, 0)
+            const direction = callHistoryModel.data(idx, 258) || "outgoing"
+            const status = callHistoryModel.data(idx, 261) || ""
+            const seconds = callHistoryModel.data(idx, 263) || 0
+            const missed = status === "missed" || status === "rejected" || status === "failed"
+            let what
+            if (status === "missed") what = qsTr("Appel manqué")
+            else if (status === "rejected") what = qsTr("Appel refusé")
+            else if (status === "failed") what = qsTr("Appel échoué")
+            else what = (direction === "incoming" ? qsTr("Appel entrant") : qsTr("Appel sortant"))
+                        + (seconds > 0 ? " · " + qsTr("%1 min").arg(Math.max(1, Math.round(seconds / 60))) : "")
+            out.push({ who: callHistoryModel.data(idx, 260) || callHistoryModel.data(idx, 259) || "",
+                       what: what, missed: missed, startedAt: callHistoryModel.data(idx, 262) || "" })
+        }
+        root.recentCalls = out
+    }
+
+    Connections {
+        target: (typeof callHistoryModel !== "undefined") ? callHistoryModel : null
+        function onModelReset() { root.refreshRecentCalls() }
+        function onCountChanged() { root.refreshRecentCalls() }
+    }
+
+    // Les interventions dependent des machines, du journal, des transferts,
+    // des dossiers et des postes hors ligne : recalcul a chaque changement.
+    onActionRequiredItemsChanged: root.refreshInterventions()
+    onNetworkOfflinePeersChanged: root.refreshInterventions()
+    onTransferItemsChanged: root.refreshInterventions()
+    onFolderConflictCountChanged: root.refreshInterventions()
+    onNetworkPeersChanged: root.refreshUserDirectory()
+
+    // ---- Actions partagees (carte, liste, panneau de detail) ------------
+    function openConversationWithPeer(peer) {
+        // startConversationWith() attend l'identifiant numerique du compte
+        // (et non l'UUID du poste) : on le retrouve via availableUsers(), puis
+        // on ouvre la conversation. A defaut, on ouvre les Discussions.
+        if (!peer || typeof messagingContext === "undefined" || !messagingContext || !peer.userUuid) {
+            root.chatRequested()
+            return
+        }
+        const users = messagingContext.availableUsers() || []
+        let conversationId = 0
+        for (let i = 0; i < users.length; i++) {
+            if (users[i].userUuid === peer.userUuid) {
+                conversationId = messagingContext.startConversationWith(users[i].userId)
+                break
+            }
+        }
+        if (conversationId > 0)
+            root.conversationRequested(conversationId)
+        else
+            root.chatRequested()
+    }
+
+    function callPeer(peer) {
+        if (!peer || !peer.address || typeof callContext === "undefined" || !callContext)
+            return
+        // Port de signalisation connu (PeersModel, UserRole + 8) : sinon le
+        // port par defaut est choisi cote metier.
+        const signalingPort = root.peerSignalingPort(peer.id)
+        if (!callContext.call(peer.address, signalingPort))
+            errorBanner.show(qsTr("Impossible d'appeler %1.").arg(peer.name || peer.address))
+    }
+
+    function peerSignalingPort(id) {
+        if (typeof peersModel === "undefined" || !peersModel)
+            return 0
+        for (let i = 0; i < peersModel.count; i++) {
+            const idx = peersModel.index(i, 0)
+            if ((peersModel.data(idx, peersModel.IdRole || 257) || "") === id)
+                return peersModel.data(idx, 264) || 0
+        }
+        return 0
+    }
+
+    // ---- Selection de la carte ------------------------------------------
+    property var hiddenStatuses: []
+    property bool selectionInitialized: false
+
+    readonly property var selectedPeer: networkWorkspace.selectedId.length > 0
+                                        ? networkWorkspace.peerById(networkWorkspace.selectedId) : null
+
+    // Premiere selection automatique (poste en activite de preference),
+    // puis nettoyage si le poste selectionne disparait.
+    function ensureSelection() {
+        const present = networkWorkspace.presentPeers
+        if (networkWorkspace.selectedId.length > 0) {
+            if (!networkWorkspace.peerById(networkWorkspace.selectedId))
+                networkWorkspace.selectedId = ""
+            return
+        }
+        if (root.selectionInitialized || present.length === 0)
+            return
+        let pick = present[0]
+        for (let i = 0; i < present.length; i++) {
+            if (present[i].status === "transferring" || present[i].status === "calling") {
+                pick = present[i]
+                break
+            }
+        }
+        networkWorkspace.selectedId = pick.id
+        root.selectionInitialized = true
+    }
+
+    Connections {
+        target: networkWorkspace
+        function onPresentPeersChanged() { root.ensureSelection() }
+        function onOfflinePeersPositionedChanged() { root.ensureSelection() }
+    }
+
+    function toggleStatus(key) {
+        const list = root.hiddenStatuses.slice()
+        const i = list.indexOf(key)
+        if (i >= 0) list.splice(i, 1)
+        else list.push(key)
+        root.hiddenStatuses = list
+    }
+
+    function countStatus(key) {
+        if (key === "offline")
+            return networkWorkspace.offlinePeersPositioned.length
+        return networkWorkspace.presentPeers.filter(function(p) { return p.status === key }).length
+    }
+
+    function timeOf(value) {
+        if (!value)
+            return ""
+        const d = (value instanceof Date) ? value : new Date(value)
+        return isNaN(d.getTime()) ? "" : Qt.formatTime(d, "HH:mm")
+    }
+
+    function eventVisual(type) {
+        switch (type) {
+        case "transfer": return { glyph: "", tone: "transfer" }
+        case "access_denied": return { glyph: "", tone: "danger" }
+        case "connection": return { glyph: "", tone: "success" }
+        case "disconnection": return { glyph: "", tone: "neutral" }
+        case "call": return { glyph: "", tone: "call" }
+        case "message": return { glyph: "", tone: "neutral" }
+        default: return { glyph: "", tone: "neutral" }
+        }
+    }
+
+    function transferVisual(row) {
+        if (row.state === "in_progress")
+            return { tone: "transfer", badge: Math.round(row.progress * 100) + " %", badgeTone: "accent",
+                     time: qsTr("En cours") }
+        if (row.state === "completed")
+            return { tone: "success", badge: qsTr("Terminé"), badgeTone: "success", time: root.relativeTime(row.timestamp) }
+        if (row.state === "cancelled")
+            return { tone: "neutral", badge: qsTr("Annulé"), badgeTone: "neutral", time: root.relativeTime(row.timestamp) }
+        return { tone: "danger", badge: qsTr("Échec"), badgeTone: "danger", time: root.relativeTime(row.timestamp) }
+    }
+
+    // Le role du poste (serveur/client) est deja annonce par la barre
+    // superieure : le sous-titre ne le repete pas et tient sur une ligne.
+    readonly property string sessionContext: {
+        const parts = []
+        if (root.username.length > 0)
+            parts.push(qsTr("Bonjour %1").arg(root.username))
+        if (root.nowText.length > 0)
+            parts.push(root.nowText.charAt(0).toLowerCase() + root.nowText.slice(1))
+        parts.push(root.peersCount === 0 ? qsTr("aucun autre poste détecté")
+                   : root.peersCount === 1 ? qsTr("1 poste joignable")
+                   : qsTr("%1 postes joignables").arg(root.peersCount))
+        return parts.join(" · ")
+    }
+
+    // Seuil de mise en page sur la largeur utile de la page.
+    // "Echanges en cours" : uniquement les transferts actifs (titre du panneau).
+    readonly property var runningTransferRows: root.transferRowItems.filter(function(r) { return r.state === "in_progress" })
+
+    readonly property bool wideLayout: (root.width - 2 * Theme.pagePadding) >= 1000
+
+    // Puce de filtre d'etat (carte reseau).
+    component FilterChip: AbstractButton {
+        id: chip
+        property string label: ""
+        property int count: 0
+        property color dotColor: Theme.successColor
+        property bool hollow: false
+        property bool active: true
+
+        implicitHeight: 26
+        implicitWidth: chipRow.implicitWidth + 20
+        hoverEnabled: true
+        focusPolicy: Qt.TabFocus
+        checkable: false
+        opacity: chip.active ? 1 : 0.45
+        Accessible.role: Accessible.CheckBox
+        Accessible.checked: chip.active
+        Accessible.name: qsTr("%1 : %2 poste(s), %3").arg(chip.label).arg(chip.count)
+                            .arg(chip.active ? qsTr("affichés") : qsTr("masqués"))
+        ToolTip.visible: chip.hovered
+        ToolTip.delay: 600
+        ToolTip.text: chip.active ? qsTr("Masquer les postes « %1 »").arg(chip.label)
+                                  : qsTr("Afficher les postes « %1 »").arg(chip.label)
+
+        HoverHandler { cursorShape: Qt.PointingHandCursor }
+
+        background: Rectangle {
+            radius: height / 2
+            color: chip.hovered ? Theme.hover : Theme.surface0
+            border.width: 1
+            border.color: Theme.line
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -3
+                radius: height / 2
+                color: "transparent"
+                border.width: 2
+                border.color: Theme.focusRing
+                visible: chip.visualFocus
+            }
+        }
+        contentItem: Item {
+            Row {
+                id: chipRow
+                anchors.centerIn: parent
+                spacing: 6
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 7; height: 7; radius: 3.5
+                    color: chip.hollow ? "transparent" : chip.dotColor
+                    border.width: chip.hollow ? 1.5 : 0
+                    border.color: Theme.nodeOfflineLine
                 }
-                onNotificationsRequested: {
-                    console.log("Notifications requested")
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: chip.label
+                    color: Theme.ink
+                    font.pixelSize: Theme.fs(12)
+                    font.weight: Theme.weightSemibold
+                    font.family: Theme.fontFamily
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: chip.count
+                    color: Theme.ink3
+                    font.pixelSize: Theme.fs(12)
+                    font.weight: Theme.weightMedium
+                    font.family: Theme.fontFamily
+                }
+            }
+        }
+    }
+
+    // En-tete de panneau : titre, compteur, lien.
+    component PanelHeader: RowLayout {
+        id: ph
+        property string title: ""
+        property int count: -1
+        property string countTone: "neutral"
+        property string linkText: ""
+        signal linkClicked()
+
+        Layout.fillWidth: true
+        Layout.leftMargin: 16
+        Layout.rightMargin: 10
+        Layout.topMargin: 12
+        Layout.bottomMargin: 6
+        Layout.minimumHeight: 30
+        spacing: 8
+
+        Text {
+            text: ph.title
+            color: Theme.ink
+            font.pixelSize: Theme.fs(14)
+            font.weight: Theme.weightSemibold
+            font.family: Theme.fontFamily
+            Accessible.role: Accessible.Heading
+        }
+        StatusBadge {
+            visible: ph.count >= 0
+            text: ph.count > 99 ? "99+" : ph.count
+            tone: ph.countTone
+            showDot: false
+            compact: true
+        }
+        Item { Layout.fillWidth: true }
+        AppButton {
+            visible: ph.linkText.length > 0
+            text: ph.linkText
+            variant: "ghost"
+            size: "small"
+            onClicked: ph.linkClicked()
+        }
+    }
+
+    // ======================================================================
+    Flickable {
+        id: pageFlick
+        objectName: "pageFlick"
+        anchors.fill: parent
+        clip: true
+        contentWidth: width
+        // Deduite de la seule hauteur implicite de la colonne, et non de sa
+        // hauteur (elle-meme deduite de contentHeight) : formulation sans
+        // dependance circulaire.
+        contentHeight: Math.max(height, pageColumn.y + pageColumn.implicitHeight + Theme.pagePadding)
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+        ColumnLayout {
+            id: pageColumn
+            x: Theme.pagePadding
+            y: Theme.compact ? 18 : 22
+            width: pageFlick.width - 2 * Theme.pagePadding
+            // Au moins la hauteur visible (les panneaux s'etirent pour la remplir),
+            // davantage si le contenu l'exige : la page defile alors.
+            height: Math.max(implicitHeight, pageFlick.height - y - Theme.pagePadding)
+            spacing: Theme.spacingGutter
+
+            // ---- En-tete de supervision ----------------------------------
+            // Indicateurs a droite du titre tant qu'ils tiennent (le sous-titre
+            // passe alors a la ligne), dessous sinon.
+            GridLayout {
+                id: headerGrid
+                readonly property bool sideBySide: pageColumn.width >= 900
+                Layout.fillWidth: true
+                columns: sideBySide ? 2 : 1
+                columnSpacing: 16
+                rowSpacing: 12
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 3
+                    Text {
+                        text: qsTr("Supervision du réseau")
+                        color: Theme.ink
+                        font.pixelSize: Theme.fs(20)
+                        font.weight: Theme.weightBold
+                        font.family: Theme.fontFamily
+                        Accessible.role: Accessible.Heading
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: root.sessionContext
+                        color: Theme.ink2
+                        font.pixelSize: Theme.fs(12.5)
+                        font.family: Theme.fontFamily
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
+                Flow {
+                    Layout.alignment: headerGrid.sideBySide ? (Qt.AlignRight | Qt.AlignVCenter) : Qt.AlignLeft
+                    Layout.preferredWidth: headerGrid.sideBySide ? implicitWidth : pageColumn.width
+                    Layout.fillWidth: !headerGrid.sideBySide
+                    spacing: 8
+
+                    StatPill {
+                        glyph: ""
+                        tone: root.peersCount > 0 ? "success" : "neutral"
+                        value: root.isAdmin && root.authorizedMachineCount > 0
+                               ? root.peersCount + "/" + root.authorizedMachineCount : String(root.peersCount)
+                        label: qsTr("postes en ligne")
+                        tooltip: qsTr("Ouvrir la liste des postes")
+                        onClicked: root.usersRequested()
+                    }
+                    StatPill {
+                        glyph: ""
+                        tone: root.totalActiveTransferCount > 0 ? "accent" : "neutral"
+                        value: String(root.totalActiveTransferCount)
+                        label: root.totalActiveTransferCount > 1 ? qsTr("transferts actifs") : qsTr("transfert actif")
+                        tooltip: qsTr("Ouvrir les transferts")
+                        onClicked: root.fileTransferRequested(false, null)
+                    }
+                    StatPill {
+                        glyph: root.isAdmin ? "" : ""
+                        tone: root.isAdmin ? (root.pendingRequestCount > 0 ? "warning" : "neutral")
+                                           : (root.unreadTotal > 0 ? "accent" : "neutral")
+                        value: String(root.isAdmin ? root.pendingRequestCount : root.unreadTotal)
+                        // "demandes a traiter" (decisions attendues : autorisations et refus)
+                        // et non le total du panneau "Interventions requises", qui ajoute
+                        // les transferts en echec et les postes hors ligne a surveiller.
+                        label: root.isAdmin ? (root.pendingRequestCount > 1 ? qsTr("demandes à traiter")
+                                                                           : qsTr("demande à traiter"))
+                                            : (root.unreadTotal > 1 ? qsTr("messages non lus") : qsTr("message non lu"))
+                        tooltip: root.isAdmin ? qsTr("Autorisations en attente et connexions refusées · ouvrir les machines autorisées")
+                                              : qsTr("Ouvrir les discussions")
+                        onClicked: root.isAdmin ? root.adminSectionRequested(1) : root.chatRequested()
+                    }
+                    StatPill {
+                        glyph: root.isAdmin ? "" : ""
+                        tone: !root.isAdmin && root.folderConflictCount > 0 ? "warning" : "neutral"
+                        value: String(root.isAdmin ? root.auditEventCount : root.folderCount)
+                        label: root.isAdmin ? qsTr("événements")
+                                            : (root.folderCount > 1 ? qsTr("dossiers partagés") : qsTr("dossier partagé"))
+                        tooltip: root.isAdmin ? qsTr("Ouvrir le journal d'audit") : qsTr("Ouvrir les dossiers partagés")
+                        onClicked: root.isAdmin ? root.adminSectionRequested(0) : root.sharedFoldersRequested()
+                    }
                 }
             }
 
-            // Contenu principal - padding exact selon maquette: 4px 24px 18px
-            ColumnLayout {
+            // ---- Corps ----------------------------------------------------
+            GridLayout {
+                id: mainGrid
                 Layout.fillWidth: true
-                Layout.fillHeight: true
-                spacing: 0
+                Layout.fillHeight: root.wideLayout
+                columns: root.wideLayout ? 2 : 1
+                columnSpacing: 16
+                rowSpacing: 16
 
-                // Zone titre - height 62px, align-items: flex-end selon maquette
-                Item {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 62
-                    Layout.leftMargin: 24
-                    Layout.rightMargin: 24
-                    Layout.topMargin: 8
-
-                    // Ancrage explicite (au lieu d'un RowLayout + Layout.fillWidth
-                    // sur la colonne de titre) : le bouton doit rester collé au
-                    // bord droit de la zone, quelle que soit la largeur du texte
-                    // "Bonjour, ..." / des compteurs. Avec fillWidth sur la
-                    // colonne, le RowLayout ne pousse le bouton à droite que si
-                    // la colonne réclame déjà tout l'espace restant ; ça
-                    // provoquait un décalage visible par rapport au bord droit
-                    // de la carte réseau / du panneau "À traiter" juste en
-                    // dessous (qui, eux, sont ancrés sur toute la largeur).
-                    ColumnLayout {
-                        id: titleColumn
-                        anchors.left: parent.left
-                        anchors.right: newTransferBtn.left
-                        anchors.rightMargin: 16
-                        anchors.bottom: parent.bottom
-                        // Permet à la colonne de se réduire (élision du texte)
-                        // plutôt que de déborder et de repousser le bouton hors
-                        // de la zone visible sur les fenêtres étroites.
-                        clip: true
-                        spacing: 5
-
-                            // .gr h1 : 26px / 700 / line-height 32 / letter-spacing -0.02em
-                            Label {
-                                text: qsTr("Bonjour, ") + (root.username || "")
-                                color: Theme.dashboardInk
-                                font.pixelSize: 27
-                                font.weight: Theme.weightSemibold
-                                font.family: Theme.fontFamily
-                                font.letterSpacing: -0.54
-                                lineHeight: 32
-                                lineHeightMode: Text.FixedHeight
-                            }
-
-                            // .stl : flex row, align-items center, gap 16,
-                            // couleur par défaut ink2, texte en gras (b) en ink
-                            RowLayout {
-                                spacing: 16
-                                Layout.alignment: Qt.AlignVCenter
-
-                                // .sp1 : largeur auto (padding 9/11), pas de
-                                // largeur fixe qui tronquerait un libellé long
-                                // Statut serveur traité comme information contextuelle
-                                // discrète (pastille + libellé), plus comme un badge
-                                // "alerte" : poids medium au lieu de bold, fond très
-                                // légèrement teinté.
-                                RowLayout {
-                                    spacing: 7
-                                    Layout.alignment: Qt.AlignVCenter
-
-                                    Rectangle {
-                                        Layout.preferredWidth: 6
-                                        Layout.preferredHeight: 6
-                                        radius: 3
-                                        color: Theme.dashboardSuccess
-                                    }
-
-                                    Label {
-                                        text: root.serverStatusLabel
-                                        color: Theme.dashboardInkSecondary
-                                        font.pixelSize: 13
-                                        font.weight: Theme.weightMedium
-                                        font.family: Theme.fontFamily
-                                    }
-                                }
-
-                                Rectangle {
-                                    Layout.preferredWidth: 1
-                                    Layout.preferredHeight: 12
-                                    color: Theme.dashboardLine
-                                    Layout.alignment: Qt.AlignVCenter
-                                }
-
-                                // <span><b>N</b> postes en ligne</span>
-                                // Valeur mise en avant par le poids (semibold) plutôt
-                                // que par une taille plus grande, libellé en tertiaire :
-                                // information contextuelle secondaire, pas un compteur
-                                // "hero".
-                                Row {
-                                    spacing: 4
-                                    Layout.alignment: Qt.AlignVCenter
-
-                                    Label {
-                                        text: root.peersCount
-                                        color: Theme.dashboardInk
-                                        font.pixelSize: 13
-                                        font.weight: Theme.weightSemibold
-                                        font.family: Theme.fontFamily
-                                    }
-                                    Label {
-                                        text: qsTr("postes en ligne")
-                                        color: Theme.dashboardInkTertiary
-                                        font.pixelSize: 13
-                                        font.family: Theme.fontFamily
-                                    }
-                                }
-
-                                // <span><b>M</b> transferts en cours</span>
-                                Row {
-                                    spacing: 4
-                                    Layout.alignment: Qt.AlignVCenter
-
-                                    Label {
-                                        text: root.activeTransferCount
-                                        color: Theme.dashboardInk
-                                        font.pixelSize: 13
-                                        font.weight: Theme.weightSemibold
-                                        font.family: Theme.fontFamily
-                                    }
-                                    Label {
-                                        text: qsTr("transferts en cours")
-                                        color: Theme.dashboardInkTertiary
-                                        font.pixelSize: 13
-                                        font.family: Theme.fontFamily
-                                    }
-                                }
-                            }
-                    }
-
-                    // .btn.p : height 36, padding 0 14, radius 8, 600 14px,
-                    // icône "+" avant le texte, gap 7. Ancré au bord droit de
-                    // la zone (et non plus poussé par un RowLayout) pour
-                    // rester collé à droite dans tous les cas, indépendamment
-                    // du panneau "À traiter" et de la largeur du texte à gauche.
-                    Button {
-                        id: newTransferBtn
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        height: 36
-                            leftPadding: 14
-                            rightPadding: 14
-                            background: Rectangle {
-                                color: newTransferBtn.hovered ? Theme.dashboardPrimaryHover : Theme.dashboardPrimary
-                                radius: 8
-                            }
-                            contentItem: RowLayout {
-                                spacing: 7
-                                Label {
-                                    text: "+"
-                                    color: Theme.dashboardSurface
-                                    font.pixelSize: 15
-                                    font.bold: true
-                                    font.family: Theme.fontFamily
-                                    Layout.alignment: Qt.AlignVCenter
-                                }
-                                Label {
-                                    text: qsTr("Nouveau transfert")
-                                    color: Theme.dashboardSurface
-                                    font.pixelSize: 14
-                                    font.bold: true
-                                    font.family: Theme.fontFamily
-                                    verticalAlignment: Text.AlignVCenter
-                                    Layout.alignment: Qt.AlignVCenter
-                                }
-                            }
-                            onClicked: root.fileTransferRequested(true, null)
-                    }
-                }
-
-                // Workspace - height 456px. Maquette : `.ws` = UNE seule surface
-                // (bordure 1px, rayon 12) contenant la carte réseau (`.cv`, filet
-                // droit 1px) et la colonne « À traiter » (`.atr`, fond surface2).
-                // Colonne « À traiter » : 336px à 1440, jamais 1fr illimité ; la
-                // carte prend tout le reste (au minimum 840px).
+                // -- Carte reseau ------------------------------------------
                 Rectangle {
-                    id: workspaceContainer
+                    id: mapCard
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 456
-                    Layout.leftMargin: 24
-                    Layout.rightMargin: 24
-                    Layout.topMargin: 14
-                    color: Theme.surfaceLevel2
+                    Layout.fillHeight: root.wideLayout
+                    // Au moins 360 px de dessin sous l'en-tete (quelle que soit sa hauteur :
+                    // filtres sur deux lignes, texte agrandi) : en dessous, les postes
+                    // hors ligne n'ont plus de place libre autour du poste central.
+                    // Hauteur reellement mise en page de l'en-tete (et non sa hauteur
+                    // implicite, qui depend de la largeur laissee au Flow des filtres) :
+                    // la zone de dessin conserve 360 px dans tous les cas.
+                    Layout.minimumHeight: mapHeader.height + 24 + 360
+                    Layout.preferredHeight: root.wideLayout ? 420 : mapHeader.height + 24 + 380
+                    radius: Theme.radiusCard
+                    color: Theme.surface0
                     border.width: 1
-                    border.color: Theme.hairline
-                    radius: 14
+                    border.color: Theme.line
 
-                    // Surface interne, inscrite DANS la bordure de 1px : les enfants
-                    // ont ainsi un rayon de 11px (12 - 1), concentrique à la bordure.
-                    // Plus aucune « rustine » ne recouvre la bordure du conteneur.
-                    Item {
-                        id: workspaceInner
+                    ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 1
+                        spacing: 0
 
-                        readonly property real innerRadius: workspaceContainer.radius - workspaceContainer.border.width
-                        readonly property real mapMinWidth: 840
-                        readonly property real actionPanelMaxWidth: 336
-                        // Visible uniquement si la largeur est suffisante (>= 1050px)
-                        readonly property bool showActionPanel: workspaceContainer.width >= 1050
-                        // 1fr plafonné : le panneau ne dépasse jamais 336px (le reste
-                        // va à la carte). Il n'est réduit sous 336 que si la carte
-                        // tomberait sous ses 840px.
-                        readonly property real actionPanelWidth: showActionPanel
-                                ? Math.min(actionPanelMaxWidth, Math.max(0, width - mapMinWidth - 1))
-                                : 0
+                        // Titre, filtres et Carte/Liste sur une ligne ; carte etroite :
+                        // filtres sur une seconde ligne pleine largeur (maquette).
+                        GridLayout {
+                            id: mapHeader
+                            readonly property bool stackFilters: mapCard.width < 840
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 15
+                            Layout.rightMargin: 15
+                            Layout.topMargin: 12
+                            Layout.bottomMargin: 12
+                            columns: 3
+                            columnSpacing: 12
+                            rowSpacing: 10
 
-                        // ScrollView pour la carte réseau - défilement uniquement si
-                        // la place manque (< 840px)
-                        ScrollView {
-                            id: networkScrollView
-                            anchors.left: parent.left
-                            anchors.top: parent.top
-                            anchors.bottom: parent.bottom
-                            // -1 : filet de séparation vertical
-                            width: parent.width - (workspaceInner.showActionPanel ? workspaceInner.actionPanelWidth + 1 : 0)
-                            clip: true
-                            contentWidth: networkWorkspace.width
-                            contentHeight: networkWorkspace.height
-                            ScrollBar.horizontal.policy: ScrollBar.AsNeeded
-                            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
+                            Text {
+                                Layout.row: 0
+                                Layout.column: 0
+                                Layout.alignment: Qt.AlignTop
+                                Layout.topMargin: 4
+                                text: qsTr("Réseau local")
+                                color: Theme.ink
+                                font.pixelSize: Theme.fs(14)
+                                font.weight: Theme.weightSemibold
+                                font.family: Theme.fontFamily
+                                Accessible.role: Accessible.Heading
+                            }
 
-                            // Carte réseau - au moins 840px, occupe toute la place
-                            // laissée par « À traiter » ; centre recalculé (width/2).
-                            NetworkWorkspace {
-                                id: networkWorkspace
-                                width: Math.max(workspaceInner.mapMinWidth, networkScrollView.width)
-                                height: networkScrollView.height
-                                // Coins arrondis uniquement sur les côtés qui touchent
-                                // la bordure de la surface.
-                                leftRadius: workspaceInner.innerRadius
-                                rightRadius: workspaceInner.showActionPanel ? 0 : workspaceInner.innerRadius
-                                peers: root.networkPeers
-                                offlinePeers: root.networkOfflinePeers
-                                localPeerName: root.username || qsTr("Ce poste")
-                                localPeerStatusLabel: root.serverStatusLabel
-                                activeTransfers: (typeof transferContext !== "undefined" && transferContext)
-                                                 ? transferContext.activeTransfers : []
-                                activeCalls: root.networkActiveCalls
-                                demoMode: root.demoMode
+                            Flow {
+                                Layout.row: mapHeader.stackFilters ? 1 : 0
+                                Layout.column: mapHeader.stackFilters ? 0 : 1
+                                Layout.columnSpan: mapHeader.stackFilters ? 3 : 1
+                                Layout.fillWidth: true
+                                spacing: 6
+                                visible: networkWorkspace.viewMode === "map"
+                                Accessible.name: qsTr("Filtrer les postes par état")
 
-                                onSendFileRequested: function(peer) {
-                                    // Ouvre l'écran Transferts avec le volet "Nouveau
-                                    // transfert" déjà déplié et ce poste (carte réseau,
-                                    // vue carte ou liste) déjà sélectionné comme
-                                    // destinataire - même mécanisme que le bouton
-                                    // "Nouveau transfert" du Dashboard (autoOpenPanel),
-                                    // avec le poste transmis en plus.
-                                    root.fileTransferRequested(true, peer)
+                                Repeater {
+                                    model: [
+                                        { key: "online", label: qsTr("En ligne"), color: Theme.successColor },
+                                        { key: "away", label: qsTr("Absent"), color: Theme.markAway },
+                                        { key: "busy", label: qsTr("Occupé"), color: Theme.markAway, optional: true },
+                                        { key: "transferring", label: qsTr("En transfert"), color: Theme.markTransfer },
+                                        { key: "calling", label: qsTr("En appel"), color: Theme.callColor },
+                                        { key: "offline", label: qsTr("Hors ligne"), color: Theme.nodeOfflineLine, hollow: true }
+                                    ]
+                                    delegate: FilterChip {
+                                        required property var modelData
+                                        visible: !modelData.optional || count > 0
+                                        label: modelData.label
+                                        dotColor: modelData.color
+                                        hollow: modelData.hollow === true
+                                        count: root.countStatus(modelData.key)
+                                        active: root.hiddenStatuses.indexOf(modelData.key) < 0
+                                        onClicked: root.toggleStatus(modelData.key)
+                                    }
                                 }
-                                onCallRequested: function(peer) {
-                                    if (typeof callContext !== "undefined" && callContext && peer.address)
-                                        callContext.call(peer.address)
-                                }
-                                onMessageRequested: function(peer) {
-                                    if (typeof messagingContext !== "undefined" && messagingContext && peer.userUuid)
-                                        messagingContext.startConversationWith(peer.userUuid)
-                                }
+                            }
+                            Item {
+                                Layout.row: 0
+                                Layout.column: 1
+                                Layout.fillWidth: true
+                                visible: mapHeader.stackFilters || networkWorkspace.viewMode !== "map"
+                            }
+
+                            AppSegmentedControl {
+                                Layout.row: 0
+                                Layout.column: 2
+                                Layout.alignment: Qt.AlignTop
+                                stretch: false
+                                small: true
+                                model: [ { label: qsTr("Carte"), glyph: "" },
+                                         { label: qsTr("Liste"), glyph: "" } ]
+                                currentIndex: networkWorkspace.viewMode === "list" ? 1 : 0
+                                onActivated: function(index) { networkWorkspace.viewMode = index === 1 ? "list" : "map" }
                             }
                         }
 
-                        // Filet vertical carte | À traiter (maquette : `.cv` border-right 1px)
                         Rectangle {
-                            id: workspaceDivider
-                            visible: workspaceInner.showActionPanel
-                            anchors.left: networkScrollView.right
-                            anchors.top: parent.top
-                            anchors.bottom: parent.bottom
-                            width: 1
-                            color: Theme.dashboardLine
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 1
+                            color: Theme.line
                         }
 
-                        // À traiter - colonne accolée à la carte (maquette : `.atr`,
-                        // fond surface2, padding 14px 16px). Seuls les coins droits
-                        // suivent l'arrondi de la surface.
-                        Rectangle {
-                            id: actionPanelSurface
-                            visible: workspaceInner.showActionPanel
-                            anchors.left: workspaceDivider.right
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            anchors.bottom: parent.bottom
-                            color: Theme.dashboardSurfaceAlt
-                            topLeftRadius: 0
-                            bottomLeftRadius: 0
-                            topRightRadius: workspaceInner.innerRadius
-                            bottomRightRadius: workspaceInner.innerRadius
+                        Item {
+                            id: mapInner
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
 
-                            ActionRequiredPanel {
+                            ScrollView {
+                                id: networkScrollView
                                 anchors.fill: parent
-                                anchors.leftMargin: 16
-                                anchors.rightMargin: 16
-                                anchors.topMargin: 14
-                                anchors.bottomMargin: 14
-                                actions: root.actionRequiredItems
+                                clip: true
+                                contentWidth: Math.max(availableWidth, 600)
+                                ScrollBar.vertical.policy: ScrollBar.AlwaysOff
 
-                                onActionRequested: function(action, actionType) {
-                                    if (actionType !== "examine")
-                                        return
-                                    // 1 = onglet "Machines autorisées" (item de type
-                                    // "authorization"), 0 = "Journal d'audit" (tout le
-                                    // reste, notamment "access_denied") - voir
-                                    // AdminView.currentTab.
-                                    root.adminSectionRequested(action.type === "authorization" ? 1 : 0)
+                                NetworkWorkspace {
+                                    id: networkWorkspace
+                                    objectName: "networkWorkspace"
+                                    width: Math.max(networkScrollView.availableWidth, 600)
+                                    height: mapInner.height
+                                    showChrome: false
+                                    showLegend: false
+                                    inlineDetails: false
+                                    offlineSelectable: true
+                                    preferTopOffline: true
+                                    bottomReserve: 34
+                                    maxScale: 1.2
+                                    mapBackground: Theme.darkMode ? Theme.bg : Theme.surface1
+                                    hiddenStatuses: root.hiddenStatuses
+                                    leftRadius: 0
+                                    rightRadius: 0
+                                    cornerBottomLeftRadius: Theme.radiusCard - 1
+                                    cornerBottomRightRadius: Theme.radiusCard - 1
+
+                                    peers: root.networkPeers
+                                    offlinePeers: root.networkOfflinePeers
+                                    localPeerName: (typeof settingsModel !== "undefined" && settingsModel
+                                                    && settingsModel.machineName.length > 0)
+                                                   ? settingsModel.machineName : qsTr("Ce poste")
+                                    localPeerStatusLabel: root.serverStatusLabel
+                                    activeTransfers: (typeof transferContext !== "undefined" && transferContext)
+                                                     ? transferContext.activeTransfers : []
+                                    activeCalls: root.networkActiveCalls
+                                    demoMode: root.demoMode
+
+                                    onPeerClicked: function(peer) {
+                                        if (peer && peer.id)
+                                            networkWorkspace.selectedId = peer.id
+                                    }
+                                    onSendFileRequested: function(peer) { root.fileTransferRequested(true, peer) }
+                                    onCallRequested: function(peer) { root.callPeer(peer) }
+                                    onMessageRequested: function(peer) { root.openConversationWithPeer(peer) }
+                                }
+                            }
+
+                            RowLayout {
+                                visible: networkWorkspace.viewMode === "map"
+                                anchors.left: parent.left
+                                anchors.bottom: parent.bottom
+                                anchors.leftMargin: 14
+                                anchors.bottomMargin: 12
+                                spacing: 6
+                                FaIcon { glyph: ""; color: Theme.ink3; font.pixelSize: Theme.fs(11) }
+                                Text {
+                                    text: networkWorkspace.presentPeers.length + networkWorkspace.offlinePeersPositioned.length === 0
+                                          ? qsTr("Aucun autre poste détecté pour l'instant · la découverte automatique est en cours")
+                                          : qsTr("Cliquez sur un poste pour afficher ses détails · disposition indicative, pas une topologie")
+                                    color: Theme.ink3
+                                    font.pixelSize: Theme.fs(11.5)
+                                    font.family: Theme.fontFamily
                                 }
                             }
                         }
                     }
                 }
 
-                // Zone inférieure - grid 1.22fr + 1fr, à plat sur le fond
-                Item {
-                    Layout.fillWidth: true
+                // -- Poste selectionne + interventions ---------------------
+                GridLayout {
+                    id: inspector
+                    // Placement naturel, sans Layout.row/column explicites :
+                    // large = carte | inspecteur sur deux rangees, puis les panneaux
+                    // du bas ; etroit = carte, inspecteur, panneaux du bas.
+                    Layout.rowSpan: root.wideLayout ? 2 : 1
+                    Layout.fillWidth: !root.wideLayout
+                    Layout.preferredWidth: root.wideLayout ? 340 : -1
                     Layout.fillHeight: true
-                    Layout.leftMargin: 24
-                    Layout.rightMargin: 24
-                    Layout.topMargin: 14
-                    Layout.bottomMargin: 18
+                    columns: root.wideLayout ? 1 : 2
+                    columnSpacing: 16
+                    rowSpacing: 16
 
-                    RowLayout {
-                        anchors.fill: parent
-                        spacing: 0
+                    SelectedPeerPanel {
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        Layout.alignment: Qt.AlignTop
+                        peer: root.selectedPeer
+                        userName: {
+                            const p = root.selectedPeer
+                            if (!p) return ""
+                            return (p.userUuid && root.userNameByUuid[p.userUuid]) || p.userName || ""
+                        }
+                        addressText: {
+                            const p = root.selectedPeer
+                            if (!p || !p.address) return ""
+                            const e = root.networkPeerEntry(p.id)
+                            return e && e.port > 0 ? p.address + ":" + e.port : p.address
+                        }
+                        lastActivityText: {
+                            const p = root.selectedPeer
+                            if (!p) return ""
+                            if (p.status === "offline") return qsTr("Hors ligne")
+                            const e = root.networkPeerEntry(p.id)
+                            return e && e.lastSeenMs > 0 ? root.relativeTime(new Date(e.lastSeenMs)) : ""
+                        }
+                        trustText: root.selectedPeer ? root.machineTrust(root.selectedPeer.id, root.selectedPeer.address) : ""
+                        callText: root.selectedPeer && root.selectedPeer.status === "calling"
+                                  ? (typeof callContext !== "undefined" && callContext && callContext.callState === "connected"
+                                     ? qsTr("Appel en cours") : qsTr("Appel en cours d'établissement"))
+                                  : ""
+                        onMessageRequested: root.openConversationWithPeer(root.selectedPeer)
+                        onSendFileRequested: root.fileTransferRequested(true, root.selectedPeer)
+                        onCallRequested: root.callPeer(root.selectedPeer)
+                    }
 
-                        // Transferts - 1.22fr
+                    Rectangle {
+                        id: interventionsCard
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        Layout.fillHeight: root.wideLayout
+                        Layout.alignment: Qt.AlignTop
+                        Layout.minimumHeight: 160
+                        Layout.preferredHeight: root.wideLayout ? -1 : interventionsColumn.implicitHeight
+                        radius: Theme.radiusCard
+                        color: Theme.surface0
+                        border.width: 1
+                        border.color: Theme.line
+                        clip: true
+
                         ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            Layout.preferredWidth: parent.width * 1.22 / 2.22
-                            Layout.rightMargin: 28
+                            id: interventionsColumn
+                            anchors.fill: parent
                             spacing: 0
 
-                            // Header Transferts
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 30
-                                spacing: 8
-
-                                Label {
-                                    text: qsTr("Transferts")
-                                    color: Theme.dashboardInk
-                                    font.pixelSize: 15
-                                    font.bold: true
-                                    font.family: Theme.fontFamily
-                                }
-
-                                Label {
-                                    text: root.activeTransferCount > 0 ? (root.activeTransferCount + " en cours") : ""
-                                    color: Theme.dashboardInkTertiary
-                                    font.pixelSize: 12
-                                    font.family: Theme.fontFamily
-                                }
-
-                                Item { Layout.fillWidth: true }
-
-                                Button {
-                                    text: qsTr("Tous les transferts")
-                                    flat: true
-                                    font.pixelSize: 12
-                                    font.family: Theme.fontFamily
-                                    background: Rectangle { color: "transparent" }
-                                    contentItem: Label {
-                                        text: parent.text
-                                        color: Theme.dashboardPrimary
-                                        font.pixelSize: 12
-                                        font.family: Theme.fontFamily
-                                    }
-                                }
-                            }
-
-                            // Etat vide transferts
-                            SkeletonRows {
-                                visible: !root.contentSettled
-                                variant: "transfer"
-                                Layout.fillWidth: true
+                            PanelHeader {
+                                title: root.isAdmin ? qsTr("Interventions requises") : qsTr("À surveiller")
+                                count: root.interventions.length
+                                countTone: root.interventions.length > 0 ? "warning" : "neutral"
                             }
 
                             EmptyState {
-                                visible: root.contentSettled && root.transferItems.length === 0
+                                visible: root.interventions.length === 0
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
+                                compact: true
+                                iconName: "check"
+                                tone: "success"
+                                title: qsTr("Aucune intervention requise")
+                                description: root.isAdmin
+                                             ? qsTr("Les demandes d'autorisation, refus de connexion et échecs apparaîtront ici.")
+                                             : qsTr("Les transferts en échec et conflits de dossiers apparaîtront ici.")
+                            }
+
+                            ListView {
+                                visible: root.interventions.length > 0
+                                Layout.fillWidth: true
+                                Layout.fillHeight: root.wideLayout
+                                Layout.preferredHeight: root.wideLayout ? -1 : contentHeight
+                                Layout.leftMargin: 16
+                                Layout.rightMargin: 16
+                                Layout.bottomMargin: 8
+                                clip: true
+                                interactive: contentHeight > height
+                                boundsBehavior: Flickable.StopAtBounds
+                                model: root.interventions
+                                delegate: SupervisionRow {
+                                    required property var modelData
+                                    required property int index
+                                    width: ListView.view.width
+                                    showDivider: index > 0
+                                    glyph: modelData.glyph
+                                    tone: modelData.tone
+                                    title: modelData.title
+                                    meta: modelData.meta
+                                    actionText: modelData.action
+                                    actionTooltip: modelData.tip
+                                    onActionTriggered: root.runIntervention(modelData)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // -- Echanges + evenements ---------------------------------
+                GridLayout {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 208
+                    Layout.minimumHeight: 208
+                    Layout.maximumHeight: 208
+                    columns: 2
+                    columnSpacing: 16
+
+                    // Echanges en cours
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.preferredWidth: 1
+                        radius: Theme.radiusCard
+                        color: Theme.surface0
+                        border.width: 1
+                        border.color: Theme.line
+                        clip: true
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            spacing: 0
+                            PanelHeader {
+                                title: qsTr("Échanges en cours")
+                                count: root.totalActiveTransferCount
+                                countTone: root.totalActiveTransferCount > 0 ? "accent" : "neutral"
+                                linkText: qsTr("Transferts")
+                                onLinkClicked: root.fileTransferRequested(false, null)
+                            }
+                            EmptyState {
+                                visible: root.runningTransferRows.length === 0
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                compact: true
                                 iconName: "transfer"
-                                title: qsTr("Aucun transfert en cours")
-                                description: qsTr("Les fichiers envoyés et reçus apparaîtront ici.")
-                                actionText: qsTr("Envoyer un fichier")
-                                onActionClicked: root.fileTransferRequested(true, null)
+                                title: qsTr("Aucun échange en cours")
+                                description: qsTr("Les envois et réceptions de fichiers s'afficheront ici.")
                             }
-
-                            // Liste transferts à plat
-                            ScrollView {
-                                visible: root.contentSettled && root.transferItems.length > 0
+                            ListView {
+                                visible: root.runningTransferRows.length > 0
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
+                                Layout.leftMargin: 16
+                                Layout.rightMargin: 16
+                                Layout.bottomMargin: 6
                                 clip: true
-
-                                ColumnLayout {
-                                    width: parent.width
-                                    spacing: 10
-
-                                    Repeater {
-                                        model: root.transferItems
-                                        delegate: TransferRow {
-                                            Layout.fillWidth: true
-                                            fileName: modelData.fileName || ""
-                                            peerName: modelData.peerName || ""
-                                            address: modelData.peerAddress || ""
-                                            progress: (modelData.percent || 0) / 100
-                                            transferred: modelData.bytesTransferred || 0
-                                            total: modelData.totalBytes || 0
-                                            status: modelData.statusText || "En cours"
-                                            state: modelData.state || ""
-                                            timestamp: modelData.timestamp || ""
-                                            isIncoming: modelData.incoming || false
-
-                                            onDetailsRequested: root.fileTransferRequested(false, null)
-                                            onOpenLocationRequested: {
-                                                if (typeof transferContext === "undefined" || !transferContext
-                                                        || !transferContext.openFileLocation(modelData.filePath || "")) {
-                                                    errorBanner.show(qsTr("Impossible d'ouvrir l'emplacement du fichier."))
-                                                }
-                                            }
-                                            onRetryRequested: {
-                                                if (typeof transferContext === "undefined" || !transferContext
-                                                        || !transferContext.retryTransfer(modelData.transferKey || "")) {
-                                                    errorBanner.show(qsTr("Impossible de relancer le transfert."))
-                                                }
-                                            }
-                                        }
-                                    }
+                                interactive: contentHeight > height
+                                boundsBehavior: Flickable.StopAtBounds
+                                model: root.runningTransferRows
+                                delegate: SupervisionRow {
+                                    required property var modelData
+                                    required property int index
+                                    readonly property var vis: root.transferVisual(modelData)
+                                    width: ListView.view.width
+                                    showDivider: index > 0
+                                    glyph: ""
+                                    tone: vis.tone
+                                    title: modelData.fileName
+                                    metaGlyph: modelData.isIncoming ? "" : ""
+                                    meta: (modelData.isIncoming ? qsTr("Réception de %1") : qsTr("Envoi vers %1"))
+                                              .arg(modelData.peerName || modelData.address)
+                                          + (modelData.total > 0
+                                             ? " · " + (modelData.state === "in_progress"
+                                                        ? Fmt.formatBytesPrecise(modelData.transferred) + " / " + Fmt.formatBytesPrecise(modelData.total)
+                                                        : Fmt.formatBytes(modelData.total))
+                                             : "")
+                                    progress: modelData.state === "in_progress" ? modelData.progress : -1
+                                    badgeText: vis.badge
+                                    badgeTone: vis.badgeTone
+                                    timeText: vis.time
                                 }
                             }
                         }
+                    }
 
-                        // Séparateur vertical
-                        Rectangle {
-                            Layout.preferredWidth: 1
-                            Layout.fillHeight: true
-                            color: Theme.dashboardLine
-                        }
+                    // Evenements recents (admin) / Appels recents (utilisateur)
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.preferredWidth: 1
+                        radius: Theme.radiusCard
+                        color: Theme.surface0
+                        border.width: 1
+                        border.color: Theme.line
+                        clip: true
 
-                        // Activité - 1fr
                         ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            Layout.leftMargin: 28
+                            anchors.fill: parent
                             spacing: 0
-
-                            // Header Activité
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 30
-                                spacing: 8
-
-                                Label {
-                                    text: qsTr("Activité récente")
-                                    color: Theme.dashboardInk
-                                    font.pixelSize: 15
-                                    font.bold: true
-                                    font.family: Theme.fontFamily
-                                }
-
-                                Item { Layout.fillWidth: true }
-
-                                Button {
-                                    visible: root.contentSettled && root.activityItems.length > 0
-                                    text: qsTr("Voir le journal")
-                                    flat: true
-                                    font.pixelSize: 12
-                                    font.family: Theme.fontFamily
-                                    background: Rectangle { color: "transparent" }
-                                    contentItem: Label {
-                                        text: parent.text
-                                        color: Theme.dashboardPrimary
-                                        font.pixelSize: 12
-                                        font.family: Theme.fontFamily
-                                    }
-                                }
+                            PanelHeader {
+                                title: root.isAdmin ? qsTr("Événements récents") : qsTr("Appels récents")
+                                linkText: root.isAdmin ? qsTr("Journal") : qsTr("Appels")
+                                onLinkClicked: root.isAdmin ? root.adminSectionRequested(0) : root.callRequested()
                             }
-
-                            // Etat vide activité (pas de bouton : rien à ouvrir)
-                            SkeletonRows {
-                                visible: !root.contentSettled
-                                variant: "activity"
-                                Layout.fillWidth: true
-                            }
-
                             EmptyState {
-                                visible: root.contentSettled && root.activityItems.length === 0
+                                visible: (root.isAdmin ? root.activityItems.length : root.recentCalls.length) === 0
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
-                                iconName: "log"
-                                title: qsTr("Aucune activité pour le moment")
-                                description: qsTr("Les connexions, messages, transferts et appels apparaîtront ici.")
+                                compact: true
+                                iconName: root.isAdmin ? "log" : "call"
+                                title: root.isAdmin ? qsTr("Aucun événement récent") : qsTr("Aucun appel récent")
+                                description: root.isAdmin ? qsTr("Les connexions, transferts et refus seront journalisés ici.")
+                                                          : qsTr("Vos appels émis et reçus apparaîtront ici.")
                             }
-
-                            // Liste activité à plat
-                            ScrollView {
-                                visible: root.contentSettled && root.activityItems.length > 0
+                            ListView {
+                                visible: root.isAdmin && root.activityItems.length > 0
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
+                                Layout.leftMargin: 16
+                                Layout.rightMargin: 16
+                                Layout.bottomMargin: 6
                                 clip: true
-
-                                ColumnLayout {
-                                    width: parent.width
-                                    spacing: 8
-
-                                    Repeater {
-                                        model: root.activityItems
-                                        delegate: ActivityRow {
-                                            Layout.fillWidth: true
-                                            event: modelData.event || ""
-                                            actor: modelData.actor || ""
-                                            message: modelData.message || ""
-                                            result: modelData.result || ""
-                                            resultBadge: modelData.resultBadge || ""
-                                            timestamp: modelData.timestamp || new Date()
-                                        }
-                                    }
+                                interactive: contentHeight > height
+                                boundsBehavior: Flickable.StopAtBounds
+                                model: root.isAdmin ? root.activityItems : []
+                                delegate: SupervisionRow {
+                                    required property var modelData
+                                    required property int index
+                                    readonly property var vis: root.eventVisual(modelData.event)
+                                    width: ListView.view.width
+                                    showDivider: index > 0
+                                    glyph: vis.glyph
+                                    tone: vis.tone
+                                    title: modelData.actor || qsTr("Système")
+                                    meta: modelData.message
+                                    timeText: root.timeOf(modelData.timestamp)
+                                }
+                            }
+                            ListView {
+                                visible: !root.isAdmin && root.recentCalls.length > 0
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                Layout.leftMargin: 16
+                                Layout.rightMargin: 16
+                                Layout.bottomMargin: 6
+                                clip: true
+                                interactive: contentHeight > height
+                                boundsBehavior: Flickable.StopAtBounds
+                                model: root.isAdmin ? [] : root.recentCalls
+                                delegate: SupervisionRow {
+                                    required property var modelData
+                                    required property int index
+                                    width: ListView.view.width
+                                    showDivider: index > 0
+                                    glyph: ""
+                                    tone: modelData.missed ? "danger" : "call"
+                                    title: modelData.who
+                                    meta: modelData.what
+                                    timeText: root.timeOf(modelData.startedAt)
                                 }
                             }
                         }

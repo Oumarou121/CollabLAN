@@ -182,7 +182,7 @@ Rectangle {
                 Label {
                     text: root.actor || root.eventLabel
                     color: Theme.dashboardInk
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.fs(13)
                     font.weight: Theme.weightSemibold
                     font.family: Theme.fontFamily
                     elide: Text.ElideRight
@@ -193,7 +193,7 @@ Rectangle {
                 Label {
                     text: Qt.formatTime(root.timestamp, "hh:mm")
                     color: Theme.dashboardInkTertiary
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fs(10)
                     opacity: 0.85
                     font.family: Theme.fontFamily
                 }
@@ -202,7 +202,7 @@ Rectangle {
             Label {
                 text: root.message
                 color: Theme.dashboardInkSecondary
-                font.pixelSize: 12
+                font.pixelSize: Theme.fs(12)
                 font.family: Theme.fontFamily
                 elide: Text.ElideRight
                 Layout.fillWidth: true
@@ -224,7 +224,7 @@ Rectangle {
                 anchors.centerIn: parent
                 text: root.badgeLabel
                 color: root.badgeText
-                font.pixelSize: 11
+                font.pixelSize: Theme.fs(11)
                 font.bold: true
                 font.family: Theme.fontFamily
             }

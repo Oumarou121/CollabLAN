@@ -17,10 +17,15 @@ import Themes
 Item {
     id: root
 
-    // Largeur du bloc étiquette : contraint le hostname (elide) pour éviter
-    // le chevauchement signalé dans la capture de référence (voir doc étape 3, §17).
-    width: 86
-    height: 78
+    // Largeur du bloc étiquette. Refonte 2026 : 120 px au lieu de 86, pour
+    // qu'un nom long ("PC-COMMERCIAL-04") ne soit plus tronqué. La boîte de
+    // collision correspondante est peerBoxW dans NetworkWorkspace.qml.
+    // Largeur de l'etiquette : un nom long passe sur deux lignes plutot que
+    // d'etre elide des 16 caracteres ("PC-COMMERCIAL-04").
+    width: 148
+    // Hauteur reelle du contenu (1 ou 2 lignes de nom) : le noeud reste
+    // ancre en haut, seule l'etiquette fait varier le bas.
+    height: nameLabel.y + nameLabel.height + 1 + statusLabel.height
 
     property string peerId: ""
     property string label: ""
@@ -29,6 +34,8 @@ Item {
     property string status: "online"
     property bool isSelected: false
     property bool isHovered: false
+    // Rend un poste hors ligne cliquable (selection pour un panneau exterieur).
+    property bool selectable: false
     readonly property bool offline: status === "offline"
     readonly property bool hasBadgeIcon: status === "transferring" || status === "calling"
     readonly property real nodeRadius: 17
@@ -37,25 +44,27 @@ Item {
     signal entered()
     signal exited()
 
+    // Marques de la carte réseau (jetons dashboardMark*) : la couleur
+    // n'encode que l'activité, "en ligne" garde l'anneau vert neutre.
     readonly property color statusColor: {
         switch (root.status) {
-        case "transferring": return Theme.dashboardPrimary
-        case "calling": return Theme.dashboardCall
-        case "away": return Theme.dashboardWarning
-        case "busy": return Theme.dashboardWarning
-        case "offline": return "#B4C1C5"
+        case "transferring": return Theme.dashboardMarkTransfer
+        case "calling": return Theme.dashboardMarkCall
+        case "away": return Theme.dashboardMarkAway
+        case "busy": return Theme.dashboardMarkAway
+        case "offline": return Theme.dashboardNodeOfflineLine
         default: return Theme.dashboardSuccess
         }
     }
 
     readonly property color labelColor: {
         switch (root.status) {
-        case "transferring": return Theme.dashboardPrimary
-        case "calling": return Theme.dashboardCall
+        case "transferring": return Theme.dashboardMarkTransfer
+        case "calling": return Theme.dashboardMarkCall
         case "away": return Theme.dashboardWarningText
         case "busy": return Theme.dashboardWarningText
         case "offline": return Theme.dashboardInkTertiary
-        default: return Theme.dashboardInkTertiary
+        default: return Theme.dashboardSuccessText
         }
     }
 
@@ -73,7 +82,7 @@ Item {
     // Halo de sélection - rayon 30, fond primary très léger, bordure primary
     // (maquette : §23 « background primary très léger / border primary »)
     Rectangle {
-        visible: root.isSelected && !root.offline
+        visible: root.isSelected
         anchors.centerIn: node
         width: 60
         height: 60
@@ -112,9 +121,9 @@ Item {
             visible: root.offline
             anchors.fill: parent
             radius: width / 2
-            color: "#F3F6F6"
+            color: Theme.dashboardNodeOffline
             border.width: 1.6
-            border.color: "#B4C1C5"
+            border.color: Theme.dashboardNodeOfflineLine
         }
         // Qt Quick n'a pas de bordure pointillée native pour Rectangle : on
         // superpose un Canvas qui redessine le cercle en pointillés (3 3),
@@ -125,7 +134,7 @@ Item {
             onPaint: {
                 var ctx = getContext("2d")
                 ctx.clearRect(0, 0, width, height)
-                ctx.strokeStyle = "#B4C1C5"
+                ctx.strokeStyle = Theme.dashboardNodeOfflineLine
                 ctx.lineWidth = 1.6
                 ctx.setLineDash([3, 3])
                 ctx.beginPath()
@@ -137,8 +146,8 @@ Item {
             visible: root.offline
             anchors.centerIn: parent
             text: "\uf108"
-            color: "#8A98A0"
-            font.pixelSize: 15
+            color: Theme.dashboardNodeOfflineInk
+            font.pixelSize: Theme.fs(15)
             font.family: "FontAwesome"
             opacity: 0.8
         }
@@ -165,7 +174,7 @@ Item {
             anchors.centerIn: parent
             text: "\uf108"
             color: Theme.dashboardPrimary
-            font.pixelSize: 16
+            font.pixelSize: Theme.fs(16)
             font.family: "FontAwesome"
         }
 
@@ -186,7 +195,7 @@ Item {
                 anchors.centerIn: parent
                 text: root.status === "transferring" ? "\uf1d8" : "\uf095"
                 color: Theme.dashboardSurface
-                font.pixelSize: 9
+                font.pixelSize: Theme.fs(9)
                 font.family: "FontAwesome"
             }
         }
@@ -200,15 +209,24 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         width: root.width
         horizontalAlignment: Text.AlignHCenter
+        // Deux lignes maximum ; Text.Wrap (et non WordWrap) coupe aussi un
+        // nom d'un seul tenant, frequent pour un nom d'hote.
+        wrapMode: Text.Wrap
+        maximumLineCount: 2
+        lineHeight: 0.95
         elide: Text.ElideRight
         text: root.label
         color: root.offline ? Theme.dashboardInkTertiary : Theme.dashboardInk
-        font.pixelSize: 12
+        // Detourage : reste lisible quand une liaison passe sous l'etiquette.
+        style: Text.Outline
+        styleColor: Theme.dashboardSurfaceAlt
+        font.pixelSize: Theme.fs(12)
         font.weight: root.isSelected ? Font.Bold : Font.DemiBold
         font.family: Theme.fontFamily
     }
 
     Text {
+        id: statusLabel
         anchors.top: nameLabel.bottom
         anchors.topMargin: 1
         anchors.horizontalCenter: parent.horizontalCenter
@@ -217,15 +235,17 @@ Item {
         elide: Text.ElideRight
         text: root.statusLabel
         color: root.labelColor
-        font.pixelSize: 11
+        style: Text.Outline
+        styleColor: Theme.dashboardSurfaceAlt
+        font.pixelSize: Theme.fs(11)
         font.weight: Font.Medium
         font.family: Theme.fontFamily
     }
 
     MouseArea {
         anchors.fill: node
-        hoverEnabled: !root.offline
-        enabled: !root.offline
+        hoverEnabled: !root.offline || root.selectable
+        enabled: !root.offline || root.selectable
         cursorShape: Qt.PointingHandCursor
         onEntered: root.entered()
         onExited: root.exited()

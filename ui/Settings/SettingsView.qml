@@ -6,44 +6,32 @@ import Themes
 import "../Components"
 
 /*
- * SettingsView - Parametres accessibles a tous les utilisateurs depuis le
- * menu profil de HomeView (anciennement onglet "Parametres" reserve aux
- * administrateurs dans AdminView).
+ * SettingsView - page Parametres (tous utilisateurs), organisee en
+ * categories : navigation laterale (liste deroulante en fenetre etroite)
+ * et contenu en colonne de largeur maximale.
  *
- * Refonte design (juillet 2026) : alignement complet sur le style
- * "corporate" bleu-gris deja utilise pour LoginView/HomeView -- cartes
- * SettingsSectionCard avec icone Font Awesome (meme composant que
- * DashboardCard sur l'accueil), contenu centre en colonne unique avec
- * largeur maximale (comme .card-grid sur HomeView) plutot qu'etire sur
- * toute la largeur de l'ecran, et grille de champs qui se reorganise
- * selon la largeur disponible (utile en fenetre partagee / multi-ecrans
- * desktop, cf. seuils GridLayout ci-dessous).
+ *   - Apparence : theme clair/sombre/systeme, couleur d'accent, taille du
+ *     texte, densite, barre laterale reduite. Applique immediatement et
+ *     persiste par le singleton Theme (QSettings "Appearance").
+ *   - Ce poste et dossiers : nom du poste, repertoires par defaut.
+ *     defaultDownloadPath est applique a network::TransferService (voir
+ *     main.cpp) ; defaultSharedFolderPath est propose a la creation d'un
+ *     dossier partage.
+ *   - Notifications et sons : enableNotifications (settingsModel, branche
+ *     sur core::NotificationManager) ; sons et volume via audioService,
+ *     appliques immediatement.
+ *   - Compte et securite : changement du mot de passe (verification cote
+ *     UserManager::changeOwnPassword).
+ *   - Reseau : role du poste (promotion/retour client, confirmes) et ports
+ *     reseau, ces derniers reserves aux administrateurs.
  *
- * Contenu :
- *   - Preferences generales (telechargement, partage) : tous utilisateurs.
- *     defaultDownloadPath est applique en temps reel a
- *     network::TransferService (voir main.cpp) ; defaultSharedFolderPath
- *     est propose par defaut a la creation d'un nouveau dossier partage
- *     (SharedFolderView.qml).
- *   - Notifications & sons : tous utilisateurs. enableNotifications est
- *     branche sur core::NotificationManager::setNotificationsEnabled()
- *     (voir main.cpp). Le son (audioService.soundEnabled/volume) est la
- *     seule source de verite pour l'activation des sons -- l'ancienne
- *     case a cocher settingsModel.enableSounds, qui ne pilotait rien
- *     reellement, a ete retiree (doublon).
- *   - Ports reseau : reserve aux administrateurs
- *     (userManager.currentUserIsAdmin), simplement masque pour les
- *     autres utilisateurs.
- *   - Une seule barre d'actions "Annuler / Enregistrer", fixe en bas de
- *     l'ecran plutot que dupliquee par carte : settingsModel.save()/load()
- *     portent de toute facon sur l'integralite des reglages (meme
- *     QSettings), donc plusieurs boutons qui font strictement la meme
- *     chose n'apportaient rien et pretaient a confusion (ex. cliquer
- *     "Enregistrer" sous Ports reseau sauvegardait aussi silencieusement
- *     les Preferences).
- *   - La section "Bascule automatique de serveur" (etat + reglages
- *     priorite/timeout) est masquee (visible: false) sur demande - le
- *     code reste en place si on souhaite la reactiver plus tard.
+ * Les reglages portes par settingsModel ne sont ecrits qu'a
+ * l'enregistrement : une seule barre "Annuler / Enregistrer" en bas de
+ * page, affichee seulement pour les categories concernees (save()/load()
+ * portent sur l'integralite des reglages).
+ *
+ * La section "Bascule automatique de serveur" reste masquee (visible:
+ * false) sur demande.
  */
 Item {
     id: root
@@ -55,42 +43,178 @@ Item {
     property var election: (typeof electionService !== "undefined") ? electionService : null
     property var app: (typeof application !== "undefined") ? application : null
 
+    // Categorie affichee (navigation laterale de la page).
+    property string category: "appearance"
+
+    readonly property var categories: [
+        { key: "appearance", label: qsTr("Apparence"), glyph: "",
+          hint: qsTr("Thème, couleur d'accent, taille du texte et densité") },
+        { key: "machine", label: qsTr("Ce poste et dossiers"), glyph: "",
+          hint: qsTr("Nom du poste, dossiers de téléchargement et de partage") },
+        { key: "notifications", label: qsTr("Notifications et sons"), glyph: "",
+          hint: qsTr("Alertes du bureau, sons et volume") },
+        { key: "account", label: qsTr("Compte et sécurité"), glyph: "",
+          hint: qsTr("Mot de passe de votre compte") },
+        { key: "network", label: qsTr("Réseau"), glyph: "",
+          hint: root.isAdmin ? qsTr("Rôle du poste et ports réseau") : qsTr("Rôle du poste sur le réseau") }
+    ]
+
+    readonly property int currentCategoryIndex: {
+        for (let i = 0; i < categories.length; i++)
+            if (categories[i].key === category) return i
+        return 0
+    }
+    readonly property var currentCategory: categories[currentCategoryIndex]
+
+    // Fil d'Ariane (AppShell) : Parametres > <categorie>.
+    readonly property string breadcrumbLeaf: currentCategory.label
+
+    // Les reglages de ces categories passent par settingsModel et ne sont
+    // ecrits qu'a l'enregistrement ; Apparence, sons et mot de passe
+    // s'appliquent immediatement.
+    readonly property bool usesSaveBar: category === "machine" || category === "notifications"
+                                        || (category === "network" && isAdmin)
+
+    readonly property bool narrow: width < 860
+
     Rectangle {
         anchors.fill: parent
-        color: Theme.background
+        color: Theme.bg
     }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // ---- Barre superieure (composant partage, cf. Components/AppHeader.qml) --
         AppHeader {
+            Layout.fillWidth: true
             title: qsTr("Paramètres")
-            onBackRequested: root.backRequested()
+            subtitle: root.currentCategory.hint
         }
 
-        // ---- Contenu principal : colonne centree, largeur maximale --------
-        // (meme principe que le card-grid de HomeView : le contenu ne
-        // s'etire pas indefiniment sur les grands ecrans, il reste lisible
-        // et centre ; en dessous de ~760px il occupe toute la largeur.)
+        // Navigation par categorie en fenetre etroite : liste deroulante.
+        AppComboBox {
+            visible: root.narrow
+            Layout.fillWidth: true
+            Layout.leftMargin: Theme.pagePadding
+            Layout.rightMargin: Theme.pagePadding
+            Layout.bottomMargin: Theme.spacingMedium
+            model: root.categories
+            textRole: "label"
+            valueRole: "key"
+            currentIndex: root.currentCategoryIndex
+            Accessible.name: qsTr("Catégorie de paramètres")
+            onActivated: function(index) { root.category = root.categories[index].key }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: Theme.spacingLarge
+
+            // Navigation par categorie : liste a gauche.
+            Column {
+                id: categoryNav
+                visible: !root.narrow
+                Layout.preferredWidth: 236
+                Layout.fillHeight: true
+                Layout.leftMargin: Theme.pagePadding
+                spacing: 2
+
+                Accessible.role: Accessible.List
+                Accessible.name: qsTr("Catégories de paramètres")
+
+                Repeater {
+                    model: root.categories
+
+                    delegate: AbstractButton {
+                        id: catItem
+                        required property var modelData
+                        readonly property bool current: root.category === catItem.modelData.key
+
+                        width: categoryNav.width
+                        height: Theme.navItemHeight
+                        hoverEnabled: true
+                        focusPolicy: Qt.TabFocus
+                        Accessible.role: Accessible.PageTab
+                        Accessible.name: catItem.modelData.label
+                        Accessible.selected: catItem.current
+                        onClicked: root.category = catItem.modelData.key
+
+                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+
+                        background: Rectangle {
+                            radius: Theme.radiusControl
+                            color: catItem.current ? Theme.accentSoft
+                                 : (catItem.hovered ? Theme.hover : "transparent")
+
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: -2
+                                radius: parent.radius + 2
+                                color: "transparent"
+                                border.width: 2
+                                border.color: Theme.focusRing
+                                visible: catItem.visualFocus
+                            }
+                        }
+
+                        contentItem: RowLayout {
+                            spacing: 10
+                            FaIcon {
+                                Layout.leftMargin: 12
+                                Layout.preferredWidth: 18
+                                glyph: catItem.modelData.glyph
+                                color: catItem.current ? Theme.navActiveInk : Theme.ink3
+                                font.pixelSize: Theme.fs(14)
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: catItem.modelData.label
+                                color: catItem.current ? Theme.navActiveInk : Theme.ink2
+                                font.pixelSize: Theme.fs(13)
+                                font.weight: catItem.current ? Theme.weightSemibold : Theme.weightRegular
+                                font.family: Theme.fontFamily
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+                }
+            }
+
         Flickable {
             id: settingsFlickable
             Layout.fillWidth: true
             Layout.fillHeight: true
             contentWidth: width
-            contentHeight: contentColumn.implicitHeight + 2 * Theme.spacingXl
+            contentHeight: contentColumn.implicitHeight + Theme.spacingXl
             clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+            // Retour en haut a chaque changement de categorie.
+            Connections {
+                target: root
+                function onCategoryChanged() { settingsFlickable.contentY = 0 }
+            }
 
             ColumnLayout {
                 id: contentColumn
-                width: Math.min(parent.width - 2 * Theme.spacingXl, 760)
-                x: (parent.width - width) / 2
-                y: Theme.spacingXl
+                width: Math.min(parent.width - (root.narrow ? 2 : 1) * Theme.pagePadding, 760)
+                x: root.narrow ? Theme.pagePadding : 0
+                y: 0
                 spacing: Theme.spacingLarge
+
+                AppearanceSettings {
+                    visible: root.category === "appearance"
+                    Layout.fillWidth: true
+                }
 
                 // --- Preferences generales (telechargement + partage) ------
                 SettingsSectionCard {
+                    visible: root.category === "machine"
                     Layout.fillWidth: true
                     icon: "\uf07c"
                     title: qsTr("Préférences générales")
@@ -117,24 +241,9 @@ Item {
                                 onTextChanged: settingsModel.defaultDownloadPath = text
                             }
 
-                            Button {
-                                text: qsTr("Parcourir...")
-                                Layout.preferredHeight: 40
-
-                                background: Rectangle {
-                                    radius: Theme.radiusMedium
-                                    color: parent.hovered ? Theme.surfaceAlt : "transparent"
-                                    border.width: 1
-                                    border.color: Theme.border
-                                }
-                                contentItem: Text {
-                                    text: qsTr("Parcourir...")
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-
+                            AppButton {
+                                text: qsTr("Parcourir…")
+                                tooltip: qsTr("Choisir un dossier")
                                 onClicked: settingsFolderDialog.open()
                             }
                         }
@@ -171,24 +280,9 @@ Item {
                                 onTextChanged: settingsModel.defaultSharedFolderPath = text
                             }
 
-                            Button {
-                                text: qsTr("Parcourir...")
-                                Layout.preferredHeight: 40
-
-                                background: Rectangle {
-                                    radius: Theme.radiusMedium
-                                    color: parent.hovered ? Theme.surfaceAlt : "transparent"
-                                    border.width: 1
-                                    border.color: Theme.border
-                                }
-                                contentItem: Text {
-                                    text: qsTr("Parcourir...")
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-
+                            AppButton {
+                                text: qsTr("Parcourir…")
+                                tooltip: qsTr("Choisir un dossier")
                                 onClicked: settingsSharedFolderDialog.open()
                             }
                         }
@@ -202,10 +296,11 @@ Item {
                 // poste n'existait pas du tout (QHostInfo::localHostName() fige,
                 // donc deux "DESKTOP-xxxx" indiscernables dans la liste des pairs).
                 SettingsSectionCard {
+                    visible: root.category === "machine"
                     Layout.fillWidth: true
                     icon: "\uf109"
                     title: qsTr("Ce poste")
-                    subtitle: qsTr("Nom affiché aux autres postes du réseau et apparence de l'application.")
+                    subtitle: qsTr("Nom affiché aux autres postes du réseau local.")
 
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -228,34 +323,6 @@ Item {
                             Layout.fillWidth: true
                         }
 
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: Theme.spacingMedium
-
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 1
-                                Label {
-                                    text: qsTr("Thème sombre")
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeBody
-                                    font.family: Theme.fontFamily
-                                }
-                                Label {
-                                    text: qsTr("Appliqué immédiatement et conservé au prochain démarrage.")
-                                    color: Theme.textTertiary
-                                    font.pixelSize: Theme.fontSizeCaption
-                                    font.family: Theme.fontFamily
-                                    wrapMode: Text.WordWrap
-                                    Layout.fillWidth: true
-                                }
-                            }
-
-                            Switch {
-                                checked: Theme.darkMode
-                                onToggled: Theme.darkMode = checked
-                            }
-                        }
                     }
                 }
 
@@ -264,6 +331,7 @@ Item {
                 // Son par categorie) plutot qu'une seule carte melangeant les
                 // trois, pour rester scannable en un coup d'oeil.
                 SettingsSectionCard {
+                    visible: root.category === "notifications"
                     Layout.fillWidth: true
                     icon: "\uf0f3"
                     title: qsTr("Notifications")
@@ -292,7 +360,7 @@ Item {
                             }
                         }
 
-                        Switch {
+                        AppSwitch {
                             checked: settingsModel.enableNotifications
                             onCheckedChanged: settingsModel.enableNotifications = checked
                         }
@@ -301,6 +369,7 @@ Item {
 
                 // --- Sons : activation + volume --------------------------------
                 SettingsSectionCard {
+                    visible: root.category === "notifications"
                     Layout.fillWidth: true
                     icon: "\uf028"
                     title: qsTr("Sons")
@@ -320,7 +389,7 @@ Item {
                             font.family: Theme.fontFamily
                             Layout.fillWidth: true
                         }
-                        Switch {
+                        AppSwitch {
                             id: soundSwitch
                             checked: (typeof audioService !== "undefined") && audioService.soundEnabled
                             onCheckedChanged: {
@@ -363,7 +432,7 @@ Item {
                             }
                         }
 
-                        Slider {
+                        AppSlider {
                             id: volumeSlider
                             from: 0.0
                             to: 1.0
@@ -401,6 +470,7 @@ Item {
                 // soundEnabled pour permettre l'ecoute meme interrupteur
                 // desactive).
                 SettingsSectionCard {
+                    visible: root.category === "notifications"
                     Layout.fillWidth: true
                     icon: "\uf001"
                     title: qsTr("Son par catégorie")
@@ -428,7 +498,7 @@ Item {
                                 property var eventType
                                 property var variantLabels: ({})
                                 property string currentValue: ""
-                                property var onSelect: function(id) {}
+                                property var selectHandler: function(id) {}
 
                                 Layout.fillWidth: true
                                 Layout.topMargin: Theme.spacingSmall
@@ -449,7 +519,7 @@ Item {
                                             anchors.centerIn: parent
                                             text: categoryIcon
                                             font.family: soundIconFont.name
-                                            font.pixelSize: 14
+                                            font.pixelSize: Theme.fs(14)
                                             color: Theme.textSecondary
                                         }
                                     }
@@ -539,7 +609,7 @@ Item {
                                             MouseArea {
                                                 anchors.fill: parent
                                                 cursorShape: Qt.PointingHandCursor
-                                                onClicked: onSelect(modelData)
+                                                onClicked: selectHandler(modelData)
                                             }
                                         }
 
@@ -597,7 +667,7 @@ Item {
                                 item.currentValue = Qt.binding(function() {
                                     return (typeof audioService !== "undefined") ? audioService.messageSound : ""
                                 })
-                                item.onSelect = function(id) {
+                                item.selectHandler = function(id) {
                                     if (typeof audioService !== "undefined")
                                         audioService.messageSound = id
                                 }
@@ -607,7 +677,7 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 1
-                            color: Theme.background
+                            color: Theme.line
                         }
 
                         Loader {
@@ -625,7 +695,7 @@ Item {
                                 item.currentValue = Qt.binding(function() {
                                     return (typeof audioService !== "undefined") ? audioService.transferSound : ""
                                 })
-                                item.onSelect = function(id) {
+                                item.selectHandler = function(id) {
                                     if (typeof audioService !== "undefined")
                                         audioService.transferSound = id
                                 }
@@ -635,7 +705,7 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 1
-                            color: Theme.background
+                            color: Theme.line
                         }
 
                         Loader {
@@ -653,7 +723,7 @@ Item {
                                 item.currentValue = Qt.binding(function() {
                                     return (typeof audioService !== "undefined") ? audioService.callSound : ""
                                 })
-                                item.onSelect = function(id) {
+                                item.selectHandler = function(id) {
                                     if (typeof audioService !== "undefined")
                                         audioService.callSound = id
                                 }
@@ -671,7 +741,7 @@ Item {
                 // renvoie le message a afficher, ou "" en cas de succes.
                 SettingsSectionCard {
                     Layout.fillWidth: true
-                    visible: typeof userManager !== "undefined" && userManager && userManager.authenticated
+                    visible: root.category === "account" && typeof userManager !== "undefined" && userManager && userManager.authenticated
                     icon: "\uf084"
                     title: qsTr("Sécurité du compte")
                     subtitle: qsTr("Changez le mot de passe de votre compte. Il vous sera demandé à la prochaine connexion.")
@@ -720,34 +790,20 @@ Item {
                         Label {
                             visible: passwordForm.feedback !== ""
                             text: passwordForm.feedback
-                            color: passwordForm.feedbackIsError ? Theme.error : Theme.success
+                            color: passwordForm.feedbackIsError ? Theme.dangerInk : Theme.successInk
                             font.pixelSize: Theme.fontSizeSmall
                             font.family: Theme.fontFamily
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
                         }
 
-                        Button {
+                        AppButton {
                             id: changePasswordButton
                             text: qsTr("Changer le mot de passe")
-                            Layout.preferredHeight: 32
+                            variant: "primary"
                             enabled: currentPasswordField.text !== ""
                                      && newPasswordField.text !== ""
                                      && confirmPasswordField.text !== ""
-
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: parent.hovered ? Theme.primaryHover : Theme.primary
-                                opacity: parent.enabled ? 1.0 : 0.5
-                            }
-                            contentItem: Text {
-                                text: changePasswordButton.text
-                                color: Theme.primaryText
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.family: Theme.fontFamily
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
 
                             onClicked: {
                                 var error = userManager.changeOwnPassword(currentPasswordField.text,
@@ -768,7 +824,7 @@ Item {
                 // --- Ports reseau (reserve aux administrateurs) -------------
                 SettingsSectionCard {
                     Layout.fillWidth: true
-                    visible: root.isAdmin
+                    visible: root.isAdmin && root.category === "network"
                     icon: "\uf1e6"
                     title: qsTr("Ports réseau")
                     subtitle: qsTr("Nécessite un redémarrage de l'application pour être appliqué (les sockets déjà ouverts ne peuvent pas changer de port à chaud).")
@@ -793,6 +849,7 @@ Item {
                                 font.family: Theme.fontFamily
                             }
                             AppSpinBox {
+                                groupDigits: false
                                 Layout.fillWidth: true
                                 from: 1024
                                 to: 65535
@@ -812,6 +869,7 @@ Item {
                                 font.family: Theme.fontFamily
                             }
                             AppSpinBox {
+                                groupDigits: false
                                 Layout.fillWidth: true
                                 from: 1024
                                 to: 65535
@@ -824,6 +882,7 @@ Item {
 
                 // --- Rôle de ce poste (promotion manuelle en serveur) ------
                 SettingsSectionCard {
+                    visible: root.category === "network"
                     Layout.fillWidth: true
                     icon: "\uf233"
                     title: qsTr("Rôle de ce poste")
@@ -833,7 +892,7 @@ Item {
                         spacing: Theme.spacingXs
 
                         Label {
-                            text: qsTr("Détermine si ce poste fait autorité (Server) ou se connecte à un autre poste (Client).")
+                            text: qsTr("Détermine si ce poste coordonne le réseau local (serveur) ou se connecte au serveur d'un autre poste (client).")
                             color: Theme.textSecondary
                             font.pixelSize: Theme.fontSizeSmall
                             wrapMode: Text.WordWrap
@@ -842,58 +901,41 @@ Item {
 
                         RowLayout {
                             spacing: Theme.spacingSmall
-                            Label { text: qsTr("Rôle actuel :"); color: Theme.textSecondary }
-                            Label {
-                                text: root.election ? root.election.roleLabel : ""
-                                color: Theme.text
-                                font.bold: true
+                            Text {
+                                text: qsTr("Rôle actuel")
+                                color: Theme.ink2
+                                font.pixelSize: Theme.fs(13)
+                                font.family: Theme.fontFamily
+                            }
+                            StatusBadge {
+                                text: !root.election ? qsTr("Inconnu")
+                                    : root.election.roleLabel === "SERVER" ? qsTr("Serveur")
+                                    : root.election.roleLabel === "TEMP_SERVER" ? qsTr("Serveur de secours")
+                                    : qsTr("Client")
+                                tone: root.election && root.election.roleLabel === "TEMP_SERVER" ? "warning"
+                                    : (root.election && root.election.roleLabel === "SERVER" ? "accent" : "neutral")
                             }
                         }
 
-                        Button {
-                            text: qsTr("Faire de ce poste le serveur")
-                            Layout.preferredHeight: 32
-                            enabled: root.election && root.election.roleLabel !== "SERVER"
-
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: parent.hovered ? Theme.primaryHover : Theme.primary
-                                opacity: parent.enabled ? 1.0 : 0.5
-                            }
-                            contentItem: Text {
+                        RowLayout {
+                            Layout.topMargin: 6
+                            spacing: 8
+                            AppButton {
                                 text: qsTr("Faire de ce poste le serveur")
-                                color: Theme.primaryText
-                                font.pixelSize: Theme.fontSizeSmall
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
+                                variant: "secondary"
+                                enabled: root.election && root.election.roleLabel !== "SERVER"
+                                onClicked: promoteToServerDialog.open()
                             }
-
-                            onClicked: promoteToServerDialog.open()
-                        }
-
-                        Button {
-                            text: qsTr("Redevenir client")
-                            Layout.preferredHeight: 32
-                            enabled: root.election && root.election.roleLabel !== "CLIENT"
-
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: parent.hovered ? Theme.error : Theme.errorMuted
-                                opacity: parent.enabled ? 1.0 : 0.5
-                            }
-                            contentItem: Text {
+                            AppButton {
                                 text: qsTr("Redevenir client")
-                                color: parent.hovered ? Theme.primaryText : Theme.error
-                                font.pixelSize: Theme.fontSizeSmall
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
+                                variant: "dangerGhost"
+                                enabled: root.election && root.election.roleLabel !== "CLIENT"
+                                onClicked: demoteToClientDialog.open()
                             }
-
-                            onClicked: demoteToClientDialog.open()
                         }
 
                         Label {
-                            text: qsTr("Un seul poste devrait avoir ce rôle. Les autres postes doivent rester en Client.")
+                            text: qsTr("Un seul poste devrait avoir ce rôle. Les autres postes doivent rester clients.")
                             color: Theme.textTertiary
                             font.pixelSize: Theme.fontSizeSmall
                             wrapMode: Text.WordWrap
@@ -902,26 +944,21 @@ Item {
                     }
                 }
 
-                MessageDialog {
+                ConfirmDialog {
                     id: promoteToServerDialog
                     title: qsTr("Faire de ce poste le serveur ?")
-                    text: qsTr("Ce poste va commencer à écouter les connexions des autres. Assure-toi qu'aucun autre poste n'a déjà ce rôle sur le réseau.")
-                    buttons: MessageDialog.Yes | MessageDialog.No
-                    onAccepted: {
-                        if (root.app)
-                            root.app.promoteToServer()
-                    }
+                    message: qsTr("Ce poste va accepter les connexions des autres postes. Vérifiez qu'aucun autre poste n'a déjà ce rôle sur le réseau.")
+                    confirmText: qsTr("Devenir serveur")
+                    onConfirmed: if (root.app) root.app.promoteToServer()
                 }
 
-                MessageDialog {
+                ConfirmDialog {
                     id: demoteToClientDialog
                     title: qsTr("Redevenir client ?")
-                    text: qsTr("Ce poste va cesser d'écouter les connexions des autres. Assure-toi qu'un autre poste a bien été désigné serveur avant de continuer, sinon plus aucun poste n'écoutera sur le réseau.")
-                    buttons: MessageDialog.Yes | MessageDialog.No
-                    onAccepted: {
-                        if (root.app)
-                            root.app.demoteToClient()
-                    }
+                    message: qsTr("Ce poste va cesser d'accepter les connexions. Assurez-vous qu'un autre poste a été désigné serveur, sinon plus aucun poste n'écoutera sur le réseau.")
+                    confirmText: qsTr("Redevenir client")
+                    destructive: true
+                    onConfirmed: if (root.app) root.app.demoteToClient()
                 }
 
                 // --- Etat courant (lecture seule, temps reel) ---------------
@@ -1105,83 +1142,67 @@ Item {
                 Item { Layout.preferredHeight: Theme.spacingSmall }
             }
         }
+        }
 
         // ---- Barre d'actions unique, fixe en bas de l'ecran ----------------
-        // Remplace les boutons Annuler/Enregistrer auparavant dupliques dans
-        // chaque carte : settingsModel.save()/load() portent sur l'ensemble
-        // des reglages (une seule QSettings), donc une seule paire de
-        // boutons suffit et evite la confusion (cf. commentaire d'en-tete).
+        // settingsModel.save()/load() portent sur l'ensemble des reglages
+        // (une seule QSettings) : une seule paire de boutons, affichee
+        // uniquement pour les categories concernees.
         Rectangle {
+            visible: root.usesSaveBar
             Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            color: Theme.surface
+            Layout.preferredHeight: Theme.compact ? 56 : 64
+            color: Theme.surface0
 
             Rectangle {
                 anchors.top: parent.top
                 width: parent.width
                 height: 1
-                color: Theme.border
+                color: Theme.line
             }
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.spacingLarge
-                anchors.rightMargin: Theme.spacingLarge
+                anchors.leftMargin: Theme.pagePadding
+                anchors.rightMargin: Theme.pagePadding
                 spacing: Theme.spacingMedium
 
-                // Confirmation transitoire apres clic sur "Enregistrer" :
-                // sans ca, rien ne distingue visuellement un enregistrement
-                // reussi d'un clic ignore -- l'utilisateur n'a aucune
-                // information que la sauvegarde a bien eu lieu.
-                RowLayout {
-                    spacing: Theme.spacingXs
-                    opacity: saveConfirmation.visible ? 1 : 0
-                    Behavior on opacity { NumberAnimation { duration: 150 } }
-
-                    Label {
-                        id: saveConfirmationIcon
-                        text: "\u2713"
-                        color: Theme.success !== undefined ? Theme.success : Theme.primary
-                        font.bold: true
-                    }
-                    Label {
-                        id: saveConfirmation
-                        visible: false
-                        text: qsTr("Enregistré")
-                        color: Theme.textSecondary
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: Theme.fontFamily
-                    }
+                FaIcon {
+                    visible: saveConfirmation.visible
+                    glyph: ""
+                    color: Theme.successInk
+                    font.pixelSize: Theme.fs(13)
+                }
+                Text {
+                    id: saveConfirmation
+                    visible: false
+                    Layout.fillWidth: true
+                    text: qsTr("Paramètres enregistrés")
+                    color: Theme.successInk
+                    font.pixelSize: Theme.fs(13)
+                    font.weight: Theme.weightMedium
+                    font.family: Theme.fontFamily
+                }
+                Text {
+                    visible: !saveConfirmation.visible
+                    Layout.fillWidth: true
+                    text: qsTr("Les modifications de cette page ne sont appliquées qu'après l'enregistrement.")
+                    color: Theme.ink3
+                    font.pixelSize: Theme.fs(12)
+                    font.family: Theme.fontFamily
+                    elide: Text.ElideRight
                 }
 
                 Timer {
                     id: saveConfirmationTimer
-                    interval: 2200
+                    interval: 2500
                     onTriggered: saveConfirmation.visible = false
                 }
 
-                Item { Layout.fillWidth: true }
-
-                Button {
-                    text: qsTr("Annuler")
-                    Layout.preferredHeight: 36
-                    Layout.preferredWidth: 110
-
-                    background: Rectangle {
-                        radius: Theme.radiusSmall
-                        color: parent.hovered ? Theme.surfaceAlt : "transparent"
-                        border.width: 1
-                        border.color: Theme.border
-                    }
-                    contentItem: Text {
-                        text: qsTr("Annuler")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: Theme.fontFamily
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
+                AppButton {
+                    text: qsTr("Annuler les modifications")
+                    variant: "ghost"
+                    tooltip: qsTr("Recharger les derniers paramètres enregistrés")
                     onClicked: {
                         settingsModel.load()
                         saveConfirmationTimer.stop()
@@ -1189,24 +1210,10 @@ Item {
                     }
                 }
 
-                Button {
+                AppButton {
                     text: qsTr("Enregistrer")
-                    Layout.preferredHeight: 36
-                    Layout.preferredWidth: 130
-
-                    background: Rectangle {
-                        radius: Theme.radiusSmall
-                        color: parent.hovered ? Theme.primaryHover : Theme.primary
-                    }
-                    contentItem: Text {
-                        text: qsTr("Enregistrer")
-                        color: Theme.primaryText
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: Theme.fontFamily
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
+                    variant: "primary"
+                    iconGlyph: ""
                     onClicked: {
                         settingsModel.save()
                         saveConfirmation.visible = true
