@@ -492,6 +492,7 @@ Item {
             onAdminRequested: shell.navigate("admin")
             onSettingsRequested: shell.navigate("settings")
             onLogoutRequested: shell.logoutRequested()
+            onConversationRequested: function(conversationId) { shell.openConversation(conversationId) }
         }
     }
 

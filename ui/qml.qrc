@@ -81,6 +81,8 @@
         <file>Dashboard/NetworkRegistry.qml</file>
         <file>Dashboard/PeerFiche.qml</file>
         <file>Dashboard/InterventionList.qml</file>
+        <file>Dashboard/TransferExchange.qml</file>
+        <file>Dashboard/TransferComposer.qml</file>
         <file>Dashboard/NetworkPeer.qml</file>
         <file>Dashboard/NetworkListView.qml</file>
         <file>Dashboard/PeerDetailsPanel.qml</file>
