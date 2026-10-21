@@ -191,9 +191,9 @@ QtObject {
     readonly property color navActiveInk:  darkMode ? _accent[1] : _accent[0]
     readonly property color navLine:       ruleInk
 
-    readonly property color scrim:         darkMode ? "#000000A6" : "#4017130E"
-    readonly property color shadowColor:   darkMode ? "#00000066" : "#141F1B16"
-    readonly property color shadowStrong:  darkMode ? "#00000099" : "#2E1F1B16"
+    readonly property color scrim:         darkMode ? "#A6000000" : "#4017130E"
+    readonly property color shadowColor:   darkMode ? "#66000000" : "#141F1B16"
+    readonly property color shadowStrong:  darkMode ? "#99000000" : "#2E1F1B16"
 
     // ---- Marques de la carte reseau ---------------------------------------
     // La couleur n'encode que l'ACTIVITE (l'encre de marque pour les

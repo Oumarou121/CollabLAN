@@ -1,22 +1,25 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Shapes
 import QtQuick.Dialogs
 import Themes
 import "../Components"
+import "../Components/icons.js" as Icons
+import "../Dashboard/transferFormat.js" as Fmt
 
 /*
- * SharedFolderView - Écran "Dossiers partagés" (module "Shared Folder",
- * 1ère tranche : créer/lister/supprimer des dossiers partagés, façon
- * explorateur de fichiers, sur le même principe visuel que
- * FileTransferView (grille de tuiles FolderTile).
+ * SharedFolderView - ecran « Dossiers partages » en Ligne claire, meme
+ * squelette que Transferts :
  *
- * Pas de synchronisation réseau ici : "partager" un dossier ne fait
- * qu'indexer localement son contenu (SharedFolderManager::shareFolder(),
- * sans rien envoyer sur le réseau). Le compteur affiché sur chaque tuile
- * est donc le nombre de fichiers indexés localement, pas un statut de
- * synchronisation entre postes (ce dernier arrivera dans une itération
- * future avec FolderWatcher/SyncEngine).
+ *   [surtitre · phrase-titre · action ................. 4 chiffres serif]
+ *   [Dossiers (liste) ][Dossier ouvert : en-tete, bilan, membres,
+ *   [                 ] synchronisation, conflits, Fichiers | Historique ]
+ *
+ * Partager un dossier indexe son contenu sur ce poste (SharedFolderManager)
+ * puis FolderSyncService le tient a jour chez les membres. Les fenetres
+ * (acces, exclusions, emplacement, invitation, arret du partage) et le volet
+ * de creation sont des feuilles posees au-dessus de la page.
  */
 Item {
     id: root
@@ -24,179 +27,296 @@ Item {
     property var context: (typeof sharedFolderContext !== "undefined") ? sharedFolderContext : null
 
     signal backRequested()
+    signal settingsRequested()
 
-    // Fil d Ariane global (AppShell) : "Dossiers partages / <dossier ouvert>".
-    readonly property string breadcrumbLeaf: root.openedFolderId >= 0 ? root.openedFolderName : ""
-    function breadcrumbRootClicked() { root.openedFolderId = -1 }
+    // Fil d'Ariane global (AppShell) : "Dossiers partages / <dossier ouvert>".
+    readonly property string breadcrumbLeaf: root.currentFolder ? root.currentFolder.name : ""
+    function breadcrumbRootClicked() { root.browsedRelativePath = ""; root.rebuildFileBrowser() }
 
-    property string openedFolderUuid: ""
-    property var openedFolderName: ""
+    // ---- dossier ouvert ----
     property var openedFolderId: -1
-    property bool openedFolderIsLocalOrigin: true
+    property string openedFolderUuid: ""
     property var currentFiles: []
     property var browserItems: []
     property string browsedRelativePath: ""
     property var currentSyncHistory: []
-    property bool showHistory: false
+    property var currentAccess: []
+    property var currentExcludes: []
+    property string tab: "files"              // "files" | "history"
+    property string searchText: ""
+    property string viewMode: "list"          // "list" | "grid"
 
-    // Ids des dossiers actuellement en cours d'indexation en arrière-plan
-    // (cf. SyncEngine::reindexFolderAsync() / SharedFolderContext::
-    // indexingStarted()) -- alimente l'indicateur "Indexation…" affiché
-    // dans l'en-tête pendant que l'appli reste réactive. Un dossier est
-    // retiré de cette liste dès que folderReindexed() arrive pour lui
-    // (succès ou échec), cf. les deux Connections ci-dessous.
+    // Dossiers en cours d'indexation en arriere-plan (indexingStarted ->
+    // folderReindexed) : indicateur dans la liste et dans le dossier.
     property var indexingFolderIds: []
 
-    // Ensemble des chemins relatifs en conflit pour le dossier actuellement ouvert.
-    // Clé: relativePath  Valeur: chemin du fichier de conflit renommé.
-    // Réinitialisé à l'ouverture d'un nouveau dossier.
+    // Conflits du dossier ouvert. Cle : relativePath ; valeur : chemin de la
+    // copie mise de cote.
     property var conflictedFiles: ({})
 
-    // File d'attente des demandes de confirmation de partage (dossiers
-    // distants reçus sans localPath) pas encore affichées : plusieurs
-    // dossiers peuvent être reçus d'affilée, on les présente un par un
-    // plutôt que d'empiler des dialogues.
+    // Rafales de synchronisation en cours (folderTransferProgress), par uuid.
+    property var syncBatches: ({})
+
+    // Invitations recues (dossiers distants sans emplacement), presentees une
+    // par une.
     property var pendingShareConfirmations: []
 
-    // Filtre rapide (rangee de chips, meme principe que FileTransferView -
-    // remplace l'ancien panneau lateral ExplorerSidebar).
-    property string activeFilter: "all"   // "all" | "mine" | "received"
-    property string searchText: ""
-    property string viewMode: "grid"      // "grid" | "list"
+    // ---- liste des dossiers ----
+    property var folderRows: []
+    property string activeFilter: "all"       // "all" | "mine" | "received" | "todo"
+    property string listSearch: ""
 
-    function folderMatchesFilter(isLocalOrigin) {
-        switch (root.activeFilter) {
-        case "mine": return isLocalOrigin
-        case "received": return !isLocalOrigin
-        default: return true
+    // Feuille ouverte : "" | "access" | "exclusions" | "location" | "remove"
+    property string sheet: ""
+    property bool composerOpen: false
+    property bool composerDone: false
+    property string composerError: ""
+    property string composerPath: ""
+    property var composerUsers: []
+
+    // ======================================================================
+    // Utilitaires
+    // ======================================================================
+    function esc(t) {
+        return String(t === undefined || t === null ? "" : t)
+               .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    }
+    function initials(label) {
+        const w = (label || "?").split(/[\s-]+/).filter(function(x) { return x.length > 0 })
+        return ((w[0] || "?").charAt(0) + (w.length > 1 ? w[1].charAt(0) : "")).toUpperCase()
+    }
+    function plural(n, one, many) { return n + " " + (n > 1 ? many : one) }
+    function formatBytes(b) { return Fmt.formatBytes(b) }
+    function formatCount(n) { return Number(n).toLocaleString(Qt.locale(), "f", 0) }
+    function extOf(name) {
+        const i = (name || "").lastIndexOf(".")
+        return i > 0 ? name.slice(i + 1, i + 5).toUpperCase() : ""
+    }
+    function dateOf(iso) {
+        if (!iso) return null
+        const d = new Date(iso)
+        return isNaN(d.getTime()) ? null : d
+    }
+    function dayKey(d) { return d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate() }
+    function isSameDay(a, b) { return a && b && root.dayKey(a) === root.dayKey(b) }
+    function isYesterday(d) {
+        const y = new Date(); y.setDate(y.getDate() - 1)
+        return root.isSameDay(d, y)
+    }
+    // « 14:21 », « hier », « 18 oct. »
+    function whenShort(iso) {
+        const d = root.dateOf(iso)
+        if (!d) return ""
+        if (root.isSameDay(d, new Date())) return d.toLocaleTimeString(Qt.locale(), "HH:mm")
+        if (root.isYesterday(d)) return qsTr("hier")
+        return d.toLocaleDateString(Qt.locale(), d.getFullYear() === new Date().getFullYear() ? "d MMM" : "d MMM yyyy")
+    }
+    function dayLabel(iso) {
+        const d = root.dateOf(iso)
+        if (!d) return ""
+        if (root.isSameDay(d, new Date())) return qsTr("Aujourd'hui")
+        if (root.isYesterday(d)) return qsTr("Hier")
+        return d.toLocaleDateString(Qt.locale(), "dddd d MMMM")
+    }
+    function timeOf(iso) {
+        const d = root.dateOf(iso)
+        return d ? d.toLocaleTimeString(Qt.locale(), "HH:mm") : ""
+    }
+    function splitPatterns(text) {
+        return (text || "").split(",").map(function(p) { return p.trim() }).filter(function(p) { return p.length > 0 })
+    }
+    function cleanUrl(url) {
+        // "file:///C:/..." (Windows) ou "file:///home/..." : on retire le
+        // schema, puis la barre en trop devant une lettre de lecteur.
+        let path = decodeURIComponent(url.toString()).replace(/^file:\/\//, "")
+        if (/^\/[A-Za-z]:/.test(path))
+            path = path.substring(1)
+        return path
+    }
+    readonly property string defaultSharedPath: (typeof settingsModel !== "undefined" && settingsModel && settingsModel.defaultSharedFolderPath)
+                                                ? settingsModel.defaultSharedFolderPath : ""
+
+    // ======================================================================
+    // Dossiers : lecture du modele, chiffres de l'en-tete
+    // ======================================================================
+    Instantiator {
+        id: folderSource
+        model: root.context ? root.context.folderModel : null
+        delegate: QtObject {
+            required property var folderId
+            required property string uuid
+            required property string name
+            required property string localPath
+            required property var ownerId
+            required property int fileCount
+            required property bool isLocalOrigin
+            required property bool hasConflict
+            onFileCountChanged: root.scheduleRebuild()
+            onHasConflictChanged: root.scheduleRebuild()
+            onLocalPathChanged: root.scheduleRebuild()
+            onNameChanged: root.scheduleRebuild()
         }
+        onObjectAdded: root.scheduleRebuild()
+        onObjectRemoved: root.scheduleRebuild()
     }
 
-    function folderMatchesSearch(name) {
-        const q = root.searchText.trim().toLowerCase()
-        if (q.length === 0) return true
-        return name.toLowerCase().indexOf(q) !== -1
+    property bool rebuildPending: false
+    function scheduleRebuild() {
+        if (root.rebuildPending) return
+        root.rebuildPending = true
+        Qt.callLater(root.rebuildFolders)
     }
 
-    function itemMatchesSearch(item) {
-        const q = root.searchText.trim().toLowerCase()
-        if (q.length === 0) return true
-        return item.name.toLowerCase().indexOf(q) !== -1
-    }
-
-    function hasActiveFilters() {
-        return root.searchText.trim().length > 0 || root.activeFilter !== "all"
-    }
-
-    function resolveConflictFor(relativePath, conflictPath, resolution) {
-        if (!root.context || root.openedFolderId < 0) {
-            return false
+    function rebuildFolders() {
+        root.rebuildPending = false
+        const ctx = root.context
+        const names = {}
+        if (ctx) {
+            const users = ctx.availableUsers()
+            for (let u = 0; u < users.length; u++)
+                names[users[u].userId] = users[u].username
         }
-
-        const resolved = root.context.resolveConflict(
-            root.openedFolderId, relativePath, conflictPath, resolution)
-        if (resolved) {
-            root.refreshFiles()
-            root.refreshHistory()
+        const rows = []
+        for (let i = 0; i < folderSource.count; i++) {
+            const o = folderSource.objectAt(i)
+            if (!o) continue
+            const hist = ctx ? ctx.syncHistoryForFolder(o.folderId, 1) : []
+            const access = ctx && o.isLocalOrigin ? ctx.accessForFolder(o.folderId) : []
+            const conflicts = ctx && o.hasConflict ? ctx.getConflicts(o.folderId).length : 0
+            rows.push({
+                folderId: o.folderId, uuid: o.uuid, name: o.name, localPath: o.localPath || "",
+                ownerId: o.ownerId, ownerName: names[o.ownerId] || "",
+                fileCount: o.fileCount, isLocalOrigin: o.isLocalOrigin, hasConflict: o.hasConflict,
+                conflictCount: o.hasConflict ? Math.max(1, conflicts) : 0,
+                members: access.map(function(a) { return a.userId }),
+                lastActivity: hist.length > 0 ? hist[0].createdAt : ""
+            })
         }
-        return resolved
+        rows.sort(function(a, b) {
+            if (a.lastActivity !== b.lastActivity) return a.lastActivity < b.lastActivity ? 1 : -1
+            return a.name.localeCompare(b.name)
+        })
+        root.folderRows = rows
+        root.ensureFolder()
     }
 
-    function filterIconColor(key) {
-        switch (key) {
-        case "mine": return Theme.primary
-        case "received": return Theme.accent
-        default: return Theme.textTertiary
-        }
+    function rowFor(folderId) {
+        for (let i = 0; i < root.folderRows.length; i++)
+            if (root.folderRows[i].folderId === folderId) return root.folderRows[i]
+        return null
     }
-    function filterIconGlyph(key) {
-        switch (key) {
-        case "mine": return "\uf015"     // home
-        case "received": return "\uf063" // arrow-down
-        default: return "\uf00a"         // th (tout)
+    readonly property var currentFolder: root.rowFor(root.openedFolderId)
+    readonly property bool currentReceived: !!root.currentFolder && !root.currentFolder.isLocalOrigin
+    readonly property bool currentNoPath: root.currentReceived && root.currentFolder.localPath.length === 0
+
+    function needsAction(r) { return r.hasConflict || (!r.isLocalOrigin && r.localPath.length === 0) }
+
+    readonly property var stats: {
+        const rows = root.folderRows
+        const members = {}
+        let mine = 0, files = 0, conflicts = 0, noPath = 0
+        for (let i = 0; i < rows.length; i++) {
+            const r = rows[i]
+            if (r.isLocalOrigin) {
+                mine++
+                r.members.forEach(function(id) { members[id] = true })
+            } else if (r.localPath.length === 0) {
+                noPath++
+            }
+            files += r.fileCount
+            conflicts += r.conflictCount
         }
+        let syncing = 0
+        for (const k in root.syncBatches) syncing++
+        return { total: rows.length, mine: mine, received: rows.length - mine, files: files,
+                 conflicts: conflicts, noPath: noPath, members: Object.keys(members).length, syncing: syncing }
     }
 
-    // Icone + couleur de fichier selon l'extension (meme logique que
-    // FileTransferView.fileKindFor), utilisee dans la vue "fichiers" d'un
-    // dossier partage. Glyphes Font Awesome 4.7.0.
-    function fileKindFor(fileName) {
-        const parts = (fileName || "").split(".")
-        const ext = parts.length > 1 ? parts[parts.length - 1].toLowerCase() : ""
-        switch (ext) {
-        case "pdf":
-            return { glyph: "\uf1c1", color: Theme.primary }
-        case "doc": case "docx": case "odt": case "rtf": case "txt":
-            return { glyph: "\uf0f6", color: Theme.primary }
-        case "jpg": case "jpeg": case "png": case "gif": case "bmp": case "webp": case "svg":
-            return { glyph: "\uf1c5", color: "#0EA5B7" }
-        case "zip": case "rar": case "7z": case "tar": case "gz":
-            return { glyph: "\uf1c6", color: "#D97706" }
-        case "mp4": case "mov": case "avi": case "mkv": case "webm":
-            return { glyph: "\uf1c8", color: "#E85C8A" }
-        case "mp3": case "wav": case "flac": case "ogg": case "m4a":
-            return { glyph: "\uf1c7", color: "#7C5CFF" }
-        case "xls": case "xlsx": case "csv":
-            return { glyph: "\uf1c3", color: Theme.success }
-        case "ppt": case "pptx":
-            return { glyph: "\uf1c4", color: Theme.warning }
-        default:
-            return { glyph: "\uf016", color: Theme.textSecondary }
-        }
+    readonly property var visibleRows: {
+        const q = root.listSearch.trim().toLowerCase()
+        return root.folderRows.filter(function(r) {
+            const f = root.activeFilter === "mine" ? r.isLocalOrigin
+                    : root.activeFilter === "received" ? !r.isLocalOrigin
+                    : root.activeFilter === "todo" ? root.needsAction(r) : true
+            return f && (q.length === 0 || r.name.toLowerCase().indexOf(q) !== -1)
+        })
     }
 
-    function showNextShareConfirmation() {
-        if (shareConfirmDialog.visible || root.pendingShareConfirmations.length === 0) {
-            return
-        }
-        const next = root.pendingShareConfirmations.shift()
-        shareConfirmDialog.targetFolderId = next.folderId
-        shareConfirmDialog.targetFolderName = next.folderName
-        shareConfirmDialog.ownerName = next.ownerName
-        shareConfirmDialog.suggestedPath = next.suggestedPath
-        shareConfirmDialog.allowWrite = next.allowWrite
-        shareConfirmDialog.open()
-    }
+    function batchFor(uuid) { return root.syncBatches[uuid + "|in"] || root.syncBatches[uuid + "|out"] || null }
 
-    function formatBytes(bytes) {
-        if (!bytes || bytes <= 0) return "0 o"
-        const units = ["o", "Ko", "Mo", "Go"]
-        let value = bytes
-        let unitIndex = 0
-        while (value >= 1024 && unitIndex < units.length - 1) {
-            value /= 1024
-            unitIndex++
-        }
-        return (unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)) + " " + units[unitIndex]
-    }
-
-    function openFolder(folderId, name, isLocalOrigin = true, uuid = "") {
-        root.openedFolderId = folderId
-        root.openedFolderName = name
-        root.openedFolderIsLocalOrigin = isLocalOrigin
-        root.openedFolderUuid = uuid
-        root.showHistory = false
-        root.conflictedFiles = {}   // reset des conflits a l'ouverture
+    // ======================================================================
+    // Dossier ouvert : fichiers, historique, acces
+    // ======================================================================
+    function openFolder(folderId) {
+        const r = root.rowFor(folderId)
+        if (!r) return
+        root.openedFolderId = r.folderId
+        root.openedFolderUuid = r.uuid
+        root.tab = "files"
+        root.searchText = ""
         root.browsedRelativePath = ""
+        root.conflictedFiles = {}
         root.refreshFiles()
         root.refreshHistory()
+        root.refreshAccess()
+    }
+
+    // Garde un dossier ouvert : le plus recent si aucun (ou s'il a disparu).
+    function ensureFolder() {
+        if (root.rowFor(root.openedFolderId)) return
+        if (root.folderRows.length > 0) root.openFolder(root.folderRows[0].folderId)
+        else root.openedFolderId = -1
     }
 
     function refreshFiles() {
         if (root.context && root.openedFolderId >= 0) {
             root.currentFiles = root.context.filesForFolder(root.openedFolderId)
             const conflicts = root.context.getConflicts(root.openedFolderId)
-            const conflictMap = {}
-            for (let i = 0; i < conflicts.length; i++) {
-                conflictMap[conflicts[i].relativePath] = conflicts[i].conflictPath
-            }
-            root.conflictedFiles = conflictMap
-            root.rebuildFileBrowser()
+            const map = {}
+            for (let i = 0; i < conflicts.length; i++)
+                map[conflicts[i].relativePath] = conflicts[i].conflictPath
+            root.conflictedFiles = map
         } else {
             root.currentFiles = []
             root.conflictedFiles = {}
-            root.browserItems = []
         }
+        root.rebuildFileBrowser()
+    }
+
+    function refreshHistory() {
+        root.currentSyncHistory = (root.context && root.openedFolderId >= 0)
+                                  ? root.context.syncHistoryForFolder(root.openedFolderId, 100) : []
+    }
+
+    function refreshAccess() {
+        if (root.context && root.openedFolderId >= 0 && root.currentFolder && root.currentFolder.isLocalOrigin) {
+            root.currentAccess = root.context.accessForFolder(root.openedFolderId)
+            root.currentExcludes = root.splitPatterns(root.context.excludePatternsForFolder(root.openedFolderId))
+        } else {
+            root.currentAccess = []
+            root.currentExcludes = []
+        }
+    }
+
+    function refreshAll() {
+        if (root.context) root.context.refresh()
+        root.refreshFiles()
+        root.refreshHistory()
+        root.refreshAccess()
+        root.scheduleRebuild()
+    }
+
+    // Bilan du dossier ouvert : volume et sous-dossiers (derives des fichiers).
+    readonly property var currentTotals: {
+        const dirs = {}
+        let bytes = 0
+        for (let i = 0; i < root.currentFiles.length; i++) {
+            const f = root.currentFiles[i]
+            bytes += f.size || 0
+            const parts = f.relativePath.split("/")
+            for (let k = 1; k < parts.length; k++) dirs[parts.slice(0, k).join("/")] = true
+        }
+        return { bytes: bytes, dirs: Object.keys(dirs).length }
     }
 
     function rebuildFileBrowser() {
@@ -204,34 +324,34 @@ Item {
         const files = []
         const prefix = root.browsedRelativePath.length > 0 ? root.browsedRelativePath + "/" : ""
         const q = root.searchText.trim().toLowerCase()
+        const copies = {}
+        for (const k in root.conflictedFiles) copies[root.conflictedFiles[k]] = true
 
         for (let i = 0; i < root.currentFiles.length; ++i) {
             const file = root.currentFiles[i]
-            if (!file.relativePath.startsWith(prefix)) {
-                continue
-            }
-            const remainingPath = file.relativePath.slice(prefix.length)
-            const separatorIndex = remainingPath.indexOf("/")
-            if (separatorIndex >= 0) {
-                const name = remainingPath.slice(0, separatorIndex)
+            if (!file.relativePath.startsWith(prefix)) continue
+            const rest = file.relativePath.slice(prefix.length)
+            const sep = rest.indexOf("/")
+            if (sep >= 0) {
+                const name = rest.slice(0, sep)
                 const path = prefix + name
                 if (q.length === 0 || name.toLowerCase().indexOf(q) !== -1) {
-                    if (!folders[path]) {
-                        folders[path] = { kind: "folder", name: name, path: path, count: 0 }
-                    }
+                    if (!folders[path])
+                        folders[path] = { kind: "folder", name: name, path: path, count: 0, lastModified: "" }
                     folders[path].count++
+                    if ((file.lastModified || "") > folders[path].lastModified)
+                        folders[path].lastModified = file.lastModified
                 }
-            } else {
-                if (q.length === 0 || remainingPath.toLowerCase().indexOf(q) !== -1) {
-                    files.push({ kind: "file", name: remainingPath, relativePath: file.relativePath,
-                                 size: file.size, version: file.version })
-                }
+            } else if (q.length === 0 || rest.toLowerCase().indexOf(q) !== -1) {
+                files.push({ kind: "file", name: rest, relativePath: file.relativePath, path: "",
+                             size: file.size, version: file.version, lastModified: file.lastModified || "",
+                             conflict: root.conflictedFiles.hasOwnProperty(file.relativePath),
+                             conflictCopy: copies[file.relativePath] === true })
             }
         }
-
-        const folderItems = Object.keys(folders).map(function(path) { return folders[path] })
-        folderItems.sort(function(left, right) { return left.name.localeCompare(right.name) })
-        files.sort(function(left, right) { return left.name.localeCompare(right.name) })
+        const folderItems = Object.keys(folders).map(function(p) { return folders[p] })
+        folderItems.sort(function(a, b) { return a.name.localeCompare(b.name) })
+        files.sort(function(a, b) { return a.name.localeCompare(b.name) })
         root.browserItems = folderItems.concat(files)
     }
 
@@ -240,2944 +360,1704 @@ Item {
         root.rebuildFileBrowser()
     }
 
-    function browserPathAt(index) {
-        if (root.browsedRelativePath.length === 0) {
-            return ""
-        }
-        return root.browsedRelativePath.split("/").slice(0, index + 1).join("/")
-    }
-
-    function goUpInBrowser() {
-        const separatorIndex = root.browsedRelativePath.lastIndexOf("/")
-        root.browsedRelativePath = separatorIndex >= 0
-            ? root.browsedRelativePath.slice(0, separatorIndex)
-            : ""
-        root.rebuildFileBrowser()
-    }
-
-    function refreshHistory() {
-        if (root.context && root.openedFolderId >= 0) {
-            root.currentSyncHistory = root.context.syncHistoryForFolder(root.openedFolderId, 100)
-        } else {
-            root.currentSyncHistory = []
+    function resolveConflictFor(relativePath, conflictPath, resolution) {
+        if (!root.context || root.openedFolderId < 0) return
+        if (root.context.resolveConflict(root.openedFolderId, relativePath, conflictPath, resolution)) {
+            root.refreshFiles()
+            root.refreshHistory()
+            root.scheduleRebuild()
         }
     }
 
-    // Rafraichissement automatique apres chaque reindexation declenchee par
-    // FolderWatcher (Release 2) ou manuellement : l'utilisateur voit le
-    // nouveau contenu + l'historique (Release 3) sans avoir a naviguer.
+    // Historique groupe par jour.
+    readonly property var historyRows: {
+        const out = []
+        let day = ""
+        for (let i = 0; i < root.currentSyncHistory.length; i++) {
+            const e = root.currentSyncHistory[i]
+            const d = root.dayLabel(e.createdAt)
+            out.push({ newDay: d !== day, day: d, time: root.timeOf(e.createdAt), type: e.type,
+                       relativePath: e.relativePath, oldRelativePath: e.oldRelativePath || "", version: e.version })
+            day = d
+        }
+        return out
+    }
+    function dayCount(day) {
+        return root.historyRows.filter(function(h) { return h.day === day }).length
+    }
+
+    // ======================================================================
+    // Invitations, avis
+    // ======================================================================
+    function showNextShareConfirmation() {
+        if (inviteSheet.open || root.pendingShareConfirmations.length === 0) return
+        const queue = root.pendingShareConfirmations.slice()
+        const next = queue.shift()
+        root.pendingShareConfirmations = queue
+        inviteSheet.queueTotal = Math.max(inviteSheet.queueTotal, queue.length + 1)
+        inviteSheet.queueIndex = inviteSheet.queueTotal - queue.length
+        inviteSheet.folderId = next.folderId
+        inviteSheet.folderName = next.folderName
+        inviteSheet.ownerName = next.ownerName
+        inviteSheet.suggestedPath = next.suggestedPath
+        inviteSheet.allowWrite = next.allowWrite
+        inviteSheet.open = true
+    }
+
+    property string noticeKind: ""            // "" | "conflict" | "error"
+    property string noticeText: ""
+    property string noticeFolderUuid: ""
+    function showNotice(kind, text, uuid) {
+        root.noticeKind = kind
+        root.noticeText = text
+        root.noticeFolderUuid = uuid || ""
+        noticeTimer.restart()
+    }
+    Timer { id: noticeTimer; interval: 8000; onTriggered: root.noticeKind = "" }
+
     Connections {
         target: root.context
         function onFolderReindexed(folderId, changeCount) {
-            var idx = root.indexingFolderIds.indexOf(folderId)
+            const idx = root.indexingFolderIds.indexOf(folderId)
             if (idx !== -1) {
-                var stillIndexing = root.indexingFolderIds.slice()
-                stillIndexing.splice(idx, 1)
-                root.indexingFolderIds = stillIndexing
+                const still = root.indexingFolderIds.slice()
+                still.splice(idx, 1)
+                root.indexingFolderIds = still
             }
             if (folderId === root.openedFolderId) {
                 root.refreshFiles()
                 root.refreshHistory()
             }
+            root.scheduleRebuild()
         }
-        // Émis dès que l'indexation démarre en arrière-plan (avant que le
-        // résultat ne soit connu) : ajoute folderId à la liste des
-        // dossiers en cours d'indexation pour afficher l'indicateur.
         function onIndexingStarted(folderId) {
-            if (root.indexingFolderIds.indexOf(folderId) === -1) {
+            if (root.indexingFolderIds.indexOf(folderId) === -1)
                 root.indexingFolderIds = root.indexingFolderIds.concat([folderId])
-            }
         }
-        // Un fichier reçu via le réseau (synchronisation d'un dossier
-        // partagé, cf. FolderSyncService::fileIntegrated) doit rafraîchir
-        // la liste des fichiers et l'historique immédiatement, sans que
-        // l'utilisateur ait besoin de quitter puis rouvrir cet écran.
         function onFileReceived(folderUuid, relativePath) {
             if (folderUuid === root.openedFolderUuid) {
                 root.refreshFiles()
                 root.refreshHistory()
             }
+            root.scheduleRebuild()
         }
-        // Un dossier partagé DISTANT vient d'être reçu pour la première
-        // fois sans chemin local : demander confirmation avant de
-        // provisionner quoi que ce soit sur le disque (au lieu de
-        // l'auto-provisionner silencieusement). Plusieurs demandes peuvent
-        // arriver d'affilée (plusieurs dossiers reçus en rafale) : on les
-        // met en file et on les affiche une par une.
         function onFolderShareConfirmationRequested(folderId, folderName, ownerName, suggestedPath, allowWrite) {
-            root.pendingShareConfirmations.push({
-                folderId: folderId,
-                folderName: folderName,
-                ownerName: ownerName,
-                suggestedPath: suggestedPath,
-                allowWrite: allowWrite
-            })
+            root.pendingShareConfirmations = root.pendingShareConfirmations.concat([{
+                folderId: folderId, folderName: folderName, ownerName: ownerName,
+                suggestedPath: suggestedPath, allowWrite: allowWrite
+            }])
             root.showNextShareConfirmation()
+        }
+        function onErrorOccurred(message) {
+            root.showNotice("error", message, "")
+        }
+        function onConflictDetected(folderUuid, relativePath, conflictPath) {
+            if (folderUuid === root.openedFolderUuid) {
+                const updated = Object.assign({}, root.conflictedFiles)
+                updated[relativePath] = conflictPath
+                root.conflictedFiles = updated
+                root.rebuildFileBrowser()
+            }
+            let name = ""
+            for (let i = 0; i < root.folderRows.length; i++)
+                if (root.folderRows[i].uuid === folderUuid) name = root.folderRows[i].name
+            root.showNotice("conflict", qsTr("<b>Conflit dans %1.</b> « %2 » a été reçu alors qu'il avait changé ici ; la version reçue est mise de côté.")
+                                        .arg(root.esc(name)).arg(root.esc(relativePath)), folderUuid)
+            root.scheduleRebuild()
+        }
+        function onFolderTransferProgress(folderUuid, folderName, incoming, filesCompleted, filesTotal, bytesTransferred, bytesTotal) {
+            const b = Object.assign({}, root.syncBatches)
+            b[folderUuid + (incoming ? "|in" : "|out")] = { incoming: incoming, done: filesCompleted, total: filesTotal,
+                                                            bytes: bytesTransferred, bytesTotal: bytesTotal }
+            root.syncBatches = b
+        }
+        function onFolderTransferComplete(folderUuid, folderName, incoming, fileCount) {
+            const b = Object.assign({}, root.syncBatches)
+            delete b[folderUuid + (incoming ? "|in" : "|out")]
+            root.syncBatches = b
+            if (folderUuid === root.openedFolderUuid) {
+                root.refreshFiles()
+                root.refreshHistory()
+            }
+            root.scheduleRebuild()
         }
     }
 
     Component.onCompleted: {
-        if (root.context) {
-            root.context.refresh()
-            root.context.folderFilterProxy.filterMode = root.activeFilter
-            root.context.folderFilterProxy.searchText = root.searchText
+        if (root.context) root.context.refresh()
+        root.scheduleRebuild()
+    }
+    onSearchTextChanged: root.rebuildFileBrowser()
+
+    // ======================================================================
+    // Actions
+    // ======================================================================
+    function openSheet(name) { moreMenu.close(); root.sheet = name }
+    function openComposer() {
+        root.composerDone = false
+        root.composerError = ""
+        root.composerPath = ""
+        root.composerUsers = root.context ? root.context.availableUsers() : []
+        composer.reset()
+        root.composerOpen = true
+    }
+    function reindexCurrent() {
+        if (root.context && root.openedFolderId >= 0) {
+            root.context.shareFolder(root.openedFolderId)
+            root.refreshFiles()
+            root.refreshHistory()
         }
     }
-
-    onActiveFilterChanged: if (root.context) root.context.folderFilterProxy.filterMode = root.activeFilter
-    onSearchTextChanged: {
-        if (root.context) root.context.folderFilterProxy.searchText = root.searchText
-        root.rebuildFileBrowser()
-    }
-
-    Rectangle {
-        anchors.fill: parent
-        color: Theme.background
+    function openInExplorer() {
+        if (root.context && root.openedFolderId >= 0 && !root.context.openFolderLocation(root.openedFolderId))
+            root.showNotice("error", qsTr("<b>Impossible d'ouvrir l'emplacement du dossier.</b> Il a peut-être été déplacé ou renommé sur le disque."), "")
     }
 
     FolderDialog {
-        id: folderPickerDialog
+        id: composerPicker
         title: qsTr("Choisir un dossier local à partager")
-        currentFolder: createDialog.localPath.length > 0 ? createDialog.localPath
-                       : ((typeof settingsModel !== "undefined" && settingsModel) ? settingsModel.defaultSharedFolderPath : "")
-        onAccepted: {
-            // selectedFolder est une URL (ex: "file:///C:/Users/..." sous Windows,
-            // "file:///home/..." sous Linux/macOS). On ne peut pas juste retirer
-            // "file://" : sous Windows il reste alors un "/" en trop devant la
-            // lettre de lecteur ("/C:/Users/..."), ce qui rend le chemin invalide.
-            let path = decodeURIComponent(selectedFolder.toString())
-            path = path.replace(/^file:\/\//, "")
-            if (/^\/[A-Za-z]:/.test(path)) {
-                // Windows : "/C:/Users/..." -> "C:/Users/..."
-                path = path.substring(1)
-            }
-            createDialog.localPath = path
-        }
+        currentFolder: root.composerPath.length > 0 ? "file:///" + root.composerPath : (root.defaultSharedPath.length ? "file:///" + root.defaultSharedPath : "")
+        onAccepted: root.composerPath = root.cleanUrl(selectedFolder)
     }
-
-    // ---- bannière de conflit (Release 8) ----
-    // Affichée quand FolderSyncService détecte qu'un fichier reçu entre en
-    // conflit avec un fichier local de même nom mais de contenu différent.
-    Rectangle {
-        id: conflictBanner
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        height: conflictLabel.implicitHeight + Theme.spacingMedium
-        color: Theme.warningColor
-        visible: opacity > 0
-        opacity: 0
-        z: 11              // au-dessus de la bannière d'erreur (z=10)
-
-        Label {
-            id: conflictLabel
-            anchors.centerIn: parent
-            width: parent.width - Theme.spacingLarge
-            color: Theme.inkOnDanger
-            font.pixelSize: Theme.fontSizeSmall
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
-        }
-
-        Behavior on opacity { NumberAnimation { duration: 150 } }
-
-        Timer {
-            id: conflictTimer
-            interval: 6000
-            onTriggered: conflictBanner.opacity = 0
-        }
-
-        function show(relativePath, conflictPath) {
-            conflictLabel.text = qsTr("⚠ Conflit : « %1 » reçu en conflit → renommé « %2 »")
-                .arg(relativePath).arg(conflictPath)
-            opacity = 1
-            conflictTimer.restart()
-        }
-    }
-
-    // ---- bannière d'erreur ----
-    Rectangle {
-        id: errorBanner
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        height: errorLabel.implicitHeight + Theme.spacingMedium
-        color: Theme.error
-        visible: opacity > 0
-        opacity: 0
-        z: 10
-
-        Label {
-            id: errorLabel
-            anchors.centerIn: parent
-            width: parent.width - Theme.spacingLarge
-            color: Theme.inkOnDanger
-            font.pixelSize: Theme.fontSizeSmall
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
-        }
-
-        Behavior on opacity { NumberAnimation { duration: 150 } }
-
-        Timer {
-            id: errorTimer
-            interval: 4000
-            onTriggered: errorBanner.opacity = 0
-        }
-
-        function show(message) {
-            errorLabel.text = message
-            opacity = 1
-            errorTimer.restart()
-        }
-    }
-
-    Connections {
-        target: root.context
-        function onErrorOccurred(message) {
-            errorBanner.show(message)
-        }
-        function onConflictDetected(folderUuid, relativePath, conflictPath) {
-            // Enregistre le conflit (badge sur la ligne) et affiche la banniere.
-            const updated = Object.assign({}, root.conflictedFiles)
-            updated[relativePath] = conflictPath
-            root.conflictedFiles = updated
-            root.rebuildFileBrowser()
-            conflictBanner.show(relativePath, conflictPath)
-        }
-    }
-
-    // ---- dialogue de création (en 2 etapes : Dossier puis Partage) ----
-    AppDialog {
-        id: createDialog
-        title: qsTr("Nouveau dossier partagé")
-        headerIcon: "\uf07b"
-        dialogWidth: 500
-        // Hauteur calculee sur le contenu reel de l'etape affichee : les
-        // ColumnLayout des etapes 1/2 sont visible:false en alternance et
-        // sont donc exclus du calcul d'implicitHeight par ColumnLayout
-        // (comportement standard QtQuick.Layouts), ce qui fait varier
-        // naturellement la hauteur de la carte d'une etape a l'autre.
-        dialogHeight: createDialogMainColumn.implicitHeight + Theme.spacingMedium * 2
-        standardButtons: Dialog.NoButton
-        busyText: qsTr("Indexation et partage en cours…")
-
-        onClosed: busy = false
-
-        property string localPath: ""
-        // 1 = "Dossier" (nom, emplacement local, exclusions)
-        // 2 = "Partage" (destinataires, permission)
-        property int step: 1
-        readonly property bool step1Valid: nameField.text.trim().length > 0 && createDialog.localPath.length > 0
-
-        onOpened: {
-            nameField.text = ""
-            createDialog.step = 1
-            // Le champ localPath reste vide par defaut : l'utilisateur doit
-            // choisir explicitement un dossier via le selecteur.
-            localPath = ""
-            allowWriteCheckBox.checked = true
-            excludePatternsField.text = ""
-            reloadUsers()
-        }
-
-        function reloadUsers() {
-            availableUsersModel.clear()
-            if (!root.context) return
-            const users = root.context.availableUsers()
-            for (let i = 0; i < users.length; ++i) {
-                availableUsersModel.append({
-                    userId: users[i].userId,
-                    username: users[i].username,
-                    selected: false
-                })
-            }
-        }
-
-        ColumnLayout {
-            id: createDialogMainColumn
-            width: parent.width
-            spacing: Theme.spacingMedium
-
-            // ── Indicateur d'etape ──────────────────────────────────────
-            AppStepper {
-                Layout.fillWidth: true
-                Layout.bottomMargin: Theme.spacingXs
-                steps: [qsTr("Dossier"), qsTr("Partage")]
-                currentStep: createDialog.step
-            }
-
-            // ── Étape 1 : Dossier ────────────────────────────────────────
-            ColumnLayout {
-                id: step1Column
-                Layout.fillWidth: true
-                visible: createDialog.step === 1
-                spacing: Theme.spacingMedium
-
-                AppTextField {
-                    id: nameField
-                    Layout.fillWidth: true
-                    label: qsTr("Nom du dossier partagé")
-                    placeholderText: qsTr("ex : Documents projet")
-                }
-
-                Label {
-                    text: qsTr("Dossier local à partager")
-                    color: Theme.textSecondary
-                    font.pixelSize: Theme.fontSizeSmall
-                }
-
-                FolderDropzone {
-                    path: createDialog.localPath
-                    onBrowseRequested: folderPickerDialog.open()
-                    onPathDropped: function (droppedPath) { createDialog.localPath = droppedPath }
-                }
-
-                AppTextField {
-                    id: excludePatternsField
-                    Layout.fillWidth: true
-                    label: qsTr("Exclure de la synchronisation (optionnel)")
-                    placeholderText: qsTr("ex : *.log, node_modules, drafts/*")
-                    helperText: qsTr("Motifs séparés par des virgules. S'applique en plus des exclusions par défaut (dossiers systèmes, fichiers temporaires…). Local à ce poste.")
-                }
-            }
-
-            // ── Étape 2 : Partage ────────────────────────────────────────
-            ColumnLayout {
-                id: step2Column
-                Layout.fillWidth: true
-                visible: createDialog.step === 2
-                spacing: Theme.spacingMedium
-
-                Label {
-                    text: qsTr("Partager avec")
-                    color: Theme.textSecondary
-                    font.pixelSize: Theme.fontSizeSmall
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    // Hauteur adaptative au nombre d'utilisateurs (au lieu
-                    // d'une hauteur fixe de 160px) : avec peu d'utilisateurs,
-                    // une boite toujours haute de 160px laissait un grand
-                    // espace vide entre le contenu et les boutons Suivant/
-                    // Créer. On garde 160px comme MAXIMUM (scroll au-dela),
-                    // et un minimum de 56px pour rester lisible/cliquable
-                    // meme a 1 seul utilisateur ou aucun ("Aucun autre
-                    // utilisateur").
-                    Layout.preferredHeight: Math.max(56, Math.min(
-                        usersListView.contentHeight + Theme.spacingSmall * 2, 160))
-                    radius: Theme.radiusMedium
-                    color: Theme.surfaceAlt
-                    border.width: 1
-                    border.color: Theme.border
-
-                    ListView {
-                        id: usersListView
-                        anchors.fill: parent
-                        anchors.margins: Theme.spacingSmall
-                        clip: true
-                        spacing: 4
-                        model: ListModel { id: availableUsersModel }
-
-                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-                        delegate: RowLayout {
-                            width: usersListView.width
-                            spacing: Theme.spacingSmall
-
-                            AppCheckBox {
-                                id: userCheckBox
-                                checked: selected
-                                onCheckedChanged: availableUsersModel.setProperty(index, "selected", checked)
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: username
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeSmall
-                            }
-                        }
-                    }
-
-                    Label {
-                        anchors.centerIn: parent
-                        visible: availableUsersModel.count === 0
-                        text: qsTr("Aucun autre utilisateur")
-                        color: Theme.textTertiary
-                        font.pixelSize: Theme.fontSizeSmall
-                    }
-                }
-
-                AppCheckBox {
-                    id: allowWriteCheckBox
-                    text: qsTr("Autoriser la modification (lecture/écriture)")
-                    checked: true
-                }
-            }
-
-            // ── Actions (differentes selon l'etape) ─────────────────────
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.spacingSmall
-                spacing: Theme.spacingSmall
-
-                Item { Layout.fillWidth: true }
-
-                AppButton {
-                    text: qsTr("Annuler")
-                    variant: "ghost"
-                    visible: createDialog.step === 1
-                    onClicked: createDialog.close()
-                }
-                AppButton {
-                    text: qsTr("Retour")
-                    variant: "secondary"
-                    visible: createDialog.step === 2
-                    onClicked: createDialog.step = 1
-                }
-                AppButton {
-                    text: qsTr("Suivant")
-                    variant: "primary"
-                    visible: createDialog.step === 1
-                    enabled: createDialog.step1Valid
-                    onClicked: createDialog.step = 2
-                }
-                AppButton {
-                    text: qsTr("Créer")
-                    variant: "primary"
-                    visible: createDialog.step === 2
-                    enabled: createDialog.step1Valid
-                    onClicked: {
-                        if (!root.context) return
-                        createDialog.busy = true
-                        var selectedUserIds = []
-                        for (var i = 0; i < availableUsersModel.count; i++) {
-                            if (availableUsersModel.get(i).selected) {
-                                selectedUserIds.push(availableUsersModel.get(i).userId)
-                            }
-                        }
-                        if (root.context.createFolder(nameField.text.trim(), createDialog.localPath,
-                                                       selectedUserIds, allowWriteCheckBox.checked,
-                                                       excludePatternsField.text.trim())) {
-                            createDialog.close()
-                        } else {
-                            createDialog.busy = false
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ---- dialogue de modification des motifs d'exclusion (debrief point #4) ----
-    AppDialog {
-        id: editExcludePatternsDialog
-        title: qsTr("Exclusions — %1").arg(editExcludePatternsDialog.targetFolderName)
-        headerIcon: "\uf05e"
-        dialogWidth: 420
-        // Hauteur calculee sur le contenu reel (mainColumn.implicitHeight),
-        // meme pattern que AdminView.qml : sans ca, height retombe sur
-        // Popup.implicitHeight qui ne remonte pas correctement celui du
-        // ColumnLayout enfant (cf. commentaire dans AppDialog.qml).
-        dialogHeight: mainColumn.implicitHeight + Theme.spacingMedium * 2
-        standardButtons: Dialog.NoButton
-
-        property int targetFolderId: -1
-        property string targetFolderName: ""
-        property var impactedPaths: []
-        // Motifs representes sous forme de chips (plutot qu'un seul champ
-        // texte a virgules) : direction visuelle validee sur la maquette.
-        property var patternsList: []
-        readonly property string patternsText: patternsList.join(",")
-
-        function addPattern(raw) {
-            var value = raw.trim()
-            if (value.length === 0) return
-            if (editExcludePatternsDialog.patternsList.indexOf(value) === -1) {
-                editExcludePatternsDialog.patternsList = editExcludePatternsDialog.patternsList.concat([value])
-            }
-            impactPreviewTimer.restart()
-        }
-
-        function removePattern(value) {
-            editExcludePatternsDialog.patternsList = editExcludePatternsDialog.patternsList.filter(function(p) { return p !== value })
-            impactPreviewTimer.restart()
-        }
-
-        function refreshImpactPreview() {
-            if (root.context && editExcludePatternsDialog.targetFolderId >= 0) {
-                editExcludePatternsDialog.impactedPaths =
-                    root.context.previewExcludePatternsImpact(editExcludePatternsDialog.targetFolderId,
-                                                               editExcludePatternsDialog.patternsText)
-            } else {
-                editExcludePatternsDialog.impactedPaths = []
-            }
-        }
-
-        onOpened: {
-            var current = root.context ? root.context.excludePatternsForFolder(editExcludePatternsDialog.targetFolderId) : ""
-            editExcludePatternsDialog.patternsList = current.length > 0
-                ? current.split(",").map(function(p) { return p.trim() }).filter(function(p) { return p.length > 0 })
-                : []
-            excludePatternsEditField.text = ""
-            // Motifs actuellement enregistres : par definition aucun fichier
-            // deja indexe ne peut les matcher (ils seraient deja tombstones),
-            // donc l'impact initial est toujours vide -- pas la peine
-            // d'attendre le debounce pour l'afficher.
-            editExcludePatternsDialog.impactedPaths = []
-        }
-
-        ColumnLayout {
-            id: mainColumn
-            width: parent.width
-            spacing: Theme.spacingMedium
-
-            Label {
-                text: qsTr("Motifs glob (ex : *.log, node_modules, drafts/*). S'ajoutent aux exclusions par défaut. Ne s'applique qu'à ce poste.")
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeSmall
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
-
-            AppTextField {
-                id: excludePatternsEditField
-                Layout.fillWidth: true
-                placeholderText: qsTr("Tapez un motif puis Entrée…")
-                field.onAccepted: {
-                    editExcludePatternsDialog.addPattern(text)
-                    text = ""
-                }
-                // Une virgule tapee en cours de saisie cree directement une
-                // chip (comportement familier, ex. champs "tags" web).
-                field.onTextChanged: {
-                    if (text.indexOf(",") !== -1) {
-                        var parts = text.split(",")
-                        for (var i = 0; i < parts.length - 1; i++) {
-                            editExcludePatternsDialog.addPattern(parts[i])
-                        }
-                        text = parts[parts.length - 1]
-                    }
-                }
-            }
-
-            // Chips des motifs actifs.
-            Flow {
-                Layout.fillWidth: true
-                spacing: Theme.spacingSmall
-                visible: editExcludePatternsDialog.patternsList.length > 0
-
-                Repeater {
-                    model: editExcludePatternsDialog.patternsList
-
-                    delegate: Rectangle {
-                        radius: Theme.radiusMedium
-                        color: Theme.primaryMuted
-                        border.width: 1
-                        border.color: Theme.primary
-                        height: 28
-                        width: chipRow.implicitWidth + Theme.spacingMedium
-
-                        RowLayout {
-                            id: chipRow
-                            anchors.centerIn: parent
-                            spacing: 6
-
-                            Label {
-                                text: modelData
-                                color: Theme.primaryDeep
-                                font.pixelSize: Theme.fontSizeCaption
-                                font.bold: true
-                            }
-                            Text {
-                                text: "\u2715"
-                                color: Theme.primaryDeep
-                                font.pixelSize: Theme.fs(10)
-                                MouseArea {
-                                    anchors.fill: parent
-                                    anchors.margins: -4
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: editExcludePatternsDialog.removePattern(modelData)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Label {
-                visible: editExcludePatternsDialog.patternsList.length === 0
-                text: qsTr("Aucun motif d'exclusion pour ce dossier.")
-                color: Theme.textTertiary
-                font.pixelSize: Theme.fontSizeCaption
-                font.italic: true
-            }
-
-            Timer {
-                id: impactPreviewTimer
-                interval: 250
-                repeat: false
-                onTriggered: editExcludePatternsDialog.refreshImpactPreview()
-            }
-
-            Label {
-                visible: editExcludePatternsDialog.impactedPaths.length > 0
-                text: {
-                    var paths = editExcludePatternsDialog.impactedPaths
-                    var shown = paths.slice(0, 5).join(", ")
-                    var extra = paths.length > 5 ? qsTr(" (+%1 autre(s))").arg(paths.length - 5) : ""
-                    return qsTr("⚠ %1 fichier(s) déjà partagé(s) seront retirés à l'enregistrement : %2%3")
-                        .arg(paths.length).arg(shown).arg(extra)
-                }
-                color: Theme.warning
-                font.pixelSize: Theme.fontSizeSmall
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
-
-            Label {
-                text: qsTr("Les fichiers déjà indexés qui correspondent à un nouveau motif seront retirés lors de la prochaine réindexation (immédiate à la validation).")
-                color: Theme.textTertiary
-                font.pixelSize: Theme.fontSizeSmall
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.spacingSmall
-                spacing: Theme.spacingSmall
-
-                AppButton {
-                    text: qsTr("Annuler")
-                    variant: "secondary"
-                    Layout.fillWidth: true
-                    onClicked: editExcludePatternsDialog.close()
-                }
-                AppButton {
-                    text: qsTr("Enregistrer")
-                    variant: "primary"
-                    Layout.fillWidth: true
-                    onClicked: {
-                        if (root.context && editExcludePatternsDialog.targetFolderId >= 0) {
-                            if (root.context.updateExcludePatterns(editExcludePatternsDialog.targetFolderId,
-                                                                    editExcludePatternsDialog.patternsText)) {
-                                editExcludePatternsDialog.close()
-                                root.refreshFiles()
-                                root.refreshHistory()
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ---- dialogue de définition du chemin local pour dossiers distants ----
-    AppDialog {
-        id: setLocalPathDialog
-        title: qsTr("Définir le dossier local — %1").arg(setLocalPathDialog.targetFolderName)
-        headerIcon: "\uf07c"
-        dialogWidth: 420
-        // Hauteur calculee sur le contenu reel (cf. createDialog plus haut) :
-        // une valeur fixe (280 auparavant) ne tenait pas compte du texte
-        // d'intro sur plusieurs lignes ni de la zone de depot vide (116px),
-        // ce qui poussait les boutons Annuler/Definir hors de la carte.
-        dialogHeight: setLocalPathColumn.implicitHeight + Theme.spacingMedium * 2
-        standardButtons: Dialog.NoButton
-
-        property int targetFolderId: -1
-        property string targetFolderName: ""
-        property string targetFolderUuid: ""
-        property string localPath: ""
-
-        onOpened: {
-            setLocalPathDialog.localPath = ""
-        }
-
-        ColumnLayout {
-            id: setLocalPathColumn
-            width: parent.width
-            spacing: Theme.spacingMedium
-
-            Label {
-                text: qsTr("Ce dossier partagé provient d'un autre poste.\nChoisissez le dossier local où les fichiers seront téléchargés.")
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeSmall
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
-
-            Label {
-                text: qsTr("Dossier local")
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeSmall
-            }
-            FolderDropzone {
-                path: setLocalPathDialog.localPath
-                emptyHint: qsTr("Cliquez ou glissez le dossier de destination ici")
-                onBrowseRequested: remoteFolderPickerDialog.open()
-                onPathDropped: function (droppedPath) { setLocalPathDialog.localPath = droppedPath }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.spacingSmall
-                spacing: Theme.spacingSmall
-
-                AppButton {
-                    text: qsTr("Annuler")
-                    variant: "secondary"
-                    Layout.fillWidth: true
-                    onClicked: setLocalPathDialog.close()
-                }
-                AppButton {
-                    text: qsTr("Définir")
-                    variant: "primary"
-                    Layout.fillWidth: true
-                    enabled: setLocalPathDialog.localPath.length > 0
-                    onClicked: {
-                        if (root.context && setLocalPathDialog.targetFolderId >= 0) {
-                            if (root.context.setFolderLocalPath(setLocalPathDialog.targetFolderId, setLocalPathDialog.localPath)) {
-                                setLocalPathDialog.close()
-                                root.openFolder(setLocalPathDialog.targetFolderId, setLocalPathDialog.targetFolderName, false, setLocalPathDialog.targetFolderUuid)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     FolderDialog {
-        id: remoteFolderPickerDialog
+        id: locationPicker
         title: qsTr("Choisir le dossier local")
-        currentFolder: (typeof settingsModel !== "undefined" && settingsModel) ? settingsModel.defaultSharedFolderPath : ""
-        onAccepted: {
-            let path = decodeURIComponent(selectedFolder.toString())
-            path = path.replace(/^file:\/\//, "")
-            if (/^\/[A-Za-z]:/.test(path)) {
-                path = path.substring(1)
-            }
-            setLocalPathDialog.localPath = path
-        }
+        currentFolder: root.defaultSharedPath.length ? "file:///" + root.defaultSharedPath : ""
+        onAccepted: locationSheet.localPath = root.cleanUrl(selectedFolder)
     }
 
-    // ---- dialogue de confirmation d'un nouveau partage reçu ----
-    //
-    // Affiché quand core::SharedFolderContext émet
-    // folderShareConfirmationRequested() : un pair vient de nous partager un
-    // dossier pour la première fois. On demande explicitement l'accord de
-    // l'utilisateur avant de commencer quoi que ce soit sur son disque
-    // (au lieu d'auto-provisionner silencieusement), tout en lui montrant OÙ
-    // le contenu serait placé s'il accepte.
-    AppDialog {
-        id: shareConfirmDialog
-        title: qsTr("Nouveau dossier partagé — %1").arg(shareConfirmDialog.targetFolderName)
-        headerIcon: "\uf07b"
-        dialogWidth: 440
-        // Hauteur calculee sur le contenu reel (au lieu d'une hauteur fixe
-        // de 300px) : avec une hauteur fixe et un Item{Layout.fillHeight}
-        // pour pousser les boutons en bas, un message court laissait un
-        // grand espace vide entre le texte et les boutons Refuser/Accepter.
-        dialogHeight: shareConfirmColumn.implicitHeight + Theme.spacingMedium * 2
-        standardButtons: Dialog.NoButton
-        closePolicy: Popup.NoAutoClose
-        showCloseButton: false
-        busyText: qsTr("Préparation de la synchronisation…")
+    // ======================================================================
+    // Composants de mise en page
+    // ======================================================================
+    readonly property real pageW: width - 2 * Theme.pagePadding
+    readonly property bool heroWide: pageW > 1180
+    readonly property bool foldersWide: pageW > 860
+    readonly property real listWidth: pageW > 1240 ? 330 : 290
 
-        onClosed: {
-            busy = false
-            root.showNextShareConfirmation()
+    // Onglet souligne d'encre (filtres de la liste, Fichiers / Historique).
+    component InkTab: AbstractButton {
+        id: it
+        property bool current: false
+        property string count: ""
+        property bool danger: false
+        property real textSize: Theme.fs(12.5)
+        hoverEnabled: true
+        focusPolicy: Qt.StrongFocus
+        padding: 0
+        implicitHeight: 30
+        implicitWidth: itRow.implicitWidth
+        Accessible.role: Accessible.PageTab
+        Accessible.name: it.text
+        HoverHandler { cursorShape: Qt.PointingHandCursor }
+        background: Item {
+            Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 2; color: it.current ? Theme.ruleInk : "transparent" }
+            Rectangle { anchors.fill: parent; anchors.margins: -3; color: "transparent"; radius: Theme.radiusSheet; border.width: it.visualFocus ? 2 : 0; border.color: Theme.focusRing }
         }
-
-        property int targetFolderId: -1
-        property string targetFolderName: ""
-        property string ownerName: ""
-        property string suggestedPath: ""
-        property bool allowWrite: false
-
-        ColumnLayout {
-            id: shareConfirmColumn
-            width: parent.width
-            spacing: Theme.spacingMedium
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Theme.spacingSmall
-
-                Label {
-                    Layout.fillWidth: true
-                    text: shareConfirmDialog.ownerName.length > 0
-                        ? qsTr("« %1 » vient de partager le dossier « %2 » avec vous.")
-                            .arg(shareConfirmDialog.ownerName).arg(shareConfirmDialog.targetFolderName)
-                        : qsTr("Un dossier partagé « %1 » a été reçu.").arg(shareConfirmDialog.targetFolderName)
-                    color: Theme.text
-                    font.pixelSize: Theme.fontSizeBody
-                    wrapMode: Text.WordWrap
+        contentItem: Item {
+            Row {
+                id: itRow
+                spacing: 6
+                anchors.top: parent.top
+                anchors.topMargin: 3
+                Text {
+                    text: it.text
+                    color: it.current || it.hovered ? Theme.ink : Theme.ink3
+                    font.family: Theme.fontFamily
+                    font.pixelSize: it.textSize
+                    font.weight: it.current ? Theme.weightSemibold : Theme.weightMedium
                 }
-
-                // Badge de permission : direction visuelle validee sur la
-                // maquette. Reflete l'acces reellement accorde par le
-                // proprietaire (lecture seule si allowWrite est faux).
-                Rectangle {
-                    Layout.alignment: Qt.AlignTop
-                    radius: Theme.radiusPill
-                    color: shareConfirmDialog.allowWrite ? Theme.successMuted : Theme.surfaceAlt
-                    border.width: 1
-                    border.color: shareConfirmDialog.allowWrite ? Theme.success : Theme.border
-                    height: 24
-                    width: permissionBadgeRow.implicitWidth + Theme.spacingMedium
-
-                    RowLayout {
-                        id: permissionBadgeRow
-                        anchors.centerIn: parent
-                        spacing: 4
-
-                        FaIcon {
-                            glyph: shareConfirmDialog.allowWrite ? "\uf044" : "\uf06e"
-                            font.pixelSize: Theme.fs(10)
-                            color: shareConfirmDialog.allowWrite ? Theme.success : Theme.textSecondary
-                        }
-                        Label {
-                            text: shareConfirmDialog.allowWrite ? qsTr("Lecture/écriture") : qsTr("Lecture seule")
-                            color: shareConfirmDialog.allowWrite ? Theme.success : Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeCaption
-                            font.bold: true
-                        }
-                    }
-                }
-            }
-
-            Label {
-                text: qsTr("Si vous acceptez, son contenu sera synchronisé dans :")
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeSmall
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
-
-            Label {
-                text: shareConfirmDialog.suggestedPath
-                color: Theme.text
-                font.pixelSize: Theme.fontSizeSmall
-                font.family: "monospace"
-                elide: Text.ElideMiddle
-                wrapMode: Text.WrapAnywhere
-                Layout.fillWidth: true
-            }
-
-            Label {
-                text: qsTr("Vous pourrez changer cet emplacement plus tard, ou refuser pour l'instant sans perdre l'accès au dossier.")
-                color: Theme.textTertiary
-                font.pixelSize: Theme.fontSizeSmall
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.spacingSmall
-                spacing: Theme.spacingSmall
-
-                AppButton {
-                    text: qsTr("Refuser")
-                    variant: "secondary"
-                    Layout.fillWidth: true
-                    onClicked: {
-                        if (root.context && shareConfirmDialog.targetFolderId >= 0) {
-                            root.context.declineFolderShare(shareConfirmDialog.targetFolderId)
-                        }
-                        shareConfirmDialog.close()
-                    }
-                }
-                AppButton {
-                    text: qsTr("Accepter")
-                    variant: "primary"
-                    Layout.fillWidth: true
-                    onClicked: {
-                        shareConfirmDialog.busy = true
-                        if (root.context && shareConfirmDialog.targetFolderId >= 0) {
-                            root.context.acceptFolderShare(shareConfirmDialog.targetFolderId)
-                        }
-                        shareConfirmDialog.close()
-                    }
+                Text {
+                    visible: it.count.length > 0
+                    text: it.count
+                    color: it.danger ? Theme.dangerInk : Theme.ink3
+                    font.family: Theme.fontFamilySerif
+                    font.pixelSize: Theme.fs(12)
+                    font.weight: Theme.weightBold
                 }
             }
         }
     }
 
-    // ---- dialogue de gestion des accès (voir / révoquer / ajouter) ----
-    AppDialog {
-        id: manageAccessDialog
-        title: qsTr("Gérer les accès — %1").arg(manageAccessDialog.targetFolderName)
-        headerIcon: "\uf0c0"
-        dialogWidth: 460
-        // Hauteur calculee sur le contenu reel (meme pattern que
-        // AdminView.qml / editExcludePatternsDialog), plafonnee a 560
-        // pour garder un filet de securite si la liste d'acces est
-        // longue (le ScrollView de la liste prend le relais du scroll
-        // au-dela de sa propre limite, cf. plus bas).
-        dialogHeight: Math.min(manageAccessMainColumn.implicitHeight + Theme.spacingMedium * 2, 560)
-        standardButtons: Dialog.NoButton
-
-        property int    targetFolderId: -1
-        property string targetFolderName: ""
-        property var    grants: []          // QVariantList {userId, username, permission}
-
-        // ---- état révocation en attente ----
-        property int    pendingRevokeUserId: -1
-        property string pendingRevokeUsername: ""
-
-        onOpened: manageAccessDialog.reload()
-
-        function reload() {
-            manageAccessDialog.pendingRevokeUserId = -1
-            if (root.context && manageAccessDialog.targetFolderId >= 0) {
-                manageAccessDialog.grants = root.context.accessForFolder(manageAccessDialog.targetFolderId)
-            } else {
-                manageAccessDialog.grants = []
-            }
-            addUserCombo.reloadCandidates()
+    // Petit bouton carre a filet (remonter, bascule liste / vignettes).
+    component SquareButton: AbstractButton {
+        id: sq
+        property string iconPath: ""
+        property bool pressedState: false
+        property string tip: ""
+        hoverEnabled: true
+        focusPolicy: Qt.StrongFocus
+        implicitWidth: 30
+        implicitHeight: 28
+        Accessible.name: sq.tip
+        ToolTip.visible: sq.tip.length > 0 && sq.hovered
+        ToolTip.text: sq.tip
+        ToolTip.delay: 400
+        HoverHandler { cursorShape: sq.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor }
+        background: Rectangle {
+            radius: Theme.radiusSheet
+            color: sq.pressedState ? Theme.ink : (sq.hovered && sq.enabled ? Theme.selectWash : "transparent")
+            border.width: sq.visualFocus ? 2 : 1
+            border.color: sq.visualFocus ? Theme.focusRing : Theme.lineStrong
         }
-
-        ColumnLayout {
-            id: manageAccessMainColumn
-            width: parent.width
-            spacing: Theme.spacingMedium
-
-            // ── Section « utilisateurs actuels » ──────────────────────────
-            Label {
-                text: qsTr("Accès accordés")
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeSmall
-                font.bold: true
-            }
-
-            // Bandeau de confirmation de révocation (inline, sans popup)
-            Rectangle {
-                id: revokeConfirmBanner
-                Layout.fillWidth: true
-                height: 52
-                radius: Theme.radiusMedium
-                color: Theme.errorMuted
-                border.color: Theme.error
-                border.width: 1
-                visible: manageAccessDialog.pendingRevokeUserId >= 0
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: Theme.spacingSmall
-                    anchors.rightMargin: Theme.spacingSmall
-                    spacing: Theme.spacingSmall
-
-                    Label {
-                        Layout.fillWidth: true
-                        text: qsTr("Révoquer l'accès de « %1 » ?").arg(manageAccessDialog.pendingRevokeUsername)
-                        color: Theme.error
-                        font.pixelSize: Theme.fontSizeSmall
-                        wrapMode: Text.WordWrap
-                    }
-                    AppButton {
-                        text: qsTr("Annuler")
-                        variant: "ghost"
-                        onClicked: manageAccessDialog.pendingRevokeUserId = -1
-                    }
-                    AppButton {
-                        text: qsTr("Confirmer")
-                        variant: "danger"
-                        onClicked: {
-                            if (root.context) {
-                                root.context.revokeAccess(manageAccessDialog.targetFolderId,
-                                                          manageAccessDialog.pendingRevokeUserId)
-                                manageAccessDialog.reload()
-                            }
-                        }
-                    }
-                }
-            }
-
-            ScrollView {
-                Layout.fillWidth: true
-                // La liste epouse son contenu reel (nombre d'acces
-                // accordes) au lieu d'une hauteur fixe de 180px qui
-                // laissait un grand vide des qu'il y avait peu
-                // d'utilisateurs. Plafonnee a 180 : au-dela, ca defile.
-                Layout.preferredHeight: Math.min(Math.max(grantsListView.contentHeight, 56), 180)
-                clip: true
-
-                ListView {
-                    id: grantsListView
-                    anchors.fill: parent
-                    spacing: 4
-                    model: manageAccessDialog.grants
-
-                    delegate: Rectangle {
-                        width: grantsListView.width
-                        height: 48
-                        radius: Theme.radiusSmall
-                        color: Theme.surfaceAlt
-                        border.width: 1
-                        border.color: Theme.border
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: Theme.spacingSmall
-                            anchors.rightMargin: Theme.spacingSmall
-                            spacing: Theme.spacingSmall
-
-                            // Nom seul : la permission est portee par la
-                            // bascule segmentee a droite (direction visuelle
-                            // validee sur la maquette, remplace le bouton
-                            // "→ Lecture/Écriture" et le sous-libelle).
-                            Label {
-                                Layout.fillWidth: true
-                                text: modelData.username
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.bold: true
-                            }
-
-                            // Bascule segmentee Lecture / Écriture
-                            AppSegmentedControl {
-                                Layout.preferredWidth: 190
-                                model: [
-                                    { label: qsTr("Lecture"), glyph: "\uf06e" },
-                                    { label: qsTr("Écriture"), glyph: "\uf044" }
-                                ]
-                                currentIndex: modelData.permission === "Write" ? 1 : 0
-                                onActivated: function(index) {
-                                    if (root.context) {
-                                        root.context.changePermission(
-                                            manageAccessDialog.targetFolderId,
-                                            modelData.userId,
-                                            index === 1)
-                                        manageAccessDialog.reload()
-                                    }
-                                }
-                            }
-
-                            // Bouton révoquer (avec confirmation inline)
-                            AppButton {
-                                text: qsTr("Révoquer")
-                                variant: "danger"
-                                onClicked: {
-                                    manageAccessDialog.pendingRevokeUserId   = modelData.userId
-                                    manageAccessDialog.pendingRevokeUsername = modelData.username
-                                }
-                            }
-                        }
-                    }
-
-                    Label {
-                        visible: grantsListView.count === 0
-                        anchors.centerIn: parent
-                        text: qsTr("Ce dossier n'est partagé avec aucun autre utilisateur.")
-                        color: Theme.textTertiary
-                        horizontalAlignment: Text.AlignHCenter
-                        wrapMode: Text.WordWrap
-                        width: parent.width - Theme.spacingLarge
-                        font.pixelSize: Theme.fontSizeSmall
-                    }
-                }
-            }
-
-            // ── Séparateur ────────────────────────────────────────────────
-            Rectangle {
-                Layout.fillWidth: true
-                height: 1
-                color: Theme.border
-            }
-
-            // ── Section « ajouter un utilisateur » ────────────────────────
-            Label {
-                text: qsTr("Ajouter un utilisateur")
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeSmall
-                font.bold: true
-            }
-
-            RowLayout {
-                id: addUserCombo
-                Layout.fillWidth: true
-                spacing: Theme.spacingSmall
-
-                // Liste des candidats = tous les utilisateurs pas encore dans grants
-                property var candidates: []
-                property int selectedUserId: -1
-                property string selectedUsername: ""
-
-                function reloadCandidates() {
-                    if (!root.context) { candidates = []; return }
-                    const all = root.context.availableUsers()
-                    const grantedIds = {}
-                    for (let i = 0; i < manageAccessDialog.grants.length; ++i) {
-                        grantedIds[manageAccessDialog.grants[i].userId] = true
-                    }
-                    const filtered = []
-                    for (let j = 0; j < all.length; ++j) {
-                        if (!grantedIds[all[j].userId]) filtered.push(all[j])
-                    }
-                    candidates = filtered
-                    candidateModel.clear()
-                    for (let k = 0; k < filtered.length; ++k) {
-                        candidateModel.append(filtered[k])
-                    }
-                    addUserComboBox.currentIndex = -1
-                    addUserCombo.selectedUserId  = -1
-                    addUserCombo.selectedUsername = ""
-                }
-
-                AppComboBox {
-                    id: addUserComboBox
-                    Layout.fillWidth: true
-                    model: ListModel { id: candidateModel }
-                    textRole: "username"
-                    currentIndex: -1
-                    displayText: currentIndex < 0 ? qsTr("Choisir un utilisateur…") : currentText
-
-                    onCurrentIndexChanged: {
-                        if (currentIndex >= 0 && currentIndex < candidateModel.count) {
-                            addUserCombo.selectedUserId  = candidateModel.get(currentIndex).userId
-                            addUserCombo.selectedUsername = candidateModel.get(currentIndex).username
-                        } else {
-                            addUserCombo.selectedUserId  = -1
-                            addUserCombo.selectedUsername = ""
-                        }
-                    }
-
-                    Label {
-                        visible: candidateModel.count === 0
-                        anchors.centerIn: parent
-                        text: qsTr("Tous les utilisateurs ont déjà accès")
-                        color: Theme.textTertiary
-                        font.pixelSize: Theme.fontSizeSmall
-                    }
-                }
-
-                AppCheckBox {
-                    id: addWriteCheckBox
-                    text: qsTr("Écriture")
-                    checked: true
-                }
-
-                AppButton {
-                    text: qsTr("Ajouter")
-                    variant: "primary"
-                    enabled: addUserCombo.selectedUserId >= 0
-                    onClicked: {
-                        if (root.context && addUserCombo.selectedUserId >= 0) {
-                            root.context.grantAccess(
-                                manageAccessDialog.targetFolderId,
-                                addUserCombo.selectedUserId,
-                                addWriteCheckBox.checked)
-                            manageAccessDialog.reload()
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ---- dialogue de confirmation de suppression ----
-    AppDialog {
-        id: removeConfirmDialog
-        title: qsTr("Supprimer ce dossier partagé ?")
-        headerIcon: "\uf1f8"
-        dialogWidth: 380
-        standardButtons: Dialog.NoButton
-
-        property int targetFolderId: -1
-        property string targetFolderName: ""
-
-        ColumnLayout {
-            anchors.fill: parent
-            spacing: Theme.spacingMedium
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Theme.spacingSmall
-
-                Rectangle {
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    Layout.alignment: Qt.AlignTop
-                    radius: Theme.radiusMedium
-                    color: Theme.errorMuted
-
-                    FaIcon {
-                        anchors.centerIn: parent
-                        glyph: "\uf071"
-                        font.pixelSize: Theme.fs(15)
-                        color: Theme.error
-                    }
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    text: qsTr("« %1 » ne sera plus partagé. Les fichiers restent intacts sur le disque : seul l'enregistrement dans LocaLink est supprimé.").arg(removeConfirmDialog.targetFolderName)
-                    color: Theme.textSecondary
-                    wrapMode: Text.WordWrap
-                    font.pixelSize: Theme.fontSizeSmall
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Theme.spacingSmall
-                Item { Layout.fillWidth: true }
-                AppButton {
-                    text: qsTr("Annuler")
-                    variant: "ghost"
-                    onClicked: removeConfirmDialog.close()
-                }
-                AppButton {
-                    text: qsTr("Supprimer")
-                    variant: "danger"
-                    onClicked: {
-                        if (root.context && removeConfirmDialog.targetFolderId >= 0) {
-                            if (root.openedFolderId === removeConfirmDialog.targetFolderId) {
-                                root.openedFolderId = -1
-                            }
-                            root.context.removeFolder(removeConfirmDialog.targetFolderId)
-                        }
-                        removeConfirmDialog.close()
-                    }
-                }
-            }
-        }
-    }
-
-    // ---- layout principal ----
-    // Redesign aligne sur FileTransferView : barre d'adresse personnalisee
-    // (pilule fil d'Ariane, recherche, bascule grille/liste) + rangee de
-    // filtres rapides en chips a la place de l'ancien panneau lateral
-    // ExplorerSidebar (desormais supprime de cet ecran), tuiles "carte"
-    // avec avatar colore, badges de statut communs (StatusBadge) et barre
-    // d'etat inferieure fine, comme un explorateur natif.
-    ColumnLayout {
-        anchors.fill: parent
-        spacing: 0
-
-        // En-tete de page (racine uniquement) : titre + action principale.
-        AppHeader {
-            visible: root.openedFolderId < 0
-            title: qsTr("Dossiers partagés")
-            subtitle: qsTr("Dossiers synchronisés entre les postes du réseau local, avec des droits par membre.")
-            bottomPadding: 12
-
-            AppButton {
-                text: qsTr("Nouveau dossier")
-                iconGlyph: ""
-                variant: "primary"
-                onClicked: createDialog.open()
-            }
-        }
-
-        // =========================================================
-        // Barre d.adresse personnalisée (custom, meme principe que
-        // FileTransferView) : navigation + fil d'Ariane pilule +
-        // recherche + bascule grille/liste + actions propres a l'ecran.
-        // =========================================================
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 52
-            color: root.openedFolderId >= 0 ? Theme.surface0 : "transparent"
-
-            Rectangle {
-                visible: root.openedFolderId >= 0
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 1
-                color: Theme.line
-            }
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: Theme.pagePadding - (root.openedFolderId >= 0 ? 10 : 0)
-                anchors.rightMargin: Theme.pagePadding
-                spacing: 8
-
-                IconButton {
-                    // A la racine, la navigation laterale suffit : le
-                    // retour ne sert qu'a remonter dans un dossier ouvert.
-                    visible: root.openedFolderId >= 0
-                    glyph: "\uf060"
-                    variant: "ghost"
-                    size: 30
-                    tooltip: qsTr("Dossier parent")
-                    onClicked: {
-                        if (root.openedFolderId >= 0) {
-                            if (root.browsedRelativePath.length > 0) {
-                                root.goUpInBrowser()
-                            } else {
-                                root.openedFolderId = -1
-                            }
-                        } else {
-                            root.backRequested()
-                        }
-                    }
-                }
-
-                IconButton {
-                    glyph: "\uf021"
-                    variant: "ghost"
-                    size: 30
-                    tooltip: qsTr("Actualiser")
-                    onClicked: {
-                        if (root.openedFolderId >= 0) {
-                            root.refreshFiles()
-                            root.refreshHistory()
-                        } else if (root.context) {
-                            root.context.refresh()
-                        }
-                    }
-                }
-
-                // Fil d'Ariane en pilule
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 32
-                    radius: Theme.radiusSmall
-                    color: Theme.breadcrumbChipHover
-                    border.width: 1
-                    border.color: Theme.border
-
-                    RowLayout {
-                        id: breadcrumbRow
-                        anchors.left: parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.leftMargin: 12
-                        // Pas de anchors.right : le row ne s'etire pas sur
-                        // toute la largeur de la pilule, il ne prend que la
-                        // place necessaire a son contenu.
-                        spacing: 6
-
-                        Label {
-                            text: qsTr("Dossiers partagés")
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.family: Theme.fontFamily
-                            color: Theme.textSecondary
-
-                            MouseArea {
-                                anchors.fill: parent
-                                anchors.margins: -4
-                                cursorShape: root.openedFolderId >= 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                enabled: root.openedFolderId >= 0
-                                onClicked: root.openedFolderId = -1
-                            }
-                        }
-
-                        Label {
-                            visible: root.openedFolderId >= 0
-                            text: "/"
-                            font.pixelSize: Theme.fontSizeCaption
-                            font.family: Theme.fontFamily
-                            color: Theme.textTertiary
-                        }
-
-                        Label {
-                            visible: root.openedFolderId >= 0
-                            text: root.openedFolderName
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.weight: Font.Medium
-                            font.family: Theme.fontFamily
-                            color: root.browsedRelativePath.length > 0 ? Theme.textSecondary : Theme.text
-                            elide: Text.ElideRight
-                            Layout.maximumWidth: 180
-
-                            MouseArea {
-                                anchors.fill: parent
-                                anchors.margins: -4
-                                cursorShape: root.browsedRelativePath.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                enabled: root.browsedRelativePath.length > 0
-                                onClicked: root.openBrowserFolder("")
-                            }
-                        }
-
-                        // CORRECTIF PERF : retour visuel pendant l'indexation
-                        // asynchrone (cf. SyncEngine::reindexFolderAsync()) --
-                        // avant, le clic "Réindexer"/le partage semblait figer
-                        // l'appli sur un poste peu performant ; maintenant
-                        // l'indexation tourne en arrière-plan et ce petit
-                        // indicateur montre qu'elle est en cours, sans bloquer
-                        // le reste de l'écran.
-                        RowLayout {
-                            visible: root.openedFolderId >= 0 && root.indexingFolderIds.indexOf(root.openedFolderId) !== -1
-                            spacing: 6
-
-                            Spinner {
-                                implicitWidth: 13
-                                implicitHeight: 13
-                                running: parent.visible
-                            }
-
-                            Label {
-                                text: qsTr("Indexation…")
-                                font.pixelSize: Theme.fontSizeCaption
-                                font.family: Theme.fontFamily
-                                color: Theme.textTertiary
-                            }
-                        }
-
-                        Repeater {
-                            model: root.openedFolderId >= 0 && root.browsedRelativePath.length > 0
-                                   ? root.browsedRelativePath.split("/") : []
-
-                            delegate: RowLayout {
-                                spacing: 6
-                                Layout.minimumWidth: 0
-
-                                Label {
-                                    text: "/"
-                                    font.pixelSize: Theme.fontSizeCaption
-                                    font.family: Theme.fontFamily
-                                    color: Theme.textTertiary
-                                }
-
-                                Label {
-                                    text: modelData
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.weight: Font.Medium
-                                    font.family: Theme.fontFamily
-                                    color: index === root.browsedRelativePath.split("/").length - 1
-                                           ? Theme.text : Theme.textSecondary
-                                    elide: Text.ElideRight
-                                    Layout.maximumWidth: 180
-                                    Layout.minimumWidth: 0
-
-                                    ToolTip.visible: truncated && breadcrumbSegmentArea.containsMouse
-                                    ToolTip.text: root.browserPathAt(index)
-                                    ToolTip.delay: 500
-
-                                    MouseArea {
-                                        id: breadcrumbSegmentArea
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.openBrowserFolder(root.browserPathAt(index))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Champ de recherche
-                Item {
-                    visible: !root.showHistory
-                    Layout.preferredWidth: 190
-                    Layout.preferredHeight: 32
-
-                    AppSearchField {
-                        id: addressSearchField
-                        compact: true
-                        anchors.fill: parent
-                        placeholderText: qsTr("Rechercher...")
-                        text: root.searchText
-                        rightInset: clearIcon.visible ? 18 : 0
-                        onTextChanged: root.searchText = text
-                    }
-
-                    FaIcon {
-                        id: clearIcon
-                        visible: root.searchText.length > 0
-                        glyph: "\uf00d"
-                        font.pixelSize: Theme.fs(11)
-                        color: Theme.textTertiary
-                        anchors.right: parent.right
-                        anchors.rightMargin: 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -6
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: addressSearchField.text = ""
-                        }
-                    }
-                }
-
-                Rectangle {
-                    visible: !root.showHistory
-                    width: 1
-                    height: 18
-                    color: Theme.border
-                }
-
-                // Bascule grille/liste
-                RowLayout {
-                    visible: !root.showHistory
-                    spacing: 0
-
-                    Rectangle {
-                        Layout.preferredWidth: 30
-                        Layout.preferredHeight: 30
-                        radius: Theme.radiusSmall
-                        color: root.viewMode === "grid" ? Theme.primaryMuted
-                               : (gridToggleArea.containsMouse ? Theme.surfaceHover : "transparent")
-                        Behavior on color { ColorAnimation { duration: 100 } }
-
-                        FaIcon {
-                            anchors.centerIn: parent
-                            glyph: "\uf009"
-                            font.pixelSize: Theme.fs(15)
-                            color: root.viewMode === "grid" ? Theme.primary : Theme.textTertiary
-                        }
-
-                        MouseArea {
-                            id: gridToggleArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.viewMode = "grid"
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.preferredWidth: 30
-                        Layout.preferredHeight: 30
-                        radius: Theme.radiusSmall
-                        color: root.viewMode === "list" ? Theme.primaryMuted
-                               : (listToggleArea.containsMouse ? Theme.surfaceHover : "transparent")
-                        Behavior on color { ColorAnimation { duration: 100 } }
-
-                        FaIcon {
-                            anchors.centerIn: parent
-                            glyph: "\uf0ca"
-                            font.pixelSize: Theme.fs(15)
-                            color: root.viewMode === "list" ? Theme.primary : Theme.textTertiary
-                        }
-
-                        MouseArea {
-                            id: listToggleArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.viewMode = "list"
-                        }
-                    }
-                }
-
-                Rectangle {
-                    visible: root.openedFolderId >= 0
-                    width: 1
-                    height: 18
-                    color: Theme.border
-                }
-
-                // APRÈS
-                IconButton {
-                    id: moreActionsBtn
-                    visible: root.openedFolderId >= 0
-                    glyph: "\uf142"   // ellipsis-v (Font Awesome) — menu "plus d'actions"
-                    variant: "ghost"
-                    size: 30
-                    onClicked: moreActionsMenu.open()
-
-                    Menu {
-                        id: moreActionsMenu
-                        y: parent.height + 2
-                        width: 230
-                        palette.window: Theme.surface
-                        palette.base: Theme.surface
-                        palette.text: Theme.text
-                        palette.highlight: Theme.primaryMuted
-                        palette.highlightedText: Theme.text
-                        padding: Theme.spacingXs
-
-                        background: Rectangle {
-                            radius: Theme.radiusMedium
-                            color: Theme.surface
-                            border.width: 1
-                            border.color: Theme.border
-                        }
-
-                        MenuItem {
-                            width: parent.width - 2 * Theme.spacingXs
-                            height: 40
-                            contentItem: Label {
-                                text: parent.text
-                                color: Theme.text
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSizeSmall
-                                verticalAlignment: Text.AlignVCenter
-                                leftPadding: Theme.spacingSmall
-                            }
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: parent.highlighted ? Theme.primaryMuted : "transparent"
-                            }
-                            text: root.showHistory ? qsTr("Fichiers") : qsTr("Historique")
-                            onTriggered: root.showHistory = !root.showHistory
-                        }
-                        MenuItem {
-                            width: parent.width - 2 * Theme.spacingXs
-                            height: 40
-                            enabled: root.openedFolderIsLocalOrigin
-                            contentItem: Label {
-                                text: parent.text
-                                color: parent.enabled ? Theme.text : Theme.textTertiary
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSizeSmall
-                                verticalAlignment: Text.AlignVCenter
-                                leftPadding: Theme.spacingSmall
-                            }
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: parent.highlighted ? Theme.primaryMuted : "transparent"
-                            }
-                            text: qsTr("Réindexer")
-                            onTriggered: {
-                                if (root.context) {
-                                    root.context.shareFolder(root.openedFolderId)
-                                    root.refreshFiles()
-                                    root.refreshHistory()
-                                }
-                            }
-                        }
-                        MenuItem {
-                            width: parent.width - 2 * Theme.spacingXs
-                            height: 40
-                            enabled: true
-                            contentItem: Label {
-                                text: parent.text
-                                color: parent.enabled ? Theme.text : Theme.textTertiary
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSizeSmall
-                                verticalAlignment: Text.AlignVCenter
-                                leftPadding: Theme.spacingSmall
-                            }
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: parent.highlighted ? Theme.primaryMuted : "transparent"
-                            }
-                            // CORRECTIF : l'écran "Dossiers partagés" n'offrait
-                            // jusqu'ici aucun moyen d'accéder au contenu réel
-                            // sur le disque (contrairement à FileTransferView,
-                            // qui a "Ouvrir l'emplacement" sur chaque fichier
-                            // transféré, cf. TransferContext::openFileLocation()).
-                            text: qsTr("Ouvrir dans l'explorateur")
-                            onTriggered: {
-                                if (root.context && !root.context.openFolderLocation(root.openedFolderId)) {
-                                    errorBanner.show(qsTr("Impossible d'ouvrir l'emplacement du dossier."))
-                                }
-                            }
-                        }
-                        MenuSeparator {
-                            // CORRECTIF (espace vide conservé pour un dossier
-                            // "Reçu") : ce séparateur n'a de sens que devant
-                            // "Exclusions…"/"Gérer les accès…", masqués juste
-                            // en dessous pour un dossier distant. `visible`
-                            // seul ne suffit pas ici : dans le ListView/Column
-                            // interne de Menu, un delegate invisible garde sa
-                            // hauteur de mise en page (seul le rendu est
-                            // masqué) -- d'où le "trou" observé. On force donc
-                            // aussi height à 0 quand il est masqué, comme pour
-                            // les deux MenuItem ci-dessous.
-                            visible: root.openedFolderIsLocalOrigin
-                            height: visible ? implicitHeight : 0
-                            contentItem: Rectangle {
-                                implicitHeight: 1
-                                color: Theme.border
-                            }
-                        }
-                        MenuItem {
-                            width: parent.width - 2 * Theme.spacingXs
-                            visible: root.openedFolderIsLocalOrigin
-                            height: visible ? 40 : 0
-                            contentItem: Label {
-                                text: parent.text
-                                color: Theme.text
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSizeSmall
-                                verticalAlignment: Text.AlignVCenter
-                                leftPadding: Theme.spacingSmall
-                            }
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: parent.highlighted ? Theme.primaryMuted : "transparent"
-                            }
-                            text: qsTr("Exclusions…")
-                            onTriggered: {
-                                editExcludePatternsDialog.targetFolderId = root.openedFolderId
-                                editExcludePatternsDialog.targetFolderName = root.openedFolderName
-                                editExcludePatternsDialog.open()
-                            }
-                        }
-                        MenuItem {
-                            width: parent.width - 2 * Theme.spacingXs
-                            visible: root.openedFolderIsLocalOrigin
-                            height: visible ? 40 : 0
-                            contentItem: Label {
-                                text: parent.text
-                                color: Theme.text
-                                font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSizeSmall
-                                verticalAlignment: Text.AlignVCenter
-                                leftPadding: Theme.spacingSmall
-                            }
-                            background: Rectangle {
-                                radius: Theme.radiusSmall
-                                color: parent.highlighted ? Theme.primaryMuted : "transparent"
-                            }
-                            text: qsTr("Gérer les accès…")
-                            onTriggered: {
-                                manageAccessDialog.targetFolderId = root.openedFolderId
-                                manageAccessDialog.targetFolderName = root.openedFolderName
-                                manageAccessDialog.open()
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // =========================================================
-        // Rangée de filtres rapides (Tout, Mes dossiers, Reçus) — remplace
-        // l'ancien panneau lateral ExplorerSidebar (supprime de cet ecran).
-        // Visible uniquement a la racine (liste des dossiers partages).
-        // =========================================================
-        RowLayout {
-            visible: root.openedFolderId < 0
-            Layout.fillWidth: true
-            Layout.leftMargin: Theme.pagePadding
-            Layout.rightMargin: Theme.pagePadding
-            Layout.topMargin: 2
-            Layout.bottomMargin: 6
-            spacing: 6
-
-            AppSegmentedControl {
-                stretch: false
-                small: true
-                readonly property var keys: ["all", "mine", "received"]
-                model: [
-                    { label: qsTr("Tous"), glyph: root.filterIconGlyph("all") },
-                    { label: qsTr("Partagés par moi"), glyph: root.filterIconGlyph("mine") },
-                    { label: qsTr("Reçus"), glyph: root.filterIconGlyph("received") }
-                ]
-                currentIndex: Math.max(0, keys.indexOf(root.activeFilter))
-                onActivated: function(index) { root.activeFilter = keys[index] }
-            }
-
-            Item { Layout.fillWidth: true }
-
-            Label {
-                visible: root.hasActiveFilters()
-                text: qsTr("Réinitialiser")
-                color: Theme.textTertiary
-                font.pixelSize: Theme.fontSizeCaption
-                font.family: Theme.fontFamily
-
-                MouseArea {
-                    anchors.fill: parent
-                    anchors.margins: -4
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        root.activeFilter = "all"
-                        root.searchText = ""
-                    }
-                }
-            }
-        }
-
-        // =========================================================
-        // Zone de contenu principal
-        // =========================================================
-        Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-
-            // État vide (aucun dossier partagé du tout)
-            ColumnLayout {
+        contentItem: Item {
+            LineIcon {
                 anchors.centerIn: parent
-                visible: root.openedFolderId < 0 && gridView.count === 0
-                spacing: Theme.spacingSmall
-
-                Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 64
-                    Layout.preferredHeight: 64
-                    Layout.bottomMargin: Theme.spacingSmall
-                    radius: 18
-                    color: Theme.primaryMuted
-                    FaIcon {
-                        anchors.centerIn: parent
-                        glyph: "\uf07b"
-                        font.pixelSize: Theme.fs(26)
-                        color: Theme.primary
-                    }
-                }
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("Aucun dossier partagé")
-                    color: Theme.text
-                    font.pixelSize: Theme.fontSizeBody
-                    font.weight: Font.Medium
-                    font.family: Theme.fontFamily
-                }
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("Cliquez sur « + Nouveau dossier » pour commencer.")
-                    color: Theme.textSecondary
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.family: Theme.fontFamily
-                }
-                Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.topMargin: Theme.spacingMedium
-                    Layout.preferredHeight: 32
-                    Layout.preferredWidth: emptyCtaRow.implicitWidth + 26
-                    radius: Theme.radiusSmall
-                    color: emptyCtaArea.pressed ? Theme.primaryHover : Theme.primary
-
-                    RowLayout {
-                        id: emptyCtaRow
-                        anchors.centerIn: parent
-                        spacing: 6
-                        FaIcon { glyph: "\uf07b"; font.pixelSize: Theme.fs(12); color: Theme.primaryText }
-                        Label {
-                            text: qsTr("Nouveau dossier")
-                            color: Theme.primaryText
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.weight: Font.Medium
-                            font.family: Theme.fontFamily
-                        }
-                    }
-                    MouseArea {
-                        id: emptyCtaArea
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: createDialog.open()
-                    }
-                }
+                path: sq.iconPath
+                size: 15
+                strokeWidth: 1.8
+                color: sq.pressedState ? Theme.inkOnInk : (sq.enabled ? Theme.ink2 : Theme.inkDisabled)
             }
+        }
+    }
 
-            // =====================================================
-            // VUE RACINE : grille/liste des dossiers partagés (tuiles
-            // "carte" avec avatar colore, meme principe que les tuiles
-            // correspondants de FileTransferView).
-            // =====================================================
+    // Zone de depot en tirets (choisir ou glisser un dossier).
+    component DashedDrop: Item {
+        id: dd
+        property string title: ""
+        property string subtitle: ""
+        property string buttonText: ""
+        property string iconPath: Icons.folderPlus
+        signal activated()
+        signal pathDropped(string path)
+        implicitHeight: ddRow.implicitHeight + 36
+        Shape {
+            anchors.fill: parent
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                fillColor: ddHover.hovered || ddDrop.containsDrag ? Theme.selectWash : "transparent"
+                strokeColor: ddHover.hovered || ddDrop.containsDrag ? Theme.ink3 : Theme.lineStrong
+                strokeWidth: 1.5
+                strokeStyle: ShapePath.DashLine
+                dashPattern: [3, 2.5]
+                startX: 1; startY: 1
+                PathLine { x: dd.width - 1; y: 1 }
+                PathLine { x: dd.width - 1; y: dd.height - 1 }
+                PathLine { x: 1; y: dd.height - 1 }
+                PathLine { x: 1; y: 1 }
+            }
+        }
+        HoverHandler { id: ddHover; cursorShape: Qt.PointingHandCursor }
+        TapHandler { onTapped: dd.activated() }
+        DropArea {
+            id: ddDrop
+            anchors.fill: parent
+            onDropped: function(drop) { if (drop.hasUrls && drop.urls.length > 0) dd.pathDropped(root.cleanUrl(drop.urls[0])) }
+        }
+        RowLayout {
+            id: ddRow
+            anchors.verticalCenter: parent.verticalCenter
+            x: 20
+            width: parent.width - 40
+            spacing: 14
+            LineIcon { path: dd.iconPath; size: 26; strokeWidth: 1.4; color: Theme.ink2 }
             ColumnLayout {
-                anchors.fill: parent
-                visible: root.openedFolderId < 0 && gridView.count > 0
-                spacing: 0
+                Layout.fillWidth: true
+                spacing: 2
+                Text { Layout.fillWidth: true; text: dd.title; color: Theme.ink; font.family: Theme.fontFamilySerif; font.pixelSize: Theme.fs(15); font.weight: Theme.weightBold; wrapMode: Text.WordWrap }
+                Text { Layout.fillWidth: true; visible: dd.subtitle.length > 0; text: dd.subtitle; color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); wrapMode: Text.WrapAnywhere }
+            }
+            AppButton { variant: "ink"; size: "small"; text: dd.buttonText; onClicked: dd.activated() }
+        }
+    }
 
-                Item { Layout.preferredHeight: 16 }
+    // Entree du menu « Plus » (icone, libelle, indication a droite).
+    component SheetItem: MenuItem {
+        id: mi
+        property string iconPath: ""
+        property string hint: ""
+        property bool danger: false
+        height: visible ? 36 : 0
+        hoverEnabled: true
+        background: Rectangle { color: mi.highlighted ? Theme.selectWash : "transparent" }
+        contentItem: RowLayout {
+            spacing: 10
+            LineIcon { Layout.leftMargin: 8; path: mi.iconPath; size: 15; strokeWidth: 1.8; color: mi.danger ? Theme.dangerInk : Theme.ink3 }
+            Text { Layout.fillWidth: true; text: mi.text; color: mi.danger ? Theme.dangerInk : Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13) }
+            Text { Layout.rightMargin: 8; visible: mi.hint.length > 0; text: mi.hint; color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(11.5) }
+        }
+    }
 
-                Label {
-                    Layout.leftMargin: Theme.pagePadding
-                    Layout.bottomMargin: 10
-                    text: qsTr("Dossiers partagés")
-                    font.capitalization: Font.AllUppercase
-                    color: Theme.textTertiary
-                    font.pixelSize: Theme.fontSizeCaption
-                    font.weight: Font.Medium
-                    font.family: Theme.fontFamily
-                    font.letterSpacing: 0.4
-                }
+    // Chiffre du bilan (« 408 fichiers »).
+    component Fig: Row {
+        property string value: ""
+        property string label: ""
+        property color tone: Theme.ink
+        spacing: 5
+        Text {
+            id: figValue
+            text: parent.value
+            color: parent.tone
+            font.family: Theme.fontFamilySerif
+            font.pixelSize: Theme.fs(17)
+            font.weight: Theme.weightBold
+            font.features: ({ "tnum": 1 })
+        }
+        Text {
+            anchors.baseline: figValue.baseline
+            text: parent.label
+            color: Theme.ink3
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fs(12.5)
+        }
+    }
 
-                GridView {
-                    id: gridView
+    // ======================================================================
+    // Page
+    // ======================================================================
+    Item {
+        id: page
+        anchors.fill: parent
+        readonly property bool narrow: width < 720
+
+        Rectangle { anchors.fill: parent; color: Theme.bg }
+
+        Flickable {
+            id: pageScroll
+            objectName: "pageFlick"
+            anchors.fill: parent
+            contentWidth: width
+            contentHeight: pageColumn.y + pageColumn.implicitHeight + 24
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+            ColumnLayout {
+                id: pageColumn
+                x: Theme.pagePadding
+                y: Theme.compact ? 16 : 20
+                width: pageScroll.width - 2 * Theme.pagePadding
+                spacing: 20
+
+                // ---- Avis (conflit recu, erreur) ---------------------------
+                Rectangle {
+                    visible: root.noticeKind.length > 0
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.leftMargin: Theme.pagePadding - 12
-                    Layout.rightMargin: Theme.pagePadding - 12
-                    visible: root.viewMode === "grid"
-                    readonly property int columns: Math.max(2, Math.floor(width / 160))
-                    cellWidth: Math.floor(width / columns)
-                    cellHeight: 132
-                    model: root.context ? root.context.folderFilterProxy : null
-                    clip: true
-
-                    add: Transition {
-                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
-                    }
-
-                    delegate: Item {
-                        id: folderTile
-                        width: gridView.cellWidth
-                        height: gridView.cellHeight
-                        clip: true
-
-                        // readonly property color accentColor: Theme.colorForName(model.name)
-                        readonly property color accentColor: Theme.folderColor
-                        readonly property bool hovered: tileArea.containsMouse
-
-                        // ---- Fond de la tuile (survol / selection), meme
-                        // principe que FolderTile.tileBg. ----
-                        Rectangle {
-                            id: tileBg
-                            anchors.fill: parent
-                            anchors.margins: 4
-                            radius: Theme.radiusMedium
-                            color: folderTile.hovered ? Theme.selectWash : "transparent"
-                            border.width: 0
-                            border.color: Theme.selectionBorder
-                            Behavior on color { ColorAnimation { duration: 120 } }
-                            Behavior on border.color { ColorAnimation { duration: 120 } }
+                    implicitHeight: noticeRow.implicitHeight + 20
+                    color: Theme.surface0
+                    border.width: 1
+                    border.color: Theme.line
+                    Rectangle { width: 3; height: parent.height; color: Theme.dangerColor }
+                    RowLayout {
+                        id: noticeRow
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: 16
+                        width: parent.width - 26
+                        spacing: 12
+                        LineIcon { path: Icons.alertTriangle; size: 16; strokeWidth: 1.8; color: Theme.dangerInk }
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.noticeText
+                            textFormat: Text.StyledText
+                            wrapMode: Text.WordWrap
+                            color: Theme.ink
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fs(13)
                         }
-
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingSmall
-                            spacing: 4
-
-                            // ---- Icone de dossier, style FolderTile ----
-                            Item {
-                                id: iconArea
-                                Layout.alignment: Qt.AlignHCenter
-                                Layout.preferredWidth: 64
-                                Layout.preferredHeight: 52
-                                Layout.topMargin: 6
-
-                                // Elevation discrete au survol.
-                                Rectangle {
-                                    anchors.fill: folderShape
-                                    anchors.topMargin: 3
-                                    radius: folderShape.radius
-                                    color: Theme.shadow
-                                    opacity: 0
-                                    Behavior on opacity { NumberAnimation { duration: 120 } }
-                                }
-
-                                // Corps du dossier (forme "plate" a onglet).
-                                Item {
-                                    id: folderShape
-                                    anchors.fill: parent
-                                    property real radius: 6
-                                    scale: 1.0
-                                    Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-
-                                    // Onglet arriere-plan.
-                                    Rectangle {
-                                        x: 2
-                                        y: 4
-                                        width: parent.width * 0.42
-                                        height: 11
-                                        radius: 3
-                                        color: folderTile.accentColor
-                                        opacity: 0.75
-                                    }
-
-                                    // Corps principal du dossier.
-                                    Rectangle {
-                                        y: 11
-                                        width: parent.width
-                                        height: parent.height - 11
-                                        radius: folderShape.radius
-                                        color: folderTile.accentColor
-
-                                        // Degrade "vitre" subtil.
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            radius: parent.radius
-                                            gradient: Gradient {
-                                                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.16) }
-                                                GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.0) }
-                                            }
-                                        }
-
-                                        // Ligne de pli du rabat avant.
-                                        Rectangle {
-                                            anchors.top: parent.top
-                                            anchors.left: parent.left
-                                            anchors.right: parent.right
-                                            height: parent.height * 0.38
-                                            radius: folderShape.radius
-                                            color: Qt.rgba(1, 1, 1, 0.10)
-                                        }
-                                    }
-                                }
-
-                                // Avatar/accent : initiale du dossier, ancre
-                                // en bas a droite du dossier (comme un badge
-                                // "proprietaire" pose sur la pochette).
-                                // Rectangle {
-                                //     width: 24
-                                //     height: 24
-                                //     radius: 12
-                                //     color: Theme.surface
-                                //     border.width: 2
-                                //     border.color: Theme.surface
-                                //     anchors.right: folderShape.right
-                                //     anchors.bottom: folderShape.bottom
-                                //     anchors.rightMargin: -6
-                                //     anchors.bottomMargin: -6
-
-                                //     Rectangle {
-                                //         anchors.fill: parent
-                                //         anchors.margins: 2
-                                //         radius: width / 2
-                                //         color: Qt.rgba(folderTile.accentColor.r,
-                                //                         folderTile.accentColor.g,
-                                //                         folderTile.accentColor.b, 0.20)
-                                //         Text {
-                                //             anchors.centerIn: parent
-                                //             text: model.name.length > 0 ? model.name.charAt(0).toUpperCase() : "?"
-                                //             color: folderTile.accentColor
-                                //             font.pixelSize: Theme.fs(10)
-                                //             font.bold: true
-                                //             font.family: Theme.fontFamily
-                                //         }
-                                //     }
-                                // }
-
-                                // Pastille conflit (coin superieur gauche).
-                                Rectangle {
-                                    visible: model.hasConflict
-                                    width: 20
-                                    height: 20
-                                    radius: 10
-                                    color: Theme.warning
-                                    border.width: 2
-                                    border.color: Theme.surface
-                                    anchors.left: folderShape.left
-                                    anchors.top: folderShape.top
-                                    anchors.leftMargin: -7
-                                    anchors.topMargin: -4
-
-                                    FaIcon {
-                                        anchors.centerIn: parent
-                                        glyph: "\uf071"
-                                        font.pixelSize: Theme.fs(9)
-                                        color: Theme.inkOnDanger
-                                    }
-                                }
-
-                                // Pastille de comptage (coin superieur droit).
-                                Rectangle {
-                                    visible: model.fileCount > 0
-                                    width: Math.max(20, countLabel.implicitWidth + 10)
-                                    height: 20
-                                    radius: 10
-                                    color: Theme.primary
-                                    border.width: 2
-                                    border.color: Theme.surface
-                                    anchors.right: folderShape.right
-                                    anchors.top: folderShape.top
-                                    anchors.rightMargin: -8
-                                    anchors.topMargin: -4
-
-                                    Text {
-                                        id: countLabel
-                                        anchors.centerIn: parent
-                                        text: model.fileCount > 99 ? "99+" : model.fileCount
-                                        font.pixelSize: Theme.fs(10)
-                                        font.bold: true
-                                        font.family: Theme.fontFamily
-                                        color: Theme.primaryText
-                                    }
-                                }
-                            }
-
-                            Label {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                text: model.name
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.bold: true
-                                font.family: Theme.fontFamily
-                                horizontalAlignment: Text.AlignHCenter
-                                elide: Text.ElideRight
-                                maximumLineCount: 1
-
-                                ToolTip.visible: truncated && folderTile.hovered
-                                ToolTip.text: model.name
-                                ToolTip.delay: 500
+                        TextLink {
+                            visible: root.noticeKind === "conflict"
+                            text: qsTr("Régler")
+                            onClicked: {
+                                for (let i = 0; i < root.folderRows.length; i++)
+                                    if (root.folderRows[i].uuid === root.noticeFolderUuid) root.openFolder(root.folderRows[i].folderId)
+                                root.noticeKind = ""
                             }
                         }
-
-                        MouseArea {
-                            id: tileArea
-                            anchors.fill: parent
+                        AbstractButton {
+                            id: noticeClose
+                            Layout.preferredWidth: 28
+                            Layout.preferredHeight: 28
                             hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton
-                            onClicked: function(mouse) {
-                                if (mouse.button === Qt.RightButton) {
-                                    removeConfirmDialog.targetFolderId = model.folderId
-                                    removeConfirmDialog.targetFolderName = model.name
-                                    removeConfirmDialog.open()
-                                    return
-                                }
-                                if (!model.isLocalOrigin) {
-                                    if (model.localPath && model.localPath.length > 0) {
-                                        root.openFolder(model.folderId, model.name, false, model.uuid)
-                                    } else {
-                                        setLocalPathDialog.targetFolderId = model.folderId
-                                        setLocalPathDialog.targetFolderName = model.name
-                                        setLocalPathDialog.targetFolderUuid = model.uuid
-                                        setLocalPathDialog.open()
+                            Accessible.name: qsTr("Fermer")
+                            onClicked: root.noticeKind = ""
+                            background: Rectangle { radius: 14; color: noticeClose.hovered ? Theme.selectWash : "transparent" }
+                            contentItem: Item { LineIcon { anchors.centerIn: parent; path: Icons.close; size: 14; strokeWidth: 1.8; color: Theme.ink2 } }
+                        }
+                    }
+                }
+
+                // ---- En-tete --------------------------------------------
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: root.heroWide ? 2 : 1
+                    columnSpacing: 32
+                    rowSpacing: 14
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignBottom
+                        spacing: 6
+                        CapsLabel {
+                            Layout.fillWidth: true
+                            text: {
+                                const d = new Date().toLocaleDateString(Qt.locale(), "dddd d MMMM yyyy")
+                                return d + ((typeof settingsModel !== "undefined" && settingsModel && settingsModel.machineName && settingsModel.machineName.length > 0)
+                                            ? " · " + settingsModel.machineName : "")
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.stats.total === 0 ? qsTr("Aucun dossier partagé.")
+                                  : root.stats.total === 1 ? qsTr("<b>1</b> dossier partagé.")
+                                  : qsTr("<b>%1</b> dossiers partagés.").arg(root.stats.total)
+                            textFormat: Text.StyledText
+                            color: Theme.ink
+                            font.family: Theme.fontFamilySerif
+                            font.pixelSize: root.height < 720 ? Theme.fs(30) : Theme.fontSizeGreeting
+                            elide: Text.ElideRight
+                            Accessible.role: Accessible.Heading
+                        }
+                        Flow {
+                            Layout.fillWidth: true
+                            Layout.topMargin: 2
+                            spacing: 22
+                            Text {
+                                width: Math.min(implicitWidth, parent.width, 640)
+                                height: Math.max(implicitHeight, heroActions.implicitHeight)
+                                verticalAlignment: Text.AlignVCenter
+                                textFormat: Text.StyledText
+                                wrapMode: Text.WordWrap
+                                color: Theme.ink2
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fs(14.5)
+                                text: {
+                                    const s = root.stats
+                                    if (s.total === 0)
+                                        return qsTr("Partagez un dossier de ce poste : ses fichiers restent à jour chez les personnes que vous choisissez, sur le réseau local.")
+                                    let t = qsTr("Vous en partagez <b>%1</b> et en recevez <b>%2</b>.").arg(s.mine).arg(s.received)
+                                    for (let i = 0; i < root.folderRows.length; i++) {
+                                        const r = root.folderRows[i]
+                                        const b = root.batchFor(r.uuid)
+                                        if (b)
+                                            t += " " + qsTr("<b>%1</b> se synchronise : %2.").arg(root.esc(r.name))
+                                                 .arg("<font color=\"" + Theme.navActiveInk + "\"><b>" + qsTr("%1 fichiers sur %2").arg(b.done).arg(b.total) + "</b></font>")
                                     }
-                                } else {
-                                    root.openFolder(model.folderId, model.name, true, model.uuid)
+                                    const todo = []
+                                    if (s.conflicts > 0)
+                                        todo.push("<b><font color=\"" + Theme.dangerInk + "\">" + root.plural(s.conflicts, qsTr("conflit"), qsTr("conflits")) + "</font></b> " + qsTr("à régler"))
+                                    if (s.noPath > 0)
+                                        todo.push("<b><font color=\"" + Theme.warningInk + "\">" + root.plural(s.noPath, qsTr("dossier reçu"), qsTr("dossiers reçus")) + "</font></b> " + qsTr("sans emplacement"))
+                                    if (todo.length > 0)
+                                        t += " " + todo.join(", ") + "."
+                                    return t
+                                }
+                            }
+                            Row {
+                                id: heroActions
+                                spacing: 8
+                                AppButton {
+                                    variant: "ink"
+                                    iconPath: Icons.folderPlus
+                                    text: qsTr("Nouveau dossier partagé")
+                                    onClicked: root.openComposer()
+                                }
+                            }
+                        }
+                    }
+
+                    // Quatre chiffres : filtrent la liste.
+                    Item {
+                        visible: root.stats.total > 0
+                        Layout.alignment: root.heroWide ? (Qt.AlignRight | Qt.AlignBottom) : Qt.AlignLeft
+                        Layout.fillWidth: !root.heroWide
+                        implicitWidth: figRow.implicitWidth
+                        implicitHeight: figRow.implicitHeight + (root.heroWide ? 0 : 12)
+                        Rectangle { visible: !root.heroWide; width: parent.width; height: 1; color: Theme.line }
+                        Row {
+                            id: figRow
+                            y: root.heroWide ? 0 : 12
+                            width: root.heroWide ? implicitWidth : parent.width
+                            Repeater {
+                                model: {
+                                    const s = root.stats
+                                    const todo = s.conflicts + s.noPath
+                                    const ctx = []
+                                    if (s.conflicts) ctx.push(root.plural(s.conflicts, qsTr("conflit"), qsTr("conflits")))
+                                    if (s.noPath) ctx.push(root.plural(s.noPath, qsTr("emplacement"), qsTr("emplacements")))
+                                    return [
+                                        { key: "mine", label: qsTr("Partagés par vous"), value: s.mine, ctx: root.plural(s.members, qsTr("membre"), qsTr("membres")) },
+                                        { key: "received", label: qsTr("Reçus"), value: s.received, ctx: s.syncing ? qsTr("%1 en synchronisation").arg(s.syncing) : qsTr("à jour") },
+                                        { key: "all", label: qsTr("Fichiers"), value: root.formatCount(s.files), ctx: qsTr("indexés sur ce poste") },
+                                        { key: "todo", label: qsTr("À régler"), value: todo, ctx: todo ? ctx.join(" · ") : qsTr("rien"), attention: todo > 0 }
+                                    ]
+                                }
+                                delegate: Item {
+                                    id: fig
+                                    required property var modelData
+                                    required property int index
+                                    width: root.heroWide ? sf.width + (index === 0 ? 0 : 22) + (index === 3 ? 0 : 22) : figRow.width / 4
+                                    height: sf.implicitHeight
+                                    Rectangle { visible: fig.index > 0; width: 1; height: parent.height; color: Theme.line }
+                                    SerifFigure {
+                                        id: sf
+                                        x: fig.index === 0 ? 0 : (root.heroWide ? 22 : 18)
+                                        width: Math.max(implicitWidth, 110)
+                                        label: fig.modelData.label
+                                        value: String(fig.modelData.value)
+                                        context: fig.modelData.ctx
+                                        attention: !!fig.modelData.attention
+                                        valueSize: root.heroWide && root.height >= 720 ? Theme.fontSizeFigure : Theme.fs(32)
+                                        onClicked: root.activeFilter = (root.activeFilter === fig.modelData.key ? "all" : fig.modelData.key)
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                // Vue "liste" des dossiers partagés
-                ListView {
-                    id: foldersListView
+                // ---- Dossiers | dossier ouvert ----------------------------
+                Rectangle { Layout.fillWidth: true; Layout.topMargin: -4; Layout.preferredHeight: 2; color: Theme.ruleInk }
+
+                GridLayout {
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.leftMargin: Theme.pagePadding
-                    Layout.rightMargin: Theme.pagePadding
-                    visible: root.viewMode === "list"
-                    spacing: 2
-                    clip: true
-                    model: root.context ? root.context.folderFilterProxy : null
+                    Layout.topMargin: -20
+                    columns: root.foldersWide ? 2 : 1
+                    columnSpacing: 0
+                    rowSpacing: 0
 
-                    add: Transition {
-                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
-                    }
-
-                    delegate: Rectangle {
-                        id: folderRow
-                        width: foldersListView.width
-                        height: 56
-                        radius: 0
-                        color: folderRowArea.containsMouse ? Theme.selectWash : "transparent"
-                        Behavior on color { ColorAnimation { duration: 100 } }
-
-                        readonly property color accentColor: Theme.folderColor
+                    // -- Liste des dossiers --------------------------------
+                    ColumnLayout {
+                        id: folderList
+                        Layout.preferredWidth: root.foldersWide ? root.listWidth : -1
+                        Layout.fillWidth: !root.foldersWide
+                        Layout.alignment: Qt.AlignTop
+                        Layout.topMargin: 14
+                        Layout.rightMargin: root.foldersWide ? 18 : 0
+                        spacing: 2
 
                         RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 10
-
-                            Rectangle {
-                                width: 32
-                                height: 32
-                                radius: 8
-                                color: Qt.rgba(folderRow.accentColor.r,
-                                                folderRow.accentColor.g,
-                                                folderRow.accentColor.b, 0.16)
-
-                                FaIcon {
-                                    anchors.centerIn: parent
-                                    glyph: "\uf114"
-                                    font.pixelSize: Theme.fs(15)
-                                    color: folderRow.accentColor
-                                }
-                            }
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 1
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    text: model.name
-                                    color: Theme.text
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.weight: Font.Medium
-                                    font.family: Theme.fontFamily
-                                    elide: Text.ElideRight
-                                }
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    text: model.isLocalOrigin ? qsTr("Dossier local") : qsTr("Dossier reçu")
-                                    color: Theme.textTertiary
-                                    font.pixelSize: Theme.fontSizeCaption
-                                    font.family: Theme.fontFamily
-                                    elide: Text.ElideRight
-                                }
-                            }
-
-                            StatusBadge {
-                                tone: model.hasConflict ? "warning" : (model.isLocalOrigin ? "info" : "success")
-                                text: model.hasConflict ? qsTr("Conflit")
-                                      : (model.isLocalOrigin ? qsTr("Local") : qsTr("Reçu"))
-                            }
-
-                            Label {
-                                Layout.preferredWidth: 90
-                                text: model.fileCount === 1 ? qsTr("1 fichier") : qsTr("%1 fichiers").arg(model.fileCount)
-                                color: Theme.textTertiary
-                                font.pixelSize: Theme.fontSizeCaption
-                                font.family: Theme.fontFamily
-                                horizontalAlignment: Text.AlignRight
-                            }
-
-                            FaIcon {
-                                glyph: "\uf105"
-                                font.pixelSize: Theme.fs(13)
-                                color: Theme.textTertiary
+                            Layout.fillWidth: true
+                            Layout.bottomMargin: 8
+                            CapsLabel { text: qsTr("Dossiers"); Layout.fillWidth: true }
+                            Text {
+                                text: root.folderRows.length
+                                color: Theme.ink3
+                                font.family: Theme.fontFamilySerif
+                                font.pixelSize: Theme.fs(16)
+                                font.weight: Theme.weightBold
                             }
                         }
-
-                        MouseArea {
-                            id: folderRowArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton
-                            onClicked: function(mouse) {
-                                if (mouse.button === Qt.RightButton) {
-                                    removeConfirmDialog.targetFolderId = model.folderId
-                                    removeConfirmDialog.targetFolderName = model.name
-                                    removeConfirmDialog.open()
-                                    return
-                                }
-                                if (!model.isLocalOrigin) {
-                                    if (model.localPath && model.localPath.length > 0) {
-                                        root.openFolder(model.folderId, model.name, false, model.uuid)
-                                    } else {
-                                        setLocalPathDialog.targetFolderId = model.folderId
-                                        setLocalPathDialog.targetFolderName = model.name
-                                        setLocalPathDialog.targetFolderUuid = model.uuid
-                                        setLocalPathDialog.open()
-                                    }
-                                } else {
-                                    root.openFolder(model.folderId, model.name, true, model.uuid)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // =====================================================
-            // VUE DOSSIER OUVERT : fichiers/sous-dossiers (grille ou
-            // liste), icones par type de fichier + badges de statut.
-            // =====================================================
-            ColumnLayout {
-                anchors.fill: parent
-                visible: root.openedFolderId >= 0 && !root.showHistory
-                spacing: 0
-
-                RowLayout {
-                    visible: false
-                    Layout.preferredHeight: 0
-                    Layout.minimumHeight: 0
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Layout.bottomMargin: 10
-                    spacing: 8
-
-                    Rectangle {
-                        width: 26
-                        height: 26
-                        radius: 13
-                        color: Theme.colorForName(root.openedFolderName)
-                        Text {
-                            anchors.centerIn: parent
-                            text: root.openedFolderName.length > 0 ? root.openedFolderName.charAt(0).toUpperCase() : "?"
-                            color: "#FFFFFF"
-                            font.pixelSize: Theme.fs(11)
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                        }
-                    }
-                    Label {
-                        text: root.openedFolderName
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.weight: Font.Medium
-                        font.family: Theme.fontFamily
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        text: qsTr("%n élément(s)", "", filesListView.count)
-                        color: Theme.textTertiary
-                        font.pixelSize: Theme.fontSizeCaption
-                        font.family: Theme.fontFamily
-                    }
-                }
-
-                ListView {
-                    id: filesListView
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Layout.topMargin: 8
-                    spacing: 0
-                    clip: true
-                    visible: root.viewMode === "list"
-                    model: root.browserItems
-
-                    add: Transition {
-                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
-                    }
-
-                    delegate: Rectangle {
-                        id: fileRow
-                        width: filesListView.width
-                        height: fileRow.hasConflict ? 128 : (fileRow.isFolder ? 56 : 40)
-                        clip: true
-                        color: fileRowArea.containsMouse ? Theme.selectWash
-                               : (index % 2 === 1 ? Theme.surfaceAlt : "transparent")
-                        radius: 0
-                        Behavior on color { ColorAnimation { duration: 100 } }
-
-                        readonly property bool isFolder: modelData.kind === "folder"
-                        readonly property bool hasConflict: !isFolder
-                            && root.conflictedFiles.hasOwnProperty(modelData.relativePath)
-                        readonly property string conflictPath: hasConflict ? root.conflictedFiles[modelData.relativePath] : ""
-                        readonly property var kind: isFolder ? null : root.fileKindFor(modelData.name)
-                        readonly property color folderAccent: Theme.folderColor
-
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 2
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: fileRow.isFolder ? 56 : 40
-                                spacing: 8
-
-                                Rectangle {
-                                    visible: fileRow.isFolder
-                                    Layout.preferredWidth: 32
-                                    Layout.preferredHeight: 32
-                                    radius: 8
-                                    color: Qt.rgba(fileRow.folderAccent.r,
-                                                   fileRow.folderAccent.g,
-                                                   fileRow.folderAccent.b, 0.16)
-
-                                    FaIcon {
-                                        anchors.centerIn: parent
-                                        glyph: "\uf114"
-                                        font.pixelSize: Theme.fs(15)
-                                        color: fileRow.folderAccent
-                                    }
-                                }
-                                FaIcon {
-                                    visible: !fileRow.isFolder
-                                    glyph: fileRow.kind ? fileRow.kind.glyph : "\uf016"
-                                    font.pixelSize: Theme.fs(15)
-                                    color: fileRow.kind ? fileRow.kind.color : Theme.textSecondary
-                                }
-
-                                Rectangle {
-                                    visible: fileRow.hasConflict
-                                    width: 18
-                                    height: 18
-                                    radius: 9
-                                    color: Theme.warning
-                                    Label {
-                                        anchors.centerIn: parent
-                                        text: "!"
-                                        color: Theme.inkOnDanger
-                                        font.pixelSize: Theme.fs(11)
-                                        font.bold: true
-                                    }
-                                }
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    text: modelData.name
-                                    color: fileRow.hasConflict ? Theme.warning : Theme.text
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.weight: fileRow.isFolder ? Font.Medium : Font.Normal
-                                    font.family: Theme.fontFamily
-                                    elide: Text.ElideMiddle
-
-                                    ToolTip.visible: truncated && fileRowArea.containsMouse
-                                    ToolTip.text: modelData.name
-                                    ToolTip.delay: 500
-                                }
-
-                                Label {
-                                    visible: !fileRow.isFolder
-                                    Layout.preferredWidth: 70
-                                    text: root.formatBytes(modelData.size)
-                                    color: Theme.textSecondary
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.family: Theme.fontFamily
-                                    horizontalAlignment: Text.AlignRight
-                                }
-
-                                Label {
-                                    visible: fileRow.isFolder
-                                    Layout.preferredWidth: 70
-                                    text: modelData.count === 1 ? qsTr("1 fichier") : qsTr("%1 fichiers").arg(modelData.count)
-                                    color: Theme.textTertiary
-                                    font.pixelSize: Theme.fontSizeCaption
-                                    font.family: Theme.fontFamily
-                                    horizontalAlignment: Text.AlignRight
-                                }
-
-                                Label {
-                                    visible: !fileRow.isFolder
-                                    Layout.preferredWidth: 32
-                                    text: "v" + modelData.version
-                                    color: Theme.textTertiary
-                                    font.pixelSize: Theme.fontSizeCaption
-                                    font.family: Theme.fontFamily
-                                }
-
-                                StatusBadge {
-                                    visible: !fileRow.isFolder
-                                    tone: fileRow.hasConflict ? "warning" : "success"
-                                    text: fileRow.hasConflict ? qsTr("Conflit") : qsTr("Synchronisé")
-                                }
-
-                                FaIcon {
-                                    visible: fileRow.isFolder
-                                    glyph: "\uf105"
-                                    font.pixelSize: Theme.fs(13)
-                                    color: Theme.textTertiary
-                                }
-                            }
-
-                            // Sous-ligne + actions de résolution de conflit
-                            Label {
-                                visible: fileRow.hasConflict
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                Layout.leftMargin: 23
-                                text: qsTr("→ copie en conflit : %1").arg(fileRow.conflictPath)
-                                color: Theme.warning
-                                font.pixelSize: Theme.fontSizeCaption
-                                font.family: Theme.fontFamily
-                                elide: Text.ElideMiddle
-                            }
-
-                            RowLayout {
-                                visible: fileRow.hasConflict
-                                Layout.fillWidth: true
-                                Layout.leftMargin: 23
-                                Layout.bottomMargin: 6
-                                spacing: Theme.spacingSmall
-                                z: 1
-
-                                AppButton {
-                                    text: qsTr("Conserver local")
-                                    variant: "secondary"
-                                    onClicked: root.resolveConflictFor(modelData.relativePath, fileRow.conflictPath, "keep_local")
-                                }
-                                AppButton {
-                                    text: qsTr("Conserver distant")
-                                    variant: "secondary"
-                                    onClicked: root.resolveConflictFor(modelData.relativePath, fileRow.conflictPath, "keep_remote")
-                                }
-                                AppButton {
-                                    text: qsTr("Garder les deux")
-                                    variant: "secondary"
-                                    onClicked: root.resolveConflictFor(modelData.relativePath, fileRow.conflictPath, "keep_both")
-                                }
-                            }
-                        }
-
-                        MouseArea {
-                            id: fileRowArea
-                            anchors.fill: parent
-                            z: 0
-                            enabled: !fileRow.hasConflict
-                            hoverEnabled: true
-                            cursorShape: fileRow.isFolder ? Qt.PointingHandCursor : Qt.ArrowCursor
-                            onClicked: {
-                                if (fileRow.isFolder) root.openBrowserFolder(modelData.path)
-                            }
-                        }
-                    }
-
-                    Label {
-                        visible: filesListView.count === 0
-                        anchors.centerIn: parent
-                        text: qsTr("Ce dossier partagé ne contient aucun fichier indexé.")
-                        color: Theme.textTertiary
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: Theme.fontFamily
-                    }
-                }
-
-                // Vue grille d'icônes des fichiers/sous-dossiers
-                GridView {
-                    id: filesGrid
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Layout.topMargin: 8
-                    visible: root.viewMode === "grid"
-                    readonly property int columns: Math.max(3, Math.min(8, Math.floor(width / 104)))
-                    cellWidth: Math.floor(width / columns)
-                    cellHeight: 148
-                    clip: true
-                    model: root.browserItems
-
-                    add: Transition {
-                        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
-                    }
-
-                    delegate: Item {
-                        id: fileTile
-                        width: filesGrid.cellWidth
-                        height: filesGrid.cellHeight
-                        clip: true
-
-                        readonly property bool isFolder: modelData.kind === "folder"
-                        readonly property bool hasConflict: !isFolder
-                            && root.conflictedFiles.hasOwnProperty(modelData.relativePath)
-                        readonly property var kind: isFolder ? null : root.fileKindFor(modelData.name)
-                        readonly property color tileColor: isFolder ? Theme.folderColor
-                                                                     : (fileTile.kind ? fileTile.kind.color : Theme.textSecondary)
-                        readonly property bool tileHovered: fileTileArea.containsMouse
-
                         Rectangle {
-                            anchors.fill: parent
-                            anchors.margins: 4
-                            radius: Theme.radiusMedium
-                            color: fileTile.tileHovered && fileTile.isFolder ? Theme.selectWash : "transparent"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 32
+                            Layout.bottomMargin: 8
+                            radius: Theme.radiusSheet
+                            color: "transparent"
+                            border.width: 1
+                            border.color: listFind.activeFocus ? Theme.ink : Theme.line
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 10
+                                anchors.rightMargin: 8
+                                spacing: 7
+                                LineIcon { path: Icons.search; size: 14; strokeWidth: 1.8; color: Theme.ink3 }
+                                TextField {
+                                    id: listFind
+                                    Layout.fillWidth: true
+                                    placeholderText: qsTr("Nom du dossier…")
+                                    placeholderTextColor: Theme.ink3
+                                    color: Theme.ink
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fs(12.5)
+                                    background: Item {}
+                                    leftPadding: 0
+                                    rightPadding: 0
+                                    selectByMouse: true
+                                    Accessible.name: qsTr("Rechercher un dossier")
+                                    onTextChanged: root.listSearch = text
+                                }
+                            }
+                        }
+                        Row {
+                            Layout.bottomMargin: 6
+                            spacing: 16
+                            InkTab { text: qsTr("Tous"); count: String(root.stats.total); current: root.activeFilter === "all" || root.activeFilter === "todo"; onClicked: root.activeFilter = "all" }
+                            InkTab { text: qsTr("Partagés"); count: String(root.stats.mine); current: root.activeFilter === "mine"; onClicked: root.activeFilter = "mine" }
+                            InkTab { text: qsTr("Reçus"); count: String(root.stats.received); current: root.activeFilter === "received"; onClicked: root.activeFilter = "received" }
+                        }
+                        Text {
+                            visible: root.visibleRows.length === 0
+                            Layout.fillWidth: true
+                            Layout.topMargin: 8
+                            text: root.folderRows.length === 0 ? qsTr("Les dossiers que vous partagez ou recevez apparaîtront ici.")
+                                                                : qsTr("Aucun dossier ne correspond.")
+                            color: Theme.ink3
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fs(12.5)
+                            wrapMode: Text.WordWrap
                         }
 
-                        ColumnLayout {
-                            z: 1
-                            anchors.fill: parent
-                            anchors.topMargin: 12
-                            anchors.bottomMargin: 8
-                            spacing: 4
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: root.foldersWide || page.narrow ? 1 : 2
+                            columnSpacing: 12
+                            rowSpacing: 2
 
-                            Item {
-                                id: subfolderIconArea
-                                Layout.alignment: Qt.AlignHCenter
-                                Layout.preferredWidth: fileTile.isFolder ? 64 : 40
-                                Layout.preferredHeight: fileTile.isFolder ? 52 : 30
-
-                                Item {
-                                    visible: fileTile.isFolder
-                                    anchors.fill: parent
-                                    property real radius: 6
-
-                                    Rectangle {
-                                        x: 2
-                                        y: 4
-                                        width: parent.width * 0.42
-                                        height: 11
-                                        radius: 3
-                                        color: fileTile.tileColor
-                                        opacity: 0.75
+                            Repeater {
+                                model: root.visibleRows
+                                delegate: AbstractButton {
+                                    id: dos
+                                    required property var modelData
+                                    readonly property var r: modelData
+                                    readonly property bool on: dos.r.folderId === root.openedFolderId
+                                    readonly property bool noPath: !dos.r.isLocalOrigin && dos.r.localPath.length === 0
+                                    readonly property var batch: root.batchFor(dos.r.uuid)
+                                    readonly property bool indexing: root.indexingFolderIds.indexOf(dos.r.folderId) !== -1
+                                    Layout.fillWidth: true
+                                    implicitHeight: dosRow.implicitHeight + 20
+                                    hoverEnabled: true
+                                    focusPolicy: Qt.TabFocus
+                                    Accessible.role: Accessible.Button
+                                    Accessible.name: dos.r.name
+                                    onClicked: root.openFolder(dos.r.folderId)
+                                    HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                    background: Rectangle {
+                                        radius: Theme.radiusSheet
+                                        color: dos.on ? Theme.surface0 : (dos.hovered ? Theme.selectWash : "transparent")
+                                        border.width: dos.on ? 1 : (dos.visualFocus ? 2 : 0)
+                                        border.color: dos.visualFocus ? Theme.focusRing : Theme.line
+                                        Rectangle { visible: dos.on; x: -1; y: 8; width: 3; height: parent.height - 16; color: Theme.ruleInk }
                                     }
-
-                                    Rectangle {
-                                        y: 11
-                                        width: parent.width
-                                        height: parent.height - 11
-                                        radius: parent.radius
-                                        color: fileTile.tileColor
-
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            radius: parent.radius
-                                            gradient: Gradient {
-                                                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.16) }
-                                                GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0.0) }
+                                    contentItem: RowLayout {
+                                        id: dosRow
+                                        spacing: 12
+                                        FolderMark {
+                                            Layout.leftMargin: 10
+                                            received: !dos.r.isLocalOrigin
+                                            noPath: dos.noPath
+                                            pip: dos.r.hasConflict ? "conflict" : dos.batch ? "sync" : dos.indexing ? "indexing" : dos.noPath ? "away" : ""
+                                        }
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            Layout.rightMargin: 10
+                                            spacing: 1
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 8
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    text: dos.r.name
+                                                    color: Theme.ink
+                                                    font.family: Theme.fontFamily
+                                                    font.pixelSize: Theme.fs(13.5)
+                                                    font.weight: Theme.weightSemibold
+                                                    elide: Text.ElideRight
+                                                }
+                                                Text {
+                                                    text: root.whenShort(dos.r.lastActivity)
+                                                    color: Theme.ink3
+                                                    font.family: Theme.fontFamily
+                                                    font.pixelSize: Theme.fs(11.5)
+                                                    font.features: ({ "tnum": 1 })
+                                                }
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: dos.r.isLocalOrigin
+                                                      ? (dos.r.members.length ? qsTr("Partagé par vous · %1").arg(root.plural(dos.r.members.length, qsTr("membre"), qsTr("membres")))
+                                                                              : qsTr("Partagé par vous · aucun membre"))
+                                                      : (dos.r.ownerName.length ? qsTr("Reçu de %1").arg(dos.r.ownerName) : qsTr("Reçu d'un autre poste"))
+                                                color: Theme.ink3
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fs(12)
+                                                elide: Text.ElideRight
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                textFormat: Text.StyledText
+                                                text: {
+                                                    if (dos.noPath)
+                                                        return "<b><font color=\"" + Theme.warningInk + "\">" + qsTr("Emplacement à choisir") + "</font></b>"
+                                                    let t = root.plural(dos.r.fileCount, qsTr("fichier"), qsTr("fichiers"))
+                                                    if (dos.r.conflictCount > 0)
+                                                        t += " · <b><font color=\"" + Theme.dangerInk + "\">" + root.plural(dos.r.conflictCount, qsTr("conflit"), qsTr("conflits")) + "</font></b>"
+                                                    if (dos.batch)
+                                                        t += " · <b><font color=\"" + Theme.navActiveInk + "\">" + (dos.batch.incoming ? qsTr("réception") : qsTr("envoi"))
+                                                             + " " + dos.batch.done + "/" + dos.batch.total + "</font></b>"
+                                                    if (dos.indexing)
+                                                        t += " · <b><font color=\"" + Theme.navActiveInk + "\">" + qsTr("indexation…") + "</font></b>"
+                                                    return t
+                                                }
+                                                color: Theme.ink3
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fs(11.5)
+                                                elide: Text.ElideRight
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
 
-                                        Rectangle {
-                                            anchors.top: parent.top
-                                            anchors.left: parent.left
-                                            anchors.right: parent.right
-                                            height: parent.height * 0.38
-                                            radius: parent.radius
-                                            color: Qt.rgba(1, 1, 1, 0.10)
+                        // Emplacement par defaut des dossiers recus
+                        Rectangle { visible: root.defaultSharedPath.length > 0; Layout.fillWidth: true; Layout.topMargin: 12; Layout.preferredHeight: 1; color: Theme.line }
+                        ColumnLayout {
+                            visible: root.defaultSharedPath.length > 0
+                            Layout.fillWidth: true
+                            Layout.topMargin: 8
+                            spacing: 3
+                            Text { text: qsTr("Emplacement des dossiers reçus"); color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12) }
+                            Text { Layout.fillWidth: true; text: root.defaultSharedPath; color: Theme.ink2; font.family: "Cascadia Mono"; font.pixelSize: Theme.fs(11.5); elide: Text.ElideMiddle }
+                            TextLink { text: qsTr("Modifier dans les paramètres"); fontSize: Theme.fs(12); onClicked: root.settingsRequested() }
+                        }
+                    }
+
+                    // -- Dossier ouvert ------------------------------------
+                    Item {
+                        id: folderCol
+                        Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignTop
+                        Layout.minimumHeight: Math.max(folderList.implicitHeight, 420)
+                        implicitHeight: folderInner.implicitHeight + 18
+                        readonly property bool wide: width > 700
+
+                        Rectangle { visible: root.foldersWide; width: 1; height: Math.max(parent.height, folderList.height); color: Theme.line }
+                        Rectangle { visible: !root.foldersWide; width: parent.width; height: 1; y: 4; color: Theme.line }
+
+                        ColumnLayout {
+                            id: folderInner
+                            x: root.foldersWide ? (root.pageW > 1240 ? 28 : 22) : 0
+                            y: root.foldersWide ? 16 : 20
+                            width: parent.width - x
+                            spacing: 0
+
+                            // Aucun dossier : premier partage
+                            ColumnLayout {
+                                visible: root.folderRows.length === 0
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: 640
+                                Layout.topMargin: 14
+                                spacing: 6
+                                CapsLabel { text: qsTr("Pour commencer") }
+                                Text { text: qsTr("Partagez un premier dossier."); color: Theme.ink; font.family: Theme.fontFamilySerif; font.pixelSize: Theme.fs(26) }
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.bottomMargin: 10
+                                    text: qsTr("Choisissez un dossier de ce poste, puis les personnes qui le recevront. Ses fichiers sont indexés ici ; les modifications se propagent ensuite sur le réseau local, sans passer par Internet.")
+                                    color: Theme.ink3
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fs(13)
+                                    wrapMode: Text.WordWrap
+                                }
+                                DashedDrop {
+                                    Layout.fillWidth: true
+                                    title: qsTr("Déposez un dossier ici")
+                                    subtitle: qsTr("ou cliquez pour le choisir dans l'explorateur")
+                                    buttonText: qsTr("Choisir un dossier")
+                                    onActivated: { root.openComposer(); composerPicker.open() }
+                                    onPathDropped: function(path) { root.openComposer(); root.composerPath = path }
+                                }
+                            }
+
+                            // En-tete du dossier
+                            GridLayout {
+                                visible: root.currentFolder !== null
+                                Layout.fillWidth: true
+                                columns: folderCol.width > 520 ? 2 : 1
+                                columnSpacing: 20
+                                rowSpacing: 12
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 16
+                                    FolderMark {
+                                        size: 56
+                                        received: root.currentReceived
+                                        noPath: root.currentNoPath
+                                        pip: !root.currentFolder ? "" : root.currentFolder.hasConflict ? "conflict"
+                                             : root.batchFor(root.currentFolder.uuid) ? "sync" : root.currentNoPath ? "away" : ""
+                                    }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 2
+                                        CapsLabel {
+                                            Layout.fillWidth: true
+                                            text: !root.currentFolder ? "" : root.currentReceived
+                                                  ? (root.currentFolder.ownerName.length ? qsTr("Dossier reçu de %1").arg(root.currentFolder.ownerName) : qsTr("Dossier reçu"))
+                                                  : qsTr("Dossier partagé par vous")
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: root.currentFolder ? root.currentFolder.name : ""
+                                            color: Theme.ink
+                                            font.family: Theme.fontFamilySerif
+                                            font.pixelSize: Theme.fs(28)
+                                            font.weight: Theme.weightBold
+                                            elide: Text.ElideRight
+                                            Accessible.role: Accessible.Heading
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: !root.currentFolder ? "" : root.currentNoPath
+                                                  ? qsTr("Pas encore d'emplacement sur ce poste") : root.currentFolder.localPath
+                                            color: root.currentNoPath ? Theme.warningInk : Theme.ink2
+                                            font.family: root.currentNoPath ? Theme.fontFamily : "Cascadia Mono"
+                                            font.pixelSize: Theme.fs(12.5)
+                                            font.weight: root.currentNoPath ? Theme.weightSemibold : Theme.weightRegular
+                                            elide: Text.ElideMiddle
                                         }
                                     }
                                 }
+                                Row {
+                                    Layout.alignment: folderCol.width > 520 ? (Qt.AlignRight | Qt.AlignBottom) : Qt.AlignLeft
+                                    spacing: 8
+                                    readonly property bool iconsOnly: folderCol.width < 820
+                                    AppButton {
+                                        visible: !root.currentReceived
+                                        variant: "ink"
+                                        iconPath: Icons.users
+                                        text: parent.iconsOnly ? "" : qsTr("Gérer les accès")
+                                        tooltip: parent.iconsOnly ? qsTr("Gérer les accès") : ""
+                                        onClicked: root.openSheet("access")
+                                    }
+                                    AppButton {
+                                        visible: !root.currentNoPath
+                                        variant: "line"
+                                        iconPath: Icons.external
+                                        text: parent.iconsOnly ? "" : qsTr("Ouvrir dans l'explorateur")
+                                        tooltip: parent.iconsOnly ? qsTr("Ouvrir dans l'explorateur") : ""
+                                        onClicked: root.openInExplorer()
+                                    }
+                                    AppButton {
+                                        id: moreBtn
+                                        variant: "line"
+                                        iconPath: Icons.more
+                                        tooltip: qsTr("Plus d'actions")
+                                        onClicked: moreMenu.opened ? moreMenu.close() : moreMenu.open()
 
-                                Rectangle {
-                                    visible: !fileTile.isFolder
-                                    anchors.fill: parent
-                                    radius: 8
-                                    color: Qt.rgba(fileTile.tileColor.r,
-                                                    fileTile.tileColor.g,
-                                                    fileTile.tileColor.b, 0.14)
-
-                                    FaIcon {
-                                        anchors.centerIn: parent
-                                        glyph: fileTile.kind ? fileTile.kind.glyph : "\uf016"
-                                        font.pixelSize: Theme.fs(20)
-                                        color: fileTile.tileColor
+                                        Menu {
+                                            id: moreMenu
+                                            y: moreBtn.height + 6
+                                            x: moreBtn.width - width
+                                            width: 250
+                                            padding: 6
+                                            background: Rectangle {
+                                                color: Theme.surface0
+                                                radius: Theme.radiusSheet
+                                                border.width: 1
+                                                border.color: Theme.ruleInk
+                                            }
+                                            SheetItem { text: qsTr("Réindexer maintenant"); iconPath: Icons.refresh; visible: !root.currentNoPath; onTriggered: root.reindexCurrent() }
+                                            SheetItem { text: qsTr("Changer l'emplacement…"); iconPath: Icons.folderIn; visible: root.currentReceived; onTriggered: root.openSheet("location") }
+                                            SheetItem {
+                                                text: qsTr("Exclusions…"); iconPath: Icons.ban; visible: !root.currentReceived
+                                                hint: root.currentExcludes.length ? String(root.currentExcludes.length) : qsTr("aucune")
+                                                onTriggered: root.openSheet("exclusions")
+                                            }
+                                            SheetItem { text: qsTr("Gérer les accès…"); iconPath: Icons.users; visible: !root.currentReceived; onTriggered: root.openSheet("access") }
+                                            MenuSeparator {
+                                                contentItem: Rectangle { implicitHeight: 1; color: Theme.line }
+                                            }
+                                            SheetItem {
+                                                text: root.currentReceived ? qsTr("Retirer de ce poste…") : qsTr("Arrêter le partage…")
+                                                iconPath: Icons.trash
+                                                danger: true
+                                                onTriggered: root.openSheet("remove")
+                                            }
+                                        }
                                     }
                                 }
+                            }
 
+                            // Dossier recu sans emplacement : mise en place
+                            ColumnLayout {
+                                visible: root.currentNoPath
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: 640
+                                Layout.topMargin: 26
+                                spacing: 6
+                                CapsLabel { text: qsTr("Avant d'ouvrir ce dossier") }
+                                Text { text: qsTr("Choisissez où le recevoir sur ce poste."); color: Theme.ink; font.family: Theme.fontFamilySerif; font.pixelSize: Theme.fs(26); Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                                Text {
+                                    Layout.fillWidth: true
+                                    Layout.bottomMargin: 10
+                                    text: root.currentFolder
+                                          ? qsTr("%1 partage « %2 » avec vous. Ses fichiers seront copiés puis tenus à jour dans le dossier que vous indiquez.")
+                                            .arg(root.currentFolder.ownerName.length ? root.currentFolder.ownerName : qsTr("Un autre poste")).arg(root.currentFolder.name)
+                                          : ""
+                                    color: Theme.ink3
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fs(13)
+                                    wrapMode: Text.WordWrap
+                                }
+                                DashedDrop {
+                                    Layout.fillWidth: true
+                                    iconPath: Icons.folderIn
+                                    title: qsTr("Déposez le dossier de destination ici")
+                                    subtitle: root.defaultSharedPath.length && root.currentFolder
+                                              ? qsTr("ou cliquez pour le choisir · proposé : %1/%2").arg(root.defaultSharedPath).arg(root.currentFolder.name)
+                                              : qsTr("ou cliquez pour le choisir")
+                                    buttonText: qsTr("Choisir l'emplacement")
+                                    onActivated: root.openSheet("location")
+                                    onPathDropped: function(path) { locationSheet.localPath = path; root.openSheet("location") }
+                                }
+                            }
+
+                            // Bilan
+                            Rectangle {
+                                visible: root.currentFolder !== null && !root.currentNoPath
+                                Layout.fillWidth: true
+                                Layout.topMargin: 14
+                                implicitHeight: figs.implicitHeight + 20
+                                color: "transparent"
+                                Rectangle { width: parent.width; height: 1; color: Theme.line }
+                                Rectangle { width: parent.width; height: 1; y: parent.height - 1; color: Theme.line }
+                                Flow {
+                                    id: figs
+                                    y: 10
+                                    width: parent.width
+                                    spacing: 22
+                                    Fig { value: root.formatCount(root.currentFiles.length); label: root.currentFiles.length > 1 ? qsTr("fichiers") : qsTr("fichier") }
+                                    Fig { value: String(root.currentTotals.dirs); label: root.currentTotals.dirs > 1 ? qsTr("sous-dossiers") : qsTr("sous-dossier") }
+                                    Fig { value: root.formatBytes(root.currentTotals.bytes); label: qsTr("sur ce poste") }
+                                    Fig { visible: !root.currentReceived; value: String(root.currentAccess.length); label: root.currentAccess.length > 1 ? qsTr("membres") : qsTr("membre") }
+                                    Fig { visible: root.currentExcludes.length > 0; value: String(root.currentExcludes.length); label: root.currentExcludes.length > 1 ? qsTr("exclusions") : qsTr("exclusion") }
+                                    Fig {
+                                        readonly property int n: Object.keys(root.conflictedFiles).length
+                                        visible: n > 0
+                                        value: String(n)
+                                        label: n > 1 ? qsTr("conflits") : qsTr("conflit")
+                                        tone: Theme.dangerInk
+                                    }
+                                }
+                            }
+
+                            // Membres
+                            Item {
+                                visible: root.currentFolder !== null && !root.currentReceived
+                                Layout.fillWidth: true
+                                implicitHeight: memRow.implicitHeight + 22
+                                Rectangle { width: parent.width; height: 1; y: parent.height - 1; color: Theme.line }
+                                RowLayout {
+                                    id: memRow
+                                    y: 11
+                                    width: parent.width
+                                    spacing: 14
+                                    CapsLabel { Layout.alignment: Qt.AlignVCenter; text: qsTr("Membres") }
+                                    Flow {
+                                        Layout.fillWidth: true
+                                        spacing: 14
+                                        Repeater {
+                                            model: root.currentAccess
+                                            delegate: Row {
+                                                required property var modelData
+                                                spacing: 8
+                                                Rectangle {
+                                                    width: 24; height: 24; radius: 12
+                                                    color: Theme.ink
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    Text { anchors.centerIn: parent; text: root.initials(modelData.username); color: Theme.inkOnInk; font.family: Theme.fontFamilySerif; font.pixelSize: Theme.fs(10); font.weight: Theme.weightBold }
+                                                }
+                                                Text { anchors.verticalCenter: parent.verticalCenter; text: modelData.username; color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5) }
+                                                Text {
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    text: modelData.permission === "Write" ? qsTr("modifie") : qsTr("consulte")
+                                                    color: Theme.ink3
+                                                    font.family: Theme.fontFamily
+                                                    font.pixelSize: Theme.fs(11.5)
+                                                }
+                                            }
+                                        }
+                                        Text {
+                                            visible: root.currentAccess.length === 0
+                                            text: qsTr("Personne d'autre n'a accès à ce dossier.")
+                                            color: Theme.ink3
+                                            font.family: Theme.fontFamily
+                                            font.pixelSize: Theme.fs(12.5)
+                                        }
+                                    }
+                                    TextLink { Layout.alignment: Qt.AlignVCenter; text: qsTr("Ajouter"); arrow: false; onClicked: root.openSheet("access") }
+                                }
+                            }
+
+                            // Synchronisation en cours
+                            Item {
+                                id: syncLine
+                                readonly property var batch: root.currentFolder ? root.batchFor(root.currentFolder.uuid) : null
+                                readonly property real pct: batch && batch.bytesTotal > 0 ? Math.round(batch.bytes / batch.bytesTotal * 100) : 0
+                                visible: batch !== null && !root.currentNoPath
+                                Layout.fillWidth: true
+                                implicitHeight: 52
+                                Rectangle { width: parent.width; height: 1; y: parent.height - 1; color: Theme.line }
+                                RowLayout {
+                                    y: 11
+                                    width: parent.width
+                                    spacing: 10
+                                    LineIcon { path: syncLine.batch && !syncLine.batch.incoming ? Icons.arrowUp : Icons.arrowDown; size: 16; strokeWidth: 1.8; color: Theme.navActiveInk }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        textFormat: Text.StyledText
+                                        elide: Text.ElideRight
+                                        text: !syncLine.batch ? "" : "<b>" + (syncLine.batch.incoming ? qsTr("Réception en cours") : qsTr("Envoi en cours")) + "</b> · "
+                                              + qsTr("%1 fichiers sur %2").arg(syncLine.batch.done).arg(syncLine.batch.total) + " · "
+                                              + qsTr("%1 sur %2").arg(root.formatBytes(syncLine.batch.bytes)).arg(root.formatBytes(syncLine.batch.bytesTotal))
+                                        color: Theme.ink2
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fs(12.5)
+                                    }
+                                    Text { text: syncLine.pct + " %"; color: Theme.ink; font.family: Theme.fontFamilySerif; font.pixelSize: Theme.fs(18); font.weight: Theme.weightBold }
+                                }
                                 Rectangle {
-                                    visible: fileTile.hasConflict
-                                    width: 14
-                                    height: 14
-                                    radius: 7
-                                    color: Theme.warning
-                                    border.width: 2
-                                    border.color: Theme.surface
+                                    x: 26; y: 38
+                                    width: parent.width - 26
+                                    height: 2
+                                    color: Theme.line
+                                    Rectangle { y: -1; height: 4; width: parent.width * syncLine.pct / 100; color: Theme.markTransfer }
+                                }
+                            }
+
+                            // Indexation en cours
+                            Item {
+                                visible: root.currentFolder !== null && root.indexingFolderIds.indexOf(root.openedFolderId) !== -1
+                                Layout.fillWidth: true
+                                implicitHeight: 42
+                                Rectangle { width: parent.width; height: 1; y: parent.height - 1; color: Theme.line }
+                                RowLayout {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: parent.width
+                                    spacing: 10
+                                    Spinner { width: 14; height: 14; running: parent.visible; lineWidth: 2 }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        textFormat: Text.StyledText
+                                        text: "<b>" + qsTr("Indexation en cours") + "</b> · " + qsTr("les nouveaux fichiers apparaîtront au fur et à mesure ; l'application reste utilisable.")
+                                        color: Theme.ink2
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fs(12.5)
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                            }
+
+                            // Conflits a regler
+                            Rectangle {
+                                id: conflictBox
+                                readonly property var keys: Object.keys(root.conflictedFiles)
+                                visible: keys.length > 0 && !root.currentNoPath
+                                Layout.fillWidth: true
+                                Layout.topMargin: 14
+                                implicitHeight: conflictCol.implicitHeight + 26
+                                color: Theme.surface0
+                                border.width: 1
+                                border.color: Theme.line
+                                Rectangle { width: 3; height: parent.height; color: Theme.dangerColor }
+                                ColumnLayout {
+                                    id: conflictCol
+                                    x: 18
+                                    y: 12
+                                    width: parent.width - 34
+                                    spacing: 10
+                                    Row {
+                                        spacing: 6
+                                        StateGlyph { anchors.verticalCenter: parent.verticalCenter; kind: "error"; size: 11 }
+                                        CapsLabel {
+                                            text: conflictBox.keys.length > 1 ? qsTr("%1 conflits à régler").arg(conflictBox.keys.length) : qsTr("1 conflit à régler")
+                                            color: Theme.dangerInk
+                                        }
+                                    }
+                                    Repeater {
+                                        model: conflictBox.keys
+                                        delegate: GridLayout {
+                                            id: cf
+                                            required property var modelData
+                                            required property int index
+                                            readonly property string copyPath: root.conflictedFiles[modelData] || ""
+                                            Layout.fillWidth: true
+                                            columns: folderCol.width > 760 ? 2 : 1
+                                            columnSpacing: 18
+                                            rowSpacing: 6
+                                            ColumnLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 2
+                                                Text { Layout.fillWidth: true; text: cf.modelData; color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13.5); font.weight: Theme.weightSemibold; wrapMode: Text.WrapAnywhere }
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    textFormat: Text.StyledText
+                                                    wrapMode: Text.WordWrap
+                                                    text: qsTr("Le fichier a changé ici et chez un membre. La version reçue est mise de côté sous « %1 ».")
+                                                          .arg(root.esc(cf.copyPath.split("/").pop()))
+                                                    color: Theme.ink3
+                                                    font.family: Theme.fontFamily
+                                                    font.pixelSize: Theme.fs(12.5)
+                                                }
+                                            }
+                                            // Trois choix d'un seul tenant
+                                            Rectangle {
+                                                Layout.alignment: Qt.AlignVCenter
+                                                implicitWidth: choiceRow.implicitWidth + 2
+                                                implicitHeight: 34
+                                                radius: Theme.radiusSheet
+                                                color: "transparent"
+                                                border.width: 1
+                                                border.color: Theme.lineStrong
+                                                Row {
+                                                    id: choiceRow
+                                                    x: 1; y: 1
+                                                    Repeater {
+                                                        model: [
+                                                            { t: qsTr("Garder la mienne"), r: "keep_local" },
+                                                            { t: qsTr("Garder la reçue"), r: "keep_remote" },
+                                                            { t: qsTr("Garder les deux"), r: "keep_both" }
+                                                        ]
+                                                        delegate: AbstractButton {
+                                                            id: ch
+                                                            required property var modelData
+                                                            required property int index
+                                                            hoverEnabled: true
+                                                            implicitHeight: 32
+                                                            implicitWidth: chText.implicitWidth + 24
+                                                            Accessible.name: ch.modelData.t
+                                                            onClicked: root.resolveConflictFor(cf.modelData, cf.copyPath, ch.modelData.r)
+                                                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                                            background: Rectangle {
+                                                                color: ch.hovered ? Theme.ink : "transparent"
+                                                                Rectangle { visible: ch.index > 0; width: 1; height: parent.height; color: Theme.lineStrong }
+                                                            }
+                                                            contentItem: Text {
+                                                                id: chText
+                                                                text: ch.modelData.t
+                                                                horizontalAlignment: Text.AlignHCenter
+                                                                verticalAlignment: Text.AlignVCenter
+                                                                color: ch.hovered ? Theme.inkOnInk : Theme.ink
+                                                                font.family: Theme.fontFamily
+                                                                font.pixelSize: Theme.fs(12.5)
+                                                                font.weight: Theme.weightSemibold
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Onglets + outils
+                            Item {
+                                visible: root.currentFolder !== null && !root.currentNoPath
+                                Layout.fillWidth: true
+                                Layout.topMargin: 18
+                                implicitHeight: 36
+                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.line }
+                                Row {
+                                    anchors.bottom: parent.bottom
+                                    spacing: 18
+                                    InkTab { text: qsTr("Fichiers"); count: root.formatCount(root.currentFiles.length); current: root.tab === "files"; onClicked: root.tab = "files" }
+                                    InkTab { text: qsTr("Historique"); count: String(root.currentSyncHistory.length); current: root.tab === "history"; onClicked: root.tab = "history" }
+                                }
+                                Row {
+                                    visible: root.tab === "files"
                                     anchors.right: parent.right
                                     anchors.top: parent.top
-                                    anchors.rightMargin: -6
-                                    anchors.topMargin: -4
-                                }
-
-                                Rectangle {
-                                    visible: fileTile.isFolder && modelData.count > 0
-                                    width: 16
-                                    height: 16
-                                    radius: 8
-                                    color: Theme.primary
-                                    border.width: 2
-                                    border.color: Theme.surface
-                                    anchors.left: parent.left
-                                    anchors.top: parent.top
-                                    anchors.leftMargin: -6
-                                    anchors.topMargin: -4
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: (modelData.count !== undefined && modelData.count > 9) ? "9+" : (modelData.count !== undefined ? modelData.count : "")
-                                        font.pixelSize: Theme.fs(8)
-                                        font.bold: true
-                                        font.family: Theme.fontFamily
-                                        color: Theme.primaryText
+                                    spacing: 10
+                                    Rectangle {
+                                        visible: folderCol.width > 560
+                                        width: folderCol.width > 900 ? 220 : 170
+                                        height: 30
+                                        radius: Theme.radiusSheet
+                                        color: "transparent"
+                                        border.width: 1
+                                        border.color: inFind.activeFocus ? Theme.ink : Theme.line
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 10
+                                            anchors.rightMargin: 8
+                                            spacing: 7
+                                            LineIcon { path: Icons.search; size: 14; strokeWidth: 1.8; color: Theme.ink3 }
+                                            TextField {
+                                                id: inFind
+                                                Layout.fillWidth: true
+                                                placeholderText: qsTr("Dans ce dossier…")
+                                                placeholderTextColor: Theme.ink3
+                                                color: Theme.ink
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fs(12.5)
+                                                background: Item {}
+                                                leftPadding: 0
+                                                rightPadding: 0
+                                                selectByMouse: true
+                                                text: root.searchText
+                                                Accessible.name: qsTr("Rechercher dans ce dossier")
+                                                onTextChanged: root.searchText = text
+                                            }
+                                        }
+                                    }
+                                    Row {
+                                        SquareButton { iconPath: Icons.list; tip: qsTr("Liste"); pressedState: root.viewMode === "list"; onClicked: root.viewMode = "list" }
+                                        SquareButton { iconPath: Icons.grid; tip: qsTr("Vignettes"); pressedState: root.viewMode === "grid"; onClicked: root.viewMode = "grid" }
                                     }
                                 }
                             }
 
-                            Label {
+                            // Fil du chemin
+                            RowLayout {
+                                visible: root.currentFolder !== null && !root.currentNoPath && root.tab === "files"
                                 Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                Layout.leftMargin: 4
-                                Layout.rightMargin: 4
-                                text: modelData.name
-                                color: Theme.text
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.weight: Font.Medium
-                                font.family: Theme.fontFamily
-                                horizontalAlignment: Text.AlignHCenter
-                                elide: Text.ElideMiddle
-                                maximumLineCount: 1
-
-                                ToolTip.visible: truncated && fileTile.tileHovered
-                                ToolTip.text: modelData.name
-                                ToolTip.delay: 500
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                Layout.leftMargin: 4
-                                Layout.rightMargin: 4
-                                text: fileTile.isFolder
-                                      ? (modelData.count === 1 ? qsTr("1 fichier") : qsTr("%1 fichiers").arg(modelData.count))
-                                      : root.formatBytes(modelData.size)
-                                color: Theme.textTertiary
-                                font.pixelSize: Theme.fontSizeCaption
-                                font.family: Theme.fontFamily
-                                horizontalAlignment: Text.AlignHCenter
-                                elide: Text.ElideRight
-                                maximumLineCount: 1
-                            }
-
-                            ColumnLayout {
-                                visible: fileTile.hasConflict
-                                Layout.fillWidth: true
-                                Layout.leftMargin: 4
-                                Layout.rightMargin: 4
-                                spacing: 2
-
-                                AppButton {
-                                    text: qsTr("Local")
-                                    variant: "secondary"
-                                    Layout.fillWidth: true
-                                    implicitHeight: 26
-                                    onClicked: root.resolveConflictFor(modelData.relativePath,
-                                                                        root.conflictedFiles[modelData.relativePath],
-                                                                        "keep_local")
-                                }
-                                AppButton {
-                                    text: qsTr("Distant")
-                                    variant: "secondary"
-                                    Layout.fillWidth: true
-                                    implicitHeight: 26
-                                    onClicked: root.resolveConflictFor(modelData.relativePath,
-                                                                        root.conflictedFiles[modelData.relativePath],
-                                                                        "keep_remote")
-                                }
-                                AppButton {
-                                    text: qsTr("Les deux")
-                                    variant: "secondary"
-                                    Layout.fillWidth: true
-                                    implicitHeight: 26
-                                    onClicked: root.resolveConflictFor(modelData.relativePath,
-                                                                        root.conflictedFiles[modelData.relativePath],
-                                                                        "keep_both")
-                                }
-                            }
-                        }
-
-                        MouseArea {
-                            id: fileTileArea
-                            anchors.fill: parent
-                            z: 0
-                            enabled: !fileTile.hasConflict
-                            hoverEnabled: true
-                            cursorShape: fileTile.isFolder ? Qt.PointingHandCursor : Qt.ArrowCursor
-                            onClicked: {
-                                if (fileTile.isFolder) root.openBrowserFolder(modelData.path)
-                            }
-                        }
-                    }
-
-                    Label {
-                        visible: filesGrid.count === 0
-                        anchors.centerIn: parent
-                        text: qsTr("Ce dossier partagé ne contient aucun fichier indexé.")
-                        color: Theme.textTertiary
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.family: Theme.fontFamily
-                    }
-                }
-            }
-
-            // =====================================================
-            // VUE HISTORIQUE (journal de synchronisation)
-            // =====================================================
-            ColumnLayout {
-                anchors.fill: parent
-                visible: root.openedFolderId >= 0 && root.showHistory
-                spacing: 0
-
-                Rectangle {
-                    visible: false
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 1
-                    color: Theme.border
-                    Layout.topMargin: 8
-                }
-
-                Item { visible: false; Layout.preferredHeight: 0 }
-
-                RowLayout {
-                    visible: false
-                    Layout.preferredHeight: 0
-                    Layout.minimumHeight: 0
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Layout.bottomMargin: 10
-                    spacing: 8
-
-                    Rectangle {
-                        width: 26
-                        height: 26
-                        radius: 13
-                        color: Theme.colorForName(root.openedFolderName)
-                        Text {
-                            anchors.centerIn: parent
-                            text: root.openedFolderName.length > 0 ? root.openedFolderName.charAt(0).toUpperCase() : "?"
-                            color: "#FFFFFF"
-                            font.pixelSize: Theme.fs(11)
-                            font.bold: true
-                            font.family: Theme.fontFamily
-                        }
-                    }
-                    Label {
-                        text: qsTr("Historique — %1").arg(root.openedFolderName)
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.weight: Font.Medium
-                        font.family: Theme.fontFamily
-                    }
-                    Item { Layout.fillWidth: true }
-                }
-
-                ListView {
-                    id: historyListView
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.topMargin: Theme.spacingMedium
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Layout.bottomMargin: 8
-                    spacing: 2
-                    clip: true
-                    model: root.currentSyncHistory
-
-                    header: Rectangle {
-                        width: historyListView.width
-                        height: 32
-                        color: Theme.surfaceAlt
-                        radius: Theme.radiusSmall
-                        border.width: 1
-                        border.color: Theme.border
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: Theme.spacingSmall
-                            anchors.rightMargin: Theme.spacingSmall
-                            Label { Layout.preferredWidth: 70; text: qsTr("Opération"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary; font.family: Theme.fontFamily }
-                            Label { Layout.fillWidth: true; text: qsTr("Fichier"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary; font.family: Theme.fontFamily }
-                            Label { Layout.preferredWidth: 50; text: qsTr("Ver."); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary; font.family: Theme.fontFamily }
-                            Label { Layout.preferredWidth: 120; text: qsTr("Date"); font.bold: true; font.pixelSize: Theme.fontSizeCaption; color: Theme.textSecondary; font.family: Theme.fontFamily }
-                        }
-                    }
-
-                    delegate: Rectangle {
-                        width: historyListView.width
-                        height: modelData.type === "Rename" ? 52 : 36
-                        radius: Theme.radiusSmall
-                        color: index % 2 === 1 ? Theme.surfaceAlt : "transparent"
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: Theme.spacingSmall
-                            anchors.rightMargin: Theme.spacingSmall
-
-                            StatusBadge {
-                                Layout.preferredWidth: 70
-                                tone: {
-                                    switch (modelData.type) {
-                                    case "Create": return "success"
-                                    case "Update": return "info"
-                                    case "Delete": return "error"
-                                    case "Rename": return "warning"
-                                    default: return "neutral"
+                                Layout.topMargin: 10
+                                Layout.bottomMargin: 4
+                                spacing: 8
+                                SquareButton {
+                                    iconPath: Icons.arrowUp
+                                    tip: qsTr("Dossier parent")
+                                    enabled: root.browsedRelativePath.length > 0
+                                    onClicked: {
+                                        const i = root.browsedRelativePath.lastIndexOf("/")
+                                        root.openBrowserFolder(i >= 0 ? root.browsedRelativePath.slice(0, i) : "")
                                     }
                                 }
-                                text: {
-                                    switch (modelData.type) {
-                                    case "Create": return qsTr("Créé")
-                                    case "Update": return qsTr("Modifié")
-                                    case "Delete": return qsTr("Supprimé")
-                                    case "Rename": return qsTr("Renommé")
-                                    default: return modelData.type
+                                Flow {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    Repeater {
+                                        model: {
+                                            const segs = root.browsedRelativePath.length ? root.browsedRelativePath.split("/") : []
+                                            const out = [{ label: root.currentFolder ? root.currentFolder.name : "", path: "", current: segs.length === 0 }]
+                                            for (let i = 0; i < segs.length; i++)
+                                                out.push({ label: segs[i], path: segs.slice(0, i + 1).join("/"), current: i === segs.length - 1 })
+                                            return out
+                                        }
+                                        delegate: Row {
+                                            required property var modelData
+                                            required property int index
+                                            spacing: 6
+                                            Text { visible: index > 0; text: "/"; color: Theme.inkDisabled; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13) }
+                                            Text {
+                                                text: modelData.label
+                                                color: modelData.current ? Theme.ink : (segHover.hovered ? Theme.ink : Theme.ink3)
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fs(13)
+                                                font.weight: modelData.current ? Theme.weightSemibold : Theme.weightRegular
+                                                font.underline: segHover.hovered && !modelData.current
+                                                HoverHandler { id: segHover; cursorShape: modelData.current ? Qt.ArrowCursor : Qt.PointingHandCursor }
+                                                TapHandler { enabled: !modelData.current; onTapped: root.openBrowserFolder(modelData.path) }
+                                            }
+                                        }
                                     }
                                 }
-                            }
-
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 1
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: modelData.relativePath
-                                    color: modelData.type === "Delete" ? Theme.textTertiary : Theme.text
-                                    font.pixelSize: Theme.fontSizeSmall
+                                Text {
+                                    text: root.plural(root.browserItems.length, qsTr("élément"), qsTr("éléments"))
+                                    color: Theme.ink3
                                     font.family: Theme.fontFamily
-                                    elide: Text.ElideMiddle
-                                    font.strikeout: modelData.type === "Delete"
+                                    font.pixelSize: Theme.fs(12)
                                 }
-                                Label {
-                                    visible: modelData.type === "Rename" && modelData.oldRelativePath.length > 0
+                            }
+
+                            // Table des fichiers
+                            ColumnLayout {
+                                id: fileTable
+                                visible: root.currentFolder !== null && !root.currentNoPath && root.tab === "files" && root.viewMode === "list"
+                                Layout.fillWidth: true
+                                spacing: 0
+                                readonly property bool showVersion: folderCol.width > 640
+                                readonly property real sizeW: folderCol.width > 900 ? 96 : 84
+                                readonly property real whenW: folderCol.width > 900 ? 120 : 96
+
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    text: qsTr("← %1").arg(modelData.oldRelativePath)
-                                    color: Theme.textTertiary
-                                    font.pixelSize: Theme.fontSizeCaption
+                                    Layout.preferredHeight: 28
+                                    spacing: 12
+                                    Item { Layout.preferredWidth: 30 }
+                                    CapsLabel { Layout.fillWidth: true; text: qsTr("Nom"); font.pixelSize: Theme.fs(10) }
+                                    CapsLabel { Layout.preferredWidth: fileTable.sizeW; horizontalAlignment: Text.AlignRight; text: qsTr("Taille"); font.pixelSize: Theme.fs(10) }
+                                    CapsLabel { visible: fileTable.showVersion; Layout.preferredWidth: 66; horizontalAlignment: Text.AlignRight; text: qsTr("Version"); font.pixelSize: Theme.fs(10) }
+                                    CapsLabel { Layout.preferredWidth: fileTable.whenW; Layout.rightMargin: 8; horizontalAlignment: Text.AlignRight; text: qsTr("Modifié"); font.pixelSize: Theme.fs(10) }
+                                }
+                                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.ruleInk }
+
+                                Repeater {
+                                    model: root.browserItems
+                                    delegate: AbstractButton {
+                                        id: fr
+                                        required property var modelData
+                                        readonly property bool isFolder: modelData.kind === "folder"
+                                        Layout.fillWidth: true
+                                        implicitHeight: 42
+                                        hoverEnabled: true
+                                        focusPolicy: fr.isFolder ? Qt.TabFocus : Qt.NoFocus
+                                        Accessible.name: modelData.name
+                                        onClicked: if (fr.isFolder) root.openBrowserFolder(modelData.path)
+                                        HoverHandler { cursorShape: fr.isFolder ? Qt.PointingHandCursor : Qt.ArrowCursor }
+                                        background: Rectangle {
+                                            color: fr.modelData.conflict ? Theme.dangerSoft : (fr.hovered ? Theme.selectWash : "transparent")
+                                            border.width: fr.visualFocus ? 2 : 0
+                                            border.color: Theme.focusRing
+                                            Rectangle { width: parent.width; height: 1; y: parent.height - 1; color: Theme.line }
+                                        }
+                                        contentItem: RowLayout {
+                                            spacing: 12
+                                            Item {
+                                                Layout.preferredWidth: 30
+                                                Layout.fillHeight: true
+                                                LineIcon { visible: fr.isFolder; anchors.centerIn: parent; path: Icons.folder; size: 17; strokeWidth: 1.6; color: Theme.ink2 }
+                                                Text {
+                                                    visible: !fr.isFolder
+                                                    anchors.centerIn: parent
+                                                    text: root.extOf(fr.modelData.name)
+                                                    color: Theme.ink3
+                                                    font.family: Theme.fontFamilySerif
+                                                    font.pixelSize: Theme.fs(10)
+                                                    font.weight: Theme.weightBold
+                                                    font.letterSpacing: 0.6
+                                                }
+                                            }
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 8
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    Layout.maximumWidth: implicitWidth
+                                                    text: fr.modelData.name
+                                                    color: fr.modelData.conflict ? Theme.dangerInk : Theme.ink
+                                                    font.family: Theme.fontFamily
+                                                    font.pixelSize: Theme.fs(13)
+                                                    font.weight: fr.isFolder ? Theme.weightSemibold : Theme.weightMedium
+                                                    elide: Text.ElideMiddle
+                                                }
+                                                LineIcon { visible: fr.isFolder; path: Icons.chevronRight; size: 14; strokeWidth: 1.8; color: Theme.inkDisabled }
+                                                Row {
+                                                    visible: fr.modelData.conflict === true
+                                                    spacing: 4
+                                                    StateGlyph { anchors.verticalCenter: parent.verticalCenter; kind: "error"; size: 10 }
+                                                    Text { text: qsTr("en conflit"); color: Theme.dangerInk; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(11.5); font.weight: Theme.weightSemibold }
+                                                }
+                                                Text {
+                                                    visible: fr.modelData.conflictCopy === true
+                                                    text: qsTr("copie mise de côté")
+                                                    color: Theme.ink3
+                                                    font.family: Theme.fontFamily
+                                                    font.pixelSize: Theme.fs(11.5)
+                                                }
+                                                Item { Layout.fillWidth: true }
+                                            }
+                                            Text {
+                                                Layout.preferredWidth: fileTable.sizeW
+                                                horizontalAlignment: Text.AlignRight
+                                                text: fr.isFolder ? root.plural(fr.modelData.count, qsTr("fichier"), qsTr("fichiers")) : root.formatBytes(fr.modelData.size)
+                                                color: Theme.ink2
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fs(12.5)
+                                                font.features: ({ "tnum": 1 })
+                                            }
+                                            Text {
+                                                visible: fileTable.showVersion
+                                                Layout.preferredWidth: 66
+                                                horizontalAlignment: Text.AlignRight
+                                                text: fr.isFolder ? "" : "v" + fr.modelData.version
+                                                color: Theme.ink3
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fs(12.5)
+                                            }
+                                            Text {
+                                                Layout.preferredWidth: fileTable.whenW
+                                                Layout.rightMargin: 8
+                                                horizontalAlignment: Text.AlignRight
+                                                text: root.whenShort(fr.modelData.lastModified)
+                                                color: Theme.ink2
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fs(12.5)
+                                                font.features: ({ "tnum": 1 })
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Vignettes
+                            Flow {
+                                visible: root.currentFolder !== null && !root.currentNoPath && root.tab === "files" && root.viewMode === "grid"
+                                Layout.fillWidth: true
+                                Layout.topMargin: 8
+                                spacing: 10
+                                readonly property real tileW: {
+                                    const n = Math.max(1, Math.floor((width + 10) / 186))
+                                    return (width - (n - 1) * 10) / n
+                                }
+                                Repeater {
+                                    model: root.browserItems
+                                    delegate: AbstractButton {
+                                        id: tl
+                                        required property var modelData
+                                        readonly property bool isFolder: modelData.kind === "folder"
+                                        width: parent.tileW
+                                        implicitHeight: tlCol.implicitHeight + 24
+                                        padding: 12
+                                        hoverEnabled: true
+                                        Accessible.name: modelData.name
+                                        onClicked: if (tl.isFolder) root.openBrowserFolder(modelData.path)
+                                        HoverHandler { cursorShape: tl.isFolder ? Qt.PointingHandCursor : Qt.ArrowCursor }
+                                        background: Rectangle {
+                                            radius: Theme.radiusSheet
+                                            color: tl.modelData.conflict ? Theme.dangerSoft : (tl.hovered ? Theme.surface1 : Theme.surface0)
+                                            border.width: 1
+                                            border.color: tl.modelData.conflict ? Theme.dangerColor : Theme.line
+                                        }
+                                        contentItem: ColumnLayout {
+                                            id: tlCol
+                                            spacing: 6
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                LineIcon { visible: tl.isFolder; path: Icons.folder; size: 20; strokeWidth: 1.6; color: Theme.ink2 }
+                                                Text {
+                                                    visible: !tl.isFolder
+                                                    text: root.extOf(tl.modelData.name)
+                                                    color: Theme.ink3
+                                                    font.family: Theme.fontFamilySerif
+                                                    font.pixelSize: Theme.fs(11)
+                                                    font.weight: Theme.weightBold
+                                                    font.letterSpacing: 0.8
+                                                }
+                                                Item { Layout.fillWidth: true }
+                                                Text {
+                                                    text: tl.isFolder ? tl.modelData.count : "v" + tl.modelData.version
+                                                    color: Theme.ink3
+                                                    font.family: Theme.fontFamilySerif
+                                                    font.pixelSize: Theme.fs(11)
+                                                    font.weight: Theme.weightBold
+                                                }
+                                            }
+                                            Text { Layout.fillWidth: true; text: tl.modelData.name; color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13); font.weight: Theme.weightSemibold; elide: Text.ElideMiddle }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: tl.isFolder ? root.plural(tl.modelData.count, qsTr("fichier"), qsTr("fichiers"))
+                                                                  : root.formatBytes(tl.modelData.size) + " · " + root.whenShort(tl.modelData.lastModified)
+                                                color: Theme.ink3
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fs(12)
+                                                elide: Text.ElideRight
+                                            }
+                                            Text {
+                                                visible: tl.modelData.conflict === true || tl.modelData.conflictCopy === true
+                                                text: tl.modelData.conflict ? qsTr("× en conflit") : qsTr("copie mise de côté")
+                                                color: tl.modelData.conflict ? Theme.dangerInk : Theme.ink3
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fs(11.5)
+                                                font.weight: Theme.weightSemibold
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                visible: root.currentFolder !== null && !root.currentNoPath && root.tab === "files" && root.browserItems.length === 0
+                                Layout.topMargin: 14
+                                text: root.searchText.length ? qsTr("Aucun élément ne correspond.") : qsTr("Ce dossier ne contient aucun fichier indexé.")
+                                color: Theme.ink3
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fs(12.5)
+                            }
+
+                            // Historique
+                            ColumnLayout {
+                                visible: root.currentFolder !== null && !root.currentNoPath && root.tab === "history"
+                                Layout.fillWidth: true
+                                spacing: 0
+                                Repeater {
+                                    model: root.historyRows
+                                    delegate: ColumnLayout {
+                                        id: hr
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        spacing: 0
+                                        readonly property var op: {
+                                            switch (modelData.type) {
+                                            case "Create": return { g: "+", w: qsTr("Créé"), c: Theme.successInk }
+                                            case "Update": return { g: "~", w: qsTr("Modifié"), c: Theme.navActiveInk }
+                                            case "Delete": return { g: "−", w: qsTr("Supprimé"), c: Theme.dangerInk }
+                                            case "Rename": return { g: "→", w: qsTr("Renommé"), c: Theme.ink2 }
+                                            }
+                                            return { g: "·", w: modelData.type, c: Theme.ink2 }
+                                        }
+                                        RowLayout {
+                                            visible: hr.modelData.newDay
+                                            Layout.fillWidth: true
+                                            Layout.topMargin: 16
+                                            Layout.bottomMargin: 6
+                                            spacing: 10
+                                            CapsLabel { text: hr.modelData.day; color: Theme.ink2 }
+                                            Text {
+                                                text: root.plural(root.dayCount(hr.modelData.day), qsTr("opération"), qsTr("opérations"))
+                                                color: Theme.ink3
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fs(11.5)
+                                            }
+                                        }
+                                        Rectangle { visible: hr.modelData.newDay; Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.ruleInk }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: hr.modelData.type === "Rename" ? 50 : 40
+                                            spacing: 12
+                                            Text { Layout.preferredWidth: 44; text: hr.modelData.time; color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12); font.features: ({ "tnum": 1 }) }
+                                            Row {
+                                                Layout.preferredWidth: 104
+                                                spacing: 7
+                                                Rectangle {
+                                                    width: 18; height: 18; radius: 9
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    color: "transparent"
+                                                    border.width: 1
+                                                    border.color: Theme.lineStrong
+                                                    Text { anchors.centerIn: parent; text: hr.op.g; color: hr.op.c; font.family: Theme.fontFamilySerif; font.pixelSize: Theme.fs(12); font.weight: Theme.weightBold }
+                                                }
+                                                Text { anchors.verticalCenter: parent.verticalCenter; text: hr.op.w; color: hr.op.c; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: Theme.weightSemibold }
+                                            }
+                                            ColumnLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 1
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    text: hr.modelData.relativePath
+                                                    color: hr.modelData.type === "Delete" ? Theme.ink3 : Theme.ink
+                                                    font.strikeout: hr.modelData.type === "Delete"
+                                                    font.family: Theme.fontFamily
+                                                    font.pixelSize: Theme.fs(13)
+                                                    elide: Text.ElideMiddle
+                                                }
+                                                Text {
+                                                    visible: hr.modelData.type === "Rename" && hr.modelData.oldRelativePath.length > 0
+                                                    Layout.fillWidth: true
+                                                    text: qsTr("ancien nom : %1").arg(hr.modelData.oldRelativePath)
+                                                    color: Theme.ink3
+                                                    font.family: Theme.fontFamily
+                                                    font.pixelSize: Theme.fs(11.5)
+                                                    elide: Text.ElideMiddle
+                                                }
+                                            }
+                                            Text { Layout.preferredWidth: 40; horizontalAlignment: Text.AlignRight; text: "v" + hr.modelData.version; color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12) }
+                                        }
+                                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.line }
+                                    }
+                                }
+                                Text {
+                                    Layout.topMargin: 12
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    text: root.historyRows.length === 0
+                                          ? qsTr("Aucune opération enregistrée pour ce dossier. Réindexez-le pour commencer le journal.")
+                                          : qsTr("Les 100 dernières opérations de ce dossier, sur ce poste.")
+                                    color: Theme.ink3
                                     font.family: Theme.fontFamily
-                                    elide: Text.ElideMiddle
+                                    font.pixelSize: Theme.fs(12)
                                 }
-                            }
-
-                            Label {
-                                Layout.preferredWidth: 50
-                                text: "v" + modelData.version
-                                color: Theme.textSecondary
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.family: Theme.fontFamily
-                            }
-
-                            Label {
-                                Layout.preferredWidth: 120
-                                text: {
-                                    const d = new Date(modelData.createdAt)
-                                    return isNaN(d.getTime()) ? modelData.createdAt
-                                        : d.toLocaleTimeString(Qt.locale(), "HH:mm:ss")
-                                }
-                                color: Theme.textTertiary
-                                font.pixelSize: Theme.fontSizeCaption
-                                font.family: Theme.fontFamily
                             }
                         }
-                    }
-
-                    Label {
-                        visible: historyListView.count === 0
-                        anchors.centerIn: parent
-                        text: qsTr("Aucune opération enregistrée pour ce dossier.\nReindexez le dossier pour commencer à alimenter le journal.")
-                        color: Theme.textTertiary
-                        horizontalAlignment: Text.AlignHCenter
-                        font.pixelSize: Theme.fontSizeBody
-                        font.family: Theme.fontFamily
                     }
                 }
             }
         }
 
-        // =========================================================
-        // Barre d'état inférieure (même style que FileTransferView)
-        // =========================================================
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            color: Theme.statusBarBackground
-            visible: gridView.count > 0 || root.openedFolderId >= 0
+        // ---- volet « Nouveau dossier partage » ----
+        Item {
+            id: composerHost
+            anchors.fill: parent
+            z: 30
+            visible: root.composerOpen || composer.x < composerHost.width
 
             Rectangle {
-                anchors.top: parent.top
-                width: parent.width
-                height: 1
-                color: Theme.line
-            }
-
-            RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.pagePadding
-                anchors.rightMargin: Theme.pagePadding
-                spacing: 16
+                color: Theme.scrim
+                opacity: root.composerOpen ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: 160 } }
+                MouseArea { anchors.fill: parent; enabled: root.composerOpen; onClicked: root.composerOpen = false }
+            }
 
-                RowLayout {
-                    visible: root.openedFolderId < 0
-                    spacing: 4
-                    FaIcon { glyph: "\uf07b"; font.pixelSize: Theme.fs(12); color: Theme.textSecondary }
-                    Label {
-                        text: qsTr("%n dossier(s)", "", gridView.count)
-                        font.pixelSize: Theme.fontSizeCaption
-                        font.family: Theme.fontFamily
-                        color: Theme.textSecondary
+            FolderComposer {
+                id: composer
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: page.narrow ? composerHost.width : Math.min(460, composerHost.width - 48)
+                x: root.composerOpen ? composerHost.width - width : composerHost.width
+                Behavior on x { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+
+                users: root.composerUsers
+                localPath: root.composerPath
+                done: root.composerDone
+                errorText: root.composerError
+
+                onCloseRequested: root.composerOpen = false
+                onBrowseRequested: composerPicker.open()
+                onPathDropped: function(path) { root.composerPath = path }
+                onErrorDismissed: root.composerError = ""
+                onCreateRequested: function(name, path, userIds, allowWrite, excludes) {
+                    if (!root.context) return
+                    if (root.context.createFolder(name, path, userIds, allowWrite, excludes)) {
+                        root.composerDone = true
+                        root.scheduleRebuild()
+                    } else {
+                        root.composerError = root.context.lastErrorString || qsTr("Le dossier n'a pas pu être partagé.")
                     }
-                }
-                RowLayout {
-                    visible: root.openedFolderId >= 0 && !root.showHistory
-                    spacing: 4
-                    FaIcon { glyph: "\uf0f6"; font.pixelSize: Theme.fs(12); color: Theme.textSecondary }
-                    Label {
-                        text: qsTr("%n élément(s)", "", filesListView.count)
-                        font.pixelSize: Theme.fontSizeCaption
-                        font.family: Theme.fontFamily
-                        color: Theme.textSecondary
-                    }
-                }
-                RowLayout {
-                    visible: root.openedFolderId >= 0 && root.showHistory
-                    spacing: 4
-                    FaIcon { glyph: "\uf1da"; font.pixelSize: Theme.fs(12); color: Theme.textSecondary }
-                    Label {
-                        text: qsTr("%n entrée(s) d'historique", "", historyListView.count)
-                        font.pixelSize: Theme.fontSizeCaption
-                        font.family: Theme.fontFamily
-                        color: Theme.textSecondary
-                    }
-                }
-                Item { Layout.fillWidth: true }
-                Label {
-                    visible: root.openedFolderId < 0 && root.hasActiveFilters()
-                    text: qsTr("Filtres actifs")
-                    font.pixelSize: Theme.fontSizeCaption
-                    font.family: Theme.fontFamily
-                    color: Theme.primary
                 }
             }
+        }
+
+        // ---- fenetres ----
+        FolderAccessSheet {
+            id: accessSheet
+            open: root.sheet === "access"
+            context: root.context
+            folderId: root.openedFolderId
+            folderName: root.currentFolder ? root.currentFolder.name : ""
+            onCloseRequested: root.sheet = ""
+            onAccessChanged: { root.refreshAccess(); root.scheduleRebuild() }
+        }
+        FolderExclusionsSheet {
+            id: exclusionsSheet
+            open: root.sheet === "exclusions"
+            context: root.context
+            folderId: root.openedFolderId
+            folderName: root.currentFolder ? root.currentFolder.name : ""
+            onCloseRequested: root.sheet = ""
+            onSaved: { root.sheet = ""; root.refreshFiles(); root.refreshHistory(); root.refreshAccess(); root.scheduleRebuild() }
+        }
+        FolderLocationSheet {
+            id: locationSheet
+            open: root.sheet === "location"
+            folderName: root.currentFolder ? root.currentFolder.name : ""
+            ownerName: root.currentFolder ? root.currentFolder.ownerName : ""
+            hasPath: !root.currentNoPath
+            suggestedPath: root.defaultSharedPath.length && root.currentFolder ? root.defaultSharedPath + "/" + root.currentFolder.name : ""
+            onCloseRequested: { root.sheet = ""; locationSheet.localPath = "" }
+            onBrowseRequested: locationPicker.open()
+            onConfirmed: {
+                if (root.context && root.openedFolderId >= 0 && root.context.setFolderLocalPath(root.openedFolderId, locationSheet.localPath)) {
+                    root.sheet = ""
+                    locationSheet.localPath = ""
+                    root.refreshAll()
+                }
+            }
+        }
+        FolderRemoveSheet {
+            open: root.sheet === "remove"
+            folderName: root.currentFolder ? root.currentFolder.name : ""
+            received: root.currentReceived
+            ownerName: root.currentFolder ? root.currentFolder.ownerName : ""
+            localPath: root.currentFolder ? root.currentFolder.localPath : ""
+            memberCount: root.currentAccess.length
+            onCloseRequested: root.sheet = ""
+            onConfirmed: {
+                const id = root.openedFolderId
+                root.sheet = ""
+                if (root.context && id >= 0) {
+                    root.openedFolderId = -1
+                    root.context.removeFolder(id)
+                    root.scheduleRebuild()
+                }
+            }
+        }
+        FolderInviteSheet {
+            id: inviteSheet
+            onAccepted: {
+                if (root.context && inviteSheet.folderId >= 0) root.context.acceptFolderShare(inviteSheet.folderId)
+                inviteSheet.open = false
+                root.scheduleRebuild()
+                Qt.callLater(root.showNextShareConfirmation)
+            }
+            onPostponed: {
+                if (root.context && inviteSheet.folderId >= 0) root.context.declineFolderShare(inviteSheet.folderId)
+                inviteSheet.open = false
+                root.scheduleRebuild()
+                Qt.callLater(root.showNextShareConfirmation)
+            }
+            onOpenChanged: if (!inviteSheet.open && root.pendingShareConfirmations.length === 0) { inviteSheet.queueTotal = 0; inviteSheet.queueIndex = 0 }
         }
     }
 }

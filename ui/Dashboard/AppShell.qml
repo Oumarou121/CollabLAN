@@ -500,6 +500,7 @@ Item {
         id: folderComponent
         SharedFolderView {
             onBackRequested: shell.goBack()
+            onSettingsRequested: shell.navigate("settings")
         }
     }
 
