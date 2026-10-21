@@ -61,6 +61,11 @@
         <file>Components/StatusBadge.qml</file>
         <file>Components/EmptyState.qml</file>
         <file>Components/LineIcon.qml</file>
+        <file>Components/StateGlyph.qml</file>
+        <file>Components/CapsLabel.qml</file>
+        <file>Components/TextLink.qml</file>
+        <file>Components/SectionHeader.qml</file>
+        <file>Components/SerifFigure.qml</file>
         <file>Components/SkeletonLine.qml</file>
         <file>Components/SkeletonRows.qml</file>
         <file>Components/RecipientPicker.qml</file>
@@ -71,6 +76,11 @@
         <file>Dashboard/DashboardSidebar.qml</file>
         <file>Dashboard/DashboardShell.qml</file>
         <file>Dashboard/NetworkWorkspace.qml</file>
+        <file>Dashboard/Hemicycle.qml</file>
+        <file>Dashboard/hemicycleLayout.js</file>
+        <file>Dashboard/NetworkRegistry.qml</file>
+        <file>Dashboard/PeerFiche.qml</file>
+        <file>Dashboard/InterventionList.qml</file>
         <file>Dashboard/NetworkPeer.qml</file>
         <file>Dashboard/NetworkListView.qml</file>
         <file>Dashboard/PeerDetailsPanel.qml</file>

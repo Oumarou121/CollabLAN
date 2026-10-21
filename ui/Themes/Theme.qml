@@ -29,17 +29,29 @@ QtObject {
         // migrer vers `mode`.
         property bool savedDarkMode: false
         property string mode: ""
-        property string accent: "blue"
+        property string accent: "encre"
         property real fontScale: 1.0
         property string density: "comfortable"
         property bool sidebarCollapsed: false
+        // 2 = identite Ligne claire (papier / nuit, accent "encre").
+        property int styleVersion: 0
+    }
+
+    // Passage a Ligne claire : l'ancien accent par defaut ("blue") devient
+    // l'encre de la marque ; un accent choisi explicitement est conserve.
+    Component.onCompleted: {
+        if (prefs.styleVersion < 2) {
+            if (prefs.accent === "blue")
+                prefs.accent = "encre"
+            prefs.styleVersion = 2
+        }
     }
 
     // "light" | "dark" | "system"
     readonly property string mode: prefs.mode.length > 0 ? prefs.mode
                                                           : (prefs.savedDarkMode ? "dark" : "light")
-    // "blue" | "indigo" | "teal" | "graphite"
-    readonly property string accentName: accentPalettes[prefs.accent] !== undefined ? prefs.accent : "blue"
+    // "encre" | "blue" | "indigo" | "teal" | "graphite"
+    readonly property string accentName: accentPalettes[prefs.accent] !== undefined ? prefs.accent : "encre"
     // 0.9 | 1.0 | 1.1 | 1.2
     readonly property real fontScale: Math.max(0.85, Math.min(1.3, prefs.fontScale))
     // "comfortable" | "compact"
@@ -94,6 +106,10 @@ QtObject {
     // encre en sombre).
     // ======================================================================
     readonly property var accentPalettes: ({
+        // Encre indigo de Ligne claire (accent par defaut).
+        "encre":    { label: qsTr("Encre"),
+                      light: ["#2F3FCF", "#2733B0", "#ECEDFA", "#C5CAF3"],
+                      dark:  ["#9BA5FF", "#B3BBFF", "#1C2240", "#343C70"] },
         "blue":     { label: qsTr("Bleu"),
                       light: ["#2563EB", "#1D4ED8", "#EEF3FE", "#C7D7FD"],
                       dark:  ["#5B8DEF", "#7DA5F3", "#16223A", "#28407A"] },
@@ -107,30 +123,38 @@ QtObject {
                       light: ["#334155", "#1E293B", "#EEF1F5", "#CBD3DF"],
                       dark:  ["#A5B4C8", "#C3CEDC", "#1E2736", "#3A475C"] }
     })
-    readonly property var accentKeys: ["blue", "indigo", "teal", "graphite"]
+    readonly property var accentKeys: ["encre", "blue", "indigo", "teal", "graphite"]
     readonly property var _accent: accentPalettes[accentName][darkMode ? "dark" : "light"]
 
     // ======================================================================
     // Jeu canonique
     // ======================================================================
-    // Neutres "ardoise" legerement bleutes.
-    readonly property color bg:            darkMode ? "#0B1018" : "#F4F6FA"
-    readonly property color surface0:      darkMode ? "#121925" : "#FFFFFF"
-    readonly property color surface1:      darkMode ? "#172030" : "#F8FAFC"
-    readonly property color sunken:        darkMode ? "#1C2636" : "#EEF2F7"
-    readonly property color hover:         darkMode ? "#1E293B" : "#F1F4F9"
-    readonly property color line:          darkMode ? "#243045" : "#E3E8EF"
-    readonly property color lineStrong:    darkMode ? "#33415A" : "#CBD3DF"
-    readonly property color ink:           darkMode ? "#E6EBF2" : "#0F172A"
-    readonly property color ink2:          darkMode ? "#A4B0C2" : "#475569"
-    readonly property color ink3:          darkMode ? "#8391A7" : "#64748B"
-    readonly property color inkDisabled:   darkMode ? "#5A6880" : "#94A3B8"
+    // Ligne claire : papier et encre (clair), encre bleu nuit et ivoire
+    // (sombre, theme « Nuit »). Les filets sont opaques, calcules pour le
+    // papier, afin de se superposer sans s'additionner.
+    readonly property color bg:            darkMode ? "#0F131C" : "#F3EFE6"
+    readonly property color surface0:      darkMode ? "#151A25" : "#FBF9F4"
+    readonly property color surface1:      darkMode ? "#1B2130" : "#F2EEE5"
+    readonly property color sunken:        darkMode ? "#0B0E15" : "#EDE8DD"
+    readonly property color hover:         darkMode ? "#1C2230" : "#ECE7DD"
+    readonly property color line:          darkMode ? "#272C37" : "#D9D4CB"
+    readonly property color lineStrong:    darkMode ? "#43474F" : "#B3AFA7"
+    readonly property color ink:           darkMode ? "#EEEAE1" : "#17161B"
+    readonly property color ink2:          darkMode ? "#BCB8AF" : "#4C4A52"
+    readonly property color ink3:          darkMode ? "#8F8D89" : "#6E6B74"
+    readonly property color inkDisabled:   darkMode ? "#64656B" : "#A29E9A"
+
+    // Propres a Ligne claire : filet d'encre (rubriques, barre laterale),
+    // voile de selection, encre posee sur un fond d'encre.
+    readonly property color ruleInk:       darkMode ? "#D9D4C9" : "#17161B"
+    readonly property color selectWash:    darkMode ? "#0DEEEAE1" : "#0D17161B"
+    readonly property color inkOnInk:      darkMode ? "#10141D" : "#FBF9F4"
 
     readonly property color accentColor:   _accent[0]
     readonly property color accentHover:   _accent[1]
     readonly property color accentSoft:    _accent[2]
     readonly property color accentMuted:   _accent[3]
-    readonly property color accentInk:     darkMode ? "#0B1018" : "#FFFFFF"
+    readonly property color accentInk:     darkMode ? "#10141D" : "#FFFFFF"
     // Encre sur fonds pleins (accent, rouge, vert). Jamais "onXxx" : en QML
     // un identifiant on+Majuscule est lu comme un gestionnaire de signal.
     readonly property color inkOnAccent:   accentInk
@@ -138,54 +162,55 @@ QtObject {
     readonly property color inkOnSuccess:  darkMode ? "#06200F" : "#FFFFFF"
     readonly property color focusRing:     _accent[0]
 
-    readonly property color successColor:  darkMode ? "#4ADE80" : "#15803D"
-    readonly property color successSoft:   darkMode ? "#10291C" : "#E8F6EE"
-    readonly property color successInk:    darkMode ? "#86EFAC" : "#166534"
-    readonly property color warningColor:  darkMode ? "#F0B25A" : "#B45309"
-    readonly property color warningSoft:   darkMode ? "#2E2412" : "#FEF4E6"
-    readonly property color warningInk:    darkMode ? "#FCD38D" : "#92400E"
-    readonly property color dangerColor:   darkMode ? "#F87171" : "#DC2626"
-    readonly property color dangerHover:   darkMode ? "#FCA5A5" : "#B91C1C"
-    readonly property color dangerSoft:    darkMode ? "#331619" : "#FDECEC"
-    readonly property color dangerInk:     darkMode ? "#FCA5A5" : "#B91C1C"
-    readonly property color infoColor:     darkMode ? "#7FB4E8" : "#1D6FA5"
-    readonly property color infoSoft:      darkMode ? "#132637" : "#E8F1F8"
-    readonly property color infoInk:       darkMode ? "#A8CCF0" : "#15567F"
-    readonly property color callColor:     darkMode ? "#9C6BE0" : "#6D4AA8"
-    readonly property color callSoft:      darkMode ? "#241B38" : "#F2EDFB"
-    readonly property color callInk:       darkMode ? "#C4B5FD" : "#5B3A96"
+    // Etats : *Color pour les marques et glyphes, *Ink (plus contraste) pour
+    // le texte. Vert = operationnel, ambre = attention, rouge = refus/echec.
+    readonly property color successColor:  darkMode ? "#67C795" : "#217A4E"
+    readonly property color successSoft:   darkMode ? "#16261F" : "#E3ECDF"
+    readonly property color successInk:    darkMode ? "#82D4A9" : "#1B6640"
+    readonly property color warningColor:  darkMode ? "#E2AC59" : "#B9781A"
+    readonly property color warningSoft:   darkMode ? "#2A2418" : "#F3E5CC"
+    readonly property color warningInk:    darkMode ? "#EBBD76" : "#8A560B"
+    readonly property color dangerColor:   darkMode ? "#EE7F69" : "#BC3A24"
+    readonly property color dangerHover:   darkMode ? "#F29784" : "#A1301C"
+    readonly property color dangerSoft:    darkMode ? "#2C1B1C" : "#F4E0D8"
+    readonly property color dangerInk:     darkMode ? "#F29784" : "#A1301C"
+    readonly property color infoColor:     darkMode ? "#8DB6E0" : "#2F5E8C"
+    readonly property color infoSoft:      darkMode ? "#172231" : "#E2E6E8"
+    readonly property color infoInk:       darkMode ? "#A8CCF0" : "#234A70"
+    readonly property color callColor:     darkMode ? "#C7A1F0" : "#763CA6"
+    readonly property color callSoft:      darkMode ? "#231D32" : "#ECE2EC"
+    readonly property color callInk:       darkMode ? "#D3B5F4" : "#65318F"
 
-    // Navigation laterale : surface claire, plus legere que le contenu en
-    // sombre, separee par un filet - jamais un bloc massif.
-    readonly property color navBg:         darkMode ? "#0E141F" : "#FFFFFF"
-    readonly property color navInk:        darkMode ? "#C9D2DF" : "#334155"
-    readonly property color navInkMuted:   darkMode ? "#7D8BA1" : "#64748B"
-    readonly property color navHover:      darkMode ? "#18212F" : "#F1F4F9"
+    // Navigation laterale : meme papier que la page, separee par un filet
+    // d'encre ; l'element actif est une feuille (+ filet + graisse).
+    readonly property color navBg:         bg
+    readonly property color navInk:        ink2
+    readonly property color navInkMuted:   ink3
+    readonly property color navHover:      selectWash
     readonly property color navActive:     accentSoft
     readonly property color navActiveInk:  darkMode ? _accent[1] : _accent[0]
-    readonly property color navLine:       line
+    readonly property color navLine:       ruleInk
 
-    readonly property color scrim:         darkMode ? "#000000A6" : "#0F172A66"
-    readonly property color shadowColor:   darkMode ? "#00000066" : "#0F172A14"
-    readonly property color shadowStrong:  darkMode ? "#00000099" : "#0F172A29"
+    readonly property color scrim:         darkMode ? "#000000A6" : "#4017130E"
+    readonly property color shadowColor:   darkMode ? "#00000066" : "#141F1B16"
+    readonly property color shadowStrong:  darkMode ? "#00000099" : "#2E1F1B16"
 
     // ---- Marques de la carte reseau ---------------------------------------
-    // Jeu de 3 teintes valide pour le daltonisme : la couleur n'encode que
-    // l'ACTIVITE, toujours doublee d'un badge et d'un libelle.
-    readonly property color markTransfer:  darkMode ? "#2B96B5" : "#0B7E9E"
+    // La couleur n'encode que l'ACTIVITE (l'encre de marque pour les
+    // transferts), toujours doublee d'une forme et d'un libelle.
+    readonly property color markTransfer:  accentColor
     readonly property color markCall:      callColor
-    readonly property color markAway:      darkMode ? "#C9821F" : "#B45309"
+    readonly property color markAway:      warningColor
     readonly property color markOnline:    successColor
     readonly property color markOffline:   lineStrong
-    readonly property color orbitInner:    darkMode ? "#33415A" : "#C2CCDA"
-    readonly property color orbitOuter:    darkMode ? "#273347" : "#D7DEE8"
-    readonly property color nodeOffline:   darkMode ? "#172030" : "#F1F4F8"
-    readonly property color nodeOfflineLine: darkMode ? "#4A5870" : "#B4BFCE"
-    readonly property color nodeOfflineInk:  darkMode ? "#7D8BA1" : "#8794A8"
-    // Dossiers : la convention "dossier jaune" reste reconnue instantanement,
-    // desaturee pour s integrer a la palette ardoise.
-    readonly property color folderColor:   darkMode ? "#D9A441" : "#F2B84B"
-    readonly property color folderTab:     darkMode ? "#B88730" : "#DE9F2C"
+    readonly property color orbitInner:    darkMode ? "#3A404C" : "#C6C0B5"
+    readonly property color orbitOuter:    darkMode ? "#2A303C" : "#DAD5CB"
+    readonly property color nodeOffline:   darkMode ? "#1B2130" : "#EEEAE1"
+    readonly property color nodeOfflineLine: darkMode ? "#5B6170" : "#A9A39A"
+    readonly property color nodeOfflineInk:  darkMode ? "#8F8D89" : "#857F77"
+    // Dossiers : la convention "dossier jaune" reste reconnue instantanement.
+    readonly property color folderColor:   darkMode ? "#D9A441" : "#E8B04A"
+    readonly property color folderTab:     darkMode ? "#B88730" : "#D49A2C"
 
     // ======================================================================
     // Metriques (densite)
@@ -202,6 +227,7 @@ QtObject {
 
     readonly property int controlHeight: compact ? 32 : 38
     readonly property int controlHeightSmall: compact ? 28 : 32
+    readonly property int controlHeightEditorial: compact ? 32 : 34
     readonly property int rowHeight: compact ? 40 : 52
     readonly property int navItemHeight: compact ? 32 : 36
     readonly property int iconSize: 16
@@ -214,6 +240,8 @@ QtObject {
     readonly property int radiusPill: 999
     readonly property int radiusCard: 12
     readonly property int radiusRow: 8
+    // Ligne claire : feuilles et controles a angles presque droits.
+    readonly property int radiusSheet: 3
 
     // ---- Typographie (Inter embarquee, repli Segoe UI) ---------------------
     readonly property string fontFamily: "Inter"
@@ -234,6 +262,19 @@ QtObject {
     readonly property int weightSemibold: Font.DemiBold
     readonly property int weightBold: Font.Bold
 
+    // ---- Typographie editoriale (Ligne claire) -----------------------------
+    // PT Serif (embarquee, chargee par Main.qml) pour ce qui se lit comme un
+    // titre ou un chiffre ; Inter pour tout ce qui se manipule.
+    readonly property string fontFamilySerif: "PT Serif"
+    readonly property int fontSizeGreeting: fs(34)
+    readonly property int fontSizeFigure: fs(40)
+    readonly property int fontSizeSection: fs(21)
+    readonly property int fontSizePageTitle: fs(19)
+    readonly property int fontSizeRubric: fs(18)
+    readonly property int fontSizeCaps: fs(10.5)
+    // Espacement des petites capitales (en pixels, comme font.letterSpacing).
+    readonly property real capsLetterSpacing: 1.3
+
     // ---- Mouvement ---------------------------------------------------------
     readonly property int durationFast: 110
     readonly property int durationNormal: 180
@@ -241,9 +282,9 @@ QtObject {
     // ======================================================================
     // Structure de l'application
     // ======================================================================
-    readonly property int sidebarWidth: compact ? 216 : 232
+    readonly property int sidebarWidth: compact ? 220 : 236
     readonly property int sidebarWidthCollapsed: 64
-    readonly property int topbarHeight: compact ? 48 : 56
+    readonly property int topbarHeight: compact ? 50 : 58
 
     // Paliers de resolution (voir planche "Resolutions").
     readonly property int bpMetricsWrap: 1180

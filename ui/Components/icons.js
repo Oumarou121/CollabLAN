@@ -46,3 +46,15 @@ var phone = "M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 
 // Meme trace que l'icone "transfer" deja utilisee dans EmptyState.qml
 // (etat vide validee sur la maquette V2.2) : deux fleches opposees.
 var exchange = "M7 4 3 8l4 4 M3 8h14 M17 20l4-4-4-4 M21 16H7"
+
+// ---- Ligne claire (navigation et accueil) ----------------------------------
+var overview = "M5 3.5h4a1.5 1.5 0 0 1 1.5 1.5v5A1.5 1.5 0 0 1 9 11.5H5A1.5 1.5 0 0 1 3.5 10V5A1.5 1.5 0 0 1 5 3.5z M15 3.5h4a1.5 1.5 0 0 1 1.5 1.5v2A1.5 1.5 0 0 1 19 8.5h-4A1.5 1.5 0 0 1 13.5 7V5A1.5 1.5 0 0 1 15 3.5z M15 11.5h4a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5h-4a1.5 1.5 0 0 1-1.5-1.5v-6a1.5 1.5 0 0 1 1.5-1.5z M5 14.5h4a1.5 1.5 0 0 1 1.5 1.5v3A1.5 1.5 0 0 1 9 20.5H5A1.5 1.5 0 0 1 3.5 19v-3A1.5 1.5 0 0 1 5 14.5z"
+var shield = "M12 3.2L4.5 6v5.6c0 4.6 3.1 8 7.5 9.2 4.4-1.2 7.5-4.6 7.5-9.2V6z M9 12l2.2 2.2L15.5 10"
+var sliders = "M4 6.5h9 M17 6.5h3 M4 12h3 M11 12h9 M4 17.5h11 M19 17.5h1 M17 6.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0z M11 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0z M19 17.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0z"
+var info = "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z M12 16.5v-5 M12 8h0.01"
+var logout = "M9.5 20.5h-4a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h4 M15.5 16.5L20 12l-4.5-4.5 M20 12H9"
+var menu = "M4 6.5h16 M4 12h16 M4 17.5h16"
+var chevronDown = "M6 9.5l6 6 6-6"
+var arrowRight = "M4.5 12h15 M13.5 6l6 6-6 6"
+var server = "M5.5 3.5h13a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z M5.5 13.5h13a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z M7.5 7h0.01 M7.5 17h0.01"
+var journal = "M8.5 6.5h12 M8.5 12h12 M8.5 17.5h12 M4 6.5h0.01 M4 12h0.01 M4 17.5h0.01"

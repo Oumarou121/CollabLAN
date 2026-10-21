@@ -76,6 +76,7 @@ Item {
     }
 
     function navigate(route, props) {
+        shell.navOverlay = false
         // Les sections d'administration ne sont proposees qu'aux comptes
         // administrateurs (le controle reel reste cote metier).
         if ((route === "journal" || route === "admin") && !shell.isAdmin)
@@ -115,13 +116,20 @@ Item {
             pages.currentItem.openConversation(conversationId, "")
     }
 
-    // Fenetre etroite : rail d'icones impose.
-    readonly property bool narrowWindow: shell.width < Theme.bpPanelsWrap
+    // Fenetre etroite : rail d'icones impose (Ligne claire A2 : sous 1180 px).
+    readonly property bool narrowWindow: shell.width < Theme.bpMetricsWrap
+    // Barre repliee en rail (preference ou fenetre etroite)...
+    readonly property bool railMode: Theme.sidebarCollapsed || shell.narrowWindow
+    // ... et depliee temporairement par-dessus le contenu.
+    property bool navOverlay: false
+    onRailModeChanged: if (!railMode) shell.navOverlay = false
 
     // ---- Badges reels ----------------------------------------------------
     property int unreadMessages: 0
     property int activeTransfers: 0
     property int pendingAdmin: 0
+    property int peersCount: 0
+    property int folderConflicts: 0
     readonly property bool callActive: (typeof callContext !== "undefined" && callContext)
                                        ? (callContext.callState !== "" && callContext.callState !== "idle")
                                        : false
@@ -159,6 +167,32 @@ Item {
             }
         }
         shell.pendingAdmin = pending
+
+        shell.peersCount = (typeof peersModel !== "undefined" && peersModel) ? peersModel.count : 0
+
+        // Conflits de synchronisation (SharedFolderModel : HasConflictRole = UserRole + 9).
+        let conflicts = 0
+        const folders = (typeof sharedFolderContext !== "undefined" && sharedFolderContext)
+                        ? sharedFolderContext.folderModel : null
+        if (folders) {
+            const total = folders.rowCount()
+            for (let f = 0; f < total; f++)
+                if (folders.data(folders.index(f, 0), 257 + 8))
+                    conflicts++
+        }
+        shell.folderConflicts = conflicts
+    }
+
+    // Poste choisi dans la recherche : selectionne sur l'accueil si celui-ci
+    // sait le faire, sinon ouvre la liste des postes.
+    function showPeer(peerId) {
+        if (shell.currentRoute !== "home" || pages.depth > 1)
+            shell.navigate("home")
+        const page = pages.currentItem
+        if (page && typeof page.selectPeer === "function")
+            page.selectPeer(peerId)
+        else
+            shell.navigate("peers")
     }
 
     // Les non-lus changent a la reception d'un message ou a la lecture
@@ -224,6 +258,12 @@ Item {
         if (shell.election.roleLabel === "SERVER") return qsTr("Ce poste est serveur")
         return qsTr("Connecté au serveur")
     }
+    readonly property string networkState: {
+        if (!shell.election) return "client"
+        if (shell.election.roleLabel === "TEMP_SERVER") return "backup"
+        if (shell.election.roleLabel === "SERVER") return "server"
+        return "client"
+    }
     readonly property color networkColor: (shell.election && shell.election.roleLabel === "TEMP_SERVER")
                                           ? Theme.warningColor : Theme.successColor
 
@@ -237,30 +277,12 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        DashboardSidebar {
-            id: sidebar
+        // Emplacement de la barre laterale : en surimpression, la page garde
+        // la largeur du rail et la barre depliee passe par-dessus.
+        Item {
+            id: navSlot
             Layout.fillHeight: true
-            isCompact: Theme.sidebarCollapsed || shell.narrowWindow
-            compactForced: shell.narrowWindow
-            username: shell.username
-            isAdmin: shell.isAdmin
-            activeRoute: shell.currentRoute
-            unreadMessages: shell.unreadMessages
-            activeTransfers: shell.activeTransfers
-            pendingAdmin: shell.pendingAdmin
-            callActive: shell.callActive
-
-            onHomeRequested: shell.navigate("home")
-            onChatRequested: shell.navigate("chat")
-            onTransferRequested: shell.navigate("transfer")
-            onFoldersRequested: shell.navigate("folder")
-            onCallRequested: shell.navigate("call")
-            onPeersRequested: shell.navigate("peers")
-            onJournalRequested: shell.navigate("journal")
-            onAdminRequested: shell.navigate("admin")
-            onSettingsRequested: shell.navigate("settings")
-            onAboutRequested: shell.navigate("about")
-            onLogoutRequested: shell.logoutRequested()
+            Layout.preferredWidth: shell.navOverlay ? Theme.sidebarWidthCollapsed : sidebar.width
         }
 
         ColumnLayout {
@@ -275,6 +297,9 @@ Item {
                 isAdmin: shell.isAdmin
                 networkLabel: shell.networkLabel
                 networkColor: shell.networkColor
+                networkState: shell.networkState
+                showMenuButton: shell.railMode
+                menuOpen: shell.navOverlay
                 notifications: shell.notifications
                 notificationCount: shell.unreadNotifications
                 breadcrumb: {
@@ -285,6 +310,8 @@ Item {
                 }
 
                 onNavigateRequested: function(route) { shell.navigate(route) }
+                onMenuRequested: shell.navOverlay = !shell.navOverlay
+                onPeerRequested: function(peerId, peerName) { shell.showPeer(peerId) }
                 onConversationRequested: function(conversationId) { shell.openConversation(conversationId) }
                 onNotificationActivated: function(index) { shell.activateNotification(index) }
                 onMarkAllRead: shell.unreadNotifications = 0
@@ -331,6 +358,58 @@ Item {
         }
     }
 
+    // Barre depliee en surimpression : voile cliquable, Echap pour fermer.
+    Rectangle {
+        anchors.fill: parent
+        z: 30
+        visible: shell.navOverlay
+        color: Theme.scrim
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: shell.navOverlay = false
+        }
+    }
+
+    Shortcut {
+        sequences: ["Escape"]
+        enabled: shell.navOverlay
+        onActivated: shell.navOverlay = false
+    }
+
+    DashboardSidebar {
+        id: sidebar
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        z: 31
+        isCompact: shell.railMode && !shell.navOverlay
+        compactForced: shell.narrowWindow
+        overlay: shell.navOverlay
+        username: shell.username
+        isAdmin: shell.isAdmin
+        activeRoute: shell.currentRoute
+        unreadMessages: shell.unreadMessages
+        activeTransfers: shell.activeTransfers
+        pendingAdmin: shell.pendingAdmin
+        peersCount: shell.peersCount
+        folderConflicts: shell.folderConflicts
+        callActive: shell.callActive
+
+        onHomeRequested: shell.navigate("home")
+        onChatRequested: shell.navigate("chat")
+        onTransferRequested: shell.navigate("transfer")
+        onFoldersRequested: shell.navigate("folder")
+        onCallRequested: shell.navigate("call")
+        onPeersRequested: shell.navigate("peers")
+        onJournalRequested: shell.navigate("journal")
+        onAdminRequested: shell.navigate("admin")
+        onSettingsRequested: shell.navigate("settings")
+        onAboutRequested: shell.navigate("about")
+        onLogoutRequested: shell.logoutRequested()
+    }
+
+
     Component.onCompleted: shell.navigate("home")
 
     // ======================================================================
@@ -343,6 +422,10 @@ Item {
             username: shell.username
             onUsersRequested: shell.navigate("peers")
             onChatRequested: shell.navigate("chat")
+            onNewConversationRequested: {
+                shell.navigate("chat")
+                shell.pushPage(newConversationComponent)
+            }
             onFileTransferRequested: function(openNewTransfer, peer) {
                 shell.navigate("transfer", { autoOpenPanel: openNewTransfer === true,
                                              preselectedPeer: peer || null })

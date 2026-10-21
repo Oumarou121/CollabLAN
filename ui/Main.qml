@@ -54,6 +54,15 @@ ApplicationWindow {
         id: interBold
         source: "qrc:/ui/Assets/fonts/Inter-Bold.ttf"
     }
+    // PT Serif : titres et chiffres de Ligne claire (Theme.fontFamilySerif).
+    FontLoader {
+        id: serifRegular
+        source: "qrc:/ui/Assets/fonts/PTSerif-Regular.ttf"
+    }
+    FontLoader {
+        id: serifBold
+        source: "qrc:/ui/Assets/fonts/PTSerif-Bold.ttf"
+    }
 
     // Police par defaut : tous les Text/Label/Button en heritent sauf
     // surcharge explicite.

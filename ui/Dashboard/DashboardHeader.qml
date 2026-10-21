@@ -5,11 +5,14 @@ import Themes
 import "../Components"
 
 /*
- * DashboardHeader - barre superieure globale de LocaLink (refonte 2026).
+ * DashboardHeader - barre de contexte de LocaLink (Ligne claire A2).
  *
- * Gauche  : fil d'Ariane (section > element ouvert).
- * Droite  : etat du reseau (role reel dans l'election), recherche globale,
- *           bascule clair/sombre, centre de notifications.
+ * Gauche  : titre de la page en PT Serif (premier segment du fil d'Ariane),
+ *           suivi de l'element ouvert ; bouton de menu quand la barre
+ *           laterale est repliee en rail sur une fenetre etroite.
+ * Droite  : recherche globale, etat du reseau (role reel dans l'election,
+ *           forme + libelle), centre de notifications. La bascule de theme
+ *           vit dans Parametres > Apparence (showThemeToggle).
  *
  * La recherche interroge des donnees reelles : les sections de
  * l'application, les postes decouverts (peersModel) et les conversations
@@ -29,12 +32,17 @@ Item {
 
     property bool showSearch: true
     property bool showNotifications: true
-    property bool showThemeToggle: true
+    property bool showThemeToggle: false
+    // Bouton « afficher la navigation » (rail sur fenetre etroite).
+    property bool showMenuButton: false
+    property bool menuOpen: false
     property bool isAdmin: false
 
     // Etat reseau
     property string networkLabel: ""
     property color networkColor: Theme.successColor
+    // "server" | "backup" | "client" : la forme du repere double la couleur.
+    property string networkState: "server"
 
     // Notifications de session : [{ title, message, category, time (Date),
     // conversationId, read }]
@@ -49,10 +57,13 @@ Item {
     signal notificationActivated(int index)
     signal markAllRead()
     signal clearNotifications()
+    signal menuRequested()
+    // Poste choisi dans la recherche (identifiant peersModel).
+    signal peerRequested(string peerId, string peerName)
 
     Rectangle {
         anchors.fill: parent
-        color: Theme.surface0
+        color: Theme.bg
 
         Rectangle {
             anchors.left: parent.left
@@ -116,10 +127,11 @@ Item {
             let found = 0
             for (let p = 0; p < peersModel.count && found < 6; p++) {
                 const idx = peersModel.index(p, 0)
+                const pid = peersModel.data(idx, 257) || ""
                 const name = peersModel.data(idx, 258) || ""
                 const addr = peersModel.data(idx, 261) || ""
                 if (root.normalize(name).indexOf(q) >= 0 || addr.indexOf(q) >= 0) {
-                    out.push({ kind: "peer", group: qsTr("Postes"), label: name || addr, detail: addr, glyph: "", route: "peers" })
+                    out.push({ kind: "peer", group: qsTr("Postes"), label: name || addr, detail: addr, peerId: pid, glyph: "", route: "peers" })
                     found++
                 }
             }
@@ -154,6 +166,8 @@ Item {
         searchField.focus = false
         if (item.kind === "conversation" && item.conversationId > 0)
             root.conversationRequested(item.conversationId)
+        else if (item.kind === "peer" && item.peerId)
+            root.peerRequested(item.peerId, item.label)
         else
             root.navigateRequested(item.route)
     }
@@ -188,28 +202,88 @@ Item {
         anchors.bottomMargin: 1
         spacing: 10
 
-        // ---- Fil d'Ariane ----------------------------------------------
+        // ---- Menu (rail sur fenetre etroite) ----------------------------
+        AbstractButton {
+            id: menuButton
+            visible: root.showMenuButton
+            Layout.preferredWidth: 34
+            Layout.preferredHeight: 34
+            Layout.leftMargin: -8
+            hoverEnabled: true
+            focusPolicy: Qt.TabFocus
+            Accessible.name: root.menuOpen ? qsTr("Masquer la navigation") : qsTr("Afficher la navigation")
+            onClicked: root.menuRequested()
+            HoverHandler { cursorShape: Qt.PointingHandCursor }
+
+            background: Rectangle {
+                radius: 17
+                color: menuButton.hovered || root.menuOpen ? Theme.selectWash : "transparent"
+                border.width: menuButton.visualFocus ? 2 : 0
+                border.color: Theme.focusRing
+            }
+            contentItem: Item {
+                LineIcon {
+                    anchors.centerIn: parent
+                    path: "M4 6.5h16 M4 12h16 M4 17.5h16"
+                    size: 18
+                    strokeWidth: 1.7
+                    color: Theme.ink2
+                }
+            }
+        }
+
+        // ---- Titre de la page + element ouvert -----------------------------
         Row {
-            spacing: 6
+            spacing: 10
             Layout.fillWidth: true
             Layout.minimumWidth: 80
             clip: true
 
+            Text {
+                id: pageTitle
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.breadcrumbParts.length > 0 ? root.breadcrumbParts[0] : ""
+                color: Theme.ink
+                font.pixelSize: Theme.fontSizePageTitle
+                font.weight: Theme.weightBold
+                font.family: Theme.fontFamilySerif
+                font.underline: root.breadcrumbParts.length > 1 && titleHover.hovered
+                elide: Text.ElideRight
+                Accessible.role: Accessible.Heading
+
+                HoverHandler {
+                    id: titleHover
+                    enabled: root.breadcrumbParts.length > 1
+                    cursorShape: Qt.PointingHandCursor
+                }
+                TapHandler {
+                    enabled: root.breadcrumbParts.length > 1
+                    onTapped: root.segmentClicked(0, pageTitle.text)
+                }
+            }
+
             Repeater {
-                model: root.breadcrumbParts
+                model: root.breadcrumbParts.slice(1)
 
                 delegate: Row {
                     id: crumb
                     required property int index
                     required property string modelData
-                    readonly property bool isLast: crumb.index === root.breadcrumbParts.length - 1
-                    spacing: 6
+                    readonly property bool isLast: crumb.index === root.breadcrumbParts.length - 2
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
 
                     Text {
+                        text: "/"
+                        color: Theme.inkDisabled
+                        font.pixelSize: Theme.fs(13)
+                        font.family: Theme.fontFamily
+                    }
+                    Text {
                         text: crumb.modelData
-                        color: crumb.isLast ? Theme.ink : (crumbHover.hovered ? Theme.ink : Theme.ink3)
-                        font.pixelSize: Theme.fs(14)
-                        font.weight: crumb.isLast ? Theme.weightSemibold : Theme.weightRegular
+                        color: crumb.isLast ? Theme.ink2 : (crumbHover.hovered ? Theme.ink : Theme.ink3)
+                        font.pixelSize: Theme.fs(13)
+                        font.weight: crumb.isLast ? Theme.weightMedium : Theme.weightRegular
                         font.family: Theme.fontFamily
                         font.underline: !crumb.isLast && crumbHover.hovered
                         elide: Text.ElideRight
@@ -221,75 +295,42 @@ Item {
                         }
                         TapHandler {
                             enabled: !crumb.isLast
-                            onTapped: root.segmentClicked(crumb.index, crumb.modelData)
+                            onTapped: root.segmentClicked(crumb.index + 1, crumb.modelData)
                         }
                     }
-
-                    FaIcon {
-                        visible: !crumb.isLast
-                        glyph: ""
-                        color: Theme.ink3
-                        font.pixelSize: Theme.fs(12)
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
                 }
             }
-        }
-
-        // ---- Etat reseau -------------------------------------------------
-        Rectangle {
-            visible: root.networkLabel.length > 0 && root.width > 760
-            Layout.preferredHeight: 26
-            Layout.preferredWidth: netRow.implicitWidth + 20
-            radius: 13
-            color: Theme.alpha(root.networkColor, Theme.darkMode ? 0.14 : 0.1)
-
-            Row {
-                id: netRow
-                anchors.centerIn: parent
-                spacing: 7
-
-                Rectangle {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 7
-                    height: 7
-                    radius: 3.5
-                    color: root.networkColor
-                }
-                Text {
-                    text: root.networkLabel
-                    color: Theme.ink2
-                    font.pixelSize: Theme.fs(12)
-                    font.weight: Theme.weightMedium
-                    font.family: Theme.fontFamily
-                }
-            }
-
-            Accessible.role: Accessible.StaticText
-            Accessible.name: qsTr("État du réseau : %1").arg(root.networkLabel)
         }
 
         // ---- Recherche ---------------------------------------------------
         Rectangle {
             id: searchBox
+            // Fenetre etroite : la recherche se replie en loupe et se deplie
+            // a la prise de focus (clic ou Ctrl+K).
+            readonly property bool collapsed: root.width < 860 && !searchField.activeFocus
+                                              && searchField.text.length === 0
             visible: root.showSearch
-            Layout.preferredWidth: 300
-            Layout.maximumWidth: 320
-            Layout.minimumWidth: 150
-            Layout.fillWidth: true
-            Layout.preferredHeight: Theme.controlHeightSmall + 2
-            radius: Theme.radiusControl
-            color: searchField.activeFocus ? Theme.surface0 : Theme.surface1
+            Layout.preferredWidth: collapsed ? Theme.controlHeightEditorial : (root.width < 1180 ? 220 : 260)
+            Layout.preferredHeight: Theme.controlHeightEditorial
+            radius: height / 2
+            color: searchField.activeFocus ? Theme.surface0 : "transparent"
             border.width: 1
-            border.color: searchField.activeFocus ? Theme.accentColor : Theme.line
+            border.color: searchField.activeFocus ? Theme.ink : Theme.lineStrong
+            Behavior on Layout.preferredWidth { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+
+            TapHandler { enabled: searchBox.collapsed; onTapped: root.openSearch() }
+            HoverHandler { enabled: searchBox.collapsed; cursorShape: Qt.PointingHandCursor }
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 10
-                anchors.rightMargin: 6
+                anchors.leftMargin: searchBox.collapsed ? 0 : 12
+                anchors.rightMargin: searchBox.collapsed ? 0 : 7
                 spacing: 8
 
                 FaIcon {
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.fillWidth: searchBox.collapsed
+                    horizontalAlignment: Text.AlignHCenter
                     glyph: ""
                     color: Theme.ink3
                     font.pixelSize: Theme.fs(12)
@@ -297,8 +338,9 @@ Item {
 
                 TextField {
                     id: searchField
+                    visible: !searchBox.collapsed
                     Layout.fillWidth: true
-                    placeholderText: qsTr("Rechercher une section, un poste, une conversation")
+                    placeholderText: qsTr("Rechercher un poste…")
                     placeholderTextColor: Theme.ink3
                     color: Theme.ink
                     font.pixelSize: Theme.fs(13)
@@ -327,7 +369,7 @@ Item {
                 }
 
                 Rectangle {
-                    visible: !searchField.activeFocus
+                    visible: !searchField.activeFocus && !searchBox.collapsed && searchBox.width >= 240
                     Layout.preferredWidth: kbd.implicitWidth + 10
                     Layout.preferredHeight: 18
                     radius: 4
@@ -356,7 +398,7 @@ Item {
                 closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
                 background: Rectangle {
-                    radius: Theme.radiusMedium
+                    radius: Theme.radiusSheet
                     color: Theme.surface0
                     border.width: 1
                     border.color: Theme.line
@@ -454,6 +496,49 @@ Item {
             }
         }
 
+        // ---- Etat reseau (forme + libelle) ---------------------------------
+        Row {
+            id: netState
+            visible: root.networkLabel.length > 0
+            spacing: 8
+            Layout.leftMargin: 6
+            Layout.rightMargin: 4
+            Accessible.role: Accessible.StaticText
+            Accessible.name: qsTr("État du réseau : %1").arg(root.networkLabel)
+
+            // Serveur : disque plein ; secours : losange ambre ; client : anneau.
+            Item {
+                width: 10
+                height: 10
+                anchors.verticalCenter: parent.verticalCenter
+
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: root.networkState === "backup" ? 7 : 8
+                    height: width
+                    radius: root.networkState === "backup" ? 1 : width / 2
+                    rotation: root.networkState === "backup" ? 45 : 0
+                    color: root.networkState === "client" ? "transparent"
+                         : root.networkState === "backup" ? Theme.warningColor : Theme.successColor
+                    border.width: root.networkState === "client" ? 2 : 0
+                    border.color: Theme.successColor
+                }
+            }
+            Text {
+                visible: root.width > 760
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.networkLabel
+                color: root.networkState === "backup" ? Theme.warningInk : Theme.ink2
+                font.pixelSize: Theme.fs(12.5)
+                font.weight: Theme.weightMedium
+                font.family: Theme.fontFamily
+            }
+
+            HoverHandler { id: netHover }
+            ToolTip.visible: netHover.hovered && root.width <= 760
+            ToolTip.text: root.networkLabel
+        }
+
         // ---- Bascule de theme --------------------------------------------
         IconButton {
             visible: root.showThemeToggle
@@ -479,28 +564,18 @@ Item {
                 notificationsPopup.opened ? notificationsPopup.close() : notificationsPopup.open()
             }
 
-            Rectangle {
+            // Compteur en exposant, chiffres serif (comme la navigation).
+            Text {
                 visible: root.notificationCount > 0
                 anchors.right: parent.right
                 anchors.top: parent.top
-                anchors.rightMargin: -2
-                anchors.topMargin: -2
-                width: Math.max(16, notifCount.implicitWidth + 8)
-                height: 16
-                radius: 8
-                color: Theme.dangerColor
-                border.width: 2
-                border.color: Theme.surface0
-
-                Text {
-                    id: notifCount
-                    anchors.centerIn: parent
-                    text: root.notificationCount > 9 ? "9+" : root.notificationCount
-                    color: Theme.darkMode ? "#0B1018" : "#FFFFFF"
-                    font.pixelSize: Theme.fs(9)
-                    font.weight: Theme.weightBold
-                    font.family: Theme.fontFamily
-                }
+                anchors.rightMargin: 1
+                anchors.topMargin: 1
+                text: root.notificationCount > 9 ? "9+" : root.notificationCount
+                color: Theme.navActiveInk
+                font.pixelSize: Theme.fs(11)
+                font.weight: Theme.weightBold
+                font.family: Theme.fontFamilySerif
             }
 
             Popup {
@@ -513,7 +588,7 @@ Item {
                 onOpened: root.markAllRead()
 
                 background: Rectangle {
-                    radius: Theme.radiusMedium
+                    radius: Theme.radiusSheet
                     color: Theme.surface0
                     border.width: 1
                     border.color: Theme.line

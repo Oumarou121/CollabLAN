@@ -13,8 +13,11 @@ import Themes
  *           "outline"   contour d'accent
  *           "danger"    action destructrice (plein rouge)
  *           "dangerGhost" action destructrice discrete (texte rouge)
+ *           "ink"     Ligne claire : action principale, plein d'encre
+ *           "line"    Ligne claire : action courante, filet d'encre
  * size    : "normal" (Theme.controlHeight) | "small" | "large"
  * iconGlyph : glyphe Font Awesome optionnel avant le texte.
+ * iconPath  : icone filaire (chemin SVG de icons.js) avant le texte.
  * loading : affiche un indicateur et bloque les clics.
  *
  * "iconGlyph" et non "icon" : Button expose deja une propriete groupee
@@ -26,6 +29,7 @@ Button {
     property string variant: "secondary"
     property string size: "normal"
     property string iconGlyph: ""
+    property string iconPath: ""
     property bool fullWidth: false
     property bool loading: false
     property string tooltip: ""
@@ -36,10 +40,14 @@ Button {
     readonly property bool isGhost: variant === "ghost" || variant === "tertiary"
     readonly property bool isOutline: variant === "outline"
     readonly property bool isSoft: variant === "soft"
-    readonly property bool filled: isPrimary || isDanger
+    readonly property bool isInk: variant === "ink"
+    readonly property bool isLine: variant === "line"
+    readonly property bool editorial: isInk || isLine
+    readonly property bool filled: isPrimary || isDanger || isInk
 
     readonly property int controlHeight: size === "small" ? Theme.controlHeightSmall
                                          : size === "large" ? Theme.controlHeight + 6
+                                         : editorial ? Theme.controlHeightEditorial
                                          : Theme.controlHeight
     readonly property int hPad: size === "small" ? 10 : (size === "large" ? 18 : 14)
 
@@ -50,6 +58,7 @@ Button {
     readonly property color baseColor: {
         if (isPrimary) return Theme.accentColor
         if (isDanger) return Theme.dangerColor
+        if (isInk) return Theme.ink
         if (isSoft) return Theme.accentSoft
         if (variant === "secondary") return Theme.surface0
         return "transparent"
@@ -57,6 +66,8 @@ Button {
     readonly property color hoverColor: {
         if (isPrimary) return Theme.accentHover
         if (isDanger) return Theme.dangerHover
+        if (isInk) return Theme.accentHover
+        if (isLine) return Theme.selectWash
         if (isSoft) return Theme.accentMuted
         if (isOutline) return Theme.accentSoft
         if (isDangerGhost) return Theme.dangerSoft
@@ -64,6 +75,7 @@ Button {
     }
     readonly property color labelColor: {
         if (!root.enabled) return Theme.inkDisabled
+        if (isInk) return Theme.inkOnInk
         if (filled) return inkOnFill
         if (isOutline || isSoft) return Theme.darkMode ? Theme.accentHover : Theme.accentColor
         if (isDangerGhost) return Theme.dangerInk
@@ -99,7 +111,7 @@ Button {
     ToolTip.delay: 400
 
     background: Rectangle {
-        radius: Theme.radiusControl
+        radius: root.editorial ? Theme.radiusSheet : Theme.radiusControl
         color: {
             if (!root.enabled)
                 return root.filled ? Theme.sunken : "transparent"
@@ -107,8 +119,9 @@ Button {
                 return Qt.darker(root.hoverColor, Theme.darkMode ? 0.92 : 1.06)
             return root.hovered ? root.hoverColor : root.baseColor
         }
-        border.width: (root.variant === "secondary" || root.isOutline) ? 1 : 0
+        border.width: (root.variant === "secondary" || root.isOutline || root.isLine) ? 1 : 0
         border.color: root.isOutline ? Theme.accentColor
+                    : root.isLine ? (root.hovered ? Theme.ink : Theme.lineStrong)
                                      : (root.hovered ? Theme.lineStrong : Theme.line)
 
         Behavior on color { ColorAnimation { duration: Theme.durationFast } }
@@ -142,6 +155,14 @@ Button {
                 color: root.labelColor
                 Layout.preferredWidth: Theme.fs(root.size === "small" ? 12 : 14)
                 Layout.preferredHeight: Layout.preferredWidth
+            }
+
+            LineIcon {
+                visible: root.iconPath.length > 0 && !root.loading
+                path: root.iconPath
+                color: root.labelColor
+                size: Theme.fs(root.size === "small" ? 13 : 15)
+                strokeWidth: 1.8
             }
 
             FaIcon {
