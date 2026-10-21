@@ -36,7 +36,7 @@ Item {
         anchors.fill: parent
         radius: Theme.radiusMedium
         color: root.highlighted ? Theme.selectionBackground
-               : root.hovered ? Theme.surfaceHover
+               : root.hovered ? Theme.selectWash
                : "transparent"
         border.width: root.highlighted ? 1 : 0
         border.color: Theme.selectionBorder
@@ -63,7 +63,7 @@ Item {
                 anchors.topMargin: 3
                 radius: folderShape.radius
                 color: Theme.shadow
-                opacity: root.hovered ? 0.55 : 0
+                opacity: 0
                 Behavior on opacity { NumberAnimation { duration: 120 } }
             }
 
@@ -72,7 +72,7 @@ Item {
                 id: folderShape
                 anchors.fill: parent
                 property real radius: 6
-                scale: root.hovered ? 1.04 : 1.0
+                scale: 1.0
                 Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
                 // Onglet arriere-plan (partie visible derriere le rabat).

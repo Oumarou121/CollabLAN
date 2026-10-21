@@ -451,7 +451,7 @@ Rectangle {
                                         anchors.fill: parent
                                         radius: Theme.radiusSmall
                                         color: recipientRow.checked ? Theme.dashboardPrimarySoft
-                                               : (recipientRow.hovered ? Theme.surfaceLevel3 : "transparent")
+                                               : (recipientRow.hovered ? Theme.selectWash : "transparent")
                                     }
 
                                     RowLayout {

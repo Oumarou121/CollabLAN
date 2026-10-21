@@ -1402,9 +1402,15 @@ Item {
                                     readonly property bool hovered: tileHover.hovered
 
                                     radius: Theme.radiusMedium
-                                    color: tile.hovered ? Theme.surfaceLevel3 : Theme.surfaceLevel2
+                                    color: Theme.surfaceLevel2
                                     border.width: 1
                                     border.color: Theme.hairline
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: parent.radius
+                                        color: tile.hovered ? Theme.selectWash : "transparent"
+                                    }
 
                                     HoverHandler { id: tileHover }
 

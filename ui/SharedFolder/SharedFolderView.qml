@@ -2111,8 +2111,8 @@ Item {
                             anchors.fill: parent
                             anchors.margins: 4
                             radius: Theme.radiusMedium
-                            color: folderTile.hovered ? Theme.surfaceHover : "transparent"
-                            border.width: folderTile.hovered ? 1 : 0
+                            color: folderTile.hovered ? Theme.selectWash : "transparent"
+                            border.width: 0
                             border.color: Theme.selectionBorder
                             Behavior on color { ColorAnimation { duration: 120 } }
                             Behavior on border.color { ColorAnimation { duration: 120 } }
@@ -2137,7 +2137,7 @@ Item {
                                     anchors.topMargin: 3
                                     radius: folderShape.radius
                                     color: Theme.shadow
-                                    opacity: folderTile.hovered ? 0.55 : 0
+                                    opacity: 0
                                     Behavior on opacity { NumberAnimation { duration: 120 } }
                                 }
 
@@ -2146,7 +2146,7 @@ Item {
                                     id: folderShape
                                     anchors.fill: parent
                                     property real radius: 6
-                                    scale: folderTile.hovered ? 1.04 : 1.0
+                                    scale: 1.0
                                     Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
                                     // Onglet arriere-plan.
@@ -2339,8 +2339,8 @@ Item {
                         id: folderRow
                         width: foldersListView.width
                         height: 56
-                        radius: Theme.radiusSmall
-                        color: folderRowArea.containsMouse ? Theme.surfaceHover : "transparent"
+                        radius: 0
+                        color: folderRowArea.containsMouse ? Theme.selectWash : "transparent"
                         Behavior on color { ColorAnimation { duration: 100 } }
 
                         readonly property color accentColor: Theme.folderColor
@@ -2515,9 +2515,9 @@ Item {
                         width: filesListView.width
                         height: fileRow.hasConflict ? 128 : (fileRow.isFolder ? 56 : 40)
                         clip: true
-                        color: fileRowArea.containsMouse ? Theme.surfaceHover
+                        color: fileRowArea.containsMouse ? Theme.selectWash
                                : (index % 2 === 1 ? Theme.surfaceAlt : "transparent")
-                        radius: Theme.radiusSmall
+                        radius: 0
                         Behavior on color { ColorAnimation { duration: 100 } }
 
                         readonly property bool isFolder: modelData.kind === "folder"
@@ -2728,6 +2728,13 @@ Item {
                         readonly property color tileColor: isFolder ? Theme.folderColor
                                                                      : (fileTile.kind ? fileTile.kind.color : Theme.textSecondary)
                         readonly property bool tileHovered: fileTileArea.containsMouse
+
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: 4
+                            radius: Theme.radiusMedium
+                            color: fileTile.tileHovered && fileTile.isFolder ? Theme.selectWash : "transparent"
+                        }
 
                         ColumnLayout {
                             z: 1

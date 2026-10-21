@@ -41,8 +41,15 @@ Rectangle {
     implicitHeight: 100
     radius: Theme.radiusMedium
     color: root.selected ? Theme.dashboardPrimarySoft
-                         : (root.hovered ? Theme.surfaceLevel3 : Theme.surfaceLevel2)
+                         : Theme.surfaceLevel2
     border.width: 0
+
+    // Survol : voile plat (comme les lignes du Journal), sans changer de surface.
+    Rectangle {
+        anchors.fill: parent
+        radius: parent.radius
+        color: root.hovered && !root.selected ? Theme.selectWash : "transparent"
+    }
 
     Behavior on color { ColorAnimation { duration: 100 } }
 

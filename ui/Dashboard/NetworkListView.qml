@@ -117,7 +117,7 @@ Column {
                 // Modernisation (priorité 17) : plus de zébrage alterné -
                 // toutes les lignes partagent le même fond, séparées par un
                 // hairline, avec une surface de survol pour l'interaction.
-                color: rowHover.hovered ? Theme.surfaceLevel3 : "transparent"
+                color: rowHover.hovered ? Theme.selectWash : "transparent"
                 Behavior on color { ColorAnimation { duration: 100 } }
 
                 // Bordure inférieure

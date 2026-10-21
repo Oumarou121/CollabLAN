@@ -85,8 +85,8 @@ Rectangle {
     // transfert ; la séparation vient du hairline inférieur + du léger
     // changement de surface au survol.
     implicitHeight: cardColumn.implicitHeight + Theme.spacingMedium * 2
-    radius: 10
-    color: hoverArea.containsMouse ? Theme.surfaceLevel3 : "transparent"
+    radius: 0
+    color: hoverArea.containsMouse ? Theme.selectWash : "transparent"
 
     Behavior on color { ColorAnimation { duration: 100 } }
 

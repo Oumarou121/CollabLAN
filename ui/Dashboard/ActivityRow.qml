@@ -39,7 +39,7 @@ Rectangle {
     // séparation par hairline + surface au survol, plus compact.
     implicitHeight: contentRow.implicitHeight + Theme.spacingSmall * 1.5
     radius: 8
-    color: hoverArea.containsMouse ? Theme.surfaceLevel3 : "transparent"
+    color: hoverArea.containsMouse ? Theme.selectWash : "transparent"
 
     Behavior on color { ColorAnimation { duration: 100 } }
 

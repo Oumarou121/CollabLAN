@@ -54,7 +54,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: root.hovered ? Theme.surfaceLevel3 : "transparent"
+        color: root.hovered ? Theme.selectWash : "transparent"
         Behavior on color { ColorAnimation { duration: 100 } }
     }
 
