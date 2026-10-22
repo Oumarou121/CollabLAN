@@ -36,6 +36,8 @@ Item {
     // ---- dossier ouvert ----
     property var openedFolderId: -1
     property string openedFolderUuid: ""
+    // Dossier a ouvrir a l'arrivee (bandeau de synchronisation « Voir le dossier »).
+    property string initialFolderUuid: ""
     property var currentFiles: []
     property var browserItems: []
     property string browsedRelativePath: ""
@@ -263,6 +265,14 @@ Item {
 
     // Garde un dossier ouvert : le plus recent si aucun (ou s'il a disparu).
     function ensureFolder() {
+        if (root.initialFolderUuid.length > 0) {
+            const wanted = root.folderRows.filter(function(r) { return r.uuid === root.initialFolderUuid })[0]
+            if (wanted) {
+                root.initialFolderUuid = ""
+                root.openFolder(wanted.folderId)
+                return
+            }
+        }
         if (root.rowFor(root.openedFolderId)) return
         if (root.folderRows.length > 0) root.openFolder(root.folderRows[0].folderId)
         else root.openedFolderId = -1

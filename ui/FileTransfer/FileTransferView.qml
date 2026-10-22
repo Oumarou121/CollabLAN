@@ -793,23 +793,6 @@ Item {
         }
     }
 
-    // Donnees du transfert affiche dans TransferDetailsDialog (null =
-    // ferme). Objet fileRow() existant : aucune donnee supplementaire.
-    property var detailsItem: null
-
-    function showDetails(row) {
-        // Copie simple : le modele continue d'etre mis a jour en place
-        // (progression), la fiche affiche donc l'etat au moment de l'ouverture.
-        root.detailsItem = {
-            fileName: row.fileName, peerLabel: row.peerLabel, incoming: row.incoming,
-            state: row.state, statusText: row.statusText, errorString: row.errorString,
-            percent: row.percent, bytesTransferred: row.bytesTransferred,
-            totalBytes: row.totalBytes, filePath: row.filePath, timestamp: row.timestamp,
-            transferKey: row.transferKey
-        }
-        detailsDialog.open()
-    }
-
     function openLocation(filePath) {
         if (root.context && !root.context.openFileLocation(filePath)) {
             root.showError(qsTr("Impossible d'ouvrir l'emplacement du fichier."))
@@ -884,19 +867,6 @@ Item {
                 peerAddress: t.peerAddress || ""
             }
         })
-    }
-
-    // ---- fiche "Detail" (maquette .acts, sans comportement dans la demo
-    // HTML : n'affiche que des champs deja connus du transfert) ----
-    TransferDetailsDialog {
-        id: detailsDialog
-        parent: root
-        item: root.detailsItem
-        canRetry: root.detailsItem !== null && root.detailsItem.state === "failed" && !root.detailsItem.incoming
-        canOpen: root.detailsItem !== null && root.detailsItem.state === "completed"
-        onClosed: root.detailsItem = null
-        onRetryRequested: if (root.detailsItem) root.retryTransfer(root.detailsItem.transferKey)
-        onOpenRequested: if (root.detailsItem) root.openLocation(root.detailsItem.filePath)
     }
 
     // ---- dialogues ----

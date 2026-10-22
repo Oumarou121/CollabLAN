@@ -119,7 +119,6 @@
         <file>Dashboard/DashboardButton.qml</file>
         <file>Dashboard/TransferStatusBadge.qml</file>
         <file>Dashboard/TransferErrorBanner.qml</file>
-        <file>Dashboard/TransferDetailsDialog.qml</file>
         <file>Dashboard/FileTypeIcon.qml</file>
         <file>Dashboard/InlineAlert.qml</file>
         <file>Dashboard/TransferPeerCard.qml</file>

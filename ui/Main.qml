@@ -125,6 +125,13 @@ ApplicationWindow {
     // Progression globale des synchronisations de dossiers partages.
     FolderTransferProgressHost {
         anchors.fill: parent
+        // Centre sur la page (a droite de la barre laterale), au-dessus de la bande d'appel.
+        leftInset: window.appShell ? (window.appShell.railMode ? Theme.sidebarWidthCollapsed : Theme.sidebarWidth) : 0
+        bottomInset: window.appShell && window.appShell.callBarShown ? 92 : 16
+        onFolderRequested: function(folderUuid) {
+            if (window.appShell)
+                window.appShell.navigate("folder", { initialFolderUuid: folderUuid })
+        }
     }
 
     // Appel en cours (appelant comme appele), par-dessus l'ecran actif.
