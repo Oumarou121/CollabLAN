@@ -44,13 +44,20 @@ Item {
     // deconnectent d'un coup).
     readonly property int maxVisible: 4
 
+    // Marges fournies par Main.qml : sous la barre de contexte en haut, et
+    // au-dessus de la bande d'appel en bas quand un appel est etabli.
+    property real topInset: Theme.spacingMedium
+    property real bottomInset: Theme.spacingMedium
+
     // ---- Pile "message" : bas-droite ---------------------------------
     Column {
         anchors.bottom: parent.bottom
         anchors.right: parent.right
-        anchors.margins: Theme.spacingMedium
-        spacing: Theme.spacingSmall
-        width: 360
+        anchors.rightMargin: 20
+        anchors.bottomMargin: toastHost.bottomInset
+        spacing: 10
+        width: Math.min(360, toastHost.width - 40)
+        Behavior on anchors.bottomMargin { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
 
         Repeater {
             model: toastHost.messageQueue
@@ -62,6 +69,7 @@ Item {
                 category: modelData.category
                 count: modelData.count
                 conversationId: modelData.conversationId
+                fromBottom: true
 
                 onDismissed: toastHost.removeToast(modelData.key, true)
                 onConversationRequested: (conversationId) => {
@@ -87,9 +95,10 @@ Item {
     Column {
         anchors.top: parent.top
         anchors.right: parent.right
-        anchors.margins: Theme.spacingMedium
-        spacing: Theme.spacingSmall
-        width: 360
+        anchors.rightMargin: 20
+        anchors.topMargin: toastHost.topInset
+        spacing: 10
+        width: Math.min(360, toastHost.width - 40)
 
         Repeater {
             model: toastHost.otherQueue

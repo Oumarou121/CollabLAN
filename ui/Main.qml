@@ -100,6 +100,9 @@ ApplicationWindow {
     ToastHost {
         id: toastHost
         anchors.fill: parent
+        // Sous la barre de contexte une fois connecte ; au-dessus de la bande d'appel.
+        topInset: window.appShell ? 70 : 16
+        bottomInset: window.appShell && window.appShell.callBarShown ? 92 : 16
         onConversationRequested: function(conversationId) {
             if (window.appShell)
                 window.appShell.openConversation(conversationId)

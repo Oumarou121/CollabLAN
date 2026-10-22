@@ -2,7 +2,9 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Themes
+import QtQuick.Effects
 import "../Components"
+import "../Components/icons.js" as Icons
 
 /*
  * DashboardHeader - barre de contexte de LocaLink (Ligne claire A2).
@@ -193,6 +195,19 @@ Item {
         case "call": return ""
         default: return ""
         }
+    }
+
+    // Icone lineaire d'une nature de notification (centre de notifications).
+    function categoryIcon(category) {
+        switch (category) {
+        case "transfer": return Icons.exchange
+        case "folder": return Icons.folder
+        case "connection":
+        case "disconnection": return Icons.monitor
+        case "group": return Icons.users
+        case "call": return Icons.phoneLine
+        }
+        return Icons.messageCircle
     }
 
     RowLayout {
@@ -578,175 +593,344 @@ Item {
                 font.family: Theme.fontFamilySerif
             }
 
+            // Centre de notifications (Ligne claire) : feuille accrochee a la
+            // cloche, onglets par nature, « Nouvelles » puis « Plus tot ».
             Popup {
                 id: notificationsPopup
-                y: bellButton.height + 8
-                x: bellButton.width - width
-                width: 360
+                y: bellButton.height + 10
+                x: bellButton.width - width + 6
+                width: 400
                 padding: 0
                 closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                // Nombre de non lues au moment de l'ouverture (la lecture remet
+                // ensuite le compteur a zero).
+                property int freshCount: 0
+                property string tab: "all"      // all | message | transfer | folder | network
+                onAboutToShow: { freshCount = root.notificationCount; tab = "all" }
                 onOpened: root.markAllRead()
 
-                background: Rectangle {
-                    radius: Theme.radiusSheet
-                    color: Theme.surface0
-                    border.width: 1
-                    border.color: Theme.line
+                function tabOf(category) {
+                    switch (category) {
+                    case "message": case "group": return "message"
+                    case "transfer": return "transfer"
+                    case "folder": return "folder"
+                    case "connection": case "disconnection": return "network"
+                    }
+                    return ""
+                }
+                function countOf(t) {
+                    if (t === "all") return root.notifications.length
+                    return root.notifications.filter(function(n) { return notificationsPopup.tabOf(n.category) === t }).length
+                }
+                readonly property var rows: {
+                    const out = []
+                    let section = ""
+                    for (let i = 0; i < root.notifications.length; i++) {
+                        const n = root.notifications[i]
+                        if (notificationsPopup.tab !== "all" && notificationsPopup.tabOf(n.category) !== notificationsPopup.tab)
+                            continue
+                        const fresh = i < notificationsPopup.freshCount
+                        const s = fresh ? "new" : "old"
+                        out.push({ n: n, index: i, fresh: fresh, newSection: s !== section, section: s })
+                        section = s
+                    }
+                    return out
+                }
+                function sectionCount(s) { return notificationsPopup.rows.filter(function(r) { return r.section === s }).length }
 
+                background: Item {
+                    RectangularShadow {
+                        anchors.fill: sheetBg
+                        offset.y: 14
+                        blur: 36
+                        spread: -4
+                        radius: sheetBg.radius
+                        color: Theme.shadowStrong
+                    }
                     Rectangle {
-                        z: -1
+                        id: sheetBg
                         anchors.fill: parent
-                        anchors.topMargin: 4
-                        anchors.bottomMargin: -8
-                        radius: parent.radius + 2
-                        color: Theme.shadowColor
+                        radius: Theme.radiusSheet
+                        color: Theme.bg
+                        border.width: 1
+                        border.color: Theme.ruleInk
+                    }
+                    // Encoche vers la cloche.
+                    Rectangle {
+                        x: parent.width - bellButton.width / 2 - 6 - 6
+                        y: -6
+                        width: 12
+                        height: 12
+                        rotation: 45
+                        color: Theme.bg
+                        border.width: 1
+                        border.color: Theme.ruleInk
+                        Rectangle { x: 1; y: 6; width: 14; height: 8; color: Theme.bg; rotation: -45 }
                     }
                 }
 
                 contentItem: ColumnLayout {
                     spacing: 0
 
+                    // En-tete
                     RowLayout {
                         Layout.fillWidth: true
-                        Layout.margins: 14
-                        Layout.bottomMargin: 10
-
-                        Text {
-                            text: qsTr("Notifications")
-                            color: Theme.ink
-                            font.pixelSize: Theme.fs(14)
-                            font.weight: Theme.weightSemibold
-                            font.family: Theme.fontFamily
+                        Layout.preferredWidth: notificationsPopup.width - 30
+                        Layout.leftMargin: 18
+                        Layout.rightMargin: 12
+                        Layout.topMargin: 16
+                        Layout.bottomMargin: 12
+                        spacing: 10
+                        ColumnLayout {
                             Layout.fillWidth: true
+                            spacing: 4
+                            CapsLabel { text: qsTr("Notifications") }
+                            Text {
+                                textFormat: Text.StyledText
+                                text: root.notifications.length === 0 ? qsTr("Rien de neuf")
+                                      : notificationsPopup.freshCount > 1 ? qsTr("<b>%1</b> nouvelles").arg(notificationsPopup.freshCount)
+                                      : notificationsPopup.freshCount === 1 ? qsTr("<b>1</b> nouvelle")
+                                      : qsTr("À jour")
+                                color: Theme.ink
+                                font.family: Theme.fontFamilySerif
+                                font.pixelSize: Theme.fs(22)
+                                Accessible.role: Accessible.Heading
+                            }
                         }
-
                         AppButton {
                             visible: root.notifications.length > 0
+                            Layout.fillWidth: false
+                            Layout.alignment: Qt.AlignBottom | Qt.AlignRight
                             text: qsTr("Effacer")
                             variant: "ghost"
                             size: "small"
                             onClicked: root.clearNotifications()
                         }
                     }
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.line }
 
-                    Rectangle {
+                    // Onglets par nature
+                    Item {
+                        visible: root.notifications.length > 0
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 1
-                        color: Theme.line
+                        implicitHeight: 36
+                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.line }
+                        Row {
+                            x: 18
+                            anchors.bottom: parent.bottom
+                            spacing: 16
+                            Repeater {
+                                model: [
+                                    { key: "all", label: qsTr("Tout") }, { key: "message", label: qsTr("Messages") },
+                                    { key: "transfer", label: qsTr("Transferts") }, { key: "folder", label: qsTr("Dossiers") },
+                                    { key: "network", label: qsTr("Postes") }
+                                ]
+                                delegate: AbstractButton {
+                                    id: nt
+                                    required property var modelData
+                                    readonly property bool current: notificationsPopup.tab === nt.modelData.key
+                                    implicitHeight: 30
+                                    implicitWidth: ntRow.implicitWidth
+                                    hoverEnabled: true
+                                    Accessible.role: Accessible.PageTab
+                                    Accessible.name: nt.modelData.label
+                                    HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                    background: Item {
+                                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 2; color: nt.current ? Theme.ruleInk : "transparent" }
+                                    }
+                                    contentItem: Item {
+                                        Row {
+                                            id: ntRow
+                                            spacing: 5
+                                            anchors.top: parent.top
+                                            anchors.topMargin: 4
+                                            Text { text: nt.modelData.label; color: nt.current || nt.hovered ? Theme.ink : Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: nt.current ? Theme.weightSemibold : Theme.weightMedium }
+                                            Text { text: notificationsPopup.countOf(nt.modelData.key); color: Theme.ink3; font.family: Theme.fontFamilySerif; font.pixelSize: Theme.fs(11.5); font.weight: Theme.weightBold }
+                                        }
+                                    }
+                                    onClicked: notificationsPopup.tab = nt.modelData.key
+                                }
+                            }
+                        }
                     }
 
                     // Etat vide
                     ColumnLayout {
-                        visible: root.notifications.length === 0
+                        visible: notificationsPopup.rows.length === 0
                         Layout.fillWidth: true
-                        Layout.margins: 24
+                        Layout.margins: 26
                         spacing: 6
-
-                        FaIcon {
-                            Layout.alignment: Qt.AlignHCenter
-                            glyph: ""
-                            color: Theme.inkDisabled
-                            font.pixelSize: Theme.fs(20)
-                        }
+                        LineIcon { Layout.alignment: Qt.AlignHCenter; path: Icons.bell; size: 26; strokeWidth: 1.5; color: Theme.inkDisabled }
                         Text {
                             Layout.alignment: Qt.AlignHCenter
-                            text: qsTr("Aucune notification")
+                            text: root.notifications.length === 0 ? qsTr("Aucune notification") : qsTr("Rien dans cette catégorie")
                             color: Theme.ink
-                            font.pixelSize: Theme.fs(13)
-                            font.weight: Theme.weightSemibold
-                            font.family: Theme.fontFamily
+                            font.family: Theme.fontFamilySerif
+                            font.pixelSize: Theme.fs(18)
                         }
                         Text {
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter
-                            text: qsTr("Les messages, transferts et connexions de cette session apparaîtront ici.")
+                            text: root.notifications.length === 0
+                                  ? qsTr("Les messages, transferts, dossiers et connexions de cette session apparaîtront ici.")
+                                  : qsTr("Les autres notifications sont dans « Tout ».")
                             color: Theme.ink3
-                            font.pixelSize: Theme.fs(12)
                             font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fs(12.5)
                             wrapMode: Text.WordWrap
                         }
                     }
 
-                    ListView {
-                        visible: root.notifications.length > 0
+                    // Liste
+                    Flickable {
+                        visible: notificationsPopup.rows.length > 0
                         Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(contentHeight, 380)
+                        Layout.preferredHeight: Math.min(notifCol.implicitHeight, 430)
+                        contentHeight: notifCol.implicitHeight
                         clip: true
-                        model: root.notifications
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-                        delegate: ItemDelegate {
-                            id: notifRow
-                            required property int index
-                            required property var modelData
-                            width: ListView.view.width
-                            padding: 12
-                            onClicked: {
-                                notificationsPopup.close()
-                                root.notificationActivated(notifRow.index)
-                            }
-                            HoverHandler { cursorShape: Qt.PointingHandCursor }
-
-                            background: Rectangle {
-                                color: notifRow.hovered ? Theme.hover : "transparent"
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.bottom: parent.bottom
-                                    height: 1
-                                    color: Theme.line
-                                }
-                            }
-
-                            contentItem: RowLayout {
-                                spacing: 10
-
-                                Rectangle {
-                                    Layout.alignment: Qt.AlignTop
-                                    Layout.preferredWidth: 28
-                                    Layout.preferredHeight: 28
-                                    radius: 8
-                                    color: Theme.sunken
-
-                                    FaIcon {
-                                        anchors.centerIn: parent
-                                        glyph: root.categoryGlyph(notifRow.modelData.category)
-                                        color: Theme.ink2
-                                        font.pixelSize: Theme.fs(12)
-                                    }
-                                }
-
-                                ColumnLayout {
+                        ColumnLayout {
+                            id: notifCol
+                            width: parent.width
+                            spacing: 0
+                            Repeater {
+                                model: notificationsPopup.rows
+                                delegate: ColumnLayout {
+                                    id: nr
+                                    required property var modelData
+                                    readonly property var n: nr.modelData.n
+                                    readonly property bool failed: nr.n.title === "Échec du transfert" || nr.n.title === "Accès révoqué"
+                                    readonly property color tone: nr.failed ? Theme.dangerColor
+                                                                  : nr.n.category === "transfer" ? Theme.accentColor
+                                                                  : nr.n.category === "connection" ? Theme.successColor
+                                                                  : nr.n.category === "disconnection" ? Theme.ink3 : Theme.ruleInk
+                                    readonly property bool tinted: nr.failed || nr.n.category === "transfer" || nr.n.category === "connection"
                                     Layout.fillWidth: true
-                                    spacing: 2
+                                    spacing: 0
 
-                                    Text {
-                                        text: notifRow.modelData.title
-                                        color: Theme.ink
-                                        font.pixelSize: Theme.fs(13)
-                                        font.weight: Theme.weightSemibold
-                                        font.family: Theme.fontFamily
-                                        elide: Text.ElideRight
+                                    RowLayout {
+                                        visible: nr.modelData.newSection
                                         Layout.fillWidth: true
+                                        Layout.leftMargin: 18
+                                        Layout.topMargin: 12
+                                        Layout.bottomMargin: 6
+                                        spacing: 8
+                                        CapsLabel { text: nr.modelData.section === "new" ? qsTr("Nouvelles") : qsTr("Plus tôt dans la session"); color: Theme.ink2 }
+                                        Text { text: notificationsPopup.sectionCount(nr.modelData.section); color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(11.5) }
                                     }
-                                    Text {
-                                        visible: text.length > 0
-                                        text: notifRow.modelData.message || ""
-                                        color: Theme.ink2
-                                        font.pixelSize: Theme.fs(12)
-                                        font.family: Theme.fontFamily
-                                        wrapMode: Text.WordWrap
-                                        maximumLineCount: 2
-                                        elide: Text.ElideRight
+
+                                    ItemDelegate {
+                                        id: notifRow
                                         Layout.fillWidth: true
-                                    }
-                                    Text {
-                                        text: root.timeLabel(notifRow.modelData.time)
-                                        color: Theme.ink3
-                                        font.pixelSize: Theme.fs(11)
-                                        font.family: Theme.fontFamily
+                                        padding: 0
+                                        implicitHeight: rowContent.implicitHeight + 20
+                                        Accessible.name: nr.n.title + ". " + (nr.n.message || "")
+                                        onClicked: {
+                                            notificationsPopup.close()
+                                            root.notificationActivated(nr.modelData.index)
+                                        }
+                                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                        background: Rectangle {
+                                            color: notifRow.hovered ? Theme.selectWash : "transparent"
+                                            Rectangle { width: parent.width; height: 1; color: Theme.line }
+                                            Rectangle { visible: nr.modelData.fresh; width: 3; height: parent.height; color: nr.tone }
+                                        }
+                                        contentItem: Item {
+                                            RowLayout {
+                                                id: rowContent
+                                                x: 18
+                                                y: 10
+                                                width: parent.width - 36
+                                                spacing: 12
+                                                Rectangle {
+                                                    Layout.alignment: Qt.AlignTop
+                                                    implicitWidth: 30
+                                                    implicitHeight: 30
+                                                    radius: 15
+                                                    color: nr.n.category === "message" ? Theme.ink : "transparent"
+                                                    border.width: nr.n.category === "message" ? 0 : 1
+                                                    border.color: nr.tinted ? nr.tone : Theme.lineStrong
+                                                    Text {
+                                                        visible: nr.n.category === "message"
+                                                        anchors.centerIn: parent
+                                                        text: {
+                                                            const p = (nr.n.title || "").trim().split(/[\s&-]+/).filter(function(x) { return x.length > 0 })
+                                                            return p.length ? (p[0].charAt(0) + (p.length > 1 ? p[p.length - 1].charAt(0) : "")).toUpperCase() : ""
+                                                        }
+                                                        color: Theme.inkOnInk
+                                                        font.family: Theme.fontFamilySerif
+                                                        font.pixelSize: Theme.fs(11)
+                                                        font.weight: Theme.weightBold
+                                                    }
+                                                    LineIcon {
+                                                        visible: nr.n.category !== "message"
+                                                        anchors.centerIn: parent
+                                                        path: root.categoryIcon(nr.n.category)
+                                                        size: 14
+                                                        strokeWidth: 1.7
+                                                        color: nr.failed ? Theme.dangerInk : nr.n.category === "transfer" ? Theme.navActiveInk
+                                                               : nr.n.category === "connection" ? Theme.successInk : Theme.ink2
+                                                    }
+                                                }
+                                                ColumnLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 2
+                                                    Text {
+                                                        Layout.fillWidth: true
+                                                        text: nr.n.title
+                                                        elide: Text.ElideRight
+                                                        color: nr.failed ? Theme.dangerInk : Theme.ink
+                                                        font.family: Theme.fontFamily
+                                                        font.pixelSize: Theme.fs(13)
+                                                        font.weight: Theme.weightSemibold
+                                                    }
+                                                    Text {
+                                                        visible: text.length > 0
+                                                        Layout.fillWidth: true
+                                                        text: nr.n.message || ""
+                                                        wrapMode: Text.Wrap
+                                                        maximumLineCount: 2
+                                                        elide: Text.ElideRight
+                                                        color: Theme.ink2
+                                                        font.family: Theme.fontFamily
+                                                        font.pixelSize: Theme.fs(12.5)
+                                                    }
+                                                }
+                                                Text {
+                                                    Layout.alignment: Qt.AlignTop
+                                                    text: root.timeLabel(nr.n.time)
+                                                    color: Theme.ink3
+                                                    font.family: Theme.fontFamily
+                                                    font.pixelSize: Theme.fs(11.5)
+                                                    font.features: ({ "tnum": 1 })
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    // Pied
+                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.ruleInk }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 18
+                        Layout.rightMargin: 18
+                        Layout.topMargin: 10
+                        Layout.bottomMargin: 10
+                        spacing: 10
+                        LineIcon { Layout.alignment: Qt.AlignTop; path: Icons.clock; size: 14; strokeWidth: 1.7; color: Theme.ink3 }
+                        Text {
+                            Layout.fillWidth: true
+                            text: qsTr("Notifications de cette session ; elles ne sont pas gardées après la déconnexion.")
+                            color: Theme.ink3
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fs(11.5)
+                            wrapMode: Text.WordWrap
                         }
                     }
                 }
