@@ -2,330 +2,236 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Themes
-import Core
 import "../Components"
+import "../Components/icons.js" as Icons
 
 /*
- * ConversationsView - liste des conversations (panneau gauche de
- * l'espace Discussions).
- *
- * Donnees : MessagingContext.conversationsList() (conversationId, name,
- * lastMessage, timestamp, unreadCount), rechargee a chaque signal
- * conversationsChanged. Recherche locale et filtre "Non lues".
- * Aucun etat d'envoi/lecture n'est affiche : l'application ne le connait
- * pas.
+ * ConversationsView - liste des discussions (Ligne claire), colonne gauche
+ * de l'espace Discussions. Recoit les lignes deja preparees par
+ * ChatWorkspaceView (apercu, presence, nombre de membres) ; filtre localement
+ * (recherche, Toutes / Non lues / Groupes). La plus recente en tete.
  */
 Item {
     id: root
 
-    property var messagingContext: null
-    property var _allConversations: []
-
-    // Conserves pour compatibilite (la navigation est fournie par AppShell).
-    property bool showBackButton: false
-    property bool compactActions: true
+    property var conversations: []          // [{ conversationId, name, preview, timestamp, unreadCount, isGroup, status, memberCount }]
     property var selectedConversationId: null
-    readonly property string iconFontFamily: "FontAwesome"
+    property string filter: "all"           // "all" | "unread" | "groups"
+    property string search: ""
 
-    property bool unreadOnly: false
-
-    signal backRequested()
     signal conversationSelected(var conversationId, string name)
-    signal createGroupRequested()
-    signal newConversationRequested()
 
     function timeLabel(value) {
-        if (!value)
-            return ""
+        if (!value) return ""
         const d = new Date(value)
-        if (isNaN(d.getTime()))
-            return ""
+        if (isNaN(d.getTime())) return ""
         const now = new Date()
         if (d.toDateString() === now.toDateString())
             return d.toLocaleTimeString(Qt.locale(), "HH:mm")
         const yesterday = new Date(now.getTime() - 86400000)
         if (d.toDateString() === yesterday.toDateString())
-            return qsTr("Hier")
+            return qsTr("hier")
         if (now.getTime() - d.getTime() < 6 * 86400000)
             return d.toLocaleDateString(Qt.locale(), "ddd")
         return d.toLocaleDateString(Qt.locale(), "d MMM")
     }
 
-    readonly property int unreadConversations: {
-        let n = 0
-        for (let i = 0; i < root._allConversations.length; i++)
-            if ((root._allConversations[i].unreadCount || 0) > 0) n++
-        return n
+    readonly property int unreadCount: root.conversations.filter(function(c) { return c.unreadCount > 0 }).length
+    readonly property int groupCount: root.conversations.filter(function(c) { return c.isGroup }).length
+
+    readonly property var rows: {
+        const q = root.search.trim().toLowerCase()
+        return root.conversations.filter(function(c) {
+            const f = root.filter === "unread" ? c.unreadCount > 0 : root.filter === "groups" ? c.isGroup : true
+            return f && (q.length === 0 || (c.name || "").toLowerCase().indexOf(q) !== -1)
+        })
     }
 
-    Rectangle {
-        anchors.fill: parent
-        color: Theme.surface0
+    component InkTab: AbstractButton {
+        id: it
+        property bool current: false
+        property string count: ""
+        property bool brand: false
+        hoverEnabled: true
+        focusPolicy: Qt.StrongFocus
+        padding: 0
+        implicitHeight: 28
+        implicitWidth: itRow.implicitWidth
+        Accessible.role: Accessible.PageTab
+        Accessible.name: it.text
+        HoverHandler { cursorShape: Qt.PointingHandCursor }
+        background: Item {
+            Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 2; color: it.current ? Theme.ruleInk : "transparent" }
+            Rectangle { anchors.fill: parent; anchors.margins: -3; color: "transparent"; radius: Theme.radiusSheet; border.width: it.visualFocus ? 2 : 0; border.color: Theme.focusRing }
+        }
+        contentItem: Item {
+            Row {
+                id: itRow
+                spacing: 5
+                anchors.top: parent.top
+                anchors.topMargin: 3
+                Text { text: it.text; color: it.current || it.hovered ? Theme.ink : Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: it.current ? Theme.weightSemibold : Theme.weightMedium }
+                Text { text: it.count; color: it.brand && it.count !== "0" ? Theme.navActiveInk : Theme.ink3; font.family: Theme.fontFamilySerif; font.pixelSize: Theme.fs(12); font.weight: Theme.weightBold }
+            }
+        }
     }
 
     ColumnLayout {
         anchors.fill: parent
+        anchors.topMargin: 14
         spacing: 0
 
-        // ---- En-tete ----------------------------------------------------
         RowLayout {
             Layout.fillWidth: true
-            Layout.leftMargin: Theme.cardPadding
-            Layout.rightMargin: Theme.cardPadding - 4
-            Layout.topMargin: 14
             Layout.bottomMargin: 10
-            spacing: 8
-
-            IconButton {
-                visible: root.showBackButton
-                glyph: ""
-                tooltip: qsTr("Retour")
-                onClicked: root.backRequested()
-            }
-
-            Text {
-                Layout.fillWidth: true
-                text: qsTr("Discussions")
-                color: Theme.ink
-                font.pixelSize: Theme.fs(16)
-                font.weight: Theme.weightBold
-                font.family: Theme.fontFamily
-                elide: Text.ElideRight
-                Accessible.role: Accessible.Heading
-            }
-
-            IconButton {
-                id: newButton
-                glyph: ""
-                variant: "soft"
-                size: Theme.controlHeightSmall + 2
-                iconSize: Theme.fs(13)
-                tooltip: qsTr("Nouvelle conversation ou nouveau groupe")
-                onClicked: newMenu.popup(newButton, newButton.width - newMenu.implicitWidth, newButton.height + 4)
-            }
-
-            AppMenu {
-                id: newMenu
-                AppMenuItem {
-                    text: qsTr("Nouvelle conversation")
-                    iconGlyph: ""
-                    onTriggered: root.newConversationRequested()
-                }
-                AppMenuItem {
-                    text: qsTr("Nouveau groupe")
-                    iconGlyph: ""
-                    onTriggered: root.createGroupRequested()
-                }
-            }
+            CapsLabel { text: qsTr("Discussions"); Layout.fillWidth: true }
+            Text { text: root.conversations.length; color: Theme.ink3; font.family: Theme.fontFamilySerif; font.pixelSize: Theme.fs(16); font.weight: Theme.weightBold }
         }
-
-        AppSearchField {
-            id: searchField
-            Layout.fillWidth: true
-            Layout.leftMargin: Theme.cardPadding
-            Layout.rightMargin: Theme.cardPadding
-            compact: true
-            placeholderText: qsTr("Rechercher une conversation")
-            onTextChanged: conversationsListView.applyFilter()
-        }
-
-        AppSegmentedControl {
-            Layout.fillWidth: true
-            Layout.leftMargin: Theme.cardPadding
-            Layout.rightMargin: Theme.cardPadding
-            Layout.topMargin: 10
-            Layout.bottomMargin: 8
-            small: true
-            model: [ { label: qsTr("Toutes") },
-                     { label: root.unreadConversations > 0 ? qsTr("Non lues (%1)").arg(root.unreadConversations)
-                                                           : qsTr("Non lues") } ]
-            currentIndex: root.unreadOnly ? 1 : 0
-            onActivated: function(index) {
-                root.unreadOnly = index === 1
-                conversationsListView.applyFilter()
-            }
-        }
-
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: Theme.line
+            Layout.preferredHeight: 32
+            Layout.bottomMargin: 10
+            radius: Theme.radiusSheet
+            color: "transparent"
+            border.width: 1
+            border.color: findField.activeFocus ? Theme.ink : Theme.line
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 10
+                anchors.rightMargin: 8
+                spacing: 7
+                LineIcon { path: Icons.search; size: 14; strokeWidth: 1.8; color: Theme.ink3 }
+                TextField {
+                    id: findField
+                    Layout.fillWidth: true
+                    placeholderText: qsTr("Personne ou groupe…")
+                    placeholderTextColor: Theme.ink3
+                    color: Theme.ink
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fs(12.5)
+                    background: Item {}
+                    leftPadding: 0
+                    rightPadding: 0
+                    selectByMouse: true
+                    Accessible.name: qsTr("Rechercher une discussion")
+                    onTextChanged: root.search = text
+                }
+            }
+        }
+        Row {
+            Layout.bottomMargin: 6
+            spacing: 16
+            InkTab { text: qsTr("Toutes"); count: String(root.conversations.length); current: root.filter === "all"; onClicked: root.filter = "all" }
+            InkTab { text: qsTr("Non lues"); count: String(root.unreadCount); brand: true; current: root.filter === "unread"; onClicked: root.filter = "unread" }
+            InkTab { text: qsTr("Groupes"); count: String(root.groupCount); current: root.filter === "groups"; onClicked: root.filter = "groups" }
         }
 
         ListView {
-            id: conversationsListView
+            id: list
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.topMargin: 6
+            Layout.topMargin: 4
             clip: true
             spacing: 2
             boundsBehavior: Flickable.StopAtBounds
+            model: root.rows
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-            model: ListModel { id: conversationsModel }
-
-            function reloadConversations() {
-                if (root.messagingContext)
-                    root._allConversations = root.messagingContext.conversationsList() || []
-                applyFilter()
-            }
-
-            function applyFilter() {
-                conversationsModel.clear()
-                const needle = (searchField.text || "").toLowerCase()
-                for (let i = 0; i < root._allConversations.length; ++i) {
-                    const item = root._allConversations[i]
-                    if (needle.length > 0 && (item.name || "").toLowerCase().indexOf(needle) === -1)
-                        continue
-                    if (root.unreadOnly && !(item.unreadCount > 0))
-                        continue
-                    conversationsModel.append({
-                        conversationId: item.conversationId,
-                        name: item.name || "",
-                        lastMessage: item.lastMessage || "",
-                        timeText: root.timeLabel(item.timestamp),
-                        unreadCount: item.unreadCount || 0
-                    })
-                }
-            }
-
-            Component.onCompleted: reloadConversations()
-
-            Connections {
-                target: root.messagingContext
-                ignoreUnknownSignals: true
-                function onConversationsChanged() { conversationsListView.reloadConversations() }
-            }
-
-            delegate: ItemDelegate {
+            delegate: AbstractButton {
                 id: row
-                required property var conversationId
-                required property string name
-                required property string lastMessage
-                required property string timeText
-                required property int unreadCount
-
-                readonly property bool isSelected: root.selectedConversationId !== null
-                                                   && root.selectedConversationId !== undefined
-                                                   && row.conversationId === root.selectedConversationId
-
+                required property var modelData
+                readonly property var c: modelData
+                readonly property bool on: root.selectedConversationId !== null && root.selectedConversationId !== undefined
+                                           && row.c.conversationId === root.selectedConversationId
+                readonly property bool unread: row.c.unreadCount > 0
                 width: ListView.view.width
-                height: Theme.compact ? 54 : 62
-                leftPadding: Theme.cardPadding - 6
-                rightPadding: Theme.cardPadding - 6
-                leftInset: 8
-                rightInset: 8
+                implicitHeight: rowLayout.implicitHeight + 20
                 hoverEnabled: true
-                highlighted: row.isSelected
-                Accessible.name: row.name + (row.unreadCount > 0 ? ", " + qsTr("%1 non lu(s)").arg(row.unreadCount) : "")
-                onClicked: root.conversationSelected(row.conversationId, row.name)
-
+                focusPolicy: Qt.TabFocus
+                Accessible.role: Accessible.Button
+                Accessible.name: row.c.name + (row.unread ? ", " + qsTr("%1 non lu(s)").arg(row.c.unreadCount) : "")
+                onClicked: root.conversationSelected(row.c.conversationId, row.c.name)
                 HoverHandler { cursorShape: Qt.PointingHandCursor }
-
                 background: Rectangle {
-                    radius: Theme.radiusRow
-                    color: row.isSelected ? Theme.accentSoft : (row.hovered ? Theme.hover : "transparent")
-
-                    Rectangle {
-                        anchors.fill: parent
-                        anchors.margins: -2
-                        radius: parent.radius + 2
-                        color: "transparent"
-                        border.width: 2
-                        border.color: Theme.focusRing
-                        visible: row.visualFocus
-                    }
+                    radius: Theme.radiusSheet
+                    color: row.on ? Theme.surface0 : (row.hovered ? Theme.selectWash : "transparent")
+                    border.width: row.on ? 1 : (row.visualFocus ? 2 : 0)
+                    border.color: row.visualFocus ? Theme.focusRing : Theme.line
+                    Rectangle { visible: row.on; x: -1; y: 8; width: 3; height: parent.height - 16; color: Theme.ruleInk }
                 }
-
                 contentItem: RowLayout {
-                    spacing: 10
-
-                    Avatar {
-                        Layout.leftMargin: 8
-                        name: row.name
-                        size: 36
+                    id: rowLayout
+                    spacing: 12
+                    ChatMonogram {
+                        Layout.leftMargin: 10
+                        label: row.c.name
+                        group: row.c.isGroup
+                        status: row.c.status
+                        memberCount: row.c.memberCount
                     }
-
                     ColumnLayout {
                         Layout.fillWidth: true
+                        Layout.rightMargin: 10
                         spacing: 2
-
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 6
-
+                            spacing: 8
                             Text {
-                                text: row.name
-                                color: Theme.ink
-                                font.pixelSize: Theme.fs(13)
-                                font.weight: row.unreadCount > 0 ? Theme.weightSemibold : Theme.weightMedium
-                                font.family: Theme.fontFamily
-                                elide: Text.ElideRight
                                 Layout.fillWidth: true
+                                text: row.c.name
+                                color: Theme.ink
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fs(13.5)
+                                font.weight: row.unread ? Theme.weightBold : Theme.weightMedium
+                                elide: Text.ElideRight
                             }
                             Text {
-                                text: row.timeText
-                                color: row.unreadCount > 0 ? (Theme.darkMode ? Theme.accentHover : Theme.accentColor) : Theme.ink3
-                                font.pixelSize: Theme.fs(11)
-                                font.weight: row.unreadCount > 0 ? Theme.weightSemibold : Theme.weightRegular
+                                text: root.timeLabel(row.c.timestamp)
+                                color: row.unread ? Theme.navActiveInk : Theme.ink3
                                 font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fs(11.5)
+                                font.weight: row.unread ? Theme.weightSemibold : Theme.weightRegular
+                                font.features: ({ "tnum": 1 })
                             }
                         }
-
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 6
-
+                            spacing: 8
                             Text {
-                                text: row.lastMessage.length > 0 ? row.lastMessage : qsTr("Aucun message")
-                                color: row.unreadCount > 0 ? Theme.ink2 : Theme.ink3
-                                font.pixelSize: Theme.fs(12)
-                                font.italic: row.lastMessage.length === 0
-                                font.family: Theme.fontFamily
-                                elide: Text.ElideRight
                                 Layout.fillWidth: true
+                                textFormat: Text.StyledText
+                                text: row.c.preview.length > 0 ? row.c.preview : "<i>" + qsTr("Aucun message") + "</i>"
+                                color: row.unread ? Theme.ink2 : Theme.ink3
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fs(12.5)
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
                             }
-                            Rectangle {
-                                visible: row.unreadCount > 0
-                                Layout.rightMargin: 8
-                                Layout.preferredWidth: Math.max(18, unreadText.implicitWidth + 10)
-                                Layout.preferredHeight: 18
-                                radius: 9
-                                color: Theme.accentColor
-
-                                Text {
-                                    id: unreadText
-                                    anchors.centerIn: parent
-                                    text: row.unreadCount > 99 ? "99+" : row.unreadCount
-                                    color: Theme.accentInk
-                                    font.pixelSize: Theme.fs(10)
-                                    font.weight: Theme.weightBold
-                                    font.family: Theme.fontFamily
-                                }
+                            Text {
+                                visible: row.unread
+                                text: row.c.unreadCount > 99 ? "99+" : row.c.unreadCount
+                                color: Theme.navActiveInk
+                                font.family: Theme.fontFamilySerif
+                                font.pixelSize: Theme.fs(14)
+                                font.weight: Theme.weightBold
                             }
-                            Item { visible: row.unreadCount === 0; Layout.preferredWidth: 8 }
                         }
                     }
                 }
             }
 
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-        }
-
-        EmptyState {
-            visible: conversationsListView.count === 0
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.margins: Theme.cardPadding
-            compact: true
-            iconName: searchField.text.length > 0 || root.unreadOnly ? "search" : "chat"
-            title: searchField.text.length > 0 ? qsTr("Aucune conversation ne correspond")
-                 : root.unreadOnly ? qsTr("Aucun message non lu")
-                 : qsTr("Aucune conversation")
-            description: searchField.text.length > 0 ? qsTr("Vérifiez l'orthographe ou effacez la recherche.")
-                       : root.unreadOnly ? qsTr("Vous êtes à jour.")
-                       : qsTr("Démarrez une discussion avec un collègue connecté au réseau.")
-            actionText: searchField.text.length > 0 || root.unreadOnly ? "" : qsTr("Nouvelle conversation")
-            onActionClicked: root.newConversationRequested()
+            Text {
+                visible: list.count === 0
+                width: list.width
+                y: 8
+                text: root.conversations.length === 0 ? qsTr("Vos discussions apparaîtront ici.")
+                      : root.search.length > 0 ? qsTr("Aucune discussion ne correspond.")
+                      : root.filter === "unread" ? qsTr("Tout est lu.") : qsTr("Aucun groupe pour l'instant.")
+                color: Theme.ink3
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fs(12.5)
+                wrapMode: Text.WordWrap
+            }
         }
     }
 }

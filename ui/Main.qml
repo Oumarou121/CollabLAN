@@ -128,6 +128,8 @@ ApplicationWindow {
     CallOverlay {
         anchors.fill: parent
         z: 50
+        // La bande d'appel s'aligne sur la page, a droite de la barre laterale.
+        leftInset: window.appShell ? (window.appShell.railMode ? Theme.sidebarWidthCollapsed : Theme.sidebarWidth) : 0
     }
 
     Component {

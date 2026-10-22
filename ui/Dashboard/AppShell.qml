@@ -67,7 +67,7 @@ Item {
         case "folder": return folderComponent
         case "call": return callComponent
         case "peers": return peersComponent
-        case "journal": return adminComponent
+        case "journal": return journalComponent
         case "admin": return adminComponent
         case "settings": return settingsComponent
         case "about": return aboutComponent
@@ -85,8 +85,6 @@ Item {
         if (!comp)
             return
         let properties = props || {}
-        if (route === "journal" && properties.currentTab === undefined)
-            properties.currentTab = 0
         if (route === "admin" && properties.currentTab === undefined)
             properties.currentTab = 1
         if (route === shell.currentRoute && pages.depth === 1 && !props)
@@ -133,6 +131,9 @@ Item {
     readonly property bool callActive: (typeof callContext !== "undefined" && callContext)
                                        ? (callContext.callState !== "" && callContext.callState !== "idle")
                                        : false
+
+    readonly property bool callBarShown: (typeof callContext !== "undefined" && callContext)
+                                         ? (callContext.callState === "connected" || callContext.callState === "ending") : false
 
     function refreshBadges() {
         // Messages non lus : somme des unreadCount de chaque conversation.
@@ -334,6 +335,8 @@ Item {
                 id: pages
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                // Place laissee a la bande d'appel etabli (CallOverlay).
+                Layout.bottomMargin: shell.callBarShown ? 76 : 0
                 clip: true
 
                 replaceEnter: Transition {
@@ -433,7 +436,10 @@ Item {
             onCallRequested: shell.navigate("call")
             onAdminRequested: shell.navigate("admin")
             onAdminSectionRequested: function(tab) {
-                shell.navigate(tab === 0 ? "journal" : "admin", { currentTab: tab })
+                if (tab === 0)
+                    shell.navigate("journal")
+                else
+                    shell.navigate("admin", { currentTab: tab })
             }
             onSettingsRequested: shell.navigate("settings")
             onSharedFoldersRequested: shell.navigate("folder")
@@ -450,6 +456,12 @@ Item {
             onBackRequested: shell.goBack()
             onCreateGroupRequested: shell.pushPage(createGroupComponent)
             onNewConversationRequested: shell.pushPage(newConversationComponent)
+            onFileTransferRequested: function(peer) {
+                shell.navigate("transfer", { autoOpenPanel: true, preselectedPeer: peer })
+            }
+            onExchangesRequested: function(peerKey) {
+                shell.navigate("transfer", { openedPeerKey: peerKey })
+            }
         }
     }
 
@@ -520,6 +532,19 @@ Item {
             onFileTransferRequested: function(peer) {
                 shell.navigate("transfer", { autoOpenPanel: true, preselectedPeer: peer })
             }
+            onConversationRequested: function(conversationId) { shell.openConversation(conversationId) }
+            onExchangesRequested: function(peerKey) { shell.navigate("transfer", { openedPeerKey: peerKey }) }
+        }
+    }
+
+    Component {
+        id: journalComponent
+        AuditJournalView {
+            onBackRequested: shell.goBack()
+            onPeerRequested: function(peerId) { shell.navigate("peers", { selectedKey: peerId }) }
+            onConversationRequested: function(conversationId) { shell.openConversation(conversationId) }
+            onAuthorizationsRequested: shell.navigate("admin", { currentTab: 1 })
+            onTransfersRequested: shell.navigate("transfer")
         }
     }
 
@@ -527,6 +552,9 @@ Item {
         id: adminComponent
         AdminView {
             onBackRequested: shell.goBack()
+            onPeerRequested: function(peerId) { shell.navigate("peers", { selectedKey: peerId }) }
+            onJournalRequested: function(search) { shell.navigate("journal", { search: search }) }
+            onSettingsRequested: shell.navigate("settings")
         }
     }
 

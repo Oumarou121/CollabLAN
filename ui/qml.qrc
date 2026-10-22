@@ -4,6 +4,9 @@
         <file>Login/LoginView.qml</file>
         <file>Home/HomeView.qml</file>
         <file>Chat/ChatView.qml</file>
+        <file>Chat/ChatMonogram.qml</file>
+        <file>Chat/ChatFiche.qml</file>
+        <file>Chat/NewDiscussionPanel.qml</file>
         <file>Chat/ChatWorkspaceView.qml</file>
         <file>Chat/ConversationsView.qml</file>
         <file>Chat/CreateGroupView.qml</file>
@@ -13,10 +16,17 @@
         <file>FileTransfer/FileIcon.qml</file>
         <file>Call/CallView.qml</file>
         <file>Call/CallOverlay.qml</file>
+        <file>Call/callPeople.js</file>
         <file>Settings/SettingsView.qml</file>
         <file>Settings/AppearanceSettings.qml</file>
         <file>About/AboutView.qml</file>
         <file>Admin/AdminView.qml</file>
+        <file>Admin/AuditJournalView.qml</file>
+        <file>Admin/auditText.js</file>
+        <file>Admin/FingerprintGrid.qml</file>
+        <file>Admin/SheetField.qml</file>
+        <file>Admin/MachineAddSheet.qml</file>
+        <file>Admin/AccountFormSheet.qml</file>
         <file>SharedFolder/SharedFolderView.qml</file>
         <file>SharedFolder/FolderMark.qml</file>
         <file>SharedFolder/FolderComposer.qml</file>

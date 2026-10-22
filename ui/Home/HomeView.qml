@@ -7,6 +7,8 @@ import "../Components"
 import "../Dashboard"
 import "../Dashboard/transferFormat.js" as Fmt
 import "../Components/icons.js" as Icons
+import "../Call/callPeople.js" as People
+import "../Admin/auditText.js" as AuditText
 
 /*
  * HomeView - Dashboard principal LocaLink selon la maquette V2.1
@@ -225,7 +227,30 @@ Item {
     // Traduit une entree brute auditLogModel.get(i) (cles : eventType,
     // actorLabel, description, timestamp - voir AuditLogModel::get()) vers
     // la forme attendue par ActivityRow (event/actor/message/resultBadge).
-    function activityFromAuditEntry(item) {
+    //
+    // Le texte enregistre est brut (« Appel avec 192.168.1.21 : Manque
+    // (Entrant) ») : auditText.js le reformule comme l'ecran Journal d'audit
+    // (adresse -> poste -> personne, statut accentue). auditContext() lit les
+    // postes et comptes une fois par rafraichissement.
+    function auditContext() {
+        const peers = People.readPeers(typeof peersModel !== "undefined" ? peersModel : null)
+        const users = People.readUsers(typeof messagingContext !== "undefined" ? messagingContext : null)
+        return {
+            who: function(ip) { return People.labelFor(peers, users, ip, "") },
+            conv: function(id) {
+                return (typeof messagingContext !== "undefined" && messagingContext && messagingContext.conversationDisplayName)
+                        ? messagingContext.conversationDisplayName(id) : ""
+            },
+            danger: String(Theme.dangerInk),
+            ok: String(Theme.successInk)
+        }
+    }
+    function auditPlain(html) {
+        return String(html || "").replace(/<[^>]*>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+    }
+
+    function activityFromAuditEntry(item, ctx) {
+        const r = AuditText.read(item, ctx || root.auditContext())
         const resultBadgeByEvent = {
             "connection": "ok",
             "transfer": "xf",
@@ -236,6 +261,8 @@ Item {
             event: item.eventType || "activity",
             actor: item.actorLabel || "",
             message: item.description || "",
+            line: r.line,
+            sub: r.sub,
             result: "",
             resultBadge: resultBadgeByEvent[item.eventType] || "",
             timestamp: item.timestamp ? new Date(item.timestamp) : new Date()
@@ -249,8 +276,9 @@ Item {
         }
         const all = []
         const total = Math.min(auditLogModel.count, 10)
+        const ctx = root.auditContext()
         for (let i = 0; i < total; i++) {
-            all.push(root.activityFromAuditEntry(auditLogModel.get(i)))
+            all.push(root.activityFromAuditEntry(auditLogModel.get(i), ctx))
         }
         activityItems = all
         if (all.length > 0)
@@ -400,8 +428,9 @@ Item {
                 if (item && item.eventType === "access_denied") {
                     deniedCount++
                     if (!lastDenied) {
+                        const r = AuditText.read(item, root.auditContext())
                         lastDenied = {
-                            message: item.description || "",
+                            message: root.auditPlain(r.line) + (r.sub ? " · " + root.auditPlain(r.sub) : ""),
                             timestamp: item.timestamp ? new Date(item.timestamp) : new Date()
                         }
                     }
@@ -790,6 +819,7 @@ Item {
         }
         if (root.isAdmin && typeof auditLogModel !== "undefined" && auditLogModel) {
             const count = Math.min(auditLogModel.count, 10)
+            const ctx = root.auditContext()
             let shown = 0
             for (let i = 0; i < count && shown < 2; i++) {
                 const e = auditLogModel.get(i)
@@ -797,9 +827,11 @@ Item {
                     continue
                 requests++
                 shown++
+                const r = AuditText.read(e, ctx)
                 items.push({ kind: "denied", glyph: "", tone: "danger",
-                             title: e.actorLabel || qsTr("Connexion refusée"),
-                             meta: e.description || qsTr("Connexion refusée"),
+                             title: r.ip ? ctx.who(r.ip) : root.auditPlain(r.line),
+                             meta: (r.ip ? qsTr("Refusée") + (r.sub ? " · " + root.auditPlain(r.sub) : "")
+                                         : root.auditPlain(r.sub)) + (root.timeOf(e.timestamp) ? " · " + root.timeOf(e.timestamp) : ""),
                              action: qsTr("Journal"), tip: qsTr("Ouvrir le journal d'audit") })
             }
         }
@@ -2154,9 +2186,12 @@ Item {
                                     StateGlyph { kind: ev.look.glyph; size: 10 }
                                     Text {
                                         Layout.fillWidth: true
-                                        text: "<b>" + root.esc(root.isAdmin ? (ev.modelData.actor || qsTr("Système")) : ev.modelData.name)
-                                              + "</b>&nbsp;&nbsp;<font color=\"" + Theme.ink2 + "\">"
-                                              + root.esc(root.isAdmin ? ev.modelData.message : (ev.modelData.lastMessage || "")) + "</font>"
+                                        // Administrateur : phrase du journal en clair (deja echappee
+                                        // par auditText.js) puis sa precision en gris.
+                                        text: root.isAdmin
+                                              ? ev.modelData.line + (ev.modelData.sub ? "&nbsp;&nbsp;<font color=\"" + Theme.ink3 + "\">" + ev.modelData.sub + "</font>" : "")
+                                              : "<b>" + root.esc(ev.modelData.name) + "</b>&nbsp;&nbsp;<font color=\"" + Theme.ink2 + "\">"
+                                                + root.esc(ev.modelData.lastMessage || "") + "</font>"
                                         textFormat: Text.StyledText
                                         color: Theme.ink
                                         font.family: Theme.fontFamily
