@@ -164,6 +164,11 @@ add_executable(test_messagingserverauth UnitTests/test_messagingserverauth.cpp)
 target_link_libraries(test_messagingserverauth PRIVATE Qt6::Test Qt6::WebSockets network)
 add_test(NAME test_messagingserverauth COMMAND test_messagingserverauth)
 
+# Appels : le client accepte l'appel du serveur qu'il a approuve (TrustedServers).
+add_executable(test_voicesignalingauth UnitTests/test_voicesignalingauth.cpp)
+target_link_libraries(test_voicesignalingauth PRIVATE Qt6::Test Qt6::WebSockets network)
+add_test(NAME test_voicesignalingauth COMMAND test_voicesignalingauth)
+
 # Lot 2 securite : journal de synchronisation filtre par utilisateur pour les clients.
 add_executable(test_syncvisibility UnitTests/test_syncvisibility.cpp)
 target_link_libraries(test_syncvisibility PRIVATE Qt6::Test network models)

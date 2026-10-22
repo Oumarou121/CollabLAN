@@ -298,7 +298,11 @@ void VoiceSignalingChannel::onServerNewConnection()
     }
     if (m_permissionManager && !fingerprint.isEmpty()) {
         bool authorized = tlsAuthorized;
-        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+        // Un client appele par son serveur : ce serveur n'est pas une machine
+        // autorisee de la liste locale, mais un serveur approuve (TrustedServers).
+        // Meme regle que MessagingServer ; la verification ne cree aucune
+        // confiance nouvelle (contrairement a trustRemoteServerCertificate).
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedOrTrustedServer",
                                   Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                   Q_ARG(QString, fingerprint));
         if (!authorized) {
