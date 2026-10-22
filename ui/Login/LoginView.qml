@@ -3,7 +3,6 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Themes
 import "../Components"
-import "../Admin"
 import "../Components/icons.js" as Icons
 import "../Call/callPeople.js" as People
 
@@ -17,8 +16,8 @@ import "../Call/callPeople.js" as People
  * verification est faite par core::UserManager (userManager.login).
  *
  * Etats geres : connexion (nom memorise -> « Bon retour »), premier demarrage
- * (application.needsInitialAdmin -> createInitialAdmin), certificat de serveur
- * inconnu (application.pendingServer* -> approvePendingServerCertificate),
+ * (application.needsInitialAdmin -> createInitialAdmin), serveur inconnu
+ * (ServerTrustSheet : code d'appairage puis approvePendingServerCertificate),
  * mode reseau (electionService.roleLabel, promoteToServer / demoteToClient).
  */
 Item {
@@ -602,7 +601,7 @@ Item {
             iconPath: Icons.lock
             text: qsTr("Serveur à approuver")
             tooltip: qsTr("Vérifier le certificat du serveur détecté")
-            onClicked: { root.trustError = ""; root.sheet = "server" }
+            onClicked: root.sheet = "server"
         }
         AppButton {
             variant: "ghost"
@@ -619,76 +618,26 @@ Item {
     // Fenetres
     // ======================================================================
     property string sheet: ""                  // "" | server | network | promote | demote
-    property string trustError: ""
 
     Connections {
         target: (typeof application !== "undefined") ? application : null
         ignoreUnknownSignals: true
         function onPendingServerChanged() {
-            if (application.pendingServerFingerprint.length > 0) {
-                root.trustError = ""
+            if (application.pendingServerFingerprint.length > 0
+                    && application.pendingServerFingerprint !== root.dismissedServer)
                 root.sheet = "server"
-            }
         }
     }
 
-    SheetModal {
+    // Serveur inconnu : code d'appairage a comparer avec celui de l'administrateur.
+    ServerTrustSheet {
         open: root.sheet === "server"
-        kicker: qsTr("Serveur détecté")
-        title: qsTr("Approuver <b>ce serveur</b> ?")
-        boldTitle: false
-        sheetWidth: 540
-        onCloseRequested: root.sheet = ""
-
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 12
-            Text {
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                text: qsTr("Ce serveur présente un certificat encore inconnu sur ce poste. Comparez son empreinte avec celle que vous montre la personne qui administre le serveur avant de l'approuver.")
-                color: Theme.ink2; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13); lineHeight: 1.12
-            }
-            Rectangle {
-                Layout.fillWidth: true
-                implicitHeight: 40
-                radius: Theme.radiusSheet
-                color: Theme.surface0
-                border.width: 1
-                border.color: Theme.line
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 14
-                    anchors.rightMargin: 14
-                    Text { text: qsTr("Adresse"); color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13) }
-                    Item { Layout.fillWidth: true }
-                    Text {
-                        text: root.hasPendingServer ? application.pendingServerAddress + ":" + application.pendingServerPort : ""
-                        color: Theme.ink; font.family: "Cascadia Mono"; font.pixelSize: Theme.fs(12)
-                    }
-                }
-            }
-            FingerprintGrid { Layout.fillWidth: true; large: true; fingerprint: root.hasPendingServer ? application.pendingServerFingerprint : "" }
-            Notice { text: root.trustError }
-        }
-        footer: [
-            AppButton { variant: "ghost"; text: qsTr("Annuler"); onClicked: root.sheet = "" },
-            AppButton {
-                variant: "ink"
-                iconPath: Icons.check
-                text: qsTr("Approuver ce serveur")
-                // La fenetre reste ouverte en cas d'echec pour que l'erreur soit lisible.
-                onClicked: {
-                    if (application.approvePendingServerCertificate()) {
-                        root.trustError = ""
-                        root.sheet = ""
-                    } else {
-                        root.trustError = qsTr("Impossible d'approuver ce certificat. Relancez la connexion au serveur puis réessayez.")
-                    }
-                }
-            }
-        ]
+        onCloseRequested: { root.dismissedServer = application.pendingServerFingerprint; root.sheet = "" }
+        onApproved: root.sheet = ""
     }
+    // Serveur ecarte : pas de nouvelle ouverture automatique a chaque tentative de
+    // connexion (le bouton de la barre du bas reste disponible).
+    property string dismissedServer: ""
 
     SheetModal {
         open: root.sheet === "network"

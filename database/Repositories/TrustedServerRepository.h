@@ -3,6 +3,7 @@
 
 #include <QSqlDatabase>
 #include <QString>
+#include <QStringList>
 #include <optional>
 
 namespace database {
@@ -20,6 +21,10 @@ public:
                     const QString &hostname);
     bool revoke(const QString &fingerprint, const QString &reason = QString());
     bool isTrusted(const QString &fingerprint) const;
+    /// Vrai si au moins un serveur est approuve sur ce poste.
+    bool hasAnyTrusted() const;
+    /// Empreintes des serveurs approuves (statut 'authorized').
+    QStringList trustedFingerprints() const;
     QString lastError() const;
 
 private:

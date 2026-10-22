@@ -162,6 +162,63 @@ private slots:
                  QStringList({QStringLiteral("cc33"), QStringLiteral("ee55")}));
     }
 
+    // Serveur officiel qui revient : il reprend les autorisations donnees sur
+    // le serveur de secours, sauf pour une machine sur laquelle il a deja tranche.
+    void adoptTempServerAuthorization_onlyUnknownOrPending()
+    {
+        freshDatabase();
+        // Inconnue : reprise, sans auteur local (cle etrangere nulle).
+        QVERIFY(m_manager->adoptTempServerAuthorization(QStringLiteral("a1"), QStringLiteral("uuid-a1"),
+                                                        QStringLiteral("POSTE-A1"), QStringLiteral("10.0.0.1"),
+                                                        std::nullopt, QStringLiteral("secours")));
+        QVERIFY(m_manager->isMachineAuthorizedByCertificate(QStringLiteral("a1")));
+        QCOMPARE(m_manager->findMachineByCertificateFingerprint(QStringLiteral("a1"))->reason(), QStringLiteral("secours"));
+
+        // En attente : reprise.
+        QVERIFY(m_manager->registerPendingMachineByCertificate(QStringLiteral("b2"), QStringLiteral("10.0.0.2")));
+        QVERIFY(m_manager->adoptTempServerAuthorization(QStringLiteral("b2"), QString(), QString(),
+                                                        QStringLiteral("10.0.0.2"), std::nullopt, QStringLiteral("secours")));
+        QVERIFY(m_manager->isMachineAuthorizedByCertificate(QStringLiteral("b2")));
+
+        // Revoquee ici : la revocation fait foi.
+        QSqlQuery insert(m_dbManager->database());
+        QVERIFY(insert.exec(QStringLiteral(
+            "INSERT INTO Users (name, ip_address, status, role, password_hash, password_salt, uuid, updated_at) "
+            "VALUES ('admin', '', 'active', 'admin', 'x', 'y', 'u-admin', '2026-10-22T00:00:00Z')")));
+        QVERIFY(m_manager->revokeMachineByCertificate(QStringLiteral("b2"), insert.lastInsertId().toInt(),
+                                                      QStringLiteral("revoque")));
+        QVERIFY(!m_manager->adoptTempServerAuthorization(QStringLiteral("b2"), QString(), QString(),
+                                                         QStringLiteral("10.0.0.2"), std::nullopt, QStringLiteral("secours")));
+        QVERIFY(!m_manager->isMachineAuthorizedByCertificate(QStringLiteral("b2")));
+
+        // Deja autorisee : inchangee (pas de reecriture de la raison).
+        QVERIFY(!m_manager->adoptTempServerAuthorization(QStringLiteral("a1"), QString(), QString(),
+                                                         QString(), std::nullopt, QStringLiteral("autre")));
+        QCOMPARE(m_manager->findMachineByCertificateFingerprint(QStringLiteral("a1"))->reason(), QStringLiteral("secours"));
+    }
+
+    // Serveur designe par le serveur actif (champ "servers") : epingle au
+    // premier contact, sauf s'il a ete revoque localement.
+    void vouchedServer_pinnedUnlessRevoked()
+    {
+        freshDatabase();
+        QVERIFY(!m_manager->trustRemoteServerCertificate(QStringLiteral("s1"), QStringLiteral("10.0.0.9")));
+
+        m_manager->setVouchedServerFingerprints({QStringLiteral(" S1 "), QStringLiteral("s2")});
+        QVERIFY(m_manager->trustRemoteServerCertificate(QStringLiteral("s1"), QStringLiteral("10.0.0.9")));
+        // Epingle : reste reconnu quand la liste est remplacee (redemarrage).
+        m_manager->setVouchedServerFingerprints({});
+        QVERIFY(m_manager->isTrustedServer(QStringLiteral("s1")));
+        QCOMPARE(m_manager->trustedServerFingerprints(), QStringList({QStringLiteral("s1")}));
+
+        // Revoque localement : la designation ne le retablit pas.
+        QVERIFY(m_manager->approveServerCertificate(QStringLiteral("s2"), QStringLiteral("10.0.0.8")));
+        QVERIFY(m_manager->revokeServerCertificate(QStringLiteral("s2"), QStringLiteral("revoque")));
+        m_manager->setVouchedServerFingerprints({QStringLiteral("s2")});
+        QVERIFY(!m_manager->trustRemoteServerCertificate(QStringLiteral("s2"), QStringLiteral("10.0.0.8")));
+        QVERIFY(!m_manager->isTrustedServer(QStringLiteral("s2")));
+    }
+
     void removeMachine_emitsMachineRemoved()
     {
         freshDatabase();

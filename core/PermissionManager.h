@@ -93,9 +93,29 @@ public:
     /// plus la liste recue (un serveur de secours relaie celle du serveur
     /// officiel).
     QStringList authorizedFingerprintsForPeers() const;
+    /// Serveurs approuves localement (liste TrustedServers). Un serveur de
+    /// secours les transmet a ses clients pour qu'un poste arrive pendant la
+    /// panne reconnaisse le serveur officiel a son retour.
+    QStringList trustedServerFingerprints() const;
+    /// Serveurs designes par le serveur actif (champ "servers" de
+    /// "authorized_peers", en memoire). Au premier contact, un tel serveur est
+    /// epingle dans TrustedServers sans approbation manuelle, sauf s'il a ete
+    /// revoque localement.
+    void setVouchedServerFingerprints(const QStringList &fingerprints);
+    bool isVouchedServer(const QString &fingerprint) const;
+    /// Reprise par le serveur officiel d'une autorisation donnee sur un
+    /// serveur de secours pendant une panne. Sans effet (faux) si la machine
+    /// est deja autorisee ou revoquee ici : seule une machine inconnue ou en
+    /// attente est reprise.
+    bool adoptTempServerAuthorization(const QString &fingerprint, const QString &machineUuid,
+                                      const QString &hostname, const QString &ipAddress,
+                                      std::optional<int> authorizedBy, const QString &reason);
     /// Vrai si ce certificat a ete approuve comme SERVEUR (liste TrustedServers) : seul un tel
     /// pair recoit le journal de synchronisation complet (cf. SyncService).
     Q_INVOKABLE bool isTrustedServer(const QString &fingerprint) const;
+    /// Vrai si ce poste a deja approuve au moins un serveur (il a deja fait
+    /// partie d'un reseau) ; faux pour un poste neuf.
+    bool hasTrustedServer() const;
     Q_INVOKABLE void recordMachineSeen(const QString &fingerprint, const QString &ipAddress);
     /// Verifie la confiance LOCALE envers le certificat du serveur. Cette
     /// decision ne quitte jamais ce poste.
@@ -124,7 +144,7 @@ public:
     bool authorizeMachine(const QString &ipAddress, int authorizedBy, const QString &reason = QString());
     bool authorizeMachineByCertificate(const QString &fingerprint, const QString &machineUuid,
                                        const QString &hostname, const QString &ipAddress,
-                                       int authorizedBy, const QString &reason = QString());
+                                       std::optional<int> authorizedBy, const QString &reason = QString());
     bool revokeMachineByCertificate(const QString &fingerprint, int revokedBy,
                                 const QString &reason = QString());
     bool authorizeExistingMachineByCertificate(const QString &fingerprint, int authorizedBy,
@@ -152,6 +172,8 @@ private:
     std::unique_ptr<database::TrustedServerRepository> m_trustedServers;
     /// Machines declarees autorisees par le serveur actif (en memoire).
     QSet<QString> m_serverAuthorized;
+    /// Serveurs designes par le serveur actif (en memoire).
+    QSet<QString> m_vouchedServers;
 };
 
 } // namespace core

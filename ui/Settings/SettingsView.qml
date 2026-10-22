@@ -25,6 +25,7 @@ Item {
     signal backRequested()
     signal logoutRequested()
     signal historyRequested()
+    signal serverTrustRequested()
 
     property string category: "appearance"
     readonly property var categories: [
@@ -347,6 +348,7 @@ Item {
             onPromoteRequested: root.roleConfirm = "promote"
             onDemoteRequested: root.roleConfirm = "demote"
             onHistoryRequested: root.historyRequested()
+            onServerTrustRequested: root.serverTrustRequested()
             onPortsSaved: function(messaging, discovery) {
                 root.restartNote = qsTr("Ports enregistrés : messagerie <b>%1</b>, découverte <b>%2</b>. LocaLink les utilisera à son prochain démarrage ; d'ici là, rien ne change.").arg(messaging).arg(discovery)
             }

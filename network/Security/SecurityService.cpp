@@ -15,6 +15,7 @@
 #include <openssl/rand.h>
 #include <openssl/err.h>
 #include <openssl/asn1.h>
+#include <utility>
 
 namespace network {
 
@@ -83,6 +84,27 @@ QString SecurityService::certificateFingerprint(const QSslCertificate &certifica
 {
     if (certificate.isNull()) return QString();
     return QString::fromLatin1(certificate.digest(QCryptographicHash::Sha256).toHex());
+}
+
+QString SecurityService::pairingCode(const QString &fingerprintA, const QString &fingerprintB)
+{
+    QString a = fingerprintA.trimmed().toLower().remove(QLatin1Char(':'));
+    QString b = fingerprintB.trimmed().toLower().remove(QLatin1Char(':'));
+    if (a.isEmpty() || b.isEmpty())
+        return QString();
+    if (b < a)
+        std::swap(a, b); // ordre canonique : meme code des deux cotes
+    const QByteArray material = (a + QLatin1Char('|') + b).toLatin1();
+    static const QByteArray salt = QByteArrayLiteral("LocaLink-appairage-v1");
+    unsigned char derived[4] = {};
+    if (PKCS5_PBKDF2_HMAC(material.constData(), static_cast<int>(material.size()),
+                          reinterpret_cast<const unsigned char *>(salt.constData()),
+                          static_cast<int>(salt.size()), 200000, EVP_sha256(),
+                          static_cast<int>(sizeof(derived)), derived) != 1)
+        return QString();
+    const quint32 value = (quint32(derived[0]) << 24) | (quint32(derived[1]) << 16)
+                        | (quint32(derived[2]) << 8) | quint32(derived[3]);
+    return QStringLiteral("%1").arg(value % 1000000u, 6, 10, QLatin1Char('0'));
 }
 
 void SecurityService::reset()

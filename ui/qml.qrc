@@ -2,6 +2,7 @@
     <qresource prefix="/ui">
         <file>Main.qml</file>
         <file>Login/LoginView.qml</file>
+        <file>Login/ServerTrustSheet.qml</file>
         <file>Home/HomeView.qml</file>
         <file>Chat/ChatView.qml</file>
         <file>Chat/ChatMonogram.qml</file>
@@ -62,6 +63,7 @@
         <file>Components/LineIcon.qml</file>
         <file>Components/StateGlyph.qml</file>
         <file>Components/SheetModal.qml</file>
+        <file>Components/PairingCode.qml</file>
         <file>Components/CapsLabel.qml</file>
         <file>Components/TextLink.qml</file>
         <file>Components/SectionHeader.qml</file>

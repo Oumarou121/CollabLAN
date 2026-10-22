@@ -351,6 +351,16 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // autorisees (PermissionManager::trustRemoteServerCertificate) : c'est
     // donc lui, et lui seul, qui confirme l'adoption.
     m_electionService->setRequireValidatedServer(true);
+    // Poste neuf : tant qu'il ne fait confiance a aucun serveur et qu'il attend
+    // l'approbation de celui qui s'annonce, il ne se promeut pas serveur de
+    // secours (il restait sinon seul « serveur » et parasitait le reseau). Un
+    // poste deja membre du reseau garde l'election habituelle, et un premier
+    // poste seul, sans aucune annonce, aussi.
+    m_electionService->setPromotionGuard([this]() {
+        const bool waitingForApproval = !m_pendingServerFingerprint.isEmpty();
+        const bool knowsNoServer = !m_permissionManager || !m_permissionManager->hasTrustedServer();
+        return !(waitingForApproval && knowsNoServer);
+    });
     connect(m_electionService, &network::ElectionService::serverEndpointPending,
             this, [this](const QString &machineUuid, const QHostAddress &address, quint16 port) {
                 if (address.isNull() || port == 0) {
@@ -2003,10 +2013,65 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         QStringList fingerprints;
         for (const QJsonValue &value : document.object().value(QStringLiteral("fingerprints")).toArray())
             fingerprints << value.toString();
+        QStringList servers;
+        for (const QJsonValue &value : document.object().value(QStringLiteral("servers")).toArray())
+            servers << value.toString();
         if (m_permissionManager) {
             m_permissionManager->setServerAuthorizedFingerprints(fingerprints);
+            m_permissionManager->setVouchedServerFingerprints(servers);
             // Serveur de secours : relaie la liste a ses propres clients.
             broadcastAuthorizedPeers();
+        }
+        return;
+    }
+
+    // Autorisations donnees par un serveur de secours pendant la panne (type
+    // "temp_authorizations", cf. tempAuthorizationsPayload) : envoyees au
+    // serveur officiel quand il se connecte au secours pour la
+    // reconciliation, donc avant qu'il ne reprenne son role. Le serveur
+    // officiel les reprend (machines inconnues ou en attente seulement) :
+    // le poste arrive pendant la panne n'a rien a refaire a son retour.
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("temp_authorizations")) {
+        if (relay) {
+            qWarning() << "handleIncomingPayload: temp_authorizations recu d'un client, refuse";
+            if (m_auditManager)
+                m_auditManager->logRefusedAttempt(QStringLiteral("Autorisations de serveur de secours envoyées par un client (refusées)"));
+            return;
+        }
+        if (!m_electionService || m_electionService->role() != models::ServerRole::Server || !m_permissionManager)
+            return;
+        const QJsonObject object = document.object();
+        const QString origin = object.value(QStringLiteral("hostname")).toString();
+        for (const QJsonValue &value : object.value(QStringLiteral("machines")).toArray()) {
+            const QJsonObject machine = value.toObject();
+            const QString fingerprint = machine.value(QStringLiteral("fingerprint")).toString();
+            const QString byUuid = machine.value(QStringLiteral("authorized_by")).toString();
+            std::optional<int> byId;
+            QString byName;
+            if (m_userManager && !byUuid.isEmpty()) {
+                for (const models::User &user : m_userManager->allUsers()) {
+                    if (user.uuid() == byUuid) {
+                        byId = user.id();
+                        byName = user.name();
+                        break;
+                    }
+                }
+            }
+            const QString hostname = machine.value(QStringLiteral("hostname")).toString();
+            const QString reason = byName.isEmpty()
+                ? QStringLiteral("Autorisé sur le serveur de secours %1").arg(origin)
+                : QStringLiteral("Autorisé sur le serveur de secours %1 par %2").arg(origin, byName);
+            if (m_permissionManager->adoptTempServerAuthorization(
+                    fingerprint, machine.value(QStringLiteral("machine_uuid")).toString(), hostname,
+                    machine.value(QStringLiteral("ip_address")).toString(), byId, reason)) {
+                qDebug() << "Autorisation reprise du serveur de secours" << origin << ":" << fingerprint.left(16);
+                if (m_auditManager)
+                    m_auditManager->recordEvent(core::AuditEventType::Connection,
+                                                QStringLiteral("Machine %1 : %2").arg(hostname, reason),
+                                                byId.has_value() ? std::optional<qint64>(*byId) : std::nullopt,
+                                                origin);
+            }
         }
         return;
     }
@@ -2438,8 +2503,46 @@ QString Application::authorizedPeersPayload() const
         for (const QString &fingerprint : m_permissionManager->authorizedFingerprintsForPeers())
             fingerprints.append(fingerprint);
     }
-    const QJsonObject payload{{QStringLiteral("type"), QStringLiteral("authorized_peers")},
-                              {QStringLiteral("fingerprints"), fingerprints}};
+    QJsonObject payload{{QStringLiteral("type"), QStringLiteral("authorized_peers")},
+                        {QStringLiteral("fingerprints"), fingerprints}};
+    // Serveur de secours : designe aussi le(s) serveur(s) qu'il a approuves,
+    // pour qu'un poste arrive pendant la panne accepte le serveur officiel a
+    // son retour (cf. PermissionManager::setVouchedServerFingerprints).
+    if (m_permissionManager && m_electionService
+        && m_electionService->role() == models::ServerRole::TempServer) {
+        QJsonArray servers;
+        for (const QString &fingerprint : m_permissionManager->trustedServerFingerprints())
+            servers.append(fingerprint);
+        payload.insert(QStringLiteral("servers"), servers);
+    }
+    return QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+}
+
+QString Application::tempAuthorizationsPayload() const
+{
+    QJsonArray machines;
+    if (m_permissionManager) {
+        QHash<int, QString> userUuids;
+        if (m_userManager) {
+            for (const models::User &user : m_userManager->allUsers())
+                userUuids.insert(user.id(), user.uuid());
+        }
+        for (const models::AuthorizedMachine &machine : m_permissionManager->getAllMachines()) {
+            if (machine.status() != models::MachineStatus::Authorized
+                || machine.certificateFingerprint().isEmpty())
+                continue;
+            machines.append(QJsonObject{
+                {QStringLiteral("fingerprint"), machine.certificateFingerprint()},
+                {QStringLiteral("machine_uuid"), machine.uuid()},
+                {QStringLiteral("hostname"), machine.hostname()},
+                {QStringLiteral("ip_address"), machine.lastIpAddress()},
+                {QStringLiteral("authorized_by"),
+                 machine.addedBy().has_value() ? userUuids.value(*machine.addedBy()) : QString()}});
+        }
+    }
+    const QJsonObject payload{{QStringLiteral("type"), QStringLiteral("temp_authorizations")},
+                              {QStringLiteral("hostname"), QSysInfo::machineHostName()},
+                              {QStringLiteral("machines"), machines}};
     return QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
 }
 
@@ -2453,6 +2556,16 @@ void Application::sendAuthorizedPeersTo(const QString &userUuid, const QString &
         m_messagingServer->sendToFingerprint(authorizedPeersPayload(), fingerprint);
     else if (!userUuid.isEmpty())
         m_messagingServer->sendToUuids(authorizedPeersPayload(), {userUuid});
+
+    // Serveur de secours rejoint par le serveur officiel (reconciliation) :
+    // lui transmettre les autorisations donnees pendant la panne. Envoye
+    // avant la reponse au "sync_request" (meme connexion, l'identification
+    // passe en premier), donc avant que le serveur officiel ne reprenne son role.
+    if (!fingerprint.isEmpty() && m_permissionManager && m_electionService
+        && m_electionService->role() == models::ServerRole::TempServer
+        && m_permissionManager->isTrustedServer(fingerprint)) {
+        m_messagingServer->sendToFingerprint(tempAuthorizationsPayload(), fingerprint);
+    }
 }
 
 void Application::broadcastAuthorizedPeers()
@@ -2590,6 +2703,25 @@ int Application::pendingClientCount() const
     return m_permissionManager ? m_permissionManager->pendingClientCount() : 0;
 }
 
+QString Application::pendingServerPairingCode() const
+{
+    return pairingCodeWith(m_pendingServerFingerprint);
+}
+
+QString Application::pairingCodeWith(const QString &peerFingerprint) const
+{
+    const QString peer = peerFingerprint.trimmed().toLower();
+    if (peer.isEmpty() || !m_securityService || !m_securityService->isReady())
+        return QString();
+    const auto cached = m_pairingCodes.constFind(peer);
+    if (cached != m_pairingCodes.constEnd())
+        return cached.value();
+    const QString code = network::SecurityService::pairingCode(
+        m_securityService->identity().fingerprintSha256, peer);
+    m_pairingCodes.insert(peer, code);
+    return code;
+}
+
 bool Application::approvePendingServerCertificate()
 {
     if (!m_permissionManager || !m_messagingService
@@ -2603,6 +2735,12 @@ bool Application::approvePendingServerCertificate()
         // le reste du cooldown de reconciliation (cf. m_lastReconciliationAttemptMs
         // dans Application.h) avant une eventuelle reconciliation a venir.
         m_lastReconciliationAttemptMs = 0;
+        // Son annonce, rejetee tant qu'il etait inconnu, doit etre reprise aussitot.
+        // Le temps de le valider, pas d'election (cf. restartHeartbeatTimeout).
+        if (m_electionService) {
+            m_electionService->forgetRejectedServers();
+            m_electionService->restartHeartbeatTimeout();
+        }
         // La QWebSocket precedente peut encore etre en fermeture au moment
         // du clic. Une reprise differee evite d'ouvrir pendant ClosingState.
         QTimer::singleShot(100, m_messagingService, [service = m_messagingService]() {

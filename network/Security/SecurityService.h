@@ -72,6 +72,15 @@ public:
     QByteArray certificatePem() const;
     static QString certificateFingerprint(const QSslCertificate &certificate);
 
+    /// Code d'appairage a 6 chiffres d'un couple de certificats (ce poste et
+    /// le poste distant). Symetrique : le serveur et le nouveau poste
+    /// calculent le meme code chacun de leur cote, sans rien echanger de plus ;
+    /// un intermediaire qui presenterait son propre certificat obtiendrait un
+    /// code different. Derive par PBKDF2 (200 000 iterations) pour rendre
+    /// couteuse la fabrication d'un certificat donnant le meme code.
+    /// Vide si l'une des empreintes est absente.
+    static QString pairingCode(const QString &fingerprintA, const QString &fingerprintB);
+
     /// Force la regeneration d'une nouvelle paire cle/certificat,
     /// meme si une identite valide existe deja sur le disque.
     bool regenerate();

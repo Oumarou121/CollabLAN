@@ -283,6 +283,10 @@ Item {
     }
 
     TextEdit { id: clipboardHelper; visible: false }
+    function pairingCode(fingerprint) {
+        return (typeof application !== "undefined" && application && application.pairingCodeWith && fingerprint)
+               ? application.pairingCodeWith(fingerprint) : ""
+    }
     function copyText(t) { clipboardHelper.text = t; clipboardHelper.selectAll(); clipboardHelper.copy(); root.showNotice(qsTr("Empreinte copiée."), false) }
 
     // ======================================================================
@@ -1126,7 +1130,8 @@ Item {
                                 width: parent.width - 28
                                 spacing: 6
                                 Text { Layout.fillWidth: true; text: qsTr("Ce poste demande à rejoindre le réseau."); color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13); font.weight: Theme.weightSemibold; wrapMode: Text.WordWrap }
-                                Text { Layout.fillWidth: true; text: qsTr("Comparez l'empreinte ci-dessus avec celle affichée sur le poste avant d'autoriser."); color: Theme.ink2; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); wrapMode: Text.WordWrap }
+                                PairingCode { Layout.topMargin: 4; code: mFiche.m && mFiche.m.status === "pending" ? root.pairingCode(mFiche.m.fingerprint) : "" }
+                                Text { Layout.fillWidth: true; text: qsTr("Vérifiez que le poste affiche le même code d'appairage avant d'autoriser."); color: Theme.ink2; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); wrapMode: Text.WordWrap }
                                 Row {
                                     Layout.topMargin: 6
                                     spacing: 8
@@ -1434,12 +1439,14 @@ Item {
                     Fact { visible: !!confirmSheet.m && confirmSheet.m.machineId.length > 0; key: qsTr("Identifiant"); value: confirmSheet.m ? confirmSheet.m.machineId : ""; mono: true }
                 }
             }
-            Text { visible: root.confirm === "allow"; text: qsTr("Empreinte du certificat"); color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: Theme.weightSemibold }
-            FingerprintGrid { visible: root.confirm === "allow"; Layout.fillWidth: true; large: true; fingerprint: confirmSheet.m ? confirmSheet.m.fingerprint : "" }
+            Text { visible: root.confirm === "allow"; text: qsTr("Code d'appairage"); color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: Theme.weightSemibold }
+            PairingCode { visible: root.confirm === "allow"; code: root.confirm === "allow" && confirmSheet.m ? root.pairingCode(confirmSheet.m.fingerprint) : "" }
+            Text { visible: root.confirm === "allow"; text: qsTr("Empreinte complète du certificat"); color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12) }
+            FingerprintGrid { visible: root.confirm === "allow"; Layout.fillWidth: true; fingerprint: confirmSheet.m ? confirmSheet.m.fingerprint : "" }
             Text {
                 visible: root.confirm === "allow"
                 Layout.fillWidth: true
-                text: qsTr("Vérifiez qu'elle correspond à celle affichée sur le poste : c'est ce qui garantit que vous autorisez la bonne machine.")
+                text: qsTr("Vérifiez que le poste affiche le même code d'appairage : c'est ce qui garantit que vous autorisez la bonne machine.")
                 color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12); wrapMode: Text.WordWrap
             }
             Rectangle {

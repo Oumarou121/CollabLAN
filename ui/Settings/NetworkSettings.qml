@@ -24,6 +24,7 @@ ColumnLayout {
     spacing: 0
 
     signal promoteRequested()
+    signal serverTrustRequested()
     signal demoteRequested()
     signal historyRequested()
     signal portsSaved(int messaging, int discovery)
@@ -113,9 +114,36 @@ ColumnLayout {
         contentItem: Item { LineIcon { anchors.centerIn: parent; path: sb.iconPath; size: 14; strokeWidth: 1.8; color: sb.hovered ? Theme.ink : Theme.ink2 } }
     }
 
+    readonly property bool serverPending: !!root.app && !!root.app.pendingServerFingerprint
+                                          && root.app.pendingServerFingerprint.length > 0
+
+    // ---- Serveur en attente d'approbation ----------------------------------------------
+    SettingGroup {
+        visible: root.serverPending
+        first: true
+        title: qsTr("Serveur à approuver")
+        scopeIcon: Icons.monitor
+        scopeText: qsTr("<b>Ce poste</b>")
+        SettingRow {
+            label: qsTr("Serveur détecté")
+            help: qsTr("Ce poste ne connaît pas encore le serveur qui se présente : il reste isolé tant que vous ne l'avez pas approuvé.")
+            Text {
+                Layout.alignment: Qt.AlignLeft
+                text: root.serverPending ? root.app.pendingServerAddress + ":" + root.app.pendingServerPort : ""
+                color: Theme.ink; font.family: "Cascadia Mono"; font.pixelSize: Theme.fs(12.5)
+            }
+            AppButton {
+                Layout.alignment: Qt.AlignLeft
+                variant: "ink"; size: "small"; iconPath: Icons.check
+                text: qsTr("Comparer le code et approuver…")
+                onClicked: root.serverTrustRequested()
+            }
+        }
+    }
+
     // ---- Role ------------------------------------------------------------------------
     SettingGroup {
-        first: true
+        first: !root.serverPending
         title: qsTr("Rôle de ce poste")
         scopeIcon: Icons.share
         scopeText: qsTr("Vu par <b>tout le réseau</b>")

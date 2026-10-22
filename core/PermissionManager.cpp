@@ -125,6 +125,46 @@ QStringList PermissionManager::authorizedFingerprintsForPeers() const
     return out;
 }
 
+QStringList PermissionManager::trustedServerFingerprints() const
+{
+    return m_trustedServers ? m_trustedServers->trustedFingerprints() : QStringList();
+}
+
+void PermissionManager::setVouchedServerFingerprints(const QStringList &fingerprints)
+{
+    QSet<QString> next;
+    for (const QString &fingerprint : fingerprints) {
+        const QString normalized = fingerprint.trimmed().toLower();
+        if (!normalized.isEmpty())
+            next.insert(normalized);
+    }
+    m_vouchedServers = next;
+}
+
+bool PermissionManager::isVouchedServer(const QString &fingerprint) const
+{
+    const QString normalized = fingerprint.trimmed().toLower();
+    return !normalized.isEmpty() && m_vouchedServers.contains(normalized);
+}
+
+bool PermissionManager::adoptTempServerAuthorization(const QString &fingerprint, const QString &machineUuid,
+                                                     const QString &hostname, const QString &ipAddress,
+                                                     std::optional<int> authorizedBy, const QString &reason)
+{
+    if (!m_repository || fingerprint.trimmed().isEmpty()) return false;
+    const auto existing = m_repository->findByCertificateFingerprint(fingerprint);
+    // Une decision deja prise ici (autorisation ou revocation) fait foi.
+    if (existing.has_value() && !existing->isPending())
+        return false;
+    return authorizeMachineByCertificate(fingerprint, machineUuid, hostname, ipAddress,
+                                         authorizedBy, reason);
+}
+
+bool PermissionManager::hasTrustedServer() const
+{
+    return m_trustedServers && m_trustedServers->hasAnyTrusted();
+}
+
 bool PermissionManager::isTrustedServer(const QString &fingerprint) const
 {
     return !fingerprint.trimmed().isEmpty() && m_trustedServers && m_trustedServers->isTrusted(fingerprint);
@@ -175,6 +215,16 @@ bool PermissionManager::trustRemoteServerCertificate(const QString &fingerprint,
     // liste du serveur contient cette machine (une revocation reste effective).
     if (isAuthorizedByServer(fingerprint))
         return true;
+
+    // Serveur designe par le serveur actif (champ "servers" de
+    // "authorized_peers") : c'est le serveur officiel transmis par un serveur
+    // de secours a un poste arrive pendant la panne. Sans cela, ce poste
+    // refusait le serveur officiel a son retour et se promouvait lui-meme.
+    // Epingle (il redevient le serveur habituel), sauf revocation locale.
+    if (isVouchedServer(fingerprint)
+        && m_trustedServers->statusForFingerprint(fingerprint).value_or(QString()) != QStringLiteral("revoked")) {
+        return m_trustedServers->setTrusted(fingerprint, ipAddress, QString());
+    }
 
     // Le serveur inconnu est visible localement dans TrustedServers, sans
     // declencher machineChanged : ce signal concerne exclusivement la
@@ -298,7 +348,7 @@ bool PermissionManager::removeMachine(int id)
 
 bool PermissionManager::authorizeMachineByCertificate(const QString &fingerprint, const QString &machineUuid,
                                                       const QString &hostname, const QString &ipAddress,
-                                                      int authorizedBy, const QString &reason)
+                                                      std::optional<int> authorizedBy, const QString &reason)
 {
     if (!m_repository || fingerprint.trimmed().isEmpty()) return false;
     models::AuthorizedMachine machine;

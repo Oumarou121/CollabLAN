@@ -151,19 +151,29 @@ SheetModal {
         Text {
             visible: !root.manual && root.current !== null
             Layout.topMargin: 4
+            text: qsTr("Code d'appairage avec %1").arg(root.current ? (root.current.name || root.current.ip) : "")
+            color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: Theme.weightSemibold
+        }
+        PairingCode {
+            visible: !root.manual && root.current !== null
+            code: !root.manual && root.current && root.current.fingerprint && typeof application !== "undefined" && application && application.pairingCodeWith
+                  ? application.pairingCodeWith(root.current.fingerprint) : ""
+        }
+        Text {
+            visible: !root.manual && root.current !== null
+            Layout.topMargin: 4
             text: qsTr("Empreinte de %1").arg(root.current ? (root.current.name || root.current.ip) : "")
             color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: Theme.weightSemibold
         }
         FingerprintGrid {
             visible: !root.manual && root.current !== null
             Layout.fillWidth: true
-            large: true
             fingerprint: root.current ? root.current.fingerprint || "" : ""
         }
         Text {
             visible: !root.manual
             Layout.fillWidth: true
-            text: qsTr("Comparez-la avec l'empreinte affichée sur le poste avant d'autoriser.")
+            text: qsTr("Le poste affiche le même code quand il cherche à se relier au serveur : vérifiez qu'il est identique avant d'autoriser.")
             color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12); wrapMode: Text.WordWrap
         }
         TextLink {

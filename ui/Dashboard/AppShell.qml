@@ -12,6 +12,7 @@ import "../Users"
 import "../Admin"
 import "../Settings"
 import "../About"
+import "../Login"
 
 /*
  * AppShell - cadre unique de l'application connectee (refonte 2026).
@@ -532,6 +533,7 @@ Item {
             onBackRequested: shell.goBack()
             onLogoutRequested: shell.logoutRequested()
             onHistoryRequested: shell.navigate("admin", { currentTab: 3 })
+            onServerTrustRequested: { shell.dismissedServer = ""; serverTrust.open = true }
         }
     }
 
@@ -540,6 +542,28 @@ Item {
         AboutView {
             onBackRequested: shell.goBack()
             onNavigationRequested: function(route) { shell.navigate(route) }
+        }
+    }
+
+    // Serveur inconnu pendant la session (serveur de secours, retour du serveur
+    // officiel, poste deja connecte ou reconnecte automatiquement) : sans cette
+    // fenetre, la demande n'apparaissait que sur l'ecran de connexion et le
+    // poste restait isole sans le savoir.
+    // Un serveur ecarte (« Annuler ») n'est plus propose pendant la session : la
+    // connexion est retentee a chaque battement et la fenetre se rouvrirait sinon.
+    property string dismissedServer: ""
+    ServerTrustSheet {
+        id: serverTrust
+        open: false
+        onCloseRequested: { shell.dismissedServer = application.pendingServerFingerprint; serverTrust.open = false }
+        onApproved: serverTrust.open = false
+    }
+    Connections {
+        target: (typeof application !== "undefined") ? application : null
+        ignoreUnknownSignals: true
+        function onPendingServerChanged() {
+            const fp = application.pendingServerFingerprint
+            serverTrust.open = fp.length > 0 && fp !== shell.dismissedServer
         }
     }
 }

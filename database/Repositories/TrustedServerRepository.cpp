@@ -76,6 +76,29 @@ bool TrustedServerRepository::isTrusted(const QString &fingerprint) const
     return status.has_value() && *status == QStringLiteral("authorized");
 }
 
+bool TrustedServerRepository::hasAnyTrusted() const
+{
+    QSqlQuery query(m_db);
+    if (!query.exec(QStringLiteral("SELECT 1 FROM TrustedServers WHERE status = 'authorized' LIMIT 1"))) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    return query.next();
+}
+
+QStringList TrustedServerRepository::trustedFingerprints() const
+{
+    QStringList out;
+    QSqlQuery query(m_db);
+    if (!query.exec(QStringLiteral("SELECT certificate_fingerprint FROM TrustedServers WHERE status = 'authorized' ORDER BY certificate_fingerprint"))) {
+        m_lastError = query.lastError().text();
+        return out;
+    }
+    while (query.next())
+        out << query.value(0).toString();
+    return out;
+}
+
 QString TrustedServerRepository::lastError() const { return m_lastError; }
 
 } // namespace database

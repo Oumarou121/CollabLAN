@@ -184,6 +184,11 @@ add_executable(test_bascule_e2e UnitTests/test_bascule_e2e.cpp)
 target_link_libraries(test_bascule_e2e PRIVATE Qt6::Test Qt6::Widgets app_core)
 add_test(NAME test_bascule_e2e COMMAND test_bascule_e2e)
 
+# Code d'appairage : meme code a 6 chiffres sur le serveur et sur le poste neuf.
+add_executable(test_appairage UnitTests/test_appairage.cpp)
+target_link_libraries(test_appairage PRIVATE Qt6::Test Qt6::Widgets app_core)
+add_test(NAME test_appairage COMMAND test_appairage)
+
 # Lot 2 securite : journal de synchronisation filtre par utilisateur pour les clients.
 add_executable(test_syncvisibility UnitTests/test_syncvisibility.cpp)
 target_link_libraries(test_syncvisibility PRIVATE Qt6::Test network models)

@@ -5,6 +5,8 @@
 #include <QString>
 #include <QDateTime>
 #include <QHostAddress>
+#include <QHash>
+#include <functional>
 
 #include "models/ServerElection.h"
 
@@ -167,6 +169,23 @@ public:
     /// inconnu/revoque) : l'annonce est jetee et l'etat local reste inchange.
     void rejectPendingServer(const QString &machineUuid, const QString &reason);
 
+    /// Oublie les serveurs rejetes recemment (voir deferUntilValidated) : a
+    /// appeler quand l'utilisateur vient d'approuver un serveur, pour que son
+    /// annonce soit reprise aussitot plutot qu'a la fin du delai.
+    void forgetRejectedServers();
+
+    /// Repart d'un delai d'attente de battement complet avant toute election.
+    /// A appeler quand l'utilisateur vient d'approuver un serveur : un poste
+    /// neuf, qui n'a encore valide aucun battement, lancait sinon une election
+    /// aussitot et se promouvait pendant la validation de ce serveur.
+    void restartHeartbeatTimeout();
+
+    /// Condition supplementaire pour se porter candidat apres la perte du
+    /// serveur. Application l'utilise pour qu'un poste neuf, qui ne fait encore
+    /// confiance a aucun serveur et attend l'approbation de celui qui
+    /// s'annonce, ne se promeuve pas serveur de secours tout seul.
+    void setPromotionGuard(std::function<bool()> guard);
+
 signals:
     void started();
     void stopped();
@@ -274,6 +293,9 @@ private:
     PendingServer m_pendingServer;
     QString m_validatedServerUuid;
     QHostAddress m_validatedServerAddress;
+    /// Serveurs dont la validation a echoue, ignores jusqu'a l'instant indique (ms).
+    QHash<QString, qint64> m_rejectedUntilMs;
+    std::function<bool()> m_promotionGuard;
 };
 
 } // namespace network

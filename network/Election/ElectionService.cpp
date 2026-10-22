@@ -283,6 +283,18 @@ void ElectionService::checkHeartbeatTimeout()
 
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (now - m_lastHeartbeatSeenMs > m_heartbeatTimeoutMs) {
+        // Poste neuf en attente d'approbation d'un serveur : il ne se porte pas
+        // candidat (il n'a aucun reseau autorise a servir) et attend l'appairage.
+        if (m_promotionGuard && !m_promotionGuard())
+            return;
+        // Un serveur annonce est en cours de validation TLS : attendre son
+        // resultat plutot que se promouvoir en parallele (un client se
+        // promouvait le temps de valider le serveur officiel revenu). Borne a
+        // un delai d'attente supplementaire, pour qu'une suite d'annonces non
+        // valides ne retarde pas l'election indefiniment.
+        if (!m_pendingServer.machineUuid.isEmpty()
+            && now - m_lastHeartbeatSeenMs <= 2 * static_cast<qint64>(m_heartbeatTimeoutMs))
+            return;
         emit heartbeatLost();
         startElection();
     }
@@ -562,6 +574,28 @@ bool ElectionService::deferUntilValidated(const QString &machineUuid, const QHos
     if (machineUuid == m_validatedServerUuid && address.isEqual(m_validatedServerAddress))
         return false;
 
+    // Les trois regles suivantes empechent un poste non reconnu (typiquement un
+    // poste neuf qui s'annonce) de parasiter la validation du serveur legitime :
+    // une seule annonce est validee a la fois, et chaque nouvelle annonce
+    // ecrasait la precedente, si bien que la validation du vrai serveur de
+    // secours n'aboutissait jamais et que le serveur officiel revenu ne
+    // reprenait pas la main.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    // 1. Serveur rejete recemment : ignore pendant un moment.
+    const auto rejected = m_rejectedUntilMs.constFind(machineUuid);
+    if (rejected != m_rejectedUntilMs.constEnd() && now < rejected.value())
+        return true;
+    // 2. Validation deja en cours pour un AUTRE serveur : remplacee seulement par
+    //    une annonce d'epoch strictement superieur.
+    if (!m_pendingServer.machineUuid.isEmpty() && m_pendingServer.machineUuid != machineUuid
+        && epoch <= m_pendingServer.epoch)
+        return true;
+    // 3. Un serveur valide est actif (battement recent) : les annonces d'epoch
+    //    inferieur ou egal venant d'autres postes sont ignorees.
+    if (!m_validatedServerUuid.isEmpty() && m_validatedServerUuid != machineUuid
+        && epoch <= m_epoch && now - m_lastHeartbeatSeenMs <= m_heartbeatTimeoutMs)
+        return true;
+
     // Validation deja demandee pour cette meme annonce : on ne reemet pas le
     // signal a chaque heartbeat (3 s) tant que l'appelant n'a pas tranche.
     if (m_pendingServer.machineUuid == machineUuid
@@ -594,11 +628,28 @@ void ElectionService::rejectPendingServer(const QString &machineUuid, const QStr
         return;
 
     m_pendingServer = PendingServer{};
+    // Ignore ses annonces quelque temps (voir deferUntilValidated, regle 1).
+    m_rejectedUntilMs.insert(machineUuid, QDateTime::currentMSecsSinceEpoch() + qMax(5000, m_heartbeatTimeoutMs));
     qWarning() << "ElectionService: serveur annonce" << machineUuid << "rejete -" << reason;
     // m_lastHeartbeatSeenMs n'est volontairement pas rafraichi : faute de
     // serveur valide, le delai d'attente finit par declencher une election,
     // plutot que de laisser le poste suspendu a une annonce non verifiee.
     emit serverEndpointRejected(machineUuid, reason);
+}
+
+void ElectionService::forgetRejectedServers()
+{
+    m_rejectedUntilMs.clear();
+}
+
+void ElectionService::restartHeartbeatTimeout()
+{
+    m_lastHeartbeatSeenMs = QDateTime::currentMSecsSinceEpoch();
+}
+
+void ElectionService::setPromotionGuard(std::function<bool()> guard)
+{
+    m_promotionGuard = std::move(guard);
 }
 
 void ElectionService::applyRemoteServer(const QString &machineUuid, const QHostAddress &address,
@@ -622,9 +673,10 @@ void ElectionService::applyRemoteServer(const QString &machineUuid, const QHostA
     if (activeServerChangedFlag)
         emit activeServerUuidChanged();
 
-    if (viaPromotion) {
+    if (viaPromotion || m_electionInProgress) {
         // Une election en cours localement est annulee : quelqu'un d'autre a
-        // deja tranche avec un epoch superieur.
+        // deja tranche avec un epoch superieur, ou un serveur valide est
+        // vivant (battement) et l'election n'a plus lieu d'etre.
         m_electionInProgress = false;
         m_electionWindowTimer->stop();
         m_candidates.clear();
@@ -639,7 +691,10 @@ void ElectionService::applyRemoteServer(const QString &machineUuid, const QHostA
         return;
     }
 
-    if (viaPromotion) {
+    // Un serveur de secours qui reconnait un serveur valide d'epoch au moins egal
+    // (simple battement) cede aussi sa place : il restait sinon serveur, son
+    // serveur de messagerie actif, alors meme qu'il etait relie a un autre.
+    if (viaPromotion || m_role == models::ServerRole::TempServer) {
         // Un autre poste a ete promu : on redevient/reste Client et on bascule
         // notre connexion vers lui (a la charge de l'appelant, via
         // activeServerUuid() / le signal serverPromoted).

@@ -6,6 +6,7 @@
 #include <QStringList>
 #include <QVariant>
 #include <QSet>
+#include <QHash>
 #include <QDateTime>
 #include <memory>
 
@@ -63,6 +64,9 @@ class Application : public QObject
     Q_PROPERTY(QString pendingServerFingerprint READ pendingServerFingerprint NOTIFY pendingServerChanged)
     Q_PROPERTY(QString pendingServerAddress READ pendingServerAddress NOTIFY pendingServerChanged)
     Q_PROPERTY(int pendingServerPort READ pendingServerPort NOTIFY pendingServerChanged)
+    /// Code d'appairage du serveur en attente d'approbation (6 chiffres), a
+    /// comparer avec celui que l'administrateur voit pour ce poste.
+    Q_PROPERTY(QString pendingServerPairingCode READ pendingServerPairingCode NOTIFY pendingServerChanged)
     Q_PROPERTY(int pendingClientCount READ pendingClientCount NOTIFY pendingClientCountChanged)
     /// Vrai au tout premier lancement du serveur principal, tant qu'aucun compte n'existe :
     /// l'ecran de connexion propose alors de creer le premier administrateur (plus aucun
@@ -174,7 +178,11 @@ public:
     QString pendingServerAddress() const;
     int pendingServerPort() const;
     int pendingClientCount() const;
+    QString pendingServerPairingCode() const;
     Q_INVOKABLE bool approvePendingServerCertificate();
+    /// Code d'appairage entre ce poste et la machine d'empreinte donnee
+    /// (Administration : machine en attente, poste detecte a ajouter).
+    Q_INVOKABLE QString pairingCodeWith(const QString &peerFingerprint) const;
 
     // Expose au bootstrap QML le NotificationManager pour les notifications.
     core::NotificationManager *notificationManager() const;
@@ -277,6 +285,10 @@ private:
     /// s'identifie, puis rediffusee a chaque autorisation, revocation ou
     /// retrait. Sans effet si ce poste n'ecoute pas (simple client).
     QString authorizedPeersPayload() const;
+    /// Machines autorisees sur ce poste ("temp_authorizations"), envoyees par
+    /// un serveur de secours au serveur officiel qui le rejoint pour la
+    /// reconciliation : celui-ci reprend les autorisations donnees pendant la panne.
+    QString tempAuthorizationsPayload() const;
     void sendAuthorizedPeersTo(const QString &userUuid, const QString &fingerprint, bool authorized);
     void broadcastAuthorizedPeers();
 
@@ -404,6 +416,8 @@ private:
     network::SecurityService *m_securityService = nullptr;    // parente = this (QObject)
     network::MessagingService *m_messagingService = nullptr;  // parente = this (QObject)
     QString m_pendingServerFingerprint;
+    /// Codes d'appairage deja calcules (PBKDF2, environ 0,1 s chacun), par empreinte.
+    mutable QHash<QString, QString> m_pairingCodes;
     QString m_pendingServerAddress;
     quint16 m_pendingServerPort = 0;
     network::MessagingServer *m_messagingServer = nullptr;    // parente = this (QObject)
