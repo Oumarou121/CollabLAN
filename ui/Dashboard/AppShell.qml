@@ -554,7 +554,8 @@ Item {
             onBackRequested: shell.goBack()
             onPeerRequested: function(peerId) { shell.navigate("peers", { selectedKey: peerId }) }
             onJournalRequested: function(search) { shell.navigate("journal", { search: search }) }
-            onSettingsRequested: shell.navigate("settings")
+            // « Poids de priorité » : la priorité de secours est dans Paramètres > Réseau.
+            onSettingsRequested: shell.navigate("settings", { category: "network" })
         }
     }
 
@@ -562,6 +563,8 @@ Item {
         id: settingsComponent
         SettingsView {
             onBackRequested: shell.goBack()
+            onLogoutRequested: shell.logoutRequested()
+            onHistoryRequested: shell.navigate("admin", { currentTab: 3 })
         }
     }
 

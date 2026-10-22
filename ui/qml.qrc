@@ -19,6 +19,19 @@
         <file>Call/callPeople.js</file>
         <file>Settings/SettingsView.qml</file>
         <file>Settings/AppearanceSettings.qml</file>
+        <file>Settings/AppearancePreview.qml</file>
+        <file>Settings/MachineSettings.qml</file>
+        <file>Settings/MachineFiche.qml</file>
+        <file>Settings/SoundSettings.qml</file>
+        <file>Settings/AccountSettings.qml</file>
+        <file>Settings/PasswordSheet.qml</file>
+        <file>Settings/NetworkSettings.qml</file>
+        <file>Settings/SettingGroup.qml</file>
+        <file>Settings/SettingRow.qml</file>
+        <file>Settings/InkSwitch.qml</file>
+        <file>Settings/InkSegmented.qml</file>
+        <file>Settings/SavedNote.qml</file>
+        <file>Settings/FieldBox.qml</file>
         <file>About/AboutView.qml</file>
         <file>Admin/AdminView.qml</file>
         <file>Admin/AuditJournalView.qml</file>
