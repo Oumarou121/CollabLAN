@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QDebug>
 #include <QMetaObject>
+#include <QSignalBlocker>
 
 namespace network {
 
@@ -109,8 +110,25 @@ bool MessagingService::retryLastHost()
 
 void MessagingService::disconnectFromHost()
 {
-    if (m_socket) {
-        m_socket->close();
+    if (!m_socket)
+        return;
+    // Coupure IMMEDIATE : tous les appelants (Application) enchainent aussitot
+    // connectToHost() vers un autre serveur. Avec close(), m_connected ne
+    // repassait a false qu'a la reception asynchrone de disconnected : le
+    // connectToHost() suivant etait refuse ("Already connected"), et un client
+    // ne pouvait pas quitter le serveur de secours pour rejoindre le serveur
+    // officiel revenu (l'annonce etait rejetee en boucle). Les signaux de la
+    // socket sont bloques pendant l'abandon : une validation d'annonce en cours
+    // ecoute error() et ne doit pas etre rejetee par cette coupure volontaire.
+    const bool wasConnected = m_connected;
+    m_connected = false;
+    {
+        const QSignalBlocker blocker(m_socket);
+        m_socket->abort();
+    }
+    if (wasConnected) {
+        qDebug() << "Secure WebSocket disconnected (local)";
+        emit disconnected();
     }
 }
 

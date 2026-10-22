@@ -8,6 +8,9 @@
 #include "Messaging/MessagingServer.h"
 #include "Sync/SyncService.h"
 #include "models/ServerElection.h"
+#include "PermissionManager.h"
+#include "UserManager.h"
+#include "Security/SecurityService.h"
 
 /*
  * Verifie le cablage reel entre ElectionService::reconciliationRequired et
@@ -32,6 +35,22 @@ class TestApplicationReconciliationWiring : public QObject
     Q_OBJECT
 
 private:
+    // Depuis la validation TLS des annonces d'election (a0bcd9d), une annonce
+    // n'est adoptee qu'apres une connexion TLS reussie : comme sur un vrai
+    // reseau, le serveur officiel a autorise le pair, et le pair a approuve le
+    // certificat du serveur. Sans cette preparation, le serveur rejetait
+    // l'annonce du TEMP_SERVER et la reconciliation n'etait jamais demandee.
+    static void trustEachOther(Application &server, Application &peer)
+    {
+        const auto admin = server.userManager()->createUser(QStringLiteral("admin"), QStringLiteral("motdepasse"));
+        QVERIFY(admin.has_value());
+        const QString peerFp = peer.securityService()->identity().fingerprintSha256.toLower();
+        const QString serverFp = server.securityService()->identity().fingerprintSha256.toLower();
+        QVERIFY(server.permissionManager()->authorizeMachineByCertificate(
+            peerFp, QStringLiteral("pair"), QStringLiteral("PAIR"), QStringLiteral("127.0.0.1"), admin->id(), QStringLiteral("test")));
+        QVERIFY(peer.permissionManager()->approveServerCertificate(serverFp, QStringLiteral("127.0.0.1"), QStringLiteral("SERVEUR")));
+    }
+
     quint16 nextPort()
     {
         return static_cast<quint16>(20000 + (QRandomGenerator::global()->bounded(20000)));
@@ -68,6 +87,7 @@ private slots:
         Application peer;
         peer.initialize(peerMessagingPort, peerDir.filePath(QStringLiteral("peer.db")),
                          QStringLiteral("CLIENT"), -1, electionPort);
+        trustEachOther(server, peer);
         peer.electionService()->setHeartbeatTimeoutMs(300);
         peer.electionService()->setElectionWindowMs(150);
 
@@ -131,6 +151,7 @@ private slots:
         Application peer;
         peer.initialize(peerMessagingPort, peerDir.filePath(QStringLiteral("peer.db")),
                         QStringLiteral("CLIENT"), -1, electionPort);
+        trustEachOther(server, peer);
         peer.electionService()->setHeartbeatTimeoutMs(300);
         peer.electionService()->setElectionWindowMs(150);
 

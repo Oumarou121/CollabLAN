@@ -166,6 +166,16 @@ bool PermissionManager::trustRemoteServerCertificate(const QString &fingerprint,
         return m_trustedServers->setTrusted(fingerprint, ipAddress, QStringLiteral("Machine deja autorisee"));
     }
 
+    // Meme raisonnement pour une machine que le serveur officiel declare
+    // autorisee (liste "authorized_peers") : c'est typiquement le client elu
+    // serveur de secours pendant une panne. Sans cela, les autres clients
+    // rejetaient son annonce, relancaient une election et se promouvaient a
+    // leur tour : plusieurs serveurs de secours qui se refusaient entre eux.
+    // Pas d'epinglage dans TrustedServers : la confiance dure tant que la
+    // liste du serveur contient cette machine (une revocation reste effective).
+    if (isAuthorizedByServer(fingerprint))
+        return true;
+
     // Le serveur inconnu est visible localement dans TrustedServers, sans
     // declencher machineChanged : ce signal concerne exclusivement la
     // politique d'admission du serveur et ne doit jamais etre diffuse.
