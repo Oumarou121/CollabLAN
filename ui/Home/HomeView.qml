@@ -11,16 +11,13 @@ import "../Call/callPeople.js" as People
 import "../Admin/auditText.js" as AuditText
 
 /*
- * HomeView - Dashboard principal LocaLink selon la maquette V2.1
- *
- * Structure:
- * - Sidebar (navigation, profil)
- * - Header (breadcrumb, recherche)
- * - Zone titre (bonjour, état serveur)
- * - NetworkWorkspace (carte réseau)
- * - ActionRequiredPanel (à traiter)
- * - TransferList (transferts)
- * - ActivityList (activité)
+ * HomeView - accueil LocaLink (Ligne claire v2), pose dans AppShell
+ * (barre laterale et barre de contexte) :
+ * - salutation, phrase d'etat, actions et trois chiffres ;
+ * - « Le reseau » : Hemicycle ou NetworkRegistry, legende des etats ;
+ * - colonne de droite : InterventionList (« A traiter »), remplacee par
+ *   PeerFiche quand un poste est selectionne ;
+ * - Echanges et Journal (ou Discussions pour un utilisateur).
  */
 Item {
     id: root

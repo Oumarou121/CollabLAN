@@ -29,9 +29,6 @@ Item {
     property string currentConversationName: ""
 
     signal backRequested()
-    // Conserves pour compatibilite : le volet remplace desormais ces pages.
-    signal newConversationRequested()
-    signal createGroupRequested()
     // Vers Transferts : envoyer un fichier a une personne, ouvrir son dossier.
     signal fileTransferRequested(var peer)
     signal exchangesRequested(string peerKey)
@@ -126,7 +123,15 @@ Item {
         function onRowsRemoved() { root.reloadPeers() }
         function onModelReset() { root.reloadPeers() }
     }
-    Component.onCompleted: { root.reload(); root.syncActiveConversation() }
+    // Volet a ouvrir a l'arrivee sur la page ("person" | "group") : « Nouvelle
+    // discussion » de l'accueil ouvre directement le volet, sans page intermediaire.
+    property string startPanel: ""
+    Component.onCompleted: {
+        root.reload()
+        root.syncActiveConversation()
+        if (root.startPanel.length > 0)
+            Qt.callLater(root.openPanel, root.startPanel)
+    }
 
     function userById(id) {
         for (let i = 0; i < root.users.length; i++) if (root.users[i].userId === id) return root.users[i]

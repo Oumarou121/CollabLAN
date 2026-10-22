@@ -9,11 +9,8 @@
         <file>Chat/NewDiscussionPanel.qml</file>
         <file>Chat/ChatWorkspaceView.qml</file>
         <file>Chat/ConversationsView.qml</file>
-        <file>Chat/CreateGroupView.qml</file>
-        <file>Chat/NewConversationView.qml</file>
         <file>Users/UsersView.qml</file>
         <file>FileTransfer/FileTransferView.qml</file>
-        <file>FileTransfer/FileIcon.qml</file>
         <file>Call/CallView.qml</file>
         <file>Call/CallOverlay.qml</file>
         <file>Call/callPeople.js</file>
@@ -48,48 +45,20 @@
         <file>SharedFolder/FolderLocationSheet.qml</file>
         <file>SharedFolder/FolderRemoveSheet.qml</file>
         <file>SharedFolder/FolderInviteSheet.qml</file>
-        <file>Themes/Light.qml</file>
-        <file>Themes/Dark.qml</file>
         <file>Themes/Theme.qml</file>
         <file>Themes/qmldir</file>
-        <file>Components/ThemeToggleButton.qml</file>
-        <file>Components/AppHeader.qml</file>
         <file>Components/AppButton.qml</file>
-        <file>Components/AppCheckBox.qml</file>
-        <file>Components/AppComboBox.qml</file>
-        <file>Components/AppDialog.qml</file>
         <file>Components/AppMenu.qml</file>
         <file>Components/AppMenuItem.qml</file>
         <file>Components/AppMenuSeparator.qml</file>
-        <file>Components/Card.qml</file>
-        <file>Components/ConfirmDialog.qml</file>
-        <file>Components/TableHeader.qml</file>
-        <file>Components/AppSlider.qml</file>
-        <file>Components/AppSpinBox.qml</file>
-        <file>Components/AppSwitch.qml</file>
-        <file>Components/AppTextField.qml</file>
-        <file>Components/AppPasswordField.qml</file>
-        <file>Components/AppSearchField.qml</file>
-        <file>Components/AppStepper.qml</file>
-        <file>Components/AppDivider.qml</file>
-        <file>Components/AppSegmentedControl.qml</file>
-        <file>Components/FolderDropzone.qml</file>
         <file>Components/IconButton.qml</file>
         <file>Components/FaIcon.qml</file>
-        <file>Components/Avatar.qml</file>
         <file>Components/BrandMark.qml</file>
-        <file>Components/SidebarNavItem.qml</file>
-        <file>Components/TabPill.qml</file>
-        <file>Components/DashboardCard.qml</file>
-        <file>Components/SettingsSectionCard.qml</file>
-        <file>Components/FolderTile.qml</file>
         <file>Components/Toast.qml</file>
         <file>Components/ToastHost.qml</file>
         <file>Components/StartupLoadingView.qml</file>
         <file>Components/Spinner.qml</file>
         <file>Components/FolderTransferProgressHost.qml</file>
-        <file>Components/StatusBadge.qml</file>
-        <file>Components/EmptyState.qml</file>
         <file>Components/LineIcon.qml</file>
         <file>Components/StateGlyph.qml</file>
         <file>Components/SheetModal.qml</file>
@@ -97,16 +66,8 @@
         <file>Components/TextLink.qml</file>
         <file>Components/SectionHeader.qml</file>
         <file>Components/SerifFigure.qml</file>
-        <file>Components/SkeletonLine.qml</file>
-        <file>Components/SkeletonRows.qml</file>
-        <file>Components/RecipientPicker.qml</file>
-        <file>Components/ExplorerSidebar.qml</file>
-        <file>Components/ExplorerAddressBar.qml</file>
-        <file>Components/ServerStatusIndicator.qml</file>
         <file>Dashboard/DashboardHeader.qml</file>
         <file>Dashboard/DashboardSidebar.qml</file>
-        <file>Dashboard/DashboardShell.qml</file>
-        <file>Dashboard/NetworkWorkspace.qml</file>
         <file>Dashboard/Hemicycle.qml</file>
         <file>Dashboard/hemicycleLayout.js</file>
         <file>Dashboard/NetworkRegistry.qml</file>
@@ -114,29 +75,9 @@
         <file>Dashboard/InterventionList.qml</file>
         <file>Dashboard/TransferExchange.qml</file>
         <file>Dashboard/TransferComposer.qml</file>
-        <file>Dashboard/NetworkPeer.qml</file>
-        <file>Dashboard/NetworkListView.qml</file>
-        <file>Dashboard/PeerDetailsPanel.qml</file>
-        <file>Dashboard/MetricTile.qml</file>
-        <file>Dashboard/StatPill.qml</file>
-        <file>Dashboard/SupervisionRow.qml</file>
-        <file>Dashboard/SelectedPeerPanel.qml</file>
         <file>Dashboard/AppShell.qml</file>
-        <file>Dashboard/ConversationPreviewList.qml</file>
-        <file>Dashboard/FolderPreviewList.qml</file>
-        <file>Dashboard/ActionRequiredPanel.qml</file>
-        <file>Dashboard/TransferList.qml</file>
-        <file>Dashboard/TransferRow.qml</file>
-        <file>Dashboard/ActivityList.qml</file>
-        <file>Dashboard/ActivityRow.qml</file>
         <file>Dashboard/DashboardButton.qml</file>
-        <file>Dashboard/TransferStatusBadge.qml</file>
-        <file>Dashboard/TransferErrorBanner.qml</file>
-        <file>Dashboard/FileTypeIcon.qml</file>
         <file>Dashboard/InlineAlert.qml</file>
-        <file>Dashboard/TransferPeerCard.qml</file>
-        <file>Dashboard/TransferFileRow.qml</file>
-        <file>Dashboard/NewTransferPanel.qml</file>
         <file>Dashboard/transferFormat.js</file>
         <file>Components/icons.js</file>
         <file>Assets/logo.png</file>

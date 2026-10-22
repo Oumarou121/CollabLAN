@@ -425,10 +425,7 @@ Item {
             username: shell.username
             onUsersRequested: shell.navigate("peers")
             onChatRequested: shell.navigate("chat")
-            onNewConversationRequested: {
-                shell.navigate("chat")
-                shell.pushPage(newConversationComponent)
-            }
+            onNewConversationRequested: shell.navigate("chat", { startPanel: "person" })
             onFileTransferRequested: function(openNewTransfer, peer) {
                 shell.navigate("transfer", { autoOpenPanel: openNewTransfer === true,
                                              preselectedPeer: peer || null })
@@ -454,41 +451,11 @@ Item {
             objectName: "chatWorkspaceView"
             messagingContext: shell.messaging
             onBackRequested: shell.goBack()
-            onCreateGroupRequested: shell.pushPage(createGroupComponent)
-            onNewConversationRequested: shell.pushPage(newConversationComponent)
             onFileTransferRequested: function(peer) {
                 shell.navigate("transfer", { autoOpenPanel: true, preselectedPeer: peer })
             }
             onExchangesRequested: function(peerKey) {
                 shell.navigate("transfer", { openedPeerKey: peerKey })
-            }
-        }
-    }
-
-    Component {
-        id: newConversationComponent
-        NewConversationView {
-            messagingContext: shell.messaging
-            onBackRequested: pages.pop()
-            onConversationStarted: function(conversationId) {
-                pages.pop()
-                if (pages.currentItem && pages.currentItem.openConversation)
-                    pages.currentItem.openConversation(conversationId, "")
-            }
-        }
-    }
-
-    Component {
-        id: createGroupComponent
-        CreateGroupView {
-            messagingContext: shell.messaging
-            onBackRequested: pages.pop()
-            onGroupCreated: function(groupId) {
-                pages.pop()
-                const ctx = shell.messaging
-                if (ctx && ctx.messageModel.conversationId > 0
-                        && pages.currentItem && pages.currentItem.openConversation)
-                    pages.currentItem.openConversation(ctx.messageModel.conversationId, "")
             }
         }
     }
