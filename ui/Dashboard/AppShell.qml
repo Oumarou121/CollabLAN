@@ -569,6 +569,7 @@ Item {
         id: aboutComponent
         AboutView {
             onBackRequested: shell.goBack()
+            onNavigationRequested: function(route) { shell.navigate(route) }
         }
     }
 }
