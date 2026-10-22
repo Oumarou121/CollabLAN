@@ -174,6 +174,11 @@ add_executable(test_authorizedpeers UnitTests/test_authorizedpeers.cpp)
 target_link_libraries(test_authorizedpeers PRIVATE Qt6::Test Qt6::Widgets app_core)
 add_test(NAME test_authorizedpeers COMMAND test_authorizedpeers)
 
+# Essai de bout en bout « plusieurs postes » : un serveur et deux clients complets.
+add_executable(test_postes_appels_e2e UnitTests/test_postes_appels_e2e.cpp)
+target_link_libraries(test_postes_appels_e2e PRIVATE Qt6::Test Qt6::Widgets app_core)
+add_test(NAME test_postes_appels_e2e COMMAND test_postes_appels_e2e)
+
 # Lot 2 securite : journal de synchronisation filtre par utilisateur pour les clients.
 add_executable(test_syncvisibility UnitTests/test_syncvisibility.cpp)
 target_link_libraries(test_syncvisibility PRIVATE Qt6::Test network models)

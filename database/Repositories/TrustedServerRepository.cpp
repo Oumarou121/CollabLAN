@@ -37,7 +37,9 @@ bool TrustedServerRepository::registerPending(const QString &fingerprint, const 
     insert.prepare(QStringLiteral("INSERT INTO TrustedServers (certificate_fingerprint, ip_address, last_ip_address, hostname, status, reason) VALUES (:fingerprint,:ip,:ip,:hostname,'pending','Certificat serveur inconnu : approbation locale requise')"));
     insert.bindValue(QStringLiteral(":fingerprint"), normalized);
     insert.bindValue(QStringLiteral(":ip"), ipAddress);
-    insert.bindValue(QStringLiteral(":hostname"), hostname);
+    // hostname est NOT NULL (migration 032) : un nom absent devient une chaine
+    // vide, sinon approveServerCertificate() sans nom echouait toujours.
+    insert.bindValue(QStringLiteral(":hostname"), hostname.isNull() ? QStringLiteral("") : hostname);
     if (!insert.exec()) { m_lastError = insert.lastError().text(); return false; }
     return true;
 }
