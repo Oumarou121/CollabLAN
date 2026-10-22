@@ -2,7 +2,9 @@
 #define CORE_PERMISSIONMANAGER_H
 
 #include <QObject>
+#include <QSet>
 #include <QString>
+#include <QStringList>
 #include <optional>
 #include <memory>
 #include <vector>
@@ -73,9 +75,24 @@ public:
     /// se retrouve fail-open (authorized reste a sa valeur par defaut true).
     Q_INVOKABLE bool isMachineAuthorized(const QString &ipAddress) const;
     Q_INVOKABLE bool isMachineAuthorizedByCertificate(const QString &fingerprint) const;
-    /// Accepte aussi un certificat de serveur deja epingle localement. Cela
-    /// couvre le retour du serveur officiel vers un pair devenu TEMP_SERVER.
+    /// Accepte aussi un certificat de serveur deja epingle localement (retour
+    /// du serveur officiel vers un pair devenu TEMP_SERVER) et une machine
+    /// que le serveur actif declare autorisee (appels et transferts directs
+    /// entre clients, cf. setServerAuthorizedFingerprints).
     Q_INVOKABLE bool isMachineAuthorizedOrTrustedServer(const QString &fingerprint) const;
+
+    /// Liste des machines autorisees envoyee par le serveur actif (message
+    /// "authorized_peers", recu uniquement sur la connexion TLS vers ce
+    /// serveur deja approuve). Gardee en memoire seulement : elle remplace la
+    /// precedente a chaque envoi et n'est jamais ecrite dans la politique
+    /// d'admission locale (AuthorizedClients).
+    void setServerAuthorizedFingerprints(const QStringList &fingerprints);
+    void clearServerAuthorizedFingerprints();
+    bool isAuthorizedByServer(const QString &fingerprint) const;
+    /// Empreintes a envoyer aux clients : machines autorisees localement,
+    /// plus la liste recue (un serveur de secours relaie celle du serveur
+    /// officiel).
+    QStringList authorizedFingerprintsForPeers() const;
     /// Vrai si ce certificat a ete approuve comme SERVEUR (liste TrustedServers) : seul un tel
     /// pair recoit le journal de synchronisation complet (cf. SyncService).
     Q_INVOKABLE bool isTrustedServer(const QString &fingerprint) const;
@@ -122,6 +139,9 @@ public:
 
 signals:
     void machineChanged(const models::AuthorizedMachine &machine);
+    /// Une machine a ete retiree de la liste (les autres changements passent
+    /// par machineChanged).
+    void machineRemoved(int id);
 
 
 private:
@@ -130,6 +150,8 @@ private:
     std::unique_ptr<database::AuthorizedMachineRepository> m_repository;
     /// Magasin de pinning TLS du client, strictement local et non replique.
     std::unique_ptr<database::TrustedServerRepository> m_trustedServers;
+    /// Machines declarees autorisees par le serveur actif (en memoire).
+    QSet<QString> m_serverAuthorized;
 };
 
 } // namespace core

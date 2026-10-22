@@ -2,6 +2,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QRandomGenerator>
+#include <QSqlQuery>
 
 #include "PermissionManager.h"
 #include "DatabaseManager.h"
@@ -114,6 +115,62 @@ private slots:
         // Un second contact de la meme machine (deja connue) ne doit pas
         // re-emettre machineChanged : rien de nouveau a afficher dans l'admin.
         QVERIFY(m_manager->registerPendingMachineByCertificate(QStringLiteral("fp-1"), QStringLiteral("10.0.0.2")));
+        QCOMPARE(spy.count(), 1);
+    }
+
+    // Liste envoyee par le serveur actif : un autre client autorise par le
+    // serveur est accepte pour les appels et transferts directs.
+    void serverAuthorizedFingerprints_acceptedReplacedAndCleared()
+    {
+        freshDatabase();
+        QVERIFY(!m_manager->isMachineAuthorizedOrTrustedServer(QStringLiteral("aa11")));
+
+        m_manager->setServerAuthorizedFingerprints({QStringLiteral(" AA11 "), QStringLiteral("bb22")});
+        QVERIFY(m_manager->isMachineAuthorizedOrTrustedServer(QStringLiteral("aa11")));
+        QVERIFY(m_manager->isAuthorizedByServer(QStringLiteral("BB22")));
+        // Jamais ecrite dans la politique d'admission locale.
+        QVERIFY(!m_manager->isMachineAuthorizedByCertificate(QStringLiteral("aa11")));
+        QVERIFY(!m_manager->findMachineByCertificateFingerprint(QStringLiteral("aa11")).has_value());
+
+        // Un nouvel envoi remplace le precedent (revocation cote serveur).
+        m_manager->setServerAuthorizedFingerprints({QStringLiteral("bb22")});
+        QVERIFY(!m_manager->isMachineAuthorizedOrTrustedServer(QStringLiteral("aa11")));
+        QVERIFY(m_manager->isMachineAuthorizedOrTrustedServer(QStringLiteral("bb22")));
+
+        m_manager->clearServerAuthorizedFingerprints();
+        QVERIFY(!m_manager->isMachineAuthorizedOrTrustedServer(QStringLiteral("bb22")));
+    }
+
+    // Un serveur (officiel ou de secours) envoie ses machines autorisees et
+    // relaie la liste recue ; une machine seulement en attente n'y figure pas.
+    void authorizedFingerprintsForPeers_mergesLocalAuthorizedAndReceived()
+    {
+        freshDatabase();
+        // L'auteur d'une autorisation est un compte existant (cle etrangere).
+        QSqlQuery insert(m_dbManager->database());
+        QVERIFY(insert.exec(QStringLiteral(
+            "INSERT INTO Users (name, ip_address, status, role, password_hash, password_salt, uuid, updated_at) "
+            "VALUES ('admin', '', 'active', 'admin', 'x', 'y', 'u-admin', '2026-10-22T00:00:00Z')")));
+        const int adminId = insert.lastInsertId().toInt();
+
+        QVERIFY(m_manager->registerPendingMachineByCertificate(QStringLiteral("cc33"), QStringLiteral("10.0.0.3")));
+        QVERIFY(m_manager->registerPendingMachineByCertificate(QStringLiteral("dd44"), QStringLiteral("10.0.0.4")));
+        QVERIFY(m_manager->authorizeExistingMachineByCertificate(QStringLiteral("cc33"), adminId, QStringLiteral("test")));
+        m_manager->setServerAuthorizedFingerprints({QStringLiteral("ee55")});
+
+        QCOMPARE(m_manager->authorizedFingerprintsForPeers(),
+                 QStringList({QStringLiteral("cc33"), QStringLiteral("ee55")}));
+    }
+
+    void removeMachine_emitsMachineRemoved()
+    {
+        freshDatabase();
+        QVERIFY(m_manager->registerPendingMachineByCertificate(QStringLiteral("ff66"), QStringLiteral("10.0.0.6")));
+        const auto machine = m_manager->findMachineByCertificateFingerprint(QStringLiteral("ff66"));
+        QVERIFY(machine.has_value());
+
+        QSignalSpy spy(m_manager.get(), &PermissionManager::machineRemoved);
+        QVERIFY(m_manager->removeMachine(machine->id()));
         QCOMPARE(spy.count(), 1);
     }
 

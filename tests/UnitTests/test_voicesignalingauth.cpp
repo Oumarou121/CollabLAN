@@ -21,6 +21,7 @@ class FakePermissions : public QObject
 public:
     QSet<QString> authorizedMachines;   // AuthorizedMachines (geree par l'administrateur)
     QSet<QString> trustedServers;       // TrustedServers (serveur approuve par ce poste)
+    QSet<QString> serverAuthorized;     // liste "authorized_peers" recue du serveur
     int pendingRegistrations = 0;
 
     Q_INVOKABLE bool isMachineAuthorizedByCertificate(const QString &fingerprint) const
@@ -29,11 +30,13 @@ public:
     }
     Q_INVOKABLE bool isMachineAuthorizedOrTrustedServer(const QString &fingerprint) const
     {
-        return authorizedMachines.contains(fingerprint.toLower()) || trustedServers.contains(fingerprint.toLower());
+        const QString f = fingerprint.toLower();
+        return authorizedMachines.contains(f) || trustedServers.contains(f) || serverAuthorized.contains(f);
     }
+    // Repli « serveur » : ignore la liste recue, comme PermissionManager.
     Q_INVOKABLE bool trustRemoteServerCertificate(const QString &fingerprint, const QString &)
     {
-        return isMachineAuthorizedOrTrustedServer(fingerprint);
+        return authorizedMachines.contains(fingerprint.toLower()) || trustedServers.contains(fingerprint.toLower());
     }
     Q_INVOKABLE void recordMachineSeen(const QString &, const QString &) {}
     Q_INVOKABLE bool registerPendingMachineByCertificate(const QString &, const QString &, const QString &)
@@ -109,6 +112,36 @@ private slots:
         QTest::qWait(300);
         QCOMPARE(incoming.count(), 0);
         QCOMPARE(calleePermissions.pendingRegistrations, 1);
+    }
+
+    // Client -> client : aucun des deux n'est dans la liste locale de l'autre,
+    // chacun tient l'autre de la liste envoyee par le serveur ("authorized_peers").
+    void clientAcceptsCallFromClientAuthorizedByServer()
+    {
+        FakePermissions calleePermissions;
+        calleePermissions.trustedServers.insert(fp(m_server.get()));
+        calleePermissions.serverAuthorized.insert(fp(m_stranger.get()));
+        FakePermissions callerPermissions;
+        callerPermissions.trustedServers.insert(fp(m_server.get()));
+        callerPermissions.serverAuthorized.insert(fp(m_client.get()));
+
+        VoiceSignalingChannel callee(m_client.get());
+        callee.setPermissionManager(&calleePermissions);
+        QVERIFY(callee.listen(23674));
+        QSignalSpy incoming(&callee, &VoiceSignalingChannel::peerConnected);
+        QSignalSpy calleeError(&callee, &VoiceSignalingChannel::error);
+
+        VoiceSignalingChannel caller(m_stranger.get());
+        caller.setPermissionManager(&callerPermissions);
+        QSignalSpy outgoing(&caller, &VoiceSignalingChannel::peerConnected);
+        QSignalSpy callerError(&caller, &VoiceSignalingChannel::error);
+        QVERIFY(caller.connectToPeer(QHostAddress::LocalHost, 23674));
+
+        QTRY_COMPARE_WITH_TIMEOUT(outgoing.count(), 1, 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(incoming.count(), 1, 10000);
+        QCOMPARE(calleeError.count(), 0);
+        QCOMPARE(callerError.count(), 0);
+        QCOMPARE(calleePermissions.pendingRegistrations, 0);
     }
 
     // Sens inverse, qui fonctionnait deja : le client appelle le serveur.

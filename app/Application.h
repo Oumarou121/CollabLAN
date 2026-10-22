@@ -271,6 +271,15 @@ private:
     /// meme batch (cf. debrief "chicken-and-egg" login/rattrapage).
     void sendUsersCatchupTo(const QString &userUuid, const QString &fingerprint, bool authorized);
 
+    /// Liste des machines autorisees ("authorized_peers") envoyee par le
+    /// serveur a ses clients autorises, pour que deux clients s'acceptent
+    /// pour les appels et transferts directs. Envoyee a chaque client qui
+    /// s'identifie, puis rediffusee a chaque autorisation, revocation ou
+    /// retrait. Sans effet si ce poste n'ecoute pas (simple client).
+    QString authorizedPeersPayload() const;
+    void sendAuthorizedPeersTo(const QString &userUuid, const QString &fingerprint, bool authorized);
+    void broadcastAuthorizedPeers();
+
     /// Diffuse en temps reel (type "server_election_event") une entree
     /// d'historique ServerElectionLog (log_uuid, event, epoch, machineUuid)
     /// a tous les postes actuellement connectes, afin que ServerElection/

@@ -412,6 +412,12 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
             this, [this, messagingServerPort](models::ServerRole newRole, models::ServerRole previousRole) {
                 m_serverElectionRepository->updateRoleAndEpoch(newRole, m_electionService->epoch());
 
+                // Devenu serveur officiel : sa propre liste de machines autorisees
+                // fait foi, la liste recue de l'ancien serveur est oubliee. Un
+                // serveur de secours la garde et la relaie a ses clients.
+                if (newRole == models::ServerRole::Server && m_permissionManager)
+                    m_permissionManager->clearServerAuthorizedFingerprints();
+
                 // Pilotage de MessagingServer selon le rôle courant
                 // (HYBRID_SERVER_FAILOVER.md section 9, étape 3) :
                 //   - Server / TempServer -> on écoute réellement sur ce poste.
@@ -1504,6 +1510,16 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_messagingServer, &network::MessagingServer::clientIdentified,
             this, &Application::sendUsersCatchupTo);
 
+    // Machines autorisees transmises aux clients (cf. authorizedPeersPayload) :
+    // sans cette liste, deux clients se refusaient mutuellement appels et
+    // transferts directs (la politique d'admission n'existe que sur le serveur).
+    connect(m_messagingServer, &network::MessagingServer::clientIdentified,
+            this, &Application::sendAuthorizedPeersTo);
+    connect(m_permissionManager, &core::PermissionManager::machineChanged,
+            this, [this](const models::AuthorizedMachine &) { broadcastAuthorizedPeers(); });
+    connect(m_permissionManager, &core::PermissionManager::machineRemoved,
+            this, [this](int) { broadcastAuthorizedPeers(); });
+
     // Release 8 : intégration des fichiers reçus dans les dossiers partagés.
     // transferStarted permet de corréler le transferKey avec la demande en attente ;
     // transferCompleted déclenche la copie, l'upsert SharedFile et la SyncOperation.
@@ -1968,6 +1984,33 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         return;
     }
 
+    // Machines autorisees par le serveur (type "authorized_peers", cf.
+    // authorizedPeersPayload) : recue uniquement sur la connexion TLS vers le
+    // serveur deja approuve (relay=false). Envoyee par un client au serveur,
+    // elle servirait a faire accepter n'importe quel certificat : refusee.
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("authorized_peers")) {
+        if (relay) {
+            qWarning() << "handleIncomingPayload: authorized_peers recu d'un client, refuse";
+            if (m_auditManager)
+                m_auditManager->logRefusedAttempt(QStringLiteral("Liste de machines autorisées envoyée par un client (refusée)"));
+            return;
+        }
+        // Le serveur officiel tient la liste de reference : il ignore celle d'un
+        // serveur de secours auquel il se connecte pendant la reconciliation.
+        if (m_electionService && m_electionService->role() == models::ServerRole::Server)
+            return;
+        QStringList fingerprints;
+        for (const QJsonValue &value : document.object().value(QStringLiteral("fingerprints")).toArray())
+            fingerprints << value.toString();
+        if (m_permissionManager) {
+            m_permissionManager->setServerAuthorizedFingerprints(fingerprints);
+            // Serveur de secours : relaie la liste a ses propres clients.
+            broadcastAuthorizedPeers();
+        }
+        return;
+    }
+
     // Rattrapage Users (type "users_catchup_batch", cf.
     // Application::sendUsersCatchupTo) : envoye UNIQUEMENT au client qui
     // vient de s'identifier (sendToUuids, jamais relaye/broadcast), donc
@@ -2386,6 +2429,37 @@ void Application::broadcastUserEvent(const models::User &user, const QString &op
     if (m_messagingServer) {
         m_messagingServer->broadcastMessage(jsonMessage);
     }
+}
+
+QString Application::authorizedPeersPayload() const
+{
+    QJsonArray fingerprints;
+    if (m_permissionManager) {
+        for (const QString &fingerprint : m_permissionManager->authorizedFingerprintsForPeers())
+            fingerprints.append(fingerprint);
+    }
+    const QJsonObject payload{{QStringLiteral("type"), QStringLiteral("authorized_peers")},
+                              {QStringLiteral("fingerprints"), fingerprints}};
+    return QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+}
+
+void Application::sendAuthorizedPeersTo(const QString &userUuid, const QString &fingerprint, bool authorized)
+{
+    // Meme garde que sendUsersCatchupTo : seul un poste qui ecoute, et
+    // seulement vers une machine autorisee.
+    if (!m_messagingServer || !m_messagingServer->isRunning() || !authorized)
+        return;
+    if (!fingerprint.isEmpty())
+        m_messagingServer->sendToFingerprint(authorizedPeersPayload(), fingerprint);
+    else if (!userUuid.isEmpty())
+        m_messagingServer->sendToUuids(authorizedPeersPayload(), {userUuid});
+}
+
+void Application::broadcastAuthorizedPeers()
+{
+    // broadcastMessage n'atteint que les clients autorises (Lot 1 securite).
+    if (m_messagingServer && m_messagingServer->isRunning())
+        m_messagingServer->broadcastMessage(authorizedPeersPayload());
 }
 
 void Application::sendUsersCatchupTo(const QString &userUuid, const QString &fingerprint, bool authorized)

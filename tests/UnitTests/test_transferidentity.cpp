@@ -29,6 +29,10 @@ public:
     {
         return authorized.contains(fingerprint.toLower());
     }
+    Q_INVOKABLE bool isMachineAuthorizedOrTrustedServer(const QString &fingerprint) const
+    {
+        return authorized.contains(fingerprint.toLower());
+    }
     Q_INVOKABLE bool trustRemoteServerCertificate(const QString &, const QString &) { return false; }
     Q_INVOKABLE void recordMachineSeen(const QString &, const QString &) {}
     Q_INVOKABLE bool registerPendingMachineByCertificate(const QString &fingerprint, const QString &, const QString &)

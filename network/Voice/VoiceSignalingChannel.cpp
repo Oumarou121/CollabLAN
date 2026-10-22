@@ -383,11 +383,12 @@ void VoiceSignalingChannel::onClientConnected()
         m_outgoingSocket->sslConfiguration().peerCertificate());
     if (m_permissionManager) {
         bool authorized = false;
-        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+        // Un appel direct peut viser un client autorise (ici ou par le serveur
+        // actif) ou le serveur deja approuve ; trustRemoteServerCertificate
+        // n'est consulte qu'en repli.
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedOrTrustedServer",
                                   Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                   Q_ARG(QString, verifiedFingerprint));
-        // Un appel direct peut viser un client autorise ou le serveur deja
-        // approuve localement ; ne consulte TrustedServers qu'en repli.
         if (!authorized) {
             QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
                                       Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),

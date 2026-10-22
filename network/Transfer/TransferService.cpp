@@ -550,12 +550,12 @@ void TransferService::onClientSocketConnected()
         const QString fingerprint = sslSocket
             ? SecurityService::certificateFingerprint(sslSocket->peerCertificate()) : QString();
         bool authorized = false;
-        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedOrTrustedServer",
                                   Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                   Q_ARG(QString, fingerprint));
-        // Un transfert est P2P : le pair peut etre un client ou le serveur
-        // deja approuve localement. On ne traite donc le certificat comme un
-        // serveur qu'en repli, si ce n'est pas une machine autorisee.
+        // Un transfert est P2P : le pair peut etre un client autorise (ici ou
+        // par le serveur actif) ou le serveur deja approuve localement. On ne
+        // traite donc le certificat comme un serveur inconnu qu'en repli.
         if (!authorized) {
             QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
                                       Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
@@ -865,7 +865,7 @@ void TransferService::onServerSocketReadyRead()
             ? SecurityService::certificateFingerprint(sslSocket->peerCertificate()) : QString();
         if (!fingerprint.isEmpty()) {
             bool authorized = false;
-            QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+            QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedOrTrustedServer",
                                       Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                       Q_ARG(QString, fingerprint));
             if (!authorized) {
@@ -929,7 +929,7 @@ void TransferService::onServerSocketReadyRead()
             const QString announcedFingerprint = tlsFingerprint.isEmpty() ? claimedFingerprint : tlsFingerprint;
             bool authorized = !m_permissionManager;
             if (m_permissionManager && !announcedFingerprint.isEmpty()) {
-                QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedByCertificate",
+                QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedOrTrustedServer",
                                           Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                           Q_ARG(QString, announcedFingerprint));
                 if (!authorized) {

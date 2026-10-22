@@ -84,7 +84,45 @@ bool PermissionManager::isMachineAuthorizedOrTrustedServer(const QString &finger
     // ce serveur. Il ne devient donc pas un client inconnu lorsque le poste
     // local est promu temporairement et que le serveur officiel revient.
     return isMachineAuthorizedByCertificate(fingerprint)
-        || (m_trustedServers && m_trustedServers->isTrusted(fingerprint));
+        || (m_trustedServers && m_trustedServers->isTrusted(fingerprint))
+        || isAuthorizedByServer(fingerprint);
+}
+
+void PermissionManager::setServerAuthorizedFingerprints(const QStringList &fingerprints)
+{
+    QSet<QString> next;
+    for (const QString &fingerprint : fingerprints) {
+        const QString normalized = fingerprint.trimmed().toLower();
+        if (!normalized.isEmpty())
+            next.insert(normalized);
+    }
+    m_serverAuthorized = next;
+}
+
+void PermissionManager::clearServerAuthorizedFingerprints()
+{
+    m_serverAuthorized.clear();
+}
+
+bool PermissionManager::isAuthorizedByServer(const QString &fingerprint) const
+{
+    const QString normalized = fingerprint.trimmed().toLower();
+    return !normalized.isEmpty() && m_serverAuthorized.contains(normalized);
+}
+
+QStringList PermissionManager::authorizedFingerprintsForPeers() const
+{
+    QSet<QString> all = m_serverAuthorized;
+    if (m_repository) {
+        for (const models::AuthorizedMachine &machine : m_repository->findAuthorized()) {
+            const QString fingerprint = machine.certificateFingerprint().trimmed().toLower();
+            if (!fingerprint.isEmpty() && machine.status() == models::MachineStatus::Authorized)
+                all.insert(fingerprint);
+        }
+    }
+    QStringList out = all.values();
+    out.sort();
+    return out;
 }
 
 bool PermissionManager::isTrustedServer(const QString &fingerprint) const
@@ -243,7 +281,9 @@ bool PermissionManager::removeMachine(int id)
     if (!m_repository)
         return false;
 
-    return m_repository->remove(id);
+    const bool ok = m_repository->remove(id);
+    if (ok) emit machineRemoved(id);
+    return ok;
 }
 
 bool PermissionManager::authorizeMachineByCertificate(const QString &fingerprint, const QString &machineUuid,
