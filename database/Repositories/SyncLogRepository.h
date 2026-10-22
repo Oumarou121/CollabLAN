@@ -1,8 +1,11 @@
 #ifndef DATABASE_SYNCLOGREPOSITORY_H
 #define DATABASE_SYNCLOGREPOSITORY_H
 
+#include <QJsonObject>
 #include <QSqlDatabase>
 #include <QString>
+#include <QStringList>
+#include <optional>
 #include <vector>
 
 #include "models/SyncLogEntry.h"
@@ -39,6 +42,60 @@ public:
     std::vector<models::SyncLogEntry> entriesSinceEpoch(int fromEpoch) const;
 
     /**
+     * @brief Entrees de id local strictement superieur a afterId, dans l'ordre
+     *        d'ecriture locale. Synchronisation incrementale d'un client : l'id
+     *        local croit toujours, y compris pour les entrees fusionnees depuis un
+     *        serveur de secours (alors que leur lamport_clock peut etre ancien).
+     */
+    std::vector<models::SyncLogEntry> entriesAfterId(qint64 afterId) const;
+    /// Plus grand id local du journal (0 si vide).
+    qint64 maxEntryId() const;
+    /// Vrai si une entree existe deja pour cet enregistrement.
+    bool hasRecord(const QString &tableName, const QString &recordUuid) const;
+
+    /// Curseur de synchronisation incrementale (table SyncCursors) : dernier id
+    /// du journal de ce serveur deja recu pour cet utilisateur (0 si aucun).
+    qint64 syncCursor(const QString &serverKey, const QString &userUuid) const;
+    bool setSyncCursor(const QString &serverKey, const QString &userUuid, qint64 lastLogId);
+
+    /**
+     * @brief Retire d'un lot les changements de comptes qu'une source autre que
+     *        le serveur officiel ne doit pas imposer : aucun compte n'y devient
+     *        administrateur (creation en simple utilisateur), aucun role ni mot de
+     *        passe existant n'y est modifie, aucune suppression. Sans ce filtre,
+     *        un poste autorise qui s'annoncait serveur de secours pouvait, par la
+     *        reconciliation, changer le mot de passe d'un administrateur sur
+     *        tout le reseau (regle "dernier ecrit gagne").
+     * @return l'entree filtree, ou std::nullopt si elle doit etre ignoree.
+     */
+    static std::optional<models::SyncLogEntry> restrictUserEntry(const models::SyncLogEntry &entry);
+    static std::vector<models::SyncLogEntry> restrictUserEntries(const std::vector<models::SyncLogEntry> &entries);
+
+    /// Payload de creation (entree INSERT) d'un message journalise : expediteur,
+    /// conversation, participants. Sert au serveur a verifier l'auteur d'une
+    /// modification et a adresser les accuses. std::nullopt si inconnu.
+    std::optional<QJsonObject> messageInsertPayload(const QString &messageUuid) const;
+
+    /// Uuids des messages dont un accuse a ete applique depuis le dernier appel
+    /// (l'appelant recalcule leur etat d'envoi).
+    QStringList takeTouchedReceiptMessages();
+
+    /**
+     * @brief Purge les entrees devenues inutiles : pour un meme enregistrement,
+     *        seul l'etat le plus recent est garde (comptes, accuses, membres de
+     *        groupe, renommages) ; un message supprime perd aussi son texte dans
+     *        l'entree de creation. Le journal ne garde ainsi que l'utile, sans
+     *        rien perdre pour un poste qui se synchronise ensuite. Les messages
+     *        eux-memes ne sont jamais purges (c'est l'historique).
+     * @return le nombre d'entrees retirees.
+     */
+    int compact();
+
+    /// Supprime localement un groupe, ses membres, sa conversation et son fil.
+    /// Idempotent (groupe deja absent : vrai).
+    static bool deleteGroupByUuid(QSqlDatabase db, const QString &groupUuid, QString *error = nullptr);
+
+    /**
      * @brief Applique un lot d'entrees recu d'un pair (sync_batch), en ignorant les entrees
      *        deja connues (entry_uuid dupliquee) : idempotent, rejouable sans risque.
      *        Ne resout pas les conflits de contenu applicatif (a la charge de l'appelant,
@@ -48,6 +105,8 @@ public:
      * @return le nombre d'entrees effectivement inserees (les doublons ne comptent pas).
      */
     int applyBatch(const std::vector<models::SyncLogEntry> &batch);
+    /// Nombre d'entrees du dernier lot restees differees (dependance absente).
+    int lastBatchPendingCount() const { return m_lastBatchPending; }
 
     /**
      * @brief Plus grande valeur de lamport_clock connue localement (0 si journal vide),
@@ -107,9 +166,13 @@ private:
     bool applyMessageEntry(const models::SyncLogEntry &entry);
     bool applyGroupEntry(const models::SyncLogEntry &entry);
     bool applyGroupMemberEntry(const models::SyncLogEntry &entry);
+    bool applyMessageChange(const models::SyncLogEntry &entry);
+    bool applyReceiptEntry(const models::SyncLogEntry &entry);
+    QStringList m_touchedReceiptMessages;
 
     QSqlDatabase m_db;
     mutable QString m_lastError;
+    int m_lastBatchPending = 0;
 };
 
 } // namespace database

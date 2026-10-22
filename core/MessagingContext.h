@@ -109,6 +109,16 @@ public:
     /// Id de l'utilisateur actuellement authentifie (depuis UserManager).
     Q_INVOKABLE qint64 currentUserId() const;
 
+    /// Modification / suppression d'un de ses messages (par son uuid). Faux en
+    /// cas de refus ; la raison est emise par actionFailed.
+    Q_INVOKABLE bool editMessage(const QString &messageUuid, const QString &content);
+    Q_INVOKABLE bool deleteMessage(const QString &messageUuid);
+
+    /// Groupe de la conversation : l'utilisateur courant en est-il le proprietaire ?
+    Q_INVOKABLE bool isGroupOwner(qint64 conversationId) const;
+    Q_INVOKABLE bool renameGroup(qint64 conversationId, const QString &name);
+    Q_INVOKABLE bool deleteGroup(qint64 conversationId);
+
 signals:
     void messagingManagerChanged();
     void groupManagerChanged();
@@ -131,6 +141,16 @@ signals:
     /// Emis pour toute erreur concernant la conversation actuellement
     /// ouverte (ChatView.qml), avec un message d'erreur lisible.
     void messageSendFailed(const QString &error);
+
+    /// Pas de connexion au serveur : le message de la conversation ouverte est
+    /// garde et partira a la reconnexion (ce n'est pas un echec).
+    void messageQueued();
+
+    /// Modification, suppression ou action de groupe refusee (raison lisible).
+    void actionFailed(const QString &error);
+
+    /// La conversation ouverte n'existe plus (groupe supprime).
+    void conversationRemoved(qint64 conversationId);
 
 private slots:
     void onMessageReceived(const models::Message &message);

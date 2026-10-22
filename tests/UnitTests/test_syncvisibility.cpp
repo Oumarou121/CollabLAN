@@ -90,6 +90,32 @@ private slots:
         const QStringList visible = records(syncEntriesVisibleTo(journal(), QString()));
         QCOMPARE(visible, QStringList({QStringLiteral("Users:alice"), QStringLiteral("Users:bob")}));
     }
+
+    // Suite incrementale : alice a deja recu le journal jusqu'au groupe "projet"
+    // (sans elle) ; ajoutee ensuite, elle recoit le groupe et son historique en
+    // plus des nouveautes, mais rien de ce qu'elle a deja.
+    void newlyVisibleIncludesHistoryOfJoinedGroup()
+    {
+        const auto all = journal();
+        const std::vector<models::SyncLogEntry> recent(all.begin() + 5, all.end());
+        const QStringList visible = records(network::syncEntriesNewlyVisibleTo(all, recent, QStringLiteral("alice")));
+        QCOMPARE(visible, QStringList({QStringLiteral("Groups:g-projet"), QStringLiteral("GroupMembers:gm-1"),
+                                       QStringLiteral("Messages:m-projet")}));
+        // Rien de neuf : rien a envoyer.
+        QVERIFY(network::syncEntriesNewlyVisibleTo(all, {}, QStringLiteral("alice")).empty());
+    }
+
+    // Accuse : visible par l'expediteur du message et par le lecteur lui-meme.
+    void receiptsVisibleToSenderAndReader()
+    {
+        const std::vector<models::SyncLogEntry> log = {
+            entry(QStringLiteral("MessageReceipts"), QStringLiteral("m-ab|bob"), {{QStringLiteral("messageUuid"), QStringLiteral("m-ab")},
+                {QStringLiteral("userUuid"), QStringLiteral("bob")}, {QStringLiteral("senderUuid"), QStringLiteral("alice")}}),
+        };
+        QCOMPARE(syncEntriesVisibleTo(log, QStringLiteral("alice")).size(), static_cast<size_t>(1));
+        QCOMPARE(syncEntriesVisibleTo(log, QStringLiteral("bob")).size(), static_cast<size_t>(1));
+        QVERIFY(syncEntriesVisibleTo(log, QStringLiteral("chloe")).empty());
+    }
 };
 
 QTEST_GUILESS_MAIN(TestSyncVisibility)

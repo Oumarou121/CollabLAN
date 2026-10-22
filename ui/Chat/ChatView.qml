@@ -16,9 +16,13 @@ import "../Components/icons.js" as Icons
  * seulement si l'on etait deja en bas.
  *
  * Redaction : Entree envoie, Maj+Entree passe a la ligne. Si l'envoi echoue,
- * l'avis donne la raison et le texte est remis dans le champ.
+ * l'avis donne la raison et le texte est remis dans le champ. Sans connexion
+ * au serveur, le message est garde (« En attente ») et part a la reconnexion :
+ * un avis neutre le dit, le texte n'est pas remis (il partirait deux fois).
  *
- * Aucun indicateur « livre »/« lu » : l'application ne le connait pas.
+ * Sous vos messages : En attente, Envoye (conserve par le serveur), Remis,
+ * Lu (dans un groupe : par tous les membres). Clic droit (ou appui long) sur
+ * un de vos messages : Modifier, Supprimer pour tous.
  */
 Item {
     id: root
@@ -58,6 +62,7 @@ Item {
         root.unreadAnchorPending = true
         root.unreadAnchorId = -1
         root.lastSentText = ""
+        root.editingUuid = ""
         sendFail.visible = false
         root.activateConversationIfVisible()
     }
@@ -82,6 +87,14 @@ Item {
         return d.toLocaleDateString(Qt.locale(), "dddd d MMMM")
     }
     function timeOf(ts) { return ts ? new Date(ts).toLocaleTimeString(Qt.locale(), "HH:mm") : "" }
+    function deliveryWord(s) {
+        switch (s) {
+        case "pending": return qsTr("En attente")
+        case "delivered": return qsTr("Remis")
+        case "read": return qsTr("Lu")
+        }
+        return qsTr("Envoyé")
+    }
 
     // ---- Repere « Nouveaux messages » -----------------------------------
     // Fige a la premiere lecture du fil : l'activation de la conversation
@@ -110,11 +123,28 @@ Item {
     // ---- Envoi -------------------------------------------------------------
     property string lastSentText: ""
     property string sendErrorMessage: ""
+    // "error" : envoi refuse (texte remis) ; "queued" : garde, partira a la
+    // reconnexion ; "action" : modification/suppression refusee.
+    property string noticeKind: "error"
+    // Modification d'un de ses messages en cours (uuid), et cible du menu.
+    property string editingUuid: ""
+    property string menuUuid: ""
+    property string menuContent: ""
 
     Connections {
         target: messagingContext
         ignoreUnknownSignals: true
+        function onMessageQueued() {
+            root.noticeKind = "queued"
+            sendFail.visible = true
+        }
+        function onActionFailed(error) {
+            root.noticeKind = "action"
+            root.sendErrorMessage = error
+            sendFail.visible = true
+        }
         function onMessageSendFailed(error) {
+            root.noticeKind = "error"
             root.sendErrorMessage = error
             sendFail.visible = true
             // Le texte n'est pas perdu : il revient dans le champ.
@@ -128,11 +158,83 @@ Item {
     function sendCurrentMessage() {
         const text = composer.text.trim()
         if (text.length === 0 || !messagingContext) return
+        if (root.editingUuid.length > 0) {
+            if (messagingContext.editMessage(root.editingUuid, text))
+                root.cancelEdit()
+            return
+        }
         root.lastSentText = text
         sendFail.visible = false
         messagingContext.sendMessage(text)
         composer.text = ""
         composer.forceActiveFocus()
+    }
+
+    function startEdit(uuid, content) {
+        root.editingUuid = uuid
+        sendFail.visible = false
+        composer.text = content
+        composer.cursorPosition = composer.text.length
+        composer.forceActiveFocus()
+    }
+    function cancelEdit() {
+        root.editingUuid = ""
+        composer.text = ""
+        composer.forceActiveFocus()
+    }
+    function openMessageMenu(uuid, content) {
+        root.menuUuid = uuid
+        root.menuContent = content
+        messageMenu.popup()
+    }
+
+    AppMenu {
+        id: messageMenu
+        AppMenuItem { text: qsTr("Modifier"); onTriggered: root.startEdit(root.menuUuid, root.menuContent) }
+        AppMenuSeparator {}
+        AppMenuItem { text: qsTr("Supprimer pour tous"); danger: true; onTriggered: deleteSheet.uuid = root.menuUuid }
+    }
+
+    SheetModal {
+        id: deleteSheet
+        property string uuid: ""
+        open: deleteSheet.uuid.length > 0
+        boldTitle: false
+        sheetWidth: 460
+        kicker: qsTr("Supprimer le message")
+        title: qsTr("Supprimer ce message <b>pour tous</b> ?")
+        onCloseRequested: deleteSheet.uuid = ""
+        Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: warnRow.implicitHeight + 24
+            color: Theme.dangerSoft
+            Rectangle { width: 2; height: parent.height; color: Theme.dangerColor }
+            RowLayout {
+                id: warnRow
+                x: 14; y: 12
+                width: parent.width - 28
+                spacing: 12
+                LineIcon { Layout.alignment: Qt.AlignTop; path: Icons.alertTriangle; size: 18; strokeWidth: 1.8; color: Theme.dangerInk }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Text { Layout.fillWidth: true; text: qsTr("Il sera effacé chez tous les destinataires, y compris ceux qui ne sont pas connectés."); color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13); wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: qsTr("Cette action est définitive."); color: Theme.ink2; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); wrapMode: Text.WordWrap }
+                }
+            }
+        }
+
+        footer: [
+            AppButton { variant: "ghost"; text: qsTr("Annuler"); onClicked: deleteSheet.uuid = "" },
+            AppButton {
+                variant: "danger"
+                text: qsTr("Supprimer")
+                onClicked: {
+                    if (messagingContext) messagingContext.deleteMessage(deleteSheet.uuid)
+                    deleteSheet.uuid = ""
+                }
+            }
+        ]
     }
 
     // Touche de clavier dessinee (aide de la redaction).
@@ -286,7 +388,14 @@ Item {
                 required property var senderId
                 required property string content
                 required property var timestamp
+                required property string deliveryStatus
+                required property string messageUuid
+                required property bool isEdited
+                required property bool isDeleted
                 readonly property bool isMine: msg.senderId === root.currentUserId
+                // Modifiable : le sien et pas supprime (hors connexion, le changement
+                // part a la reconnexion ; un message pas encore parti change sur place).
+                readonly property bool editable: msg.isMine && !msg.isDeleted
                 readonly property var prevItem: (index > 0 && messagingContext) ? messagingContext.messageModel.get(index - 1) : null
                 readonly property var nextItem: (messagingContext && index < messageListView.count - 1) ? messagingContext.messageModel.get(index + 1) : null
                 readonly property string dayText: {
@@ -379,19 +488,35 @@ Item {
                             radius: Theme.radiusSheet
                             color: msg.isMine ? Theme.surface1 : Theme.surface0
                             border.width: 1
-                            border.color: Theme.line
+                            border.color: msg.messageUuid === root.editingUuid && msg.messageUuid.length > 0 ? Theme.ink : Theme.line
+                            TapHandler {
+                                enabled: msg.editable
+                                acceptedButtons: Qt.RightButton
+                                onTapped: root.openMessageMenu(msg.messageUuid, msg.content)
+                            }
+                            TapHandler {
+                                enabled: msg.editable
+                                acceptedDevices: PointerDevice.TouchScreen
+                                onLongPressed: root.openMessageMenu(msg.messageUuid, msg.content)
+                            }
                             Rectangle { visible: msg.isMine; anchors.right: parent.right; width: 3; height: parent.height; color: Theme.ruleInk }
                             TextEdit {
                                 id: body
                                 x: 12
                                 y: 8
                                 width: Math.min(implicitWidth, bubble.maxW)
-                                text: msg.content
+                                text: msg.isDeleted ? qsTr("Message supprimé") : msg.content
                                 readOnly: true
-                                selectByMouse: true
+                                selectByMouse: !msg.isDeleted
                                 wrapMode: Text.Wrap
                                 textFormat: TextEdit.PlainText
-                                color: Theme.ink
+                                color: msg.isDeleted ? Theme.ink3 : Theme.ink
+                                font.italic: msg.isDeleted
+                                TapHandler {
+                                    enabled: msg.editable
+                                    acceptedButtons: Qt.RightButton
+                                    onTapped: root.openMessageMenu(msg.messageUuid, msg.content)
+                                }
                                 selectionColor: Theme.accentMuted
                                 selectedTextColor: Theme.ink
                                 font.pixelSize: Theme.fs(14)
@@ -399,12 +524,15 @@ Item {
                             }
                         }
                         Text {
-                            visible: msg.groupEnd
+                            // Un message en attente garde toujours sa mention.
+                            visible: msg.groupEnd || (msg.isMine && msg.deliveryStatus === "pending")
                             anchors.right: msg.isMine ? parent.right : undefined
                             leftPadding: 2
                             rightPadding: 2
                             text: (msg.isMine ? qsTr("Vous · ") : "") + root.timeOf(msg.timestamp)
-                            color: Theme.ink3
+                                  + (msg.isEdited && !msg.isDeleted ? qsTr(" · modifié") : "")
+                                  + (msg.isMine && !msg.isDeleted ? " · " + root.deliveryWord(msg.deliveryStatus) : "")
+                            color: msg.isMine && msg.deliveryStatus === "pending" ? Theme.ink2 : Theme.ink3
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fs(11)
                             font.features: ({ "tnum": 1 })
@@ -457,22 +585,29 @@ Item {
                 Layout.fillWidth: true
                 Layout.bottomMargin: 4
                 implicitHeight: failRow.implicitHeight + 14
-                color: Theme.dangerSoft
-                Rectangle { width: 2; height: parent.height; color: Theme.dangerColor }
+                readonly property bool queued: root.noticeKind === "queued"
+                color: sendFail.queued ? Theme.infoSoft : Theme.dangerSoft
+                Rectangle { width: 2; height: parent.height; color: sendFail.queued ? Theme.infoColor : Theme.dangerColor }
                 RowLayout {
                     id: failRow
                     anchors.verticalCenter: parent.verticalCenter
                     x: 12
                     width: parent.width - 18
                     spacing: 10
-                    LineIcon { path: Icons.alertTriangle; size: 15; strokeWidth: 1.8; color: Theme.dangerInk }
+                    LineIcon { path: sendFail.queued ? Icons.clock : Icons.alertTriangle; size: 15; strokeWidth: 1.8; color: sendFail.queued ? Theme.infoInk : Theme.dangerInk }
                     Text {
                         Layout.fillWidth: true
                         textFormat: Text.StyledText
                         wrapMode: Text.WordWrap
-                        text: "<b><font color=\"" + Theme.dangerInk + "\">" + qsTr("Message non envoyé.") + "</font></b> "
-                              + root.sendErrorMessage.replace(/&/g, "&amp;").replace(/</g, "&lt;")
-                              + (root.lastSentText.length ? " " + qsTr("Votre texte est resté dans le champ.") : "")
+                        text: sendFail.queued
+                              ? "<b><font color=\"" + Theme.infoInk + "\">" + qsTr("En attente.") + "</font></b> "
+                                + qsTr("Pas de connexion au serveur : vos messages partiront dès la reconnexion.")
+                              : root.noticeKind === "action"
+                              ? "<b><font color=\"" + Theme.dangerInk + "\">" + qsTr("Action impossible.") + "</font></b> "
+                                + root.sendErrorMessage.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                              : "<b><font color=\"" + Theme.dangerInk + "\">" + qsTr("Message non envoyé.") + "</font></b> "
+                                + root.sendErrorMessage.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                                + (root.lastSentText.length ? " " + qsTr("Votre texte est resté dans le champ.") : "")
                         color: Theme.ink
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fs(12.5)
@@ -481,6 +616,15 @@ Item {
                 }
             }
 
+            RowLayout {
+                visible: root.editingUuid.length > 0
+                Layout.fillWidth: true
+                spacing: 8
+                LineIcon { path: Icons.pencil; size: 14; strokeWidth: 1.8; color: Theme.ink2 }
+                Text { Layout.fillWidth: true; text: qsTr("Modification du message"); color: Theme.ink2; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: Theme.weightSemibold }
+                Key { label: qsTr("Échap") }
+                AppButton { variant: "ghost"; size: "small"; text: qsTr("Annuler"); onClicked: root.cancelEdit() }
+            }
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 10
@@ -513,6 +657,11 @@ Item {
                             background: Item {}
                             Accessible.name: qsTr("Message")
                             Keys.onPressed: function(event) {
+                                if (event.key === Qt.Key_Escape && root.editingUuid.length > 0) {
+                                    root.cancelEdit()
+                                    event.accepted = true
+                                    return
+                                }
                                 if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
                                         && !(event.modifiers & Qt.ShiftModifier)) {
                                     root.sendCurrentMessage()
@@ -525,8 +674,8 @@ Item {
                 AppButton {
                     Layout.alignment: Qt.AlignBottom
                     variant: "ink"
-                    iconPath: Icons.send
-                    text: qsTr("Envoyer")
+                    iconPath: root.editingUuid.length > 0 ? Icons.check : Icons.send
+                    text: root.editingUuid.length > 0 ? qsTr("Enregistrer") : qsTr("Envoyer")
                     enabled: composer.text.trim().length > 0
                     onClicked: root.sendCurrentMessage()
                 }

@@ -39,10 +39,14 @@ public:
 
     /// Etat de la connexion.
     bool isConnected() const;
+    /// Connexion en cours d'etablissement (TCP/TLS pas encore abouti).
+    bool isConnecting() const;
 
     /// Adresse du poste distant (valide si isConnected() == true).
     QHostAddress peerAddress() const;
     quint16 peerPort() const;
+    /// Empreinte du certificat du serveur connecte (vide si non connecte).
+    QString peerFingerprint() const { return m_connected ? m_peerFingerprint : QString(); }
 
     /// Définit le PermissionManager pour vérifier les machines autorisées (issue #68).
     void setPermissionManager(QObject *manager);
@@ -86,6 +90,7 @@ private:
     bool m_connected = false;
     QHostAddress m_lastRequestedAddress;
     quint16 m_lastRequestedPort = 0;
+    QString m_peerFingerprint;
 };
 
 } // namespace network

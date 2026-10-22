@@ -38,6 +38,36 @@ void MessagingContext::setMessagingManager(MessagingManager *manager)
                     this, &MessagingContext::onMessageSent);
             connect(m_messagingManager, &MessagingManager::messageSendFailed,
                     this, &MessagingContext::onMessageSendFailed);
+            connect(m_messagingManager, &MessagingManager::messageQueued,
+                    this, [this](qint64 conversationId) {
+                        if (conversationId == m_messageModel->conversationId())
+                            emit messageQueued();
+                    });
+            connect(m_messagingManager, &MessagingManager::messageRemoved,
+                    this, [this](const models::Message &message) {
+                        m_messageModel->removeMessage(message.uuid());
+                        emit conversationsChanged();
+                    });
+            connect(m_messagingManager, &MessagingManager::actionRefused,
+                    this, &MessagingContext::actionFailed);
+            connect(m_messagingManager, &MessagingManager::messageUpdated,
+                    this, [this](const models::Message &message) {
+                        m_messageModel->updateMessage(message);
+                        emit conversationsChanged();
+                    });
+            connect(m_messagingManager, &MessagingManager::messageDeliveryChanged,
+                    this, [this](const QString &messageUuid, const QString &status) {
+                        m_messageModel->setDeliveryStatus(messageUuid, status);
+                    });
+            // Messages ajoutes par synchronisation (retour apres une absence) :
+            // ils n'emettent pas messageReceived, la conversation ouverte et la
+            // liste des conversations sont rechargees.
+            connect(m_messagingManager, &MessagingManager::messagesSynchronized,
+                    this, [this]() {
+                        if (m_messageModel->conversationId() > 0)
+                            setConversation(m_messageModel->conversationId());
+                        emit conversationsChanged();
+                    }, Qt::QueuedConnection);
         }
 
         emit messagingManagerChanged();
@@ -58,6 +88,20 @@ void MessagingContext::setGroupManager(GroupManager *manager)
         if (m_groupManager) {
             connect(m_groupManager, &GroupManager::groupCreated,
                     this, &MessagingContext::onGroupCreated);
+            connect(m_groupManager, &GroupManager::groupRenamed, this, [this]() {
+                loadUserGroups();
+                emit conversationsChanged();
+            });
+            connect(m_groupManager, &GroupManager::groupDeleted,
+                    this, [this](const QString &, qint64 conversationId) {
+                        loadUserGroups();
+                        if (conversationId > 0 && conversationId == m_messageModel->conversationId()) {
+                            m_messageModel->setConversationId(0);
+                            m_messageModel->clear();
+                        }
+                        emit conversationRemoved(conversationId);
+                        emit conversationsChanged();
+                    });
         }
 
         emit groupManagerChanged();
@@ -248,7 +292,7 @@ QVariantList MessagingContext::conversationsList()
             // message sans avoir a ouvrir la conversation (comme WhatsApp).
             const QString prefix = lastMessage->senderId() == currentId
                 ? tr("Moi : ") : tr("Lui : ");
-            entry[QStringLiteral("lastMessage")] = prefix + lastMessage->content();
+            entry[QStringLiteral("lastMessage")] = prefix + (lastMessage->isDeleted() ? tr("Message supprimé") : lastMessage->content());
             entry[QStringLiteral("timestamp")] = lastMessage->timestamp();
         } else {
             entry[QStringLiteral("lastMessage")] = QString();
@@ -291,7 +335,7 @@ QVariantList MessagingContext::conversationsList()
                 // possibles) : on utilise le prenom de l'expediteur reel.
                 const QString prefix = lastMessage->senderId() == currentId
                     ? tr("Moi : ") : userName(lastMessage->senderId()) + QStringLiteral(" : ");
-                entry[QStringLiteral("lastMessage")] = prefix + lastMessage->content();
+                entry[QStringLiteral("lastMessage")] = prefix + (lastMessage->isDeleted() ? tr("Message supprimé") : lastMessage->content());
                 entry[QStringLiteral("timestamp")] = lastMessage->timestamp();
             } else {
                 entry[QStringLiteral("lastMessage")] = QString();
@@ -503,6 +547,71 @@ void MessagingContext::onMessageSendFailed(qint64 conversationId, const QString 
         return;
     }
     emit messageSendFailed(error);
+}
+
+bool MessagingContext::editMessage(const QString &messageUuid, const QString &content)
+{
+    if (!m_messagingManager)
+        return false;
+    if (!m_messagingManager->editMessage(messageUuid, content, currentUserId())) {
+        emit actionFailed(m_messagingManager->lastErrorString());
+        return false;
+    }
+    return true;
+}
+
+bool MessagingContext::deleteMessage(const QString &messageUuid)
+{
+    if (!m_messagingManager)
+        return false;
+    if (!m_messagingManager->deleteMessage(messageUuid, currentUserId())) {
+        emit actionFailed(m_messagingManager->lastErrorString());
+        return false;
+    }
+    return true;
+}
+
+bool MessagingContext::isGroupOwner(qint64 conversationId) const
+{
+    if (!m_groupManager || conversationId <= 0)
+        return false;
+    for (const auto &group : m_groupManager->getUserGroups(currentUserId())) {
+        if (group.conversationId() == conversationId)
+            return group.ownerId() == currentUserId();
+    }
+    return false;
+}
+
+bool MessagingContext::renameGroup(qint64 conversationId, const QString &name)
+{
+    if (!m_groupManager)
+        return false;
+    for (const auto &group : m_groupManager->getUserGroups(currentUserId())) {
+        if (group.conversationId() != conversationId)
+            continue;
+        if (!m_groupManager->renameGroup(group.id(), name, currentUserId())) {
+            emit actionFailed(m_groupManager->lastErrorString());
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+bool MessagingContext::deleteGroup(qint64 conversationId)
+{
+    if (!m_groupManager)
+        return false;
+    for (const auto &group : m_groupManager->getUserGroups(currentUserId())) {
+        if (group.conversationId() != conversationId)
+            continue;
+        if (!m_groupManager->deleteGroup(group.id(), currentUserId())) {
+            emit actionFailed(m_groupManager->lastErrorString());
+            return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 } // namespace core

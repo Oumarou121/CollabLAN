@@ -35,6 +35,8 @@ public:
     /// Marque un fichier comme supprime (tombstone) plutot que de le
     /// retirer physiquement, afin qu'une future synchronisation reseau
     /// puisse propager la suppression aux autres postes.
+    /// Retient la derniere version echangee avec le reseau (cf. SharedFile::syncedHash).
+    bool setSyncedHash(qint64 folderId, const QString &relativePath, const QString &hash);
     bool markDeleted(qint64 folderId, const QString &relativePath);
 
     /// Renomme/deplace un fichier en base (Rename recu d'un pair distant).

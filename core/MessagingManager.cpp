@@ -142,6 +142,89 @@ std::optional<models::Conversation> MessagingManager::getOrCreateConversation(qi
     return conv;
 }
 
+MessagingManager::OutgoingMessage MessagingManager::buildOutgoing(const models::Message &message) const
+{
+    OutgoingMessage out;
+    if (!m_dbManager)
+        return out;
+
+    // Resoudre les uuids stables (conversation + expediteur) : conversationId
+    // et senderId sont des id locaux AUTOINCREMENT qui n'ont aucune raison de
+    // coincider avec ceux du poste destinataire (chaque machine a sa propre
+    // base SQLite, cf. migration 011). Envoyer ces id bruts sur le reseau
+    // provoquait un "FOREIGN KEY constraint failed" cote destinataire des
+    // que ses id locaux divergeaient des notres (groupe cree ailleurs,
+    // utilisateurs crees dans un ordre different, etc.) : on envoie donc les
+    // uuids stables, pour que receiveMessage() puisse retrouver ou creer les
+    // lignes correspondantes localement avant l'insertion.
+    QString conversationUuid;
+    QString conversationType = QStringLiteral("individual");
+    QString conversationName = QStringLiteral("Conversation");
+    qint64 participant1Id = 0;
+    qint64 participant2Id = 0;
+    {
+        QSqlQuery convQuery(m_dbManager->database());
+        convQuery.prepare(QStringLiteral(
+            "SELECT uuid, type, name, participant1_id, participant2_id FROM Conversations WHERE id = :id"));
+        convQuery.bindValue(QStringLiteral(":id"), message.conversationId());
+        if (convQuery.exec() && convQuery.next()) {
+            conversationUuid = convQuery.value(0).toString();
+            conversationType = convQuery.value(1).toString();
+            conversationName = convQuery.value(2).toString();
+            participant1Id = convQuery.value(3).toLongLong();
+            participant2Id = convQuery.value(4).toLongLong();
+        }
+    }
+
+    // uuids stables des DEUX participants de la conversation (et non
+    // seulement de l'expediteur) : sans le uuid de l'autre participant, le
+    // destinataire ne peut pas renseigner participant1_id/participant2_id
+    // en creant la conversation localement (cf. ensureConversationByUuid),
+    // et celle-ci reste alors invisible pour toujours dans
+    // getUserConversations() meme si le message lui-meme est bien insere.
+    QString senderUuid;
+    QString participant1Uuid;
+    QString participant2Uuid;
+    {
+        database::UserRepository users(m_dbManager->database());
+        if (const auto sender = users.findById(static_cast<int>(message.senderId())); sender.has_value())
+            senderUuid = sender->uuid();
+        if (participant1Id > 0) {
+            if (const auto p1 = users.findById(static_cast<int>(participant1Id)); p1.has_value())
+                participant1Uuid = p1->uuid();
+        }
+        if (participant2Id > 0) {
+            if (const auto p2 = users.findById(static_cast<int>(participant2Id)); p2.has_value())
+                participant2Uuid = p2->uuid();
+        }
+    }
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("message"));
+    payload.insert(QStringLiteral("content"), message.content());
+    payload.insert(QStringLiteral("messageUuid"), message.uuid());
+    payload.insert(QStringLiteral("conversationUuid"), conversationUuid);
+    payload.insert(QStringLiteral("conversationType"), conversationType);
+    payload.insert(QStringLiteral("conversationName"), conversationName);
+    payload.insert(QStringLiteral("senderUuid"), senderUuid);
+    payload.insert(QStringLiteral("participant1Uuid"), participant1Uuid);
+    payload.insert(QStringLiteral("participant2Uuid"), participant2Uuid);
+    // Heure d'ENVOI (UTC) : un message remis en retard (file d'envoi,
+    // rattrapage) garde son heure reelle chez le destinataire.
+    payload.insert(QStringLiteral("timestamp"),
+                   (message.timestamp().isValid() ? message.timestamp() : QDateTime::currentDateTimeUtc())
+                       .toUTC().toString(Qt::ISODate));
+    out.payload = payload;
+    out.json = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+
+    if (!participant1Uuid.isEmpty()) out.targetUuids << participant1Uuid;
+    if (!participant2Uuid.isEmpty()) out.targetUuids << participant2Uuid;
+    if (conversationType == QStringLiteral("group"))
+        out.targetUuids << resolveGroupMemberUuids(message.conversationId());
+    out.targetUuids.removeDuplicates();
+    return out;
+}
+
 std::optional<models::Message> MessagingManager::sendMessage(qint64 conversationId, qint64 senderId, const QString &content)
 {
     if (!m_dbManager) {
@@ -158,6 +241,12 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
         return std::nullopt;
     }
 
+    // Ce poste est lui-meme le serveur (serveur de messagerie actif) : le
+    // message est conserve ici, dans le journal, et servi aux destinataires
+    // absents a leur retour. Sinon il reste "en attente" jusqu'a l'accuse de
+    // reception du serveur (file d'envoi, cf. resendPendingMessages).
+    const bool storedHere = m_messagingServer && m_messagingServer->isRunning();
+
     // uuid stable du message, genere ici (et non dans le repository) afin
     // qu'il soit identique en base locale ET dans le payload reseau : sans
     // cela, le destinataire ne pourrait jamais dedupliquer ce message lors
@@ -168,9 +257,10 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
     // preparees en interne : evite toute injection SQL et les erreurs de
     // syntaxe si `content` contient une apostrophe, ex. "l'ami" ou "it's").
     models::Message draft(0, conversationId, senderId, content);
-    draft.setTimestamp(QDateTime::currentDateTime());
+    draft.setTimestamp(QDateTime::currentDateTimeUtc());
     draft.setRead(false);
     draft.setUuid(messageUuid);
+    draft.setDeliveryStatus(storedHere ? models::Message::Sent : models::Message::Pending);
 
     const auto inserted = m_repository.insert(draft);
     if (!inserted.has_value()) {
@@ -181,97 +271,15 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
     }
 
     const models::Message message = *inserted;
-
-    // Resoudre les uuids stables (conversation + expediteur) : conversationId
-    // et senderId sont des id locaux AUTOINCREMENT qui n'ont aucune raison de
-    // coincider avec ceux du poste destinataire (chaque machine a sa propre
-    // base SQLite, cf. migration 011). Envoyer ces id bruts sur le reseau
-    // provoquait un "FOREIGN KEY constraint failed" cote destinataire des
-    // que ses id locaux divergeaient des notres (groupe cree ailleurs,
-    // utilisateurs crees dans un ordre different, etc.) : on envoie donc les
-    // uuids stables en plus, pour que receiveMessage() puisse retrouver ou
-    // creer les lignes correspondantes localement avant l'insertion.
-    QString conversationUuid;
-    QString conversationType = QStringLiteral("individual");
-    QString conversationName = QStringLiteral("Conversation");
-    qint64 participant1Id = 0;
-    qint64 participant2Id = 0;
-    {
-        QSqlDatabase db = m_dbManager->database();
-        QSqlQuery convQuery(db);
-        convQuery.prepare(QStringLiteral(
-            "SELECT uuid, type, name, participant1_id, participant2_id FROM Conversations WHERE id = :id"));
-        convQuery.bindValue(QStringLiteral(":id"), conversationId);
-        if (convQuery.exec() && convQuery.next()) {
-            conversationUuid = convQuery.value(0).toString();
-            conversationType = convQuery.value(1).toString();
-            conversationName = convQuery.value(2).toString();
-            participant1Id = convQuery.value(3).toLongLong();
-            participant2Id = convQuery.value(4).toLongLong();
-        }
-    }
-
-    QString senderUuid;
-    // uuids stables des DEUX participants de la conversation (et non
-    // seulement de l'expediteur) : sans le uuid de l'autre participant, le
-    // destinataire ne peut pas renseigner participant1_id/participant2_id
-    // en creant la conversation localement (cf. ensureConversationByUuid),
-    // et celle-ci reste alors invisible pour toujours dans
-    // getUserConversations() meme si le message lui-meme est bien insere.
-    QString participant1Uuid;
-    QString participant2Uuid;
-    {
-        database::UserRepository users(m_dbManager->database());
-        const auto sender = users.findById(static_cast<int>(senderId));
-        if (sender.has_value()) {
-            senderUuid = sender->uuid();
-        }
-        if (participant1Id > 0) {
-            const auto p1 = users.findById(static_cast<int>(participant1Id));
-            if (p1.has_value()) {
-                participant1Uuid = p1->uuid();
-            }
-        }
-        if (participant2Id > 0) {
-            const auto p2 = users.findById(static_cast<int>(participant2Id));
-            if (p2.has_value()) {
-                participant2Uuid = p2->uuid();
-            }
-        }
-    }
-
-    // Payload reseau, envoye via MessagingService (connexion sortante,
-    // point-a-point) et/ou diffuse via MessagingServer (connexions
-    // entrantes) ci-dessous.
-    QJsonObject payload;
-    payload.insert(QStringLiteral("type"), QStringLiteral("message"));
-    payload.insert(QStringLiteral("content"), content);
-    payload.insert(QStringLiteral("messageUuid"), messageUuid);
-    payload.insert(QStringLiteral("conversationUuid"), conversationUuid);
-    payload.insert(QStringLiteral("conversationType"), conversationType);
-    payload.insert(QStringLiteral("conversationName"), conversationName);
-    payload.insert(QStringLiteral("senderUuid"), senderUuid);
-    payload.insert(QStringLiteral("participant1Uuid"), participant1Uuid);
-    payload.insert(QStringLiteral("participant2Uuid"), participant2Uuid);
-    const QString jsonMessage = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
-
-    bool deliveredToNetwork = false;
+    const OutgoingMessage outgoing = buildOutgoing(message);
 
     // Diffuse aux clients connectes a notre serveur, mais UNIQUEMENT ceux qui
     // sont participants de la conversation (issue #2 : broadcastMessage()
-    // envoyait ce message a TOUS les clients connectes).
-    if (m_messagingServer) {
-        QStringList targetUuids;
-        if (!participant1Uuid.isEmpty()) targetUuids << participant1Uuid;
-        if (!participant2Uuid.isEmpty()) targetUuids << participant2Uuid;
-
-        if (conversationType == QStringLiteral("group")) {
-            targetUuids << resolveGroupMemberUuids(conversationId);
-        }
-
-        targetUuids.removeDuplicates();
-        if (!targetUuids.isEmpty()) {
-            deliveredToNetwork = m_messagingServer->sendToUuids(jsonMessage, targetUuids) > 0;
+    // envoyait ce message a TOUS les clients connectes). Les absents le
+    // recevront par synchronisation.
+    if (storedHere) {
+        if (!outgoing.targetUuids.isEmpty()) {
+            m_messagingServer->sendToUuids(outgoing.json, outgoing.targetUuids);
         } else {
             // Repli de securite : si on n'a pas pu resoudre le moindre
             // destinataire (donnee manquante, groupe introuvable...), on
@@ -279,33 +287,225 @@ std::optional<models::Message> MessagingManager::sendMessage(qint64 conversation
             // silencieusement.
             qWarning() << "sendMessage: aucun destinataire resolu pour la conversation" << conversationId
                        << "- repli sur broadcastMessage()";
-            deliveredToNetwork = m_messagingServer->broadcastMessage(jsonMessage) > 0;
+            m_messagingServer->broadcastMessage(outgoing.json);
         }
     }
 
     // Envoyer aussi via la connexion sortante si ce poste est client.
     if (m_messagingService && m_messagingService->isConnected()) {
-        if (!m_messagingService->sendMessage(jsonMessage)) {
+        if (!m_messagingService->sendMessage(outgoing.json)) {
             qWarning() << "Failed to send message via network";
-            // On ne retourne pas d'erreur ici car le message est deja en base
-            emit messageSendFailed(conversationId,
-                QStringLiteral("Message enregistre localement mais l'envoi reseau a echoue"));
-        } else {
-            deliveredToNetwork = true;
+            emit messageQueued(conversationId);
         }
-    } else if (!deliveredToNetwork) {
-        // CORRECTIF : jusqu'ici totalement silencieux (pas meme un qWarning)
-        // -- le message etait persiste en base locale mais ne partait jamais
-        // sur le reseau si aucune connexion n'etait etablie (ex. serveur
-        // injoignable), sans que rien ne le signale nulle part, ni logs ni UI.
-        qWarning() << "sendMessage: MessagingService non connecte, message conserve localement uniquement"
-                   << conversationId;
-        emit messageSendFailed(conversationId,
-            QStringLiteral("Pas de connexion reseau : message enregistre localement uniquement"));
+    } else if (!storedHere) {
+        // Pas un echec : le message est garde et partira a la reconnexion.
+        qWarning() << "sendMessage: pas de connexion au serveur, message mis en attente" << conversationId;
+        emit messageQueued(conversationId);
     }
 
     emit messageSent(message);
     return message;
+}
+
+int MessagingManager::resendPendingMessages(qint64 senderId)
+{
+    if (!m_dbManager || !m_messagingService || !m_messagingService->isConnected())
+        return 0;
+
+    int resent = 0;
+    for (const models::Message &message : m_repository.pendingMessages(senderId)) {
+        if (!m_messagingService->sendMessage(buildOutgoing(message).json))
+            break; // connexion perdue : le reste attendra la prochaine
+        ++resent;
+    }
+    if (resent > 0)
+        qInfo() << "File d'envoi :" << resent << "message(s) renvoye(s) au serveur";
+    return resent;
+}
+
+bool MessagingManager::markMessageSent(const QString &messageUuid)
+{
+    if (!m_repository.setDeliveryStatus(messageUuid, models::Message::Sent))
+        return false;
+    emit messageDeliveryChanged(messageUuid, models::Message::Sent);
+    return true;
+}
+
+QVector<models::Message> MessagingManager::takeOverPendingMessages()
+{
+    const QVector<models::Message> pending = m_repository.allPendingMessages();
+    for (const models::Message &message : pending)
+        markMessageSent(message.uuid());
+    return pending;
+}
+
+void MessagingManager::notifySynchronized(int mergedEntryCount)
+{
+    emit messagesSynchronized(mergedEntryCount);
+}
+
+QString MessagingManager::localUserUuid() const
+{
+    if (!m_dbManager || !m_userManager)
+        return QString();
+    const auto id = m_userManager->currentUserId();
+    if (!id.has_value())
+        return QString();
+    database::UserRepository users(m_dbManager->database());
+    const auto user = users.findById(static_cast<int>(*id));
+    return user.has_value() ? user->uuid() : QString();
+}
+
+QStringList MessagingManager::recipientUuids(const models::Message &message) const
+{
+    return buildOutgoing(message).targetUuids;
+}
+
+QJsonObject MessagingManager::messageUpdatePayload(const models::Message &message) const
+{
+    // Memes champs d'adressage que le message (visibilite dans le journal,
+    // destinataires du relais), plus le changement.
+    QJsonObject payload = buildOutgoing(message).payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("message_update"));
+    payload.remove(QStringLiteral("timestamp"));
+    if (message.isDeleted()) {
+        payload.insert(QStringLiteral("action"), QStringLiteral("delete"));
+        payload.insert(QStringLiteral("content"), QString());
+        payload.insert(QStringLiteral("deletedAt"), message.deletedAt().toUTC().toString(Qt::ISODate));
+    } else {
+        payload.insert(QStringLiteral("action"), QStringLiteral("edit"));
+        payload.insert(QStringLiteral("editedAt"), message.editedAt().toUTC().toString(Qt::ISODate));
+    }
+    return payload;
+}
+
+namespace {
+bool isAuthorOf(const std::optional<models::Message> &message, qint64 requesterId)
+{
+    return message.has_value() && message->senderId() == requesterId && !message->isDeleted();
+}
+} // namespace
+
+bool MessagingManager::editMessage(const QString &messageUuid, const QString &newContent, qint64 requesterId)
+{
+    const QString content = newContent.trimmed();
+    const auto message = m_repository.findByUuid(messageUuid);
+    if (!isAuthorOf(message, requesterId) || content.isEmpty()) {
+        m_lastError = MessagingManagerError::InvalidContent;
+        m_lastErrorString = QStringLiteral("Seul l'auteur peut modifier ce message");
+        return false;
+    }
+    if (content == message->content())
+        return true;
+    if (!m_repository.updateContent(messageUuid, content, QDateTime::currentDateTimeUtc()))
+        return false;
+    const auto updated = m_repository.findByUuid(messageUuid);
+    // Encore en attente (jamais parti) : le renvoi portera le nouveau texte.
+    if (!updated->isPending())
+        emit messageChangeOutgoing(messageUpdatePayload(*updated));
+    emit messageUpdated(*updated);
+    return true;
+}
+
+bool MessagingManager::deleteMessage(const QString &messageUuid, qint64 requesterId)
+{
+    const auto message = m_repository.findByUuid(messageUuid);
+    if (!isAuthorOf(message, requesterId)) {
+        m_lastError = MessagingManagerError::InvalidContent;
+        m_lastErrorString = QStringLiteral("Seul l'auteur peut supprimer ce message");
+        return false;
+    }
+    // Jamais parti : personne d'autre ne l'a, il est simplement retire.
+    if (message->isPending()) {
+        if (!m_repository.removePending(messageUuid))
+            return false;
+        emit messageRemoved(*message);
+        return true;
+    }
+    // Adressage releve avant l'effacement du texte.
+    if (!m_repository.markDeleted(messageUuid, QDateTime::currentDateTimeUtc()))
+        return false;
+    const auto updated = m_repository.findByUuid(messageUuid);
+    emit messageChangeOutgoing(messageUpdatePayload(*updated));
+    emit messageUpdated(*updated);
+    return true;
+}
+
+void MessagingManager::notifyActionRefused(const QString &reason)
+{
+    emit actionRefused(reason);
+}
+bool MessagingManager::receiveMessageUpdate(const QJsonObject &payload)
+{
+    const QString messageUuid = payload.value(QStringLiteral("messageUuid")).toString();
+    const auto message = m_repository.findByUuid(messageUuid);
+    if (!message || !m_dbManager)
+        return false;
+    // Seul l'auteur du message peut le modifier.
+    database::UserRepository users(m_dbManager->database());
+    const auto sender = users.findById(static_cast<int>(message->senderId()));
+    if (!sender || sender->uuid() != payload.value(QStringLiteral("senderUuid")).toString())
+        return false;
+
+    bool changed = false;
+    if (payload.value(QStringLiteral("action")).toString() == QStringLiteral("delete")) {
+        changed = m_repository.markDeleted(messageUuid, QDateTime::fromString(
+            payload.value(QStringLiteral("deletedAt")).toString(), Qt::ISODate));
+    } else {
+        changed = m_repository.updateContent(messageUuid, payload.value(QStringLiteral("content")).toString(),
+                                             QDateTime::fromString(payload.value(QStringLiteral("editedAt")).toString(), Qt::ISODate));
+    }
+    if (changed) {
+        if (const auto updated = m_repository.findByUuid(messageUuid))
+            emit messageUpdated(*updated);
+    }
+    return changed;
+}
+
+void MessagingManager::recordDeliveredFor(qint64 userId)
+{
+    if (!m_dbManager)
+        return;
+    database::UserRepository users(m_dbManager->database());
+    const auto user = users.findById(static_cast<int>(userId));
+    if (!user || user->uuid().isEmpty())
+        return;
+    bool any = false;
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    for (const QString &uuid : m_repository.undeliveredMessageUuids(userId))
+        any = m_repository.upsertReceipt({uuid, user->uuid(), now, {}}, true) || any;
+    if (any)
+        emit receiptsPending();
+}
+
+QVector<database::MessageReceipt> MessagingManager::pendingReceipts() const
+{
+    return m_repository.pendingReceipts();
+}
+
+void MessagingManager::clearPendingReceipt(const QString &messageUuid, const QString &userUuid)
+{
+    m_repository.clearPendingReceipt(messageUuid, userUuid);
+}
+
+void MessagingManager::applyReceipts(const QVector<database::MessageReceipt> &receipts)
+{
+    QStringList touched;
+    for (const database::MessageReceipt &receipt : receipts) {
+        if (receipt.userUuid == QStringLiteral("*"))
+            continue;
+        if (m_repository.upsertReceipt(receipt, false) && !touched.contains(receipt.messageUuid))
+            touched << receipt.messageUuid;
+    }
+    refreshDeliveryStatuses(touched);
+}
+
+void MessagingManager::refreshDeliveryStatuses(const QStringList &messageUuids)
+{
+    for (const QString &uuid : messageUuids) {
+        if (const auto status = m_repository.refreshDeliveryStatus(uuid))
+            emit messageDeliveryChanged(uuid, *status);
+    }
 }
 
 std::optional<models::Message> MessagingManager::receiveMessage(const QString &jsonPayload)
@@ -464,8 +664,16 @@ std::optional<models::Message> MessagingManager::receiveMessage(const QString &j
 
     // Persiste le message recu du reseau (pas de renvoi reseau, contrairement
     // a sendMessage : on ne fait qu'ecrire en base et notifier l'UI).
+    // Heure d'envoi transmise par l'emetteur (UTC) ; heure de reception a
+    // defaut (ancien emetteur). Une heure trop en avance sur la notre est
+    // ramenee a maintenant : elle placerait le message apres tous les suivants.
+    const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+    QDateTime sentAt = QDateTime::fromString(obj.value(QStringLiteral("timestamp")).toString(), Qt::ISODate);
+    if (!sentAt.isValid() || sentAt > nowUtc.addSecs(300))
+        sentAt = nowUtc;
+
     models::Message draft(0, conversationId, senderId, content);
-    draft.setTimestamp(QDateTime::currentDateTime());
+    draft.setTimestamp(sentAt);
     draft.setRead(false);
     draft.setUuid(messageUuid);
 
@@ -478,6 +686,13 @@ std::optional<models::Message> MessagingManager::receiveMessage(const QString &j
 
     const models::Message message = *inserted;
 
+    // Accuse "remis" pour l'utilisateur de ce poste (transmis a l'expediteur).
+    const QString localUuid = localUserUuid();
+    if (!localUuid.isEmpty() && localUuid != senderUuid
+        && m_repository.upsertReceipt({messageUuid, localUuid, QDateTime::currentDateTimeUtc(), {}}, true)) {
+        emit receiptsPending();
+    }
+
     emit messageReceived(message);
     return message;
 }
@@ -488,7 +703,14 @@ QVector<models::Message> MessagingManager::getMessages(qint64 conversationId, in
         return {};
     }
 
-    return m_repository.getMessages(conversationId, limit);
+    // isRead : lu par l'utilisateur connecte (accuses), pas par un autre
+    // utilisateur du meme poste.
+    qint64 viewer = 0;
+    if (m_userManager) {
+        if (const auto id = m_userManager->currentUserId(); id.has_value())
+            viewer = *id;
+    }
+    return m_repository.getMessages(conversationId, limit, 0, viewer);
 }
 
 std::optional<models::Message> MessagingManager::getLastMessage(qint64 conversationId)
@@ -542,7 +764,12 @@ bool MessagingManager::markConversationAsRead(qint64 conversationId, qint64 user
         return false;
     }
 
-    return m_repository.markConversationAsRead(conversationId, userId);
+    const bool hadUnread = !m_repository.unreadMessageUuids(conversationId, userId).isEmpty();
+    const bool ok = m_repository.markConversationAsRead(conversationId, userId);
+    // Accuses "lu" a transmettre aux expediteurs.
+    if (ok && hadUnread)
+        emit receiptsPending();
+    return ok;
 }
 
 int MessagingManager::getUnreadCount(qint64 conversationId, qint64 userId)

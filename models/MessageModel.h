@@ -26,7 +26,11 @@ public:
         SenderIdRole,
         ContentRole,
         TimestampRole,
-        IsReadRole
+        IsReadRole,
+        DeliveryStatusRole, ///< pending / sent / delivered / read (cf. Message)
+        UuidRole,
+        EditedRole,        ///< modifie par son auteur
+        DeletedRole        ///< supprime par son auteur (texte efface)
     };
 
     explicit MessageModel(QObject *parent = nullptr);
@@ -44,6 +48,15 @@ public:
 
     /// Définit tous les messages du modèle.
     void setMessages(const QVector<Message> &messages);
+
+    /// Met a jour l'etat d'envoi d'un message affiche (accuse du serveur).
+    void setDeliveryStatus(const QString &messageUuid, const QString &status);
+
+    /// Remplace un message affiche (modifie ou supprime par son auteur).
+    void updateMessage(const Message &message);
+
+    /// Retire un message affiche (message en attente supprime avant de partir).
+    void removeMessage(const QString &messageUuid);
 
     /// Vide le modèle.
     void clear();

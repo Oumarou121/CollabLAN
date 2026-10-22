@@ -8,12 +8,16 @@
 #include <QSet>
 #include <QHash>
 #include <QDateTime>
+#include <QJsonObject>
 #include <memory>
+
+class QTimer;
 
 namespace database {
 class DatabaseManager;
 class ServerElectionRepository;
 class SyncLogRepository;
+struct MessageReceipt;
 }
 
 namespace core {
@@ -310,6 +314,58 @@ private:
                             const QString &operation, const QString &payloadJson,
                             bool bypassRoleCheck = false);
     void appendMessageSyncLog(const models::Message &message);
+    /// Serveur : journalise un message relaye (payload reseau "message"), meme
+    /// si son utilisateur n'y participe pas, pour le servir aux destinataires
+    /// absents. Vrai si le message est (deja) dans le journal.
+    bool journalRelayedMessage(const QJsonObject &message);
+    /// Serveur : journalise une modification/suppression de message ("message_update").
+    void journalMessageChange(const QJsonObject &payload);
+    /// Destinataires d'un payload adresse comme un message (participants, membres).
+    QStringList messageTargets(const QJsonObject &payload) const;
+    /// Serveur : l'utilisateur identifie sur la connexion courante est le
+    /// proprietaire de ce groupe.
+    bool isGroupOwnerOnConnection(const QString &groupUuid) const;
+    /// Serveur : enregistre et journalise des accuses (etat cumule), puis les
+    /// transmet aux expediteurs connectes.
+    /// Cles "message|utilisateur" : traites (y compris sans effet), et inconnus
+    /// (message absent du journal de ce serveur).
+    struct ReceiptOutcome {
+        QStringList handled;
+        QStringList unknown;
+    };
+    ReceiptOutcome processReceiptsAsServer(const QVector<database::MessageReceipt> &receipts);
+    /// Accuses envoyes sur la connexion courante, en attente de "receipts_ack".
+    QSet<QString> m_receiptsInFlight;
+    /// Transmet les accuses produits ici (au serveur, ou traites ici si ce
+    /// poste est le serveur). Regroupes par scheduleReceiptFlush.
+    void flushReceipts();
+    void scheduleReceiptFlush();
+    bool m_receiptFlushScheduled = false;
+    /// Serveur : purge du journal (SyncLogRepository::compact), au passage en
+    /// role serveur puis toutes les 6 heures.
+    void compactJournal();
+    QTimer *m_compactTimer = nullptr;
+
+    /// Changement fait ici (modification/suppression de message, groupes) :
+    /// serveur -> journalise et relaye aux destinataires ; client -> mis en file
+    /// d'attente (table Outbox) puis transmis, jusqu'a l'accuse "change_ack".
+    /// requiresOfficial : n'est transmis qu'au serveur officiel.
+    void sendOrQueueChange(const QJsonObject &payload, const QStringList &targets, bool requiresOfficial);
+    /// Transmet les changements en attente de l'utilisateur connecte.
+    void flushOutbox();
+    /// Ce poste devient serveur : ses changements en attente sont journalises ici.
+    void takeOverOutbox();
+    void journalLocalChange(const QJsonObject &payload);
+    /// Serveur : accuse (accepte ou refuse) d'un changement venu de la file d'un client.
+    void ackChange(const QJsonObject &payload, bool accepted, const QString &reason = QString());
+    /// Changements envoyes sur la connexion courante, en attente d'accuse.
+    QSet<QString> m_outboxInFlight;
+
+    /// Journal d'audit : marque un evenement a transmettre au serveur officiel
+    /// (AuditLogs.pending_send), puis transmet ceux en attente jusqu'a "audit_ack".
+    void queueAuditEvent(const QString &eventUuid, bool remote);
+    void flushAuditEvents();
+    QSet<QString> m_auditInFlight;
     void appendGroupSyncLog(const models::Group &group, const QString &operation);
     void appendUserSyncLog(const models::User &user, const QString &operation,
                            bool bypassRoleCheck = false);
@@ -363,6 +419,25 @@ private:
     /// connexion a un utilisateur, et sendToUuids() ne peut donc jamais
     /// cibler ce poste (issue #2 : diffusion non ciblee).
     void sendIdentifyIfReady();
+
+    /// Apres chaque identification aupres du serveur (connexion, reconnexion,
+    /// login) : synchronisation incrementale du journal pour l'utilisateur
+    /// courant, puis renvoi de sa file d'envoi.
+    void requestClientSync();
+
+    /// Vrai si ce qui arrive maintenant par la connexion sortante ne vient pas du
+    /// serveur officiel : ce poste est le serveur officiel (il ne se connecte en
+    /// sortie qu'a un serveur de secours, pour la reconciliation), ou il est
+    /// client d'un serveur de secours.
+    bool userChangesFromUntrustedSource() const;
+
+    /// Reconnexion automatique au serveur actif apres une coupure (delai
+    /// croissant de 1 s a 30 s). Sans elle, un client restait deconnecte tant
+    /// que le serveur actif ne changeait pas.
+    void scheduleReconnect();
+    void attemptReconnect();
+    QTimer *m_reconnectTimer = nullptr;
+    int m_reconnectDelayMs = 1000;
 
     /// CORRECTIF (bande passante) : ElectionService::reconciliationRequired
     /// est emis a CHAQUE heartbeat recu du TempServer tant que ce poste

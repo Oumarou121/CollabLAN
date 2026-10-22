@@ -41,6 +41,8 @@
 #include "database/Repositories/ServerElectionRepository.h"
 #include "database/Repositories/SyncLogRepository.h"
 #include "database/Repositories/GroupRepository.h"
+#include "database/Repositories/MessageRepository.h"
+#include "database/Repositories/OutboxRepository.h"
 #include "models/ServerElection.h"
 #include "models/Message.h"
 #include "models/Group.h"
@@ -259,11 +261,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 m_pendingUnresolvedMessages.append(jsonPayload);
                 qWarning() << "Message en attente de reconciliation pour sender inconnu"
                            << senderUuid << "- declenchement d'une reconciliation";
-                if (m_syncService && m_messagingService && m_messagingService->isConnected()
-                    && m_electionService) {
-                    m_syncService->requestReconciliation(m_electionService->epoch(),
-                                                          m_electionService->localMachineUuid());
-                }
+                requestClientSync();
             });
 
     // Handshake d'identification (issue #2) : des que la connexion sortante
@@ -278,6 +276,58 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
         connect(m_userManager, &core::UserManager::loginSucceeded,
                 this, &Application::sendIdentifyIfReady);
     }
+
+    // Reconnexion automatique (cf. scheduleReconnect) : toute coupure de la
+    // connexion vers le serveur relance des essais tant que ce poste est client.
+    m_reconnectTimer = new QTimer(this);
+    m_reconnectTimer->setSingleShot(true);
+    connect(m_reconnectTimer, &QTimer::timeout, this, &Application::attemptReconnect);
+    connect(m_messagingService, &network::MessagingService::disconnected,
+            this, &Application::scheduleReconnect);
+    connect(m_messagingService, &network::MessagingService::connected, this, [this]() {
+        m_reconnectTimer->stop();
+        m_reconnectDelayMs = 1000;
+    });
+    // Connexion perdue : les changements envoyes sans accuse seront renvoyes.
+    connect(m_messagingService, &network::MessagingService::disconnected,
+            this, [this]() { m_outboxInFlight.clear(); m_receiptsInFlight.clear(); m_auditInFlight.clear(); });
+
+    // Changements de comptes venus d'une source autre que le serveur officiel
+    // (reconciliation d'un serveur de secours par le serveur officiel, ou
+    // client d'un serveur de secours) : filtres (SyncLogRepository::restrictUserEntry).
+    m_syncService->setUntrustedSourceCheck([this]() { return userChangesFromUntrustedSource(); });
+
+    // Changements faits ici (modification/suppression de message, groupes) :
+    // relayes et journalises si ce poste est le serveur, sinon envoyes au
+    // serveur via la file d'attente (cf. sendOrQueueChange).
+    connect(m_messagingManager, &core::MessagingManager::messageChangeOutgoing,
+            this, [this](const QJsonObject &payload) { sendOrQueueChange(payload, messageTargets(payload), false); });
+    connect(m_groupManager, &core::GroupManager::groupChangeOutgoing,
+            this, [this](const QJsonObject &payload, const QStringList &targets) {
+                // Un serveur de secours ne connait pas forcement le groupe : seule la
+                // creation lui est confiee, le reste attend le serveur officiel.
+                const bool creation = payload.value(QStringLiteral("type")).toString() == QStringLiteral("group_created");
+                sendOrQueueChange(payload, targets, !creation);
+            });
+    // Accuses "remis"/"lu" produits ici : transmis (regroupes).
+    connect(m_messagingManager, &core::MessagingManager::receiptsPending,
+            this, &Application::scheduleReceiptFlush);
+    // Renommage / suppression de groupe : journalises (servis aux membres absents).
+    connect(m_groupManager, &core::GroupManager::groupRenamed,
+            this, [this](qint64, const QString &groupUuid, const QString &name) {
+                appendSyncLogEntry(QStringLiteral("Groups"), groupUuid, models::SyncOperation::Update,
+                                   QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("name"), name}})
+                                                         .toJson(QJsonDocument::Compact)));
+            });
+    connect(m_groupManager, &core::GroupManager::groupDeleted,
+            this, [this](const QString &groupUuid, qint64) {
+                appendSyncLogEntry(QStringLiteral("Groups"), groupUuid, models::SyncOperation::Delete,
+                                   QStringLiteral("{}"));
+            });
+    // Purge du journal tant que ce poste est serveur (cf. compactJournal).
+    m_compactTimer = new QTimer(this);
+    m_compactTimer->setInterval(6 * 60 * 60 * 1000);
+    connect(m_compactTimer, &QTimer::timeout, this, &Application::compactJournal);
 
     connect(m_groupManager, &core::GroupManager::groupCreated,
             this, [this](const models::Group &group) {
@@ -428,6 +478,27 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 if (newRole == models::ServerRole::Server && m_permissionManager)
                     m_permissionManager->clearServerAuthorizedFingerprints();
 
+                // Ce poste devient serveur : ses messages en attente (ecrits
+                // sans connexion) sont desormais conserves ici, dans le journal.
+                if ((newRole == models::ServerRole::Server || newRole == models::ServerRole::TempServer)
+                    && m_messagingManager) {
+                    for (const models::Message &message : m_messagingManager->takeOverPendingMessages())
+                        appendMessageSyncLog(message);
+                    // Ses accuses en attente sont traites ici desormais.
+                    scheduleReceiptFlush();
+                    // Et ses changements en attente : journalises ici.
+                    takeOverOutbox();
+                }
+                // Purge du journal : au passage en serveur, puis periodiquement.
+                if (m_compactTimer) {
+                    if (newRole == models::ServerRole::Server || newRole == models::ServerRole::TempServer) {
+                        QTimer::singleShot(0, this, &Application::compactJournal);
+                        m_compactTimer->start();
+                    } else {
+                        m_compactTimer->stop();
+                    }
+                }
+
                 // Pilotage de MessagingServer selon le rôle courant
                 // (HYBRID_SERVER_FAILOVER.md section 9, étape 3) :
                 //   - Server / TempServer -> on écoute réellement sur ce poste.
@@ -501,25 +572,15 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                     // Deja connecte au bon serveur : c'est desormais le cas
                     // normal, puisque la connexion TLS est precisement ce qui
                     // vient de valider l'annonce (serverEndpointPending). Le
-                    // signal connected() est donc deja passe : on demande ici
-                    // la reconciliation que la connexion differee aurait
-                    // declenchee, sinon ce poste resterait sans journal.
-                    m_syncService->requestReconciliation(0, m_electionService->localMachineUuid());
+                    // signal connected() est donc deja passe (synchronisation
+                    // deja demandee a l'identification) : simple filet, la
+                    // demande incrementale ne renvoie que ce qui manque.
+                    requestClientSync();
                     return;
                 }
 
-                const QString localUuid = m_electionService->localMachineUuid();
-                connect(m_messagingService, &network::MessagingService::connected,
-                        m_syncService, [this, localUuid]() {
-                            // fromEpoch=0 : demande l'integralite du journal
-                            // (Users/Groups/Messages), pas seulement ce qui a
-                            // ete rate depuis une panne -- c'est la premiere
-                            // fois que ce poste voit ce serveur.
-                            // SyncLogRepository::applyBatch() est idempotent :
-                            // rejouable sans risque a chaque (re)connexion.
-                            m_syncService->requestReconciliation(0, localUuid);
-                        }, Qt::SingleShotConnection);
-
+                // La synchronisation suit l'identification, a la connexion
+                // (cf. sendIdentifyIfReady / requestClientSync).
                 m_messagingService->disconnectFromHost();
                 if (!m_messagingService->connectToHost(activeAddress, activePort)) {
                     qWarning() << "Connexion initiale au serveur actif impossible :" << activeAddress << activePort;
@@ -756,6 +817,18 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 qDebug() << "Reconciliation terminee, entrees fusionnees:" << mergedEntryCount;
                 m_lastReconciledEpoch = m_electionService->epoch();
                 m_reconciliationInFlight = false;
+                // Messages ajoutes sans passer par receiveMessage : l'interface recharge.
+                if (mergedEntryCount > 0 && m_messagingManager)
+                    m_messagingManager->notifySynchronized(mergedEntryCount);
+                // Accuses appliques par la synchronisation : etat d'envoi de nos
+                // messages ; et accuses "remis" pour ce qui vient d'arriver.
+                if (m_messagingManager && m_syncLogRepository) {
+                    m_messagingManager->refreshDeliveryStatuses(m_syncLogRepository->takeTouchedReceiptMessages());
+                    if (m_userManager && m_electionService->role() == models::ServerRole::Client) {
+                        if (const auto id = m_userManager->currentUserId(); id.has_value())
+                            m_messagingManager->recordDeliveredFor(static_cast<qint64>(*id));
+                    }
+                }
 
                 // Rejeu des messages temps reel mis en attente le temps que
                 // leur expediteur soit resolu (cf. connexion sur
@@ -912,6 +985,10 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_transferService, &network::TransferService::transferFailed,
             this, [this, folderTransferKeys](const QString &transferKey, const QString &reason) {
                 if (folderTransferKeys->remove(transferKey)) {
+                    // Fichier de dossier partage : la synchronisation le redemande
+                    // (il restait sinon bloque "en cours" jusqu'au redemarrage).
+                    if (m_folderSyncService)
+                        m_folderSyncService->onTransferFailed(transferKey, reason);
                     return;
                 }
                 m_notificationManager->onTransferFailed(transferKey, reason);
@@ -951,22 +1028,15 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     // consulte/exporte depuis AdminView.qml (issue #65).
     m_auditManager = new core::AuditManager(m_databaseManager.get(), this);
 
+    // Journal d'audit centralise sur le serveur officiel : tout evenement
+    // enregistre ailleurs (client, ou serveur de secours, y compris ceux que ses
+    // clients lui ont rapportes) reste en attente jusqu'a la confirmation du
+    // serveur officiel ("audit_ack"). Auparavant, un evenement enregistre hors
+    // connexion n'y parvenait jamais.
     connect(m_auditManager, &core::AuditManager::eventRecorded,
-            this, [this](const models::AuditLog &entry) {
-                if (!m_messagingService || !m_messagingService->isConnected()) return;
-                QJsonObject payload;
-                payload[QStringLiteral("type")] = QStringLiteral("audit_event");
-                payload[QStringLiteral("event_uuid")] = entry.eventUuid();
-                payload[QStringLiteral("machine_uuid")] = m_discoveryService->localId();
-                payload[QStringLiteral("event_type")] = entry.eventType();
-                payload[QStringLiteral("description")] = entry.description();
-                payload[QStringLiteral("actor_label")] = entry.actorLabel();
-                payload[QStringLiteral("created_at")] = entry.timestamp().toUTC().toString(Qt::ISODateWithMs);
-                if (const auto uid = m_userManager->currentUserId(); uid.has_value())
-                    payload[QStringLiteral("user_uuid")] = userUuidForId(*uid);
-                m_messagingService->sendMessage(
-                    QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
-            });
+            this, [this](const models::AuditLog &entry) { queueAuditEvent(entry.eventUuid(), false); });
+    connect(m_auditManager, &core::AuditManager::remoteEventRecorded,
+            this, [this](const models::AuditLog &entry) { queueAuditEvent(entry.eventUuid(), true); });
 
     connect(m_messagingManager, &core::MessagingManager::messageSent,
             m_auditManager, [this](const models::Message &message) {
@@ -1406,7 +1476,9 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_sharedFolderManager, &core::SharedFolderManager::accessGranted,
             m_folderSyncService, &core::sync::FolderSyncService::announceAccessGranted);
     connect(m_sharedFolderManager, &core::SharedFolderManager::accessRevoked,
-            m_folderSyncService, &core::sync::FolderSyncService::announceAccessRevoked);
+            m_folderSyncService, [this](qint64 folderId, qint64 userId) {
+                m_folderSyncService->announceAccessRevoked(folderId, userId);
+            });
 
     // Notifier quand un dossier partagé est créé
     //
@@ -1488,10 +1560,11 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 }
             });
 
-    // Release 7 : à chaque connexion au serveur, envoie un folder_hello
-    // pour récupérer les opérations manquées (rattrapage hors-ligne).
-    connect(m_messagingService, &network::MessagingService::connected,
-            m_folderSyncService, &core::sync::FolderSyncService::onConnectedToServer);
+    // Release 7 : le folder_hello (rattrapage des dossiers partages manques)
+    // part apres chaque identification d'un utilisateur, avec la synchro des
+    // messages (cf. requestClientSync). Envoye a la connexion, il partait le
+    // plus souvent avant le login : le serveur le refusait (aucun utilisateur
+    // identifie) et rien ne le renvoyait ensuite.
 
     // CORRECTIF (bug "l'émetteur ne transmet pas ses changements au
     // destinataire") : dès qu'un canal de diffusion (re)devient disponible
@@ -1940,7 +2013,149 @@ void Application::sendIdentifyIfReady()
     payload.insert(QStringLiteral("machine_uuid"), m_discoveryService ? m_discoveryService->localId() : QString());
     payload.insert(QStringLiteral("certificate_fingerprint"),
                   m_securityService ? m_securityService->identity().fingerprintSha256 : QString());
-    m_messagingService->sendMessage(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+    if (!m_messagingService->sendMessage(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact))))
+        return;
+    // Meme connexion, donc traite par le serveur APRES l'identification : la
+    // synchronisation est filtree pour cet utilisateur, et le renvoi de la file
+    // d'envoi est accepte (l'expediteur est verifie).
+    requestClientSync();
+}
+
+void Application::requestClientSync()
+{
+    if (!m_messagingService || !m_messagingService->isConnected() || !m_syncService || !m_electionService)
+        return;
+    // Le serveur officiel qui se connecte a un serveur de secours pour la
+    // reconciliation suit son propre chemin (requestReconciliation).
+    if (m_electionService->role() != models::ServerRole::Client)
+        return;
+
+    QString userUuid;
+    std::optional<int> localUserId;
+    if (m_userManager) {
+        localUserId = m_userManager->currentUserId();
+        if (localUserId.has_value())
+            userUuid = userUuidForId(static_cast<qint64>(*localUserId));
+    }
+    QString serverKey = m_messagingService->peerFingerprint();
+    if (serverKey.isEmpty())
+        serverKey = QStringLiteral("%1:%2").arg(m_messagingService->peerAddress().toString())
+                        .arg(m_messagingService->peerPort());
+    m_syncService->requestIncrementalSync(serverKey, userUuid, m_electionService->localMachineUuid());
+
+    if (localUserId.has_value() && m_messagingManager)
+        m_messagingManager->resendPendingMessages(static_cast<qint64>(*localUserId));
+    // Rattrapage des dossiers partages (filtre par utilisateur cote serveur).
+    if (localUserId.has_value() && m_folderSyncService) {
+        m_folderSyncService->onConnectedToServer();
+        // Changements locaux de dossiers en attente (faits hors connexion, ou
+        // sans utilisateur connecte) : diffuses maintenant.
+        m_folderSyncService->retryPendingBroadcasts();
+    }
+    // Accuses en attente (produits hors connexion) : transmis maintenant.
+    flushReceipts();
+    // Puis les changements en attente (apres les messages qu'ils concernent).
+    flushOutbox();
+    flushAuditEvents();
+}
+
+void Application::queueAuditEvent(const QString &eventUuid, bool remote)
+{
+    if (eventUuid.isEmpty() || !m_databaseManager || !m_electionService)
+        return;
+    const models::ServerRole role = m_electionService->role();
+    // Serveur officiel : son journal fait foi. Serveur de secours : ses propres
+    // evenements et ceux de ses clients iront au serveur officiel. Client : ses
+    // propres evenements (ceux rapportes par le serveur en viennent deja).
+    if (role == models::ServerRole::Server || (remote && role != models::ServerRole::TempServer))
+        return;
+    QSqlQuery mark(m_databaseManager->database());
+    mark.prepare(QStringLiteral("UPDATE AuditLogs SET pending_send = 1 WHERE event_uuid = :uuid"));
+    mark.bindValue(QStringLiteral(":uuid"), eventUuid);
+    mark.exec();
+    flushAuditEvents();
+}
+
+void Application::flushAuditEvents()
+{
+    if (!m_messagingService || !m_messagingService->isConnected() || !m_databaseManager || !m_electionService
+        || m_electionService->role() != models::ServerRole::Client || m_electionService->activeServerTemporary())
+        return;
+    QSqlQuery pending(m_databaseManager->database());
+    if (!pending.exec(QStringLiteral(
+            "SELECT event_uuid, event_type, description, actor_label, created_at, user_id FROM AuditLogs "
+            "WHERE pending_send = 1 AND event_uuid IS NOT NULL ORDER BY id ASC LIMIT 500")))
+        return;
+    while (pending.next()) {
+        const QString eventUuid = pending.value(0).toString();
+        if (m_auditInFlight.contains(eventUuid))
+            continue;
+        QJsonObject payload;
+        payload[QStringLiteral("type")] = QStringLiteral("audit_event");
+        payload[QStringLiteral("event_uuid")] = eventUuid;
+        payload[QStringLiteral("machine_uuid")] = m_discoveryService ? m_discoveryService->localId() : QString();
+        payload[QStringLiteral("event_type")] = pending.value(1).toString();
+        payload[QStringLiteral("description")] = pending.value(2).toString();
+        payload[QStringLiteral("actor_label")] = pending.value(3).toString();
+        payload[QStringLiteral("created_at")] = QDateTime::fromString(pending.value(4).toString(), Qt::ISODateWithMs)
+                                                    .toUTC().toString(Qt::ISODateWithMs);
+        if (!pending.value(5).isNull())
+            payload[QStringLiteral("user_uuid")] = userUuidForId(pending.value(5).toLongLong());
+        if (!m_messagingService->sendMessage(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact))))
+            break;
+        m_auditInFlight.insert(eventUuid);
+    }
+}
+
+bool Application::userChangesFromUntrustedSource() const
+{
+    if (!m_electionService)
+        return false;
+    const models::ServerRole role = m_electionService->role();
+    return role == models::ServerRole::Server
+        || (role == models::ServerRole::Client && m_electionService->activeServerTemporary());
+}
+
+void Application::scheduleReconnect()
+{
+    if (!m_reconnectTimer || !m_electionService
+        || m_electionService->role() != models::ServerRole::Client)
+        return;
+    if (!m_reconnectTimer->isActive())
+        m_reconnectTimer->start(m_reconnectDelayMs);
+}
+
+void Application::attemptReconnect()
+{
+    if (!m_messagingService || !m_electionService
+        || m_electionService->role() != models::ServerRole::Client)
+        return;
+    // Une autre partie du code a deja (re)ouvert la connexion : changement de
+    // serveur, validation d'une annonce...
+    if (m_messagingService->isConnected() || m_messagingService->isConnecting())
+        return;
+
+    QHostAddress address = m_electionService->activeServerAddress();
+    quint16 port = m_electionService->activeServerPort();
+    const QString activeUuid = m_electionService->activeServerUuid();
+    const bool knownServer = !address.isNull() && port != 0 && !activeUuid.isEmpty()
+        && activeUuid != m_electionService->localMachineUuid();
+
+    // Serveur en attente d'approbation de l'utilisateur : inutile d'insister,
+    // la connexion serait refusee de la meme facon.
+    if (knownServer && !m_pendingServerFingerprint.isEmpty()
+        && m_pendingServerAddress == address.toString() && m_pendingServerPort == port)
+        return;
+
+    qInfo() << "Reconnexion automatique au serveur" << (knownServer ? address.toString() : QStringLiteral("precedent"));
+    if (knownServer)
+        m_messagingService->connectToHost(address, port);
+    else
+        m_messagingService->retryLastHost();
+    // Prochain essai plus espace, jusqu'a la connexion (qui arrete le minuteur
+    // et remet le delai a 1 s).
+    m_reconnectDelayMs = qMin(m_reconnectDelayMs * 2, 30000);
+    m_reconnectTimer->start(m_reconnectDelayMs);
 }
 
 void Application::handleIncomingPayload(const QString &message, bool relay)
@@ -1990,7 +2205,28 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         entry.setActorLabel(origin);
         entry.setTimestamp(QDateTime::fromString(object.value(QStringLiteral("created_at")).toString(), Qt::ISODateWithMs));
         if (m_auditManager) m_auditManager->recordRemoteEvent(entry);
-        if (relay && m_messagingServer) m_messagingServer->broadcastMessage(message);
+        if (relay && m_messagingServer) {
+            // Confirmation a l'auteur (il ne le renverra plus), y compris pour un
+            // evenement deja connu (renvoi apres une confirmation perdue).
+            const QJsonObject ack{{QStringLiteral("type"), QStringLiteral("audit_ack")},
+                                  {QStringLiteral("event_uuid"), entry.eventUuid()}};
+            m_messagingServer->replyToCurrentSender(QString::fromUtf8(QJsonDocument(ack).toJson(QJsonDocument::Compact)));
+            m_messagingServer->broadcastMessage(message);
+        }
+        return;
+    }
+
+    // Confirmation d'un evenement d'audit par le serveur (type "audit_ack").
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("audit_ack")) {
+        if (relay || !m_databaseManager || !m_electionService || m_electionService->activeServerTemporary())
+            return; // seul le serveur officiel libere un evenement
+        const QString eventUuid = document.object().value(QStringLiteral("event_uuid")).toString();
+        m_auditInFlight.remove(eventUuid);
+        QSqlQuery done(m_databaseManager->database());
+        done.prepare(QStringLiteral("UPDATE AuditLogs SET pending_send = 0 WHERE event_uuid = :uuid"));
+        done.bindValue(QStringLiteral(":uuid"), eventUuid);
+        done.exec();
         return;
     }
 
@@ -2112,6 +2348,12 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
             payload.remove(QStringLiteral("operation"));
             payload.remove(QStringLiteral("originMachineId"));
             entry.setPayloadJson(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+            if (userChangesFromUntrustedSource()) {
+                const auto restricted = database::SyncLogRepository::restrictUserEntry(entry);
+                if (!restricted)
+                    continue;
+                entry = *restricted;
+            }
 
             if (m_syncLogRepository && m_syncLogRepository->applyUserEntry(entry)) {
                 anyApplied = true;
@@ -2166,6 +2408,13 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         payload.remove(QStringLiteral("operation"));
         payload.remove(QStringLiteral("originMachineId"));
         entry.setPayloadJson(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+        // Recu d'un serveur de secours : pas de changement de role ni de mot de passe.
+        if (!relay && userChangesFromUntrustedSource()) {
+            const auto restricted = database::SyncLogRepository::restrictUserEntry(entry);
+            if (!restricted)
+                return;
+            entry = *restricted;
+        }
 
         const bool applied = m_syncLogRepository && m_syncLogRepository->applyUserEntry(entry);
         if (applied && m_userManager) {
@@ -2223,9 +2472,20 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         const QString type = document.object().value(QStringLiteral("type")).toString();
 
         if (type == QStringLiteral("group_created")) {
+            // Cote serveur : le proprietaire annonce est l'utilisateur de la connexion.
+            if (relay && m_messagingServer
+                && document.object().value(QStringLiteral("ownerUuid")).toString() != m_messagingServer->currentSenderUserUuid()) {
+                qWarning() << "handleIncomingPayload: group_created refuse (proprietaire different)";
+                if (m_auditManager)
+                    m_auditManager->logRefusedAttempt(QStringLiteral("Groupe créé au nom d'un autre utilisateur (refusé)"));
+                ackChange(document.object(), false, QStringLiteral("Groupe refusé par le serveur"));
+                return;
+            }
             if (const auto group = m_groupManager->receiveGroupCreated(message); group.has_value()) {
                 m_notificationManager->onGroupCreated(*group);
             }
+            if (relay)
+                ackChange(document.object(), true);
             // Relais aux SEULS membres annonces (le payload contient deja leurs uuid), plutot
             // qu'a tous les clients connectes : la composition d'un groupe ne regarde que ses
             // membres (meme principe que pour les messages, cf. plus bas).
@@ -2247,6 +2507,17 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
 
         if (type == QStringLiteral("member_added") || type == QStringLiteral("member_removed")) {
             const QString groupUuid = document.object().value(QStringLiteral("groupUuid")).toString();
+            // Cote serveur : seul le proprietaire du groupe change ses membres
+            // (n'importe quel poste pouvait jusqu'ici ajouter quelqu'un a un groupe).
+            if (relay && m_messagingServer && !isGroupOwnerOnConnection(groupUuid)) {
+                qWarning() << "handleIncomingPayload:" << type << "refuse (pas le proprietaire)";
+                if (m_auditManager)
+                    m_auditManager->logRefusedAttempt(QStringLiteral("Membres d'un groupe changés par un non-propriétaire (refusé)"));
+                ackChange(document.object(), false, m_groupManager->ownerUuidOf(groupUuid).isEmpty()
+                              ? QStringLiteral("Ce groupe n'existe plus")
+                              : QStringLiteral("Seul le propriétaire du groupe peut en changer les membres"));
+                return;
+            }
             // Destinataires releves AVANT application : pour un retrait, la personne concernee
             // doit encore recevoir l'annonce qui la retire du groupe.
             QStringList targets = groupMemberUuids(groupUuid);
@@ -2261,6 +2532,8 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
                 qWarning() << "handleIncomingPayload:" << type << "non applique :"
                            << m_groupManager->lastErrorString();
             }
+            if (relay)
+                ackChange(document.object(), true);
             if (relay && m_messagingServer) {
                 if (!targets.isEmpty()) m_messagingServer->sendToUuids(message, targets);
                 else m_messagingServer->broadcastMessage(message);
@@ -2269,9 +2542,169 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         }
     }
 
+    // Modification / suppression d'un message par son auteur (type
+    // "message_update", cf. MessagingManager::editMessage). Cote serveur :
+    // l'auteur annonce doit etre l'utilisateur de la connexion ET l'auteur
+    // reel du message (journal), puis le changement est journalise (servi aux
+    // absents) et relaye aux destinataires.
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("message_update")) {
+        const QJsonObject object = document.object();
+        const QString senderUuid = object.value(QStringLiteral("senderUuid")).toString();
+        if (relay && m_messagingServer) {
+            const auto original = m_syncLogRepository
+                ? m_syncLogRepository->messageInsertPayload(object.value(QStringLiteral("messageUuid")).toString())
+                : std::nullopt;
+            if (senderUuid != m_messagingServer->currentSenderUserUuid()
+                || (original && original->value(QStringLiteral("senderUuid")).toString() != senderUuid)) {
+                qWarning() << "handleIncomingPayload: message_update refuse (auteur different)";
+                if (m_auditManager)
+                    m_auditManager->logRefusedAttempt(QStringLiteral("Modification du message d'un autre utilisateur (refusée)"));
+                ackChange(object, false, QStringLiteral("Seul l'auteur peut modifier ce message"));
+                return;
+            }
+        }
+        m_messagingManager->receiveMessageUpdate(object);
+        if (relay && m_messagingServer) {
+            journalMessageChange(object);
+            m_messagingServer->sendToUuids(message, messageTargets(object));
+            ackChange(object, true);
+        }
+        return;
+    }
+
+    // Accuses "remis"/"lu" (type "message_receipts"). Cote serveur : chaque
+    // accuse doit venir de son lecteur (utilisateur de la connexion), destinataire
+    // du message ; il est journalise puis transmis a l'expediteur. Cote client :
+    // applique (etat d'envoi de nos messages, ou notre etat "lu" ailleurs).
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("message_receipts")) {
+        QVector<database::MessageReceipt> receipts;
+        for (const QJsonValue &value : document.object().value(QStringLiteral("receipts")).toArray()) {
+            const QJsonObject r = value.toObject();
+            receipts.append({r.value(QStringLiteral("messageUuid")).toString(),
+                             r.value(QStringLiteral("userUuid")).toString(),
+                             QDateTime::fromString(r.value(QStringLiteral("deliveredAt")).toString(), Qt::ISODate),
+                             QDateTime::fromString(r.value(QStringLiteral("readAt")).toString(), Qt::ISODate)});
+        }
+        if (relay && m_messagingServer) {
+            const QString reader = m_messagingServer->currentSenderUserUuid();
+            QVector<database::MessageReceipt> fromReader;
+            for (const auto &receipt : receipts) {
+                if (!reader.isEmpty() && receipt.userUuid == reader)
+                    fromReader.append(receipt);
+            }
+            if (fromReader.size() != receipts.size())
+                qWarning() << "handleIncomingPayload: accuses d'un autre utilisateur ignores";
+            const ReceiptOutcome outcome = processReceiptsAsServer(fromReader);
+            const QJsonObject ack{{QStringLiteral("type"), QStringLiteral("receipts_ack")},
+                                  {QStringLiteral("handled"), QJsonArray::fromStringList(outcome.handled)},
+                                  {QStringLiteral("unknown"), QJsonArray::fromStringList(outcome.unknown)}};
+            m_messagingServer->replyToCurrentSender(QString::fromUtf8(QJsonDocument(ack).toJson(QJsonDocument::Compact)));
+        } else if (m_messagingManager) {
+            m_messagingManager->applyReceipts(receipts);
+        }
+        return;
+    }
+
+    // Confirmation des accuses transmis (type "receipts_ack") : traites ->
+    // retires de l'attente ; inconnus du serveur -> retires seulement si c'est le
+    // serveur officiel (un serveur de secours ne connait pas tous les messages).
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("receipts_ack")) {
+        if (relay || !m_messagingManager || !m_electionService)
+            return;
+        const QJsonObject object = document.object();
+        const bool official = !m_electionService->activeServerTemporary();
+        const auto settle = [this](const QJsonValue &value, bool clear) {
+            const QString key = value.toString();
+            m_receiptsInFlight.remove(key);
+            const qsizetype bar = key.indexOf(QLatin1Char('|'));
+            if (clear && bar > 0)
+                m_messagingManager->clearPendingReceipt(key.left(bar), key.mid(bar + 1));
+        };
+        for (const QJsonValue &value : object.value(QStringLiteral("handled")).toArray())
+            settle(value, true);
+        for (const QJsonValue &value : object.value(QStringLiteral("unknown")).toArray())
+            settle(value, official);
+        return;
+    }
+
+    // Renommage / suppression d'un groupe (types "group_renamed" /
+    // "group_deleted"). Cote serveur : reserve au proprietaire du groupe.
+    if (document.isObject()
+        && (document.object().value(QStringLiteral("type")).toString() == QStringLiteral("group_renamed")
+            || document.object().value(QStringLiteral("type")).toString() == QStringLiteral("group_deleted"))) {
+        const QJsonObject object = document.object();
+        const QString groupUuid = object.value(QStringLiteral("groupUuid")).toString();
+        const bool deletion = object.value(QStringLiteral("type")).toString() == QStringLiteral("group_deleted");
+        if (relay && m_messagingServer && !isGroupOwnerOnConnection(groupUuid)) {
+            qWarning() << "handleIncomingPayload: changement de groupe refuse (pas le proprietaire)";
+            if (m_auditManager)
+                m_auditManager->logRefusedAttempt(QStringLiteral("Changement d'un groupe par un non-propriétaire (refusé)"));
+            ackChange(object, false, m_groupManager->ownerUuidOf(groupUuid).isEmpty()
+                          ? QStringLiteral("Ce groupe n'existe plus")
+                          : QStringLiteral("Seul le propriétaire peut renommer ou supprimer le groupe"));
+            return;
+        }
+        // Destinataires releves avant application (la suppression efface les membres).
+        const QStringList targets = groupMemberUuids(groupUuid);
+        const bool applied = deletion ? m_groupManager->receiveGroupDeleted(message)
+                                      : m_groupManager->receiveGroupRenamed(message);
+        if (!applied)
+            qWarning() << "handleIncomingPayload: changement de groupe non applique" << groupUuid;
+        if (relay && m_messagingServer && !targets.isEmpty())
+            m_messagingServer->sendToUuids(message, targets);
+        if (relay)
+            ackChange(object, true);
+        return;
+    }
+
+    // Accuse d'un changement transmis depuis la file d'attente (type
+    // "change_ack", cf. sendOrQueueChange) : il en sort ; refuse, l'utilisateur
+    // en est averti.
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("change_ack")) {
+        if (relay || !m_databaseManager)
+            return;
+        const QJsonObject object = document.object();
+        const QString changeId = object.value(QStringLiteral("changeId")).toString();
+        database::OutboxRepository(m_databaseManager->database()).remove(changeId);
+        m_outboxInFlight.remove(changeId);
+        if (!object.value(QStringLiteral("accepted")).toBool(true) && m_messagingManager)
+            m_messagingManager->notifyActionRefused(object.value(QStringLiteral("reason")).toString());
+        return;
+    }
+
+    // Accuse de reception du serveur (type "message_ack", cf. plus bas) : le
+    // message est conserve par le serveur, il sort de la file d'envoi. Recu
+    // uniquement sur la connexion vers le serveur.
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("message_ack")) {
+        if (!relay && m_messagingManager)
+            m_messagingManager->markMessageSent(document.object().value(QStringLiteral("messageUuid")).toString());
+        return;
+    }
+
     // MessagingManager ne traite que les messages de type "message".
     // SyncService traite de son cote les messages de type "sync_request",
     // "sync_ack", "sync_batch" (connecte separement sur les memes signaux).
+    if (!document.isObject()
+        || document.object().value(QStringLiteral("type")).toString() != QStringLiteral("message"))
+        return;
+    const QJsonObject messageObject = document.object();
+
+    // Cote serveur : l'expediteur annonce doit etre l'utilisateur identifie sur
+    // cette connexion. Le message est desormais conserve et servi plus tard aux
+    // destinataires : sans ce controle, un poste pouvait ecrire au nom d'un autre.
+    if (relay && m_messagingServer
+        && messageObject.value(QStringLiteral("senderUuid")).toString() != m_messagingServer->currentSenderUserUuid()) {
+        qWarning() << "handleIncomingPayload: message refuse (expediteur different de l'utilisateur de la connexion)";
+        if (m_auditManager)
+            m_auditManager->logRefusedAttempt(QStringLiteral("Message envoyé au nom d'un autre utilisateur (refusé)"));
+        return;
+    }
+
     // CORRECTIF : verifier si l'utilisateur local est reellement participant
     // de la conversation avant de persister et notifier localement. Sans
     // cette verification, le serveur (relay=true) persiste TOUS les messages
@@ -2285,6 +2718,12 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
     }
 
     if (relay && m_messagingServer) {
+        // Le serveur conserve TOUS les messages dans son journal (sans les
+        // afficher a son utilisateur s'il n'est pas concerne) : un destinataire
+        // absent les recoit a son retour par synchronisation. Auparavant, seul
+        // un destinataire connecte a cet instant les recevait.
+        const bool stored = journalRelayedMessage(messageObject);
+
         // Rediffuse UNIQUEMENT aux destinataires reels (participants de
         // la conversation ou membres du groupe), et non plus a tous les
         // clients connectes (issue #2 : un tiers non concerne recevait
@@ -2303,7 +2742,310 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
             qWarning() << "handleIncomingPayload: aucun destinataire resolu, repli sur broadcastMessage()";
             m_messagingServer->broadcastMessage(message);
         }
+
+        // Accuse de reception a l'expediteur une fois le message conserve : il
+        // sort de sa file d'envoi (sinon il le renverra a sa reconnexion, sans
+        // doublon chez les destinataires qui dedupliquent par uuid).
+        if (stored) {
+            const QJsonObject ack{{QStringLiteral("type"), QStringLiteral("message_ack")},
+                                  {QStringLiteral("messageUuid"), messageObject.value(QStringLiteral("messageUuid"))}};
+            m_messagingServer->replyToCurrentSender(QString::fromUtf8(QJsonDocument(ack).toJson(QJsonDocument::Compact)));
+        }
     }
+}
+
+QStringList Application::messageTargets(const QJsonObject &payload) const
+{
+    // Memes destinataires qu'un message de cette conversation.
+    QJsonObject asMessage = payload;
+    asMessage.insert(QStringLiteral("type"), QStringLiteral("message"));
+    return m_messagingManager
+        ? m_messagingManager->resolveTargetUuidsFromPayload(
+              QString::fromUtf8(QJsonDocument(asMessage).toJson(QJsonDocument::Compact)))
+        : QStringList();
+}
+
+void Application::journalMessageChange(const QJsonObject &payload)
+{
+    const QString messageUuid = payload.value(QStringLiteral("messageUuid")).toString();
+    if (messageUuid.isEmpty() || !shouldWriteSyncLog())
+        return;
+    // Memes champs d'adressage que la creation (visibilite), plus le changement.
+    QJsonObject entry;
+    for (const QString &key : {QStringLiteral("senderUuid"), QStringLiteral("conversationUuid"),
+                               QStringLiteral("participant1Uuid"), QStringLiteral("participant2Uuid"),
+                               QStringLiteral("conversationType"), QStringLiteral("conversationName"),
+                               QStringLiteral("content"), QStringLiteral("editedAt"), QStringLiteral("deletedAt")}) {
+        if (payload.contains(key))
+            entry.insert(key, payload.value(key));
+    }
+    const bool deletion = payload.value(QStringLiteral("action")).toString() == QStringLiteral("delete");
+    appendSyncLogEntry(QStringLiteral("Messages"), messageUuid,
+                       deletion ? models::SyncOperation::Delete : models::SyncOperation::Update,
+                       QString::fromUtf8(QJsonDocument(entry).toJson(QJsonDocument::Compact)));
+}
+
+bool Application::isGroupOwnerOnConnection(const QString &groupUuid) const
+{
+    if (!m_messagingServer || !m_groupManager)
+        return false;
+    const QString owner = m_groupManager->ownerUuidOf(groupUuid);
+    return !owner.isEmpty() && owner == m_messagingServer->currentSenderUserUuid();
+}
+
+Application::ReceiptOutcome Application::processReceiptsAsServer(const QVector<database::MessageReceipt> &receipts)
+{
+    ReceiptOutcome outcome;
+    if (receipts.isEmpty() || !m_messagingManager || !m_syncLogRepository)
+        return outcome;
+    database::MessageRepository messages(m_databaseManager.get());
+    QHash<QString, QJsonArray> toSenders;
+    for (const database::MessageReceipt &receipt : receipts) {
+        const QString key = QStringLiteral("%1|%2").arg(receipt.messageUuid, receipt.userUuid);
+        // Message inconnu ici (typiquement : serveur de secours, message envoye
+        // avant la panne) : l'accuse reste en attente chez son auteur, qui le
+        // renverra au serveur officiel.
+        const auto info = m_syncLogRepository->messageInsertPayload(receipt.messageUuid);
+        if (!info) {
+            outcome.unknown << key;
+            continue;
+        }
+        outcome.handled << key;
+        // Le lecteur doit etre destinataire du message (sinon : ignore, sans retour).
+        const QString senderUuid = info->value(QStringLiteral("senderUuid")).toString();
+        if (senderUuid == receipt.userUuid || !messageTargets(*info).contains(receipt.userUuid))
+            continue;
+        if (!messages.upsertReceipt(receipt, false))
+            continue; // rien de neuf
+        const auto merged = messages.receipt(receipt.messageUuid, receipt.userUuid);
+        if (!merged)
+            continue;
+        // Etat complet (cumulatif) : seule la derniere entree compte (cf. compact()).
+        QJsonObject entry;
+        entry.insert(QStringLiteral("messageUuid"), receipt.messageUuid);
+        entry.insert(QStringLiteral("userUuid"), receipt.userUuid);
+        entry.insert(QStringLiteral("senderUuid"), senderUuid);
+        entry.insert(QStringLiteral("conversationUuid"), info->value(QStringLiteral("conversationUuid")));
+        entry.insert(QStringLiteral("deliveredAt"), merged->deliveredAt.isValid()
+                         ? merged->deliveredAt.toUTC().toString(Qt::ISODate) : QString());
+        entry.insert(QStringLiteral("readAt"), merged->readAt.isValid()
+                         ? merged->readAt.toUTC().toString(Qt::ISODate) : QString());
+        appendSyncLogEntry(QStringLiteral("MessageReceipts"),
+                           QStringLiteral("%1|%2").arg(receipt.messageUuid, receipt.userUuid),
+                           models::SyncOperation::Update,
+                           QString::fromUtf8(QJsonDocument(entry).toJson(QJsonDocument::Compact)));
+        toSenders[senderUuid].append(entry);
+        // Expediteur sur ce poste : son etat d'envoi se met a jour aussitot.
+        m_messagingManager->refreshDeliveryStatuses({receipt.messageUuid});
+    }
+    // Transmis aux expediteurs connectes (les autres l'auront a leur synchronisation).
+    if (m_messagingServer && m_messagingServer->isRunning()) {
+        for (auto it = toSenders.constBegin(); it != toSenders.constEnd(); ++it) {
+            const QJsonObject payload{{QStringLiteral("type"), QStringLiteral("message_receipts")},
+                                      {QStringLiteral("receipts"), it.value()}};
+            m_messagingServer->sendToUuids(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)),
+                                           {it.key()});
+        }
+    }
+    return outcome;
+}
+
+void Application::scheduleReceiptFlush()
+{
+    // Regroupe les accuses produits d'un coup (ouverture d'une conversation,
+    // synchronisation) en un seul envoi.
+    if (m_receiptFlushScheduled)
+        return;
+    m_receiptFlushScheduled = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_receiptFlushScheduled = false;
+        flushReceipts();
+    });
+}
+
+void Application::flushReceipts()
+{
+    if (!m_messagingManager)
+        return;
+    const QVector<database::MessageReceipt> pending = m_messagingManager->pendingReceipts();
+    if (pending.isEmpty())
+        return;
+
+    // Ce poste est le serveur : traites ici directement.
+    if (shouldWriteSyncLog()) {
+        const ReceiptOutcome outcome = processReceiptsAsServer(pending);
+        // Inconnus d'un serveur de secours : gardes pour le serveur officiel.
+        const bool official = m_electionService && m_electionService->role() == models::ServerRole::Server;
+        for (const auto &receipt : pending) {
+            const QString key = QStringLiteral("%1|%2").arg(receipt.messageUuid, receipt.userUuid);
+            if (outcome.handled.contains(key) || (official && outcome.unknown.contains(key)))
+                m_messagingManager->clearPendingReceipt(receipt.messageUuid, receipt.userUuid);
+        }
+        return;
+    }
+    if (!m_messagingService || !m_messagingService->isConnected() || !m_userManager)
+        return;
+
+    // Le serveur n'accepte que les accuses de l'utilisateur identifie sur la
+    // connexion : ceux d'un autre utilisateur de ce poste attendent son login.
+    const auto currentId = m_userManager->currentUserId();
+    const QString current = currentId ? userUuidForId(static_cast<qint64>(*currentId)) : QString();
+    QJsonArray array;
+    QStringList sent;
+    for (const auto &receipt : pending) {
+        const QString key = QStringLiteral("%1|%2").arg(receipt.messageUuid, receipt.userUuid);
+        if (receipt.userUuid != current || m_receiptsInFlight.contains(key))
+            continue;
+        array.append(QJsonObject{
+            {QStringLiteral("messageUuid"), receipt.messageUuid},
+            {QStringLiteral("userUuid"), receipt.userUuid},
+            {QStringLiteral("deliveredAt"), receipt.deliveredAt.isValid() ? receipt.deliveredAt.toUTC().toString(Qt::ISODate) : QString()},
+            {QStringLiteral("readAt"), receipt.readAt.isValid() ? receipt.readAt.toUTC().toString(Qt::ISODate) : QString()}});
+        sent << key;
+    }
+    if (array.isEmpty())
+        return;
+    const QJsonObject payload{{QStringLiteral("type"), QStringLiteral("message_receipts")},
+                              {QStringLiteral("receipts"), array}};
+    // Gardes en attente jusqu'a la confirmation du serveur ("receipts_ack") :
+    // un accuse envoye sur une connexion qui tombe, ou a un serveur de secours
+    // qui ne connait pas le message, etait sinon perdu.
+    if (m_messagingService->sendMessage(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)))) {
+        for (const QString &key : std::as_const(sent))
+            m_receiptsInFlight.insert(key);
+    }
+}
+
+void Application::compactJournal()
+{
+    if (!m_syncLogRepository || !shouldWriteSyncLog())
+        return;
+    const int removed = m_syncLogRepository->compact();
+    if (removed > 0)
+        qInfo() << "Journal de synchronisation purge :" << removed << "entree(s) inutile(s) retiree(s)";
+}
+
+void Application::sendOrQueueChange(const QJsonObject &payload, const QStringList &targets, bool requiresOfficial)
+{
+    // Ce poste est le serveur : journalise (les changements de groupe le sont
+    // par les signaux de GroupManager) et relaye aux destinataires connectes ;
+    // les absents l'auront a leur synchronisation.
+    if (shouldWriteSyncLog()) {
+        if (payload.value(QStringLiteral("type")).toString() == QStringLiteral("message_update"))
+            journalMessageChange(payload);
+        if (m_messagingServer && m_messagingServer->isRunning() && !targets.isEmpty())
+            m_messagingServer->sendToUuids(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)), targets);
+        return;
+    }
+    if (!m_databaseManager || !m_userManager)
+        return;
+    const auto currentId = m_userManager->currentUserId();
+    const QString author = currentId ? userUuidForId(static_cast<qint64>(*currentId)) : QString();
+    database::OutboxRepository outbox(m_databaseManager->database());
+    if (outbox.enqueue(author, payload, requiresOfficial).isEmpty())
+        return;
+    flushOutbox();
+}
+
+void Application::flushOutbox()
+{
+    if (!m_messagingService || !m_messagingService->isConnected() || !m_electionService
+        || m_electionService->role() != models::ServerRole::Client || !m_userManager || !m_databaseManager)
+        return;
+    // Le serveur n'accepte un changement que de son auteur, identifie sur la
+    // connexion : ceux d'un autre utilisateur du poste attendent son login.
+    const auto currentId = m_userManager->currentUserId();
+    const QString current = currentId ? userUuidForId(static_cast<qint64>(*currentId)) : QString();
+    if (current.isEmpty())
+        return;
+    const bool official = !m_electionService->activeServerTemporary();
+    database::OutboxRepository outbox(m_databaseManager->database());
+    for (const database::OutboxChange &change : outbox.pending(current)) {
+        if (m_outboxInFlight.contains(change.changeId) || (change.requiresOfficial && !official))
+            continue;
+        if (!m_messagingService->sendMessage(QString::fromUtf8(QJsonDocument(change.payload).toJson(QJsonDocument::Compact))))
+            break; // connexion perdue : la suite attendra la reconnexion
+        m_outboxInFlight.insert(change.changeId);
+    }
+}
+
+void Application::takeOverOutbox()
+{
+    if (!m_databaseManager)
+        return;
+    database::OutboxRepository outbox(m_databaseManager->database());
+    for (const database::OutboxChange &change : outbox.pending()) {
+        journalLocalChange(change.payload);
+        outbox.remove(change.changeId);
+    }
+    m_outboxInFlight.clear();
+}
+
+void Application::journalLocalChange(const QJsonObject &payload)
+{
+    const QString type = payload.value(QStringLiteral("type")).toString();
+    const QString groupUuid = payload.value(QStringLiteral("groupUuid")).toString();
+    if (type == QStringLiteral("message_update")) {
+        journalMessageChange(payload);
+    } else if (type == QStringLiteral("group_created")) {
+        database::GroupRepository groups(m_databaseManager.get());
+        if (const auto group = groups.findByUuid(groupUuid))
+            appendGroupSyncLog(*group, models::SyncOperation::Insert);
+    } else if (type == QStringLiteral("member_added") || type == QStringLiteral("member_removed")) {
+        const QString memberUuid = payload.value(QStringLiteral("memberUuid")).toString();
+        const QJsonObject entry{{QStringLiteral("groupUuid"), groupUuid}, {QStringLiteral("memberUuid"), memberUuid}};
+        appendSyncLogEntry(QStringLiteral("GroupMembers"), QStringLiteral("%1:%2").arg(groupUuid, memberUuid),
+                           type == QStringLiteral("member_added") ? models::SyncOperation::Insert : models::SyncOperation::Delete,
+                           QString::fromUtf8(QJsonDocument(entry).toJson(QJsonDocument::Compact)));
+    } else if (type == QStringLiteral("group_renamed")) {
+        appendSyncLogEntry(QStringLiteral("Groups"), groupUuid, models::SyncOperation::Update,
+                           QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("name"), payload.value(QStringLiteral("name"))}})
+                                                 .toJson(QJsonDocument::Compact)));
+    } else if (type == QStringLiteral("group_deleted")) {
+        appendSyncLogEntry(QStringLiteral("Groups"), groupUuid, models::SyncOperation::Delete, QStringLiteral("{}"));
+    }
+}
+
+void Application::ackChange(const QJsonObject &payload, bool accepted, const QString &reason)
+{
+    const QString changeId = payload.value(QStringLiteral("changeId")).toString();
+    if (changeId.isEmpty() || !m_messagingServer)
+        return;
+    const QJsonObject ack{{QStringLiteral("type"), QStringLiteral("change_ack")},
+                          {QStringLiteral("changeId"), changeId},
+                          {QStringLiteral("accepted"), accepted},
+                          {QStringLiteral("reason"), reason}};
+    m_messagingServer->replyToCurrentSender(QString::fromUtf8(QJsonDocument(ack).toJson(QJsonDocument::Compact)));
+}
+
+bool Application::journalRelayedMessage(const QJsonObject &message)
+{
+    const QString messageUuid = message.value(QStringLiteral("messageUuid")).toString();
+    if (messageUuid.isEmpty() || !m_syncLogRepository || !shouldWriteSyncLog())
+        return false;
+    // Deja journalise (renvoi par la file d'envoi, ou message de l'utilisateur
+    // de ce poste deja journalise par appendMessageSyncLog).
+    if (m_syncLogRepository->hasRecord(QStringLiteral("Messages"), messageUuid))
+        return true;
+
+    // Memes champs que appendMessageSyncLog (cf. SyncLogRepository::applyMessageEntry).
+    QJsonObject payload;
+    for (const QString &key : {QStringLiteral("senderUuid"), QStringLiteral("conversationUuid"),
+                               QStringLiteral("participant1Uuid"), QStringLiteral("participant2Uuid"),
+                               QStringLiteral("content"), QStringLiteral("conversationType"),
+                               QStringLiteral("conversationName")}) {
+        payload.insert(key, message.value(key));
+    }
+    payload.insert(QStringLiteral("isRead"), false);
+    QDateTime sentAt = QDateTime::fromString(message.value(QStringLiteral("timestamp")).toString(), Qt::ISODate);
+    const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+    if (!sentAt.isValid() || sentAt > nowUtc.addSecs(300))
+        sentAt = nowUtc;
+    payload.insert(QStringLiteral("timestamp"), sentAt.toUTC().toString(Qt::ISODate));
+
+    appendSyncLogEntry(QStringLiteral("Messages"), messageUuid, models::SyncOperation::Insert,
+                       QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+    return m_syncLogRepository->hasRecord(QStringLiteral("Messages"), messageUuid);
 }
 
 QStringList Application::groupMemberUuids(const QString &groupUuid) const
@@ -2339,6 +3081,11 @@ void Application::appendMessageSyncLog(const models::Message &message)
         qWarning() << "appendMessageSyncLog : message sans uuid, entree ignoree" << message.id();
         return;
     }
+    if (!shouldWriteSyncLog())
+        return;
+    // Deja journalise (message relaye journalise a son arrivee, ou renvoye).
+    if (m_syncLogRepository && m_syncLogRepository->hasRecord(QStringLiteral("Messages"), message.uuid()))
+        return;
 
     const QString senderUuid = userUuidForId(message.senderId());
     const QString conversationUuid = conversationUuidForId(message.conversationId());
@@ -2355,18 +3102,24 @@ void Application::appendMessageSyncLog(const models::Message &message)
     // reste invisible dans MessagingManager::getUserConversations().
     QString participant1Uuid;
     QString participant2Uuid;
+    QString conversationType = QStringLiteral("individual");
+    QString conversationName = QStringLiteral("Conversation");
     if (m_databaseManager) {
         QSqlQuery convQuery(m_databaseManager->database());
         convQuery.prepare(QStringLiteral(
-            "SELECT participant1_id, participant2_id FROM Conversations WHERE id = :id"));
+            "SELECT participant1_id, participant2_id, type, name FROM Conversations WHERE id = :id"));
         convQuery.bindValue(QStringLiteral(":id"), message.conversationId());
         if (convQuery.exec() && convQuery.next()) {
             participant1Uuid = userUuidForId(convQuery.value(0).toLongLong());
             participant2Uuid = userUuidForId(convQuery.value(1).toLongLong());
+            conversationType = convQuery.value(2).toString();
+            conversationName = convQuery.value(3).toString();
         }
     }
 
     QJsonObject payload;
+    payload.insert(QStringLiteral("conversationType"), conversationType);
+    payload.insert(QStringLiteral("conversationName"), conversationName);
     payload.insert(QStringLiteral("senderUuid"), senderUuid);
     payload.insert(QStringLiteral("conversationUuid"), conversationUuid);
     payload.insert(QStringLiteral("participant1Uuid"), participant1Uuid);

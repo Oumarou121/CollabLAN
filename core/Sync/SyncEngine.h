@@ -3,6 +3,9 @@
 
 #include <QObject>
 #include <QPointer>
+#include <QHash>
+#include <QSet>
+#include <QTimer>
 #include <QString>
 #include <QThread>
 #include <QVector>
@@ -185,6 +188,15 @@ private:
     QString m_machineId;
     qint64 m_localUserId = -1;
     QHash<qint64, qint64> m_ignoreWatcherUntilMs;
+    /// Reindexation demandee pendant la fenetre d'ignorance : relancee a sa fin
+    /// (auparavant abandonnee, et une modification locale faite a ce moment
+    /// n'etait jamais diffusee).
+    QHash<qint64, QTimer *> m_deferredReindex;
+    /// Indexations asynchrones en cours, et dossiers a reindexer de nouveau a
+    /// leur fin (changements survenus pendant le parcours).
+    QSet<qint64> m_indexInFlight;
+    QSet<qint64> m_indexDirty;
+    void requestReindex(qint64 folderId);
 
     // Indexation asynchrone (reindexFolderAsync()) : thread + worker
     // dedies, vivant pour toute la duree de vie de ce SyncEngine (cf.

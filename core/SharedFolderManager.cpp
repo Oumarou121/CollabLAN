@@ -321,7 +321,11 @@ std::optional<QVector<models::SharedFileChange>> SharedFolderManager::shareFolde
     // migration #018 -- independant du chemin absolu, qui peut differer
     // d'un poste a l'autre pour le "meme" dossier logique).
     QSet<QString> seenRelativePaths;
-    QDirIterator it(folder->localPath(), QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    // Liens symboliques ignores : un lien vers un fichier hors du dossier
+    // l'exposait (annonce aux membres) sans pouvoir le leur envoyer (le
+    // controle de chemin refuse les cibles hors du dossier).
+    QDirIterator it(folder->localPath(), QDir::Files | QDir::NoDotAndDotDot | QDir::NoSymLinks,
+                    QDirIterator::Subdirectories);
     while (it.hasNext()) {
         const QString absolutePath = it.next();
         const QString relativePath = rootDir.relativeFilePath(absolutePath);
@@ -400,9 +404,13 @@ std::optional<QVector<models::SharedFileChange>> SharedFolderManager::shareFolde
             continue;
         }
 
-        changes.append(models::SharedFileChange(
-            existedBefore ? models::SyncChangeType::Update : models::SyncChangeType::Create,
-            *upserted));
+        models::SharedFileChange change(
+            existedBefore ? models::SyncChangeType::Update : models::SyncChangeType::Create, *upserted);
+        // Version dont part cette modification : un destinataire qui l'a
+        // exactement avance sans conflit (cf. FolderSyncService::integrateReceivedFile).
+        if (existedBefore)
+            change.setPreviousHash(previousIt->hash());
+        changes.append(change);
     }
 
     // Fichiers connus en base mais absents du disque : suppression logique
@@ -472,7 +480,11 @@ std::optional<QVector<models::SharedFileChange>> SharedFolderManager::shareFolde
         if (m_fileRepository.markDeleted(folderId, known.relativePath())) {
             models::SharedFile tombstoned = known;
             tombstoned.setDeleted(true);
-            changes.append(models::SharedFileChange(models::SyncChangeType::Delete, tombstoned));
+            models::SharedFileChange change(models::SyncChangeType::Delete, tombstoned);
+            // Version supprimee : un destinataire qui l'a modifiee entre-temps
+            // garde sa modification (cf. FolderSyncService::applyRemoteDelete).
+            change.setPreviousHash(known.hash());
+            changes.append(change);
         }
     }
 
@@ -673,6 +685,12 @@ bool SharedFolderManager::updateFolderLocalPath(qint64 folderId, const QString &
         return false;
     }
 
+    // Meme suite que pour le chemin par defaut (provisionDefaultLocalPath) :
+    // surveillance pour un membre en ecriture, puis demande du contenu. Sans
+    // ce signal, un dossier accepte dans un emplacement choisi n'etait pas
+    // surveille : les modifications du membre ne repartaient jamais.
+    if (QDir::cleanPath(folder->localPath()) != QDir::cleanPath(localPath))
+        emit folderLocalPathProvisioned(folderId, localPath);
     return true;
 }
 

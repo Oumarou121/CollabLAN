@@ -44,7 +44,7 @@ private:
         )));
         QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS Messages")));
         // Schema aligne sur celui produit par les migrations reelles
-        // (003_update_messages_table + 011_add_sync_uuid_columns) : la
+        // (003_update_messages_table + 011_add_sync_uuid_columns + 033 + 034) : la
         // colonne uuid est requise par MessageRepository::insert(), sans
         // elle query.prepare() echoue silencieusement ("Parameter count
         // mismatch") faute de colonne correspondante.
@@ -56,7 +56,8 @@ private:
             "content TEXT NOT NULL, "
             "timestamp TEXT, "
             "is_read INTEGER DEFAULT 0, "
-            "uuid TEXT)"
+            "uuid TEXT, "
+            "delivery_status TEXT NOT NULL DEFAULT 'sent', edited_at TEXT, deleted_at TEXT)"
         )));
 
         // Creer deux utilisateurs de test
@@ -265,6 +266,183 @@ private slots:
 
         const auto messages = m_messagingManager->getMessages(conv->id());
         QCOMPARE(messages.size(), 1);
+    }
+
+    // File d'envoi : sans connexion, le message est garde "en attente" (l'UI est
+    // prevenue qu'il partira a la reconnexion) jusqu'a l'accuse du serveur.
+    void sendMessage_withoutConnection_isPendingUntilAcknowledged()
+    {
+        freshDatabase();
+        const auto users = m_userManager->allUsers();
+        const auto conv = m_messagingManager->getOrCreateConversation(users[0].id(), users[1].id());
+        QVERIFY(conv.has_value());
+
+        QSignalSpy failed(m_messagingManager.get(), &MessagingManager::messageSendFailed);
+        QSignalSpy queued(m_messagingManager.get(), &MessagingManager::messageQueued);
+        QSignalSpy delivery(m_messagingManager.get(), &MessagingManager::messageDeliveryChanged);
+        const auto msg = m_messagingManager->sendMessage(conv->id(), users[0].id(), QStringLiteral("hors ligne"));
+        QVERIFY(msg.has_value());
+        QVERIFY(msg->isPending());
+        // Pas un echec (le texte n'est pas rendu a l'UI) : mis en attente.
+        QCOMPARE(failed.count(), 0);
+        QCOMPARE(queued.count(), 1);
+        QCOMPARE(queued.first().at(0).toLongLong(), conv->id());
+        // Rien a renvoyer tant qu'il n'y a pas de connexion.
+        QCOMPARE(m_messagingManager->resendPendingMessages(users[0].id()), 0);
+
+        QVERIFY(m_messagingManager->markMessageSent(msg->uuid()));
+        QCOMPARE(delivery.count(), 1);
+        QCOMPARE(delivery.first().at(1).toString(), models::Message::Sent);
+        QVERIFY(!m_messagingManager->markMessageSent(msg->uuid())); // accuse en double : sans effet
+        QVERIFY(m_messagingManager->takeOverPendingMessages().isEmpty());
+    }
+
+    // Modification / suppression : reservees a l'auteur, et seulement si le
+    // Modification / suppression : reservees a l'auteur, possibles hors
+    // connexion (le changement est propage par l'appelant, a la reconnexion) ;
+    // un message pas encore parti change ou disparait sur place.
+    void editAndDeleteMessage_byAuthorEvenOffline()
+    {
+        freshDatabase();
+        const auto users = m_userManager->allUsers();
+        const auto conv = m_messagingManager->getOrCreateConversation(users[0].id(), users[1].id());
+        QVERIFY(conv.has_value());
+        QSignalSpy outgoing(m_messagingManager.get(), &MessagingManager::messageChangeOutgoing);
+        QSignalSpy removed(m_messagingManager.get(), &MessagingManager::messageRemoved);
+
+        // Pas encore parti : modifie sur place, rien a propager (le renvoi portera le texte).
+        const auto pending = m_messagingManager->sendMessage(conv->id(), users[0].id(), QStringLiteral("brouillon"));
+        QVERIFY(pending.has_value());
+        QVERIFY(m_messagingManager->editMessage(pending->uuid(), QStringLiteral("brouillon corrige"), users[0].id()));
+        QCOMPARE(outgoing.count(), 0);
+        QCOMPARE(m_messagingManager->resendPendingMessages(users[0].id()), 0); // hors connexion
+        // Supprime avant de partir : simplement retire.
+        QVERIFY(m_messagingManager->deleteMessage(pending->uuid(), users[0].id()));
+        QCOMPARE(removed.count(), 1);
+        QCOMPARE(outgoing.count(), 0);
+        QVERIFY(m_messagingManager->getMessages(conv->id()).isEmpty());
+
+        // Deja parti : la modification est propagee, meme sans connexion.
+        const auto msg = m_messagingManager->sendMessage(conv->id(), users[0].id(), QStringLiteral("version 1"));
+        QVERIFY(msg.has_value());
+        QVERIFY(m_messagingManager->markMessageSent(msg->uuid()));
+        QVERIFY(!m_messagingManager->editMessage(msg->uuid(), QStringLiteral("pirate"), users[1].id())); // pas l'auteur
+        QVERIFY(m_messagingManager->editMessage(msg->uuid(), QStringLiteral("version 2"), users[0].id()));
+        QCOMPARE(outgoing.count(), 1);
+        QCOMPARE(outgoing.last().at(0).toJsonObject().value(QStringLiteral("action")).toString(), QStringLiteral("edit"));
+        QCOMPARE(outgoing.last().at(0).toJsonObject().value(QStringLiteral("content")).toString(), QStringLiteral("version 2"));
+        QVERIFY(m_messagingManager->deleteMessage(msg->uuid(), users[0].id()));
+        QCOMPARE(outgoing.count(), 2);
+        QCOMPARE(outgoing.last().at(0).toJsonObject().value(QStringLiteral("action")).toString(), QStringLiteral("delete"));
+        QVERIFY(!m_messagingManager->editMessage(msg->uuid(), QStringLiteral("revient"), users[0].id())); // supprime
+    }
+
+    // Modification recue : appliquee seulement si elle vient de l'auteur ;
+    // suppression : texte efface, ligne gardee.
+    void receiveMessageUpdate_appliesOnlyFromAuthor()
+    {
+        freshDatabase();
+        const auto users = m_userManager->allUsers();
+        const auto conv = m_messagingManager->getOrCreateConversation(users[0].id(), users[1].id());
+        QVERIFY(conv.has_value());
+        const QString uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        const QString payload = QStringLiteral(
+            "{\"type\":\"message\",\"conversationUuid\":\"%1\",\"senderUuid\":\"%2\",\"messageUuid\":\"%3\",\"content\":\"original\"}")
+            .arg(conv->uuid(), users[1].uuid(), uuid);
+        QVERIFY(m_messagingManager->receiveMessage(payload).has_value());
+
+        QSignalSpy updated(m_messagingManager.get(), &MessagingManager::messageUpdated);
+        QJsonObject edit{{QStringLiteral("type"), QStringLiteral("message_update")}, {QStringLiteral("action"), QStringLiteral("edit")},
+                         {QStringLiteral("messageUuid"), uuid}, {QStringLiteral("content"), QStringLiteral("corrige")},
+                         {QStringLiteral("editedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
+                         {QStringLiteral("senderUuid"), users[0].uuid()}};
+        QVERIFY(!m_messagingManager->receiveMessageUpdate(edit)); // pas l'auteur
+        edit.insert(QStringLiteral("senderUuid"), users[1].uuid());
+        QVERIFY(m_messagingManager->receiveMessageUpdate(edit));
+        QCOMPARE(updated.count(), 1);
+        auto stored = updated.first().at(0).value<models::Message>();
+        QCOMPARE(stored.content(), QStringLiteral("corrige"));
+        QVERIFY(stored.editedAt().isValid());
+
+        QJsonObject del = edit;
+        del.insert(QStringLiteral("action"), QStringLiteral("delete"));
+        del.insert(QStringLiteral("deletedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+        QVERIFY(m_messagingManager->receiveMessageUpdate(del));
+        const auto messages = m_messagingManager->getMessages(conv->id());
+        QCOMPARE(messages.size(), 1);
+        QVERIFY(messages[0].isDeleted());
+        QVERIFY(messages[0].content().isEmpty());
+        // Une modification apres suppression ne fait pas revivre le texte.
+        QVERIFY(!m_messagingManager->receiveMessageUpdate(edit));
+    }
+
+    // Accuses : "remis" puis "lu" par le destinataire -> etat d'envoi de
+    // l'expediteur ; l'etat "lu" est propre a chaque utilisateur.
+    void receipts_drivesDeliveryStatusAndPerUserRead()
+    {
+        freshDatabase();
+        const auto users = m_userManager->allUsers();
+        const qint64 alice = users[0].id(), bob = users[1].id();
+        const auto conv = m_messagingManager->getOrCreateConversation(alice, bob);
+        QVERIFY(conv.has_value());
+        const auto msg = m_messagingManager->sendMessage(conv->id(), alice, QStringLiteral("bonjour"));
+        QVERIFY(msg.has_value());
+        QVERIFY(m_messagingManager->markMessageSent(msg->uuid()));
+
+        QSignalSpy delivery(m_messagingManager.get(), &MessagingManager::messageDeliveryChanged);
+        const QDateTime now = QDateTime::currentDateTimeUtc();
+        m_messagingManager->applyReceipts({{msg->uuid(), users[1].uuid(), now, {}}});
+        QCOMPARE(delivery.count(), 1);
+        QCOMPARE(delivery.last().at(1).toString(), models::Message::Delivered);
+        m_messagingManager->applyReceipts({{msg->uuid(), users[1].uuid(), now, now}});
+        QCOMPARE(delivery.last().at(1).toString(), models::Message::Read);
+        // Un accuse en retard ne fait pas reculer l'etat.
+        m_messagingManager->applyReceipts({{msg->uuid(), users[1].uuid(), now, {}}});
+        QCOMPARE(delivery.count(), 2);
+
+        // Etat "lu" par utilisateur : bob n'a rien lu tant qu'il n'a pas ouvert.
+        const auto reply = m_messagingManager->sendMessage(conv->id(), bob, QStringLiteral("salut"));
+        QVERIFY(reply.has_value());
+        QCOMPARE(m_messagingManager->getUnreadCount(conv->id(), alice), 1);
+        QSignalSpy pending(m_messagingManager.get(), &MessagingManager::receiptsPending);
+        QVERIFY(m_messagingManager->markConversationAsRead(conv->id(), alice));
+        QCOMPARE(pending.count(), 1); // accuse "lu" a transmettre
+        QCOMPARE(m_messagingManager->getUnreadCount(conv->id(), alice), 0);
+        const auto receipts = m_messagingManager->pendingReceipts();
+        QCOMPARE(receipts.size(), 1);
+        QCOMPARE(receipts[0].userUuid, users[0].uuid());
+        QVERIFY(receipts[0].readAt.isValid());
+        m_messagingManager->clearPendingReceipt(receipts[0].messageUuid, receipts[0].userUuid);
+        QVERIFY(m_messagingManager->pendingReceipts().isEmpty());
+    }
+
+    // Le destinataire garde l'heure d'ENVOI transmise (message remis en retard),
+    // sauf si elle est dans le futur.
+    void receiveMessage_keepsSenderTimestamp()
+    {
+        freshDatabase();
+        const auto users = m_userManager->allUsers();
+        const auto conv = m_messagingManager->getOrCreateConversation(users[0].id(), users[1].id());
+        QVERIFY(conv.has_value());
+
+        const QDateTime sentAt = QDateTime::currentDateTimeUtc().addSecs(-7200);
+        const QString payload = QStringLiteral(
+            "{\"type\":\"message\",\"conversationUuid\":\"%1\",\"senderUuid\":\"%2\",\"messageUuid\":\"%3\","
+            "\"content\":\"envoye il y a deux heures\",\"timestamp\":\"%4\"}")
+            .arg(conv->uuid(), users[1].uuid(), QUuid::createUuid().toString(QUuid::WithoutBraces),
+                 sentAt.toString(Qt::ISODate));
+        const auto msg = m_messagingManager->receiveMessage(payload);
+        QVERIFY(msg.has_value());
+        QVERIFY(qAbs(msg->timestamp().secsTo(sentAt)) <= 1);
+
+        const QString future = QStringLiteral(
+            "{\"type\":\"message\",\"conversationUuid\":\"%1\",\"senderUuid\":\"%2\",\"messageUuid\":\"%3\","
+            "\"content\":\"horloge en avance\",\"timestamp\":\"%4\"}")
+            .arg(conv->uuid(), users[1].uuid(), QUuid::createUuid().toString(QUuid::WithoutBraces),
+                 QDateTime::currentDateTimeUtc().addDays(1).toString(Qt::ISODate));
+        const auto clamped = m_messagingManager->receiveMessage(future);
+        QVERIFY(clamped.has_value());
+        QVERIFY(clamped->timestamp() <= QDateTime::currentDateTimeUtc().addSecs(1));
     }
 
     void receiveMessage_survivesApostropheInContent()

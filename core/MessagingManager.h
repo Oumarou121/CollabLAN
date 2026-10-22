@@ -1,6 +1,7 @@
 #ifndef CORE_MESSAGINGMANAGER_H
 #define CORE_MESSAGINGMANAGER_H
 
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -111,6 +112,55 @@ public:
     /// courant (ex: serveur qui relaye un message entre deux autres clients).
     bool isLocalUserParticipant(const QString &jsonPayload) const;
 
+    /// File d'envoi : renvoie au serveur, dans l'ordre, les messages de cet
+    /// expediteur qui n'ont pas encore ete accuses (poste hors connexion au
+    /// moment de l'envoi, ou accuse perdu). Le destinataire les deduplique par
+    /// uuid. A appeler une fois l'identification envoyee au serveur.
+    /// @return le nombre de messages renvoyes.
+    int resendPendingMessages(qint64 senderId);
+
+    /// Accuse de reception du serveur ("message_ack") : le message est conserve
+    /// par le serveur, il ne sera plus renvoye.
+    bool markMessageSent(const QString &messageUuid);
+
+    /// Les messages en attente de ce poste sont desormais conserves ici (ce
+    /// poste est devenu serveur) : marques envoyes. Retourne ces messages.
+    QVector<models::Message> takeOverPendingMessages();
+
+    /// A appeler apres une synchronisation qui a ajoute des messages en base sans
+    /// passer par receiveMessage : l'interface recharge conversations et fil.
+    void notifySynchronized(int mergedEntryCount);
+
+    /// Modification / suppression d'un message par son auteur (requesterId),
+    /// appliquee tout de suite ici puis propagee (messageChangeOutgoing :
+    /// l'appelant l'envoie au serveur, ou la met en file d'attente sans
+    /// connexion). Un message encore en attente (jamais parti) est modifie ou
+    /// retire localement, sans rien propager.
+    bool editMessage(const QString &messageUuid, const QString &newContent, qint64 requesterId);
+    bool deleteMessage(const QString &messageUuid, qint64 requesterId);
+    /// Applique une modification recue ("message_update"). Seul l'auteur du
+    /// message peut le modifier : sinon, sans effet.
+    bool receiveMessageUpdate(const QJsonObject &payload);
+    /// Payload "message_update" pour un message deja modifie en base.
+    QJsonObject messageUpdatePayload(const models::Message &message) const;
+    /// Destinataires d'un message (participants ou membres du groupe).
+    QStringList recipientUuids(const models::Message &message) const;
+
+    /// Accuses : "remis" pour les messages recus par cet utilisateur et pas
+    /// encore accuses (apres une synchronisation, au login).
+    void recordDeliveredFor(qint64 userId);
+    /// Accuses produits ici et pas encore transmis (cf. MessageRepository).
+    QVector<database::MessageReceipt> pendingReceipts() const;
+    void clearPendingReceipt(const QString &messageUuid, const QString &userUuid);
+    /// Accuses recus (du serveur, ou d'un client quand ce poste est le serveur) :
+    /// enregistres, puis etat d'envoi des messages concernes recalcule.
+    void applyReceipts(const QVector<database::MessageReceipt> &receipts);
+    /// Recalcule l'etat d'envoi de ces messages (accuses appliques ailleurs).
+    void refreshDeliveryStatuses(const QStringList &messageUuids);
+
+    /// Le serveur a refuse un changement transmis (raison lisible).
+    void notifyActionRefused(const QString &reason);
+
     /// Derniere erreur survenue.
     MessagingManagerError lastError() const { return m_lastError; }
     QString lastErrorString() const { return m_lastErrorString; }
@@ -139,7 +189,43 @@ signals:
     /// message une fois l'utilisateur connu.
     void unresolvedSenderMessage(const QString &senderUuid, const QString &jsonPayload);
 
+    /// Etat d'envoi d'un message change (models::Message::Pending / Sent).
+    void messageDeliveryChanged(const QString &messageUuid, const QString &status);
+
+    /// Des messages ont ete ajoutes par synchronisation (cf. notifySynchronized).
+    void messagesSynchronized(int mergedEntryCount);
+
+    /// Pas de connexion au serveur : le message est garde et partira a la
+    /// reconnexion (ce n'est pas un echec, cf. messageSendFailed).
+    void messageQueued(qint64 conversationId);
+
+    /// Un message a ete modifie ou supprime (localement ou par son auteur).
+    void messageUpdated(const models::Message &message);
+
+    /// Modification locale a propager ("message_update") : l'appelant la
+    /// journalise si ce poste est le serveur.
+    void messageChangeOutgoing(const QJsonObject &payload);
+
+    /// Des accuses ont ete produits ici et attendent d'etre transmis.
+    void receiptsPending();
+
+    /// Message en attente retire avant d'etre parti (supprime par son auteur).
+    void messageRemoved(const models::Message &message);
+
+    /// Changement refuse par le serveur (cf. notifyActionRefused).
+    void actionRefused(const QString &reason);
+
 private:
+    /// Payload reseau d'un message deja en base, et ses destinataires (uuids
+    /// des participants, ou des membres pour un groupe).
+    struct OutgoingMessage {
+        QJsonObject payload;
+        QString json;
+        QStringList targetUuids;
+    };
+    QString localUserUuid() const;
+    OutgoingMessage buildOutgoing(const models::Message &message) const;
+
     /// Uuids des membres du groupe associe a la conversation @p conversationId
     /// (liste vide si ce n'est pas une conversation de groupe, ou si le
     /// groupe/ses membres sont introuvables localement). Factorise entre

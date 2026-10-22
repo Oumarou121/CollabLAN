@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Themes
 import "../Components"
 import "../Components/icons.js" as Icons
+import "../Admin"
 
 /*
  * ChatWorkspaceView - ecran « Discussions » en Ligne claire, meme coque que
@@ -112,6 +113,13 @@ Item {
         target: root.messagingContext
         ignoreUnknownSignals: true
         function onConversationsChanged() { root.reload() }
+        // Groupe supprime (par son proprietaire, ici ou ailleurs) : on le quitte.
+        function onConversationRemoved(conversationId) {
+            if (conversationId === root.currentConversationId) {
+                root.currentConversationId = null
+                root.ficheOpen = false
+            }
+        }
         function onAvailableUsersChanged() { root.reload() }
         function onPresenceChanged() { root.reload() }
     }
@@ -436,9 +444,13 @@ Item {
                 memberCount: root.currentRow ? root.currentRow.memberCount : 0
                 messageCount: chatPanel.messageCount
                 unreadCount: root.currentRow ? root.currentRow.unreadCount : 0
+                canManageGroup: fiche.group && !!root.messagingContext && root.hasSelection
+                                && root.messagingContext.isGroupOwner(root.currentConversationId)
                 onCallRequested: root.callCurrent()
                 onSendFileRequested: root.sendFileToCurrent()
                 onExchangesRequested: root.exchangesOfCurrent()
+                onRenameRequested: { renameField.text = chatPanel.displayName; groupSheet.mode = "rename" }
+                onDeleteRequested: groupSheet.mode = "delete"
                 // Ombre a gauche quand elle passe au-dessus de la conversation.
                 Rectangle {
                     visible: !root.ficheDocked
@@ -453,6 +465,68 @@ Item {
                 }
             }
         }
+    }
+
+    SheetModal {
+        id: groupSheet
+        property string mode: ""        // "rename" | "delete"
+        open: groupSheet.mode.length > 0 && root.hasSelection
+        boldTitle: false
+        sheetWidth: 480
+        kicker: groupSheet.mode === "rename" ? qsTr("Renommer le groupe") : qsTr("Supprimer le groupe")
+        title: groupSheet.mode === "rename"
+               ? qsTr("Nouveau nom pour <b>%1</b>").arg(chatPanel.displayName.replace(/&/g, "&amp;").replace(/</g, "&lt;"))
+               : qsTr("Supprimer <b>%1</b> ?").arg(chatPanel.displayName.replace(/&/g, "&amp;").replace(/</g, "&lt;"))
+        lead: groupSheet.mode === "rename" ? qsTr("Le nouveau nom s'affiche chez tous les membres.") : ""
+        onCloseRequested: groupSheet.mode = ""
+        onOpenChanged: if (open && mode === "rename") Qt.callLater(function() { renameField.field.forceActiveFocus(); renameField.field.selectAll() })
+
+        Rectangle {
+            visible: groupSheet.mode === "delete"
+            Layout.fillWidth: true
+            implicitHeight: warnRow.implicitHeight + 24
+            color: Theme.dangerSoft
+            Rectangle { width: 2; height: parent.height; color: Theme.dangerColor }
+            RowLayout {
+                id: warnRow
+                x: 14; y: 12
+                width: parent.width - 28
+                spacing: 12
+                LineIcon { Layout.alignment: Qt.AlignTop; path: Icons.alertTriangle; size: 18; strokeWidth: 1.8; color: Theme.dangerInk }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Text { Layout.fillWidth: true; text: qsTr("Le groupe, sa discussion et tous ses messages disparaissent pour tous les membres, y compris ceux qui ne sont pas connectés."); color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13); wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: qsTr("Cette action est définitive."); color: Theme.ink2; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); wrapMode: Text.WordWrap }
+                }
+            }
+        }
+        SheetField {
+            id: renameField
+            visible: groupSheet.mode === "rename"
+            Layout.fillWidth: true
+            label: qsTr("Nom du groupe")
+            onAccepted: groupSheet.confirm()
+        }
+
+        function confirm() {
+            if (!root.messagingContext) return
+            const ok = groupSheet.mode === "rename"
+                ? root.messagingContext.renameGroup(root.currentConversationId, renameField.text)
+                : root.messagingContext.deleteGroup(root.currentConversationId)
+            if (ok) groupSheet.mode = ""
+        }
+
+        footer: [
+            AppButton { variant: "ghost"; text: qsTr("Annuler"); onClicked: groupSheet.mode = "" },
+            AppButton {
+                variant: groupSheet.mode === "delete" ? "danger" : "ink"
+                iconPath: groupSheet.mode === "delete" ? "" : Icons.check
+                enabled: groupSheet.mode === "delete" || renameField.text.trim().length > 0
+                text: groupSheet.mode === "delete" ? qsTr("Supprimer le groupe") : qsTr("Renommer")
+                onClicked: groupSheet.confirm()
+            }
+        ]
     }
 
     // ---- volet « Nouvelle discussion » -----------------------------------

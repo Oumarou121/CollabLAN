@@ -97,6 +97,21 @@ QString resolveInsideFolder(const QString &root, const QString &relativePath)
             return QString();
         if (segment == QLatin1String("."))
             continue;
+#ifdef Q_OS_WIN
+        // Noms reserves de Windows (CON, NUL, COM1...) et noms finissant par
+        // un point ou un espace : impossibles a creer correctement ici (un
+        // poste Linux peut les partager). Refuses plutot que mal ecrits.
+        static const QStringList reserved = {
+            QStringLiteral("CON"), QStringLiteral("PRN"), QStringLiteral("AUX"), QStringLiteral("NUL"),
+            QStringLiteral("COM1"), QStringLiteral("COM2"), QStringLiteral("COM3"), QStringLiteral("COM4"),
+            QStringLiteral("COM5"), QStringLiteral("COM6"), QStringLiteral("COM7"), QStringLiteral("COM8"),
+            QStringLiteral("COM9"), QStringLiteral("LPT1"), QStringLiteral("LPT2"), QStringLiteral("LPT3"),
+            QStringLiteral("LPT4"), QStringLiteral("LPT5"), QStringLiteral("LPT6"), QStringLiteral("LPT7"),
+            QStringLiteral("LPT8"), QStringLiteral("LPT9")};
+        if (segment.endsWith(QLatin1Char('.')) || segment.endsWith(QLatin1Char(' '))
+            || reserved.contains(segment.section(QLatin1Char('.'), 0, 0).trimmed(), Qt::CaseInsensitive))
+            return QString();
+#endif
         kept << segment;
     }
     if (kept.isEmpty())

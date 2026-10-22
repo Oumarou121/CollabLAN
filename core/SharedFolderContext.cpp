@@ -244,6 +244,18 @@ bool SharedFolderContext::removeFolder(qint64 folderId)
         return false;
     }
 
+    // Les autres postes en sont avertis avant le retrait : arret du partage par
+    // le proprietaire (les membres gardent leurs fichiers), ou depart d'un
+    // membre (sinon le dossier revenait chez lui au rattrapage suivant).
+    if (m_folderSyncService) {
+        if (const auto folder = m_manager->getFolder(folderId); folder.has_value()) {
+            if (folder->isLocalOrigin())
+                m_folderSyncService->stopSharing(folderId);
+            else
+                m_folderSyncService->leaveFolder(folderId);
+        }
+    }
+
     const bool ok = m_manager->removeFolder(folderId);
     if (!ok) {
         m_lastErrorString = m_manager->lastErrorString();
@@ -477,14 +489,8 @@ bool SharedFolderContext::setFolderLocalPath(qint64 folderId, const QString &loc
         return false;
     }
 
-    // Après avoir défini le localPath, déclencher un resync pour récupérer les fichiers
-    // depuis le propriétaire du dossier distant
-    if (m_folderSyncService) {
-        const auto folder = m_manager->getFolder(folderId);
-        if (folder.has_value() && !folder->isLocalOrigin()) {
-            m_folderSyncService->requestFolderResync(folder->uuid());
-        }
-    }
+    // La demande du contenu suit le signal folderLocalPathProvisioned (cf.
+    // SharedFolderManager::updateFolderLocalPath et Application).
 
     refresh();
     return true;
@@ -603,14 +609,14 @@ QVariantList SharedFolderContext::getConflicts(qint64 folderId) const
         activePaths.insert(file.relativePath());
     }
 
-    QRegularExpression conflictRegex(QStringLiteral("^(.+) \\(([^)]{6})\\)(\\.[^/\\.]+)?$"));
+    QRegularExpression conflictRegex(QStringLiteral("^(.+) \\((?:conflit ([^)]+)|([^)]{6}))\\)(\\.[^/\\.]+)?$"));
 
     for (const auto &file : files) {
         auto match = conflictRegex.match(file.relativePath());
         if (match.hasMatch()) {
             QString basePath = match.captured(1);
-            QString shortId = match.captured(2);
-            QString ext = match.captured(3);
+            QString shortId = match.captured(2).isEmpty() ? match.captured(3) : match.captured(2);
+            QString ext = match.captured(4);
             QString originalPath = basePath + ext;
 
             if (activePaths.contains(originalPath)) {
@@ -639,13 +645,13 @@ bool SharedFolderContext::hasConflicts(qint64 folderId) const
         activePaths.insert(file.relativePath());
     }
 
-    QRegularExpression conflictRegex(QStringLiteral("^(.+) \\(([^)]{6})\\)(\\.[^/\\.]+)?$"));
+    QRegularExpression conflictRegex(QStringLiteral("^(.+) \\((?:conflit ([^)]+)|([^)]{6}))\\)(\\.[^/\\.]+)?$"));
 
     for (const auto &file : files) {
         auto match = conflictRegex.match(file.relativePath());
         if (match.hasMatch()) {
             QString basePath = match.captured(1);
-            QString ext = match.captured(3);
+            QString ext = match.captured(4);
             QString originalPath = basePath + ext;
 
             if (activePaths.contains(originalPath)) {

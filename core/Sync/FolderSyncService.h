@@ -143,7 +143,26 @@ public:
      * prochaine action de partage sur ce dossier. Limitation acceptee pour
      * borner la portee de cette version -- cf. mémoire du projet.
      */
-    void announceAccessRevoked(qint64 folderId, qint64 userId);
+    void announceAccessRevoked(qint64 folderId, qint64 userId, bool keepFiles = false);
+
+    /**
+     * @brief Arret du partage par le proprietaire : chaque membre en est
+     *        averti (retrait "keep_files" : il garde ses fichiers, le dossier
+     *        quitte simplement LocaLink chez lui), puis le dossier est retire ici.
+     */
+    void stopSharing(qint64 folderId);
+
+    /**
+     * @brief Un membre retire un dossier recu de son poste : le proprietaire en
+     *        est averti ("folder_leave") et lui retire l'acces, sinon le dossier
+     *        revenait au prochain rattrapage. Les fichiers restent sur le disque.
+     */
+    void leaveFolder(qint64 folderId);
+
+    /// A connecter sur TransferService::transferFailed : un fichier dont le
+    /// transfert echoue n'est plus considere en cours (il restait sinon bloque
+    /// jusqu'au redemarrage) et il est redemande.
+    void onTransferFailed(const QString &transferKey, const QString &reason);
 
     /**
      * @brief Demande un resync d'un dossier distant pour récupérer son contenu.
@@ -181,7 +200,8 @@ public:
     void requestRemoteFile(const QString &folderUuid, const QString &relativePath,
                            const QString &ownerMachineId, qint64 folderId,
                            const QString &localFolderPath, const QString &incomingHash,
-                           int incomingVersion);
+                           int incomingVersion, const QString &baseHash = QString(),
+                           const QString &authorUuid = QString());
 
 signals:
     /**
@@ -370,6 +390,10 @@ private:
         QString ownerMachineId;  ///< machineId du pair émetteur.
         QString incomingHash;    ///< Hash annoncé dans folder_op (peut être vide).
         int     incomingVersion = 0;
+        QString baseHash;        ///< Version dont part la modification (cf. integrateReceivedFile).
+        QString authorUuid;      ///< Auteur de la modification (noms des copies de conflit).
+        qint64  requestedAtMs = 0; ///< Pour l'expiration d'une demande sans reponse.
+        int     attempts = 1;    ///< Demandes deja faites pour ce fichier (empreinte differente, echec).
     };
 
     /// Diffuse un message JSON à tous les clients connectés (côté SERVER)
@@ -385,6 +409,26 @@ private:
     void handleFolderFileRequest(const QJsonObject &obj, const QHostAddress &senderAddress);
     void handleFolderAccessGranted(const QJsonObject &obj);
     void handleFolderAccessRevoked(const QJsonObject &obj);
+    void handleFolderLeave(const QJsonObject &obj);
+
+    /// Le fichier local a deja ce contenu (empreinte connue en base et taille/
+    /// date inchangees, ou empreinte recalculee) : rien a telecharger.
+    bool localMatches(const models::SharedFolder &folder, const QString &relativePath,
+                      const QString &fileHash) const;
+    /// Nom lisible d'un compte (copies de conflit) ; repli sur un identifiant court.
+    QString displayNameOf(const QString &userUuid, const QString &fallbackId) const;
+    /// Remplacement sur : copie dans un fichier temporaire du meme dossier, puis
+    /// echange. Le fichier existant n'est jamais perdu si la copie echoue.
+    static bool replaceFileSafely(const QString &sourcePath, const QString &targetPath);
+    /// Corbeille du systeme si possible, suppression sinon.
+    static bool moveToTrashOrRemove(const QString &path);
+    /// Curseur de diffusion persistant (table FolderBroadcastCursors).
+    qint64 broadcastCursor(qint64 folderId);
+    void setBroadcastCursor(qint64 folderId, qint64 opId);
+    /// Retire les demandes de fichier restees sans reponse (pair eteint, refus)
+    /// pour qu'elles puissent etre refaites.
+    void sweepStalePendingRequests();
+    QTimer *m_pendingSweepTimer = nullptr;
 
     /**
      * @brief Traite un "folder_resync_request" : un pair qui vient de
@@ -416,7 +460,8 @@ private:
      * l'operation dans SyncOperations pour un futur rattrapage (Release 7).
      */
     void applyRemoteDelete(const models::SharedFolder &folder, const QString &relativePath,
-                           const QString &machineId);
+                           const QString &machineId,
+                           const QString &baseHash = QString());
 
     /**
      * @brief Applique localement un renommage/deplacement distant
@@ -470,6 +515,16 @@ private:
 
     /// Uuid du compte proprietaire du dossier (vide si inconnu localement).
     QString ownerUuidOf(const models::SharedFolder &folder) const;
+
+    /// Retraits d'acces connus de ce poste (table FolderAccessRevocations,
+    /// migration 036) : enregistre un retrait (revoked) ou l'efface (nouvel acces).
+    void recordRevocation(const QString &folderUuid, const QString &userUuid, bool revoked, bool keepFiles = false);
+    /// Serveur : proprietaire et utilisateurs ayant acces a ce dossier (uuids),
+    /// vide si le dossier est inconnu ici.
+    QStringList folderAudience(const QString &folderUuid) const;
+    /// Serveur : relaie aux seuls destinataires ; a defaut (dossier inconnu de ce
+    /// serveur), a tous les clients comme auparavant.
+    void relayTo(const QString &message, const QStringList &targets, const QHostAddress &senderAddress);
 
     /// Cote serveur relais : l'identite declaree dans un message de dossier partage est-elle
     /// celle de l'utilisateur identifie sur la connexion emettrice ?
@@ -591,9 +646,10 @@ private:
     static QString computeHash(const QString &filePath);
 
     /// Génère un chemin de conflit, ex: "Docs/rapport (abc123).docx".
-    static QString makeConflictPath(const QString &relativePath, const QString &shortMachineId);
+    static QString makeConflictPath(const QString &relativePath, const QString &authorName);
 
 
+    QSqlDatabase m_db;
     database::SyncOperationRepository m_repository;
     database::SharedFileRepository m_fileRepository;
     database::SharedFolderAccessRepository m_accessRepository;

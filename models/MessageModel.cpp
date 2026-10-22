@@ -42,6 +42,14 @@ QVariant MessageModel::data(const QModelIndex &index, int role) const
         return message.timestamp();
     case IsReadRole:
         return message.isRead();
+    case DeliveryStatusRole:
+        return message.deliveryStatus();
+    case UuidRole:
+        return message.uuid();
+    case EditedRole:
+        return message.editedAt().isValid();
+    case DeletedRole:
+        return message.isDeleted();
     default:
         return QVariant();
     }
@@ -56,6 +64,10 @@ QHash<int, QByteArray> MessageModel::roleNames() const
     roles[ContentRole] = "content";
     roles[TimestampRole] = "timestamp";
     roles[IsReadRole] = "isRead";
+    roles[DeliveryStatusRole] = "deliveryStatus";
+    roles[UuidRole] = "messageUuid";
+    roles[EditedRole] = "isEdited";
+    roles[DeletedRole] = "isDeleted";
     return roles;
 }
 
@@ -86,6 +98,45 @@ void MessageModel::setMessages(const QVector<Message> &messages)
     beginResetModel();
     m_messages = messages;
     endResetModel();
+}
+
+void MessageModel::setDeliveryStatus(const QString &messageUuid, const QString &status)
+{
+    for (int row = 0; row < m_messages.size(); ++row) {
+        if (m_messages[row].uuid() == messageUuid) {
+            m_messages[row].setDeliveryStatus(status);
+            const QModelIndex idx = index(row, 0);
+            emit dataChanged(idx, idx, {DeliveryStatusRole});
+            return;
+        }
+    }
+}
+
+void MessageModel::updateMessage(const Message &message)
+{
+    for (int row = 0; row < m_messages.size(); ++row) {
+        if (m_messages[row].uuid() == message.uuid()) {
+            // L'etat "lu" affiche est celui du lecteur (cf. getMessages), garde.
+            const bool read = m_messages[row].isRead();
+            m_messages[row] = message;
+            m_messages[row].setRead(read);
+            const QModelIndex idx = index(row, 0);
+            emit dataChanged(idx, idx);
+            return;
+        }
+    }
+}
+
+void MessageModel::removeMessage(const QString &messageUuid)
+{
+    for (int row = 0; row < m_messages.size(); ++row) {
+        if (m_messages[row].uuid() == messageUuid) {
+            beginRemoveRows(QModelIndex(), row, row);
+            m_messages.removeAt(row);
+            endRemoveRows();
+            return;
+        }
+    }
 }
 
 void MessageModel::clear()

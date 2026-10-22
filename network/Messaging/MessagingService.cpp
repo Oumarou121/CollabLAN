@@ -153,6 +153,13 @@ bool MessagingService::isConnected() const
     return m_connected;
 }
 
+bool MessagingService::isConnecting() const
+{
+    return !m_connected && m_socket
+        && (m_socket->state() == QAbstractSocket::ConnectingState
+            || m_socket->state() == QAbstractSocket::HostLookupState);
+}
+
 QHostAddress MessagingService::peerAddress() const
 {
     if (!m_connected || !m_socket) {
@@ -195,6 +202,7 @@ void MessagingService::onConnected()
             return;
         }
     }
+    m_peerFingerprint = fingerprint.toLower();
     qDebug() << "Secure WebSocket connected to" << m_socket->peerAddress() << ":" << m_socket->peerPort();
     emit connected();
 }

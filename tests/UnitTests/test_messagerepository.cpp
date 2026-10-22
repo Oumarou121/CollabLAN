@@ -29,7 +29,7 @@ private:
         QSqlQuery query(db);
         QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS Messages")));
         // Schema aligne sur celui produit par les migrations reelles
-        // (003_update_messages_table + 011_add_sync_uuid_columns) : la
+        // (003_update_messages_table + 011_add_sync_uuid_columns + 033 + 034) : la
         // colonne uuid est requise par MessageRepository::insert(), sans
         // elle query.prepare() echoue silencieusement ("Parameter count
         // mismatch") faute de colonne correspondante.
@@ -41,7 +41,8 @@ private:
             "content TEXT NOT NULL, "
             "timestamp TEXT, "
             "is_read INTEGER DEFAULT 0, "
-            "uuid TEXT)"
+            "uuid TEXT, "
+            "delivery_status TEXT NOT NULL DEFAULT 'sent', edited_at TEXT, deleted_at TEXT)"
         )));
 
         m_repository = std::make_unique<MessageRepository>(m_dbManager.get());
@@ -131,15 +132,17 @@ private slots:
             m_repository->insert(msg);
         }
 
-        // Recuperer les 5 premiers
+        // Premiere page : les 5 plus RECENTS, du plus ancien au plus recent
+        // (une conversation au-dela de la limite montrait sinon les plus vieux).
         const auto firstPage = m_repository->getMessages(conversationId, 5, 0);
         QCOMPARE(firstPage.size(), 5);
-        QCOMPARE(firstPage[0].content(), QStringLiteral("Message 0"));
+        QCOMPARE(firstPage[0].content(), QStringLiteral("Message 5"));
+        QCOMPARE(firstPage[4].content(), QStringLiteral("Message 9"));
 
-        // Recuperer les 5 suivants
+        // Page precedente : les 5 plus anciens
         const auto secondPage = m_repository->getMessages(conversationId, 5, 5);
         QCOMPARE(secondPage.size(), 5);
-        QCOMPARE(secondPage[0].content(), QStringLiteral("Message 5"));
+        QCOMPARE(secondPage[0].content(), QStringLiteral("Message 0"));
     }
 
     void getMessages_withLimit()
@@ -247,6 +250,60 @@ private slots:
             }
         }
         QCOMPARE(otherMessagesRead, 2);
+    }
+
+    // Un message recu en retard (rattrapage) se place a son heure d'envoi, pas
+    // apres les messages arrives avant lui ; l'heure est stockee en UTC.
+    void getMessages_ordersBySendTimeNotArrival()
+    {
+        freshDatabase();
+        const QDateTime now = QDateTime::currentDateTimeUtc();
+        models::Message recent(0, 1, 100, QStringLiteral("recent"));
+        recent.setTimestamp(now);
+        QVERIFY(m_repository->insert(recent).has_value());
+        models::Message late(0, 1, 101, QStringLiteral("arrive en retard"));
+        late.setTimestamp(now.addSecs(-3600).toLocalTime()); // heure locale : convertie en UTC
+        QVERIFY(m_repository->insert(late).has_value());
+
+        const auto messages = m_repository->getMessages(1);
+        QCOMPARE(messages.size(), 2);
+        QCOMPARE(messages[0].content(), QStringLiteral("arrive en retard"));
+        QCOMPARE(m_repository->getLastMessage(1)->content(), QStringLiteral("recent"));
+
+        QSqlQuery query(m_dbManager->database());
+        QVERIFY(query.exec(QStringLiteral("SELECT timestamp FROM Messages WHERE content = 'arrive en retard'")) && query.next());
+        QVERIFY(query.value(0).toString().endsWith(QLatin1Char('Z')));
+    }
+
+    // File d'envoi : messages en attente par expediteur, dans l'ordre, puis accuses.
+    void pendingMessages_untilMarkedSent()
+    {
+        freshDatabase();
+        for (int i = 0; i < 3; ++i) {
+            models::Message msg(0, 1, 100, QStringLiteral("attente %1").arg(i));
+            msg.setTimestamp(QDateTime::currentDateTimeUtc().addSecs(i));
+            msg.setUuid(QStringLiteral("u%1").arg(i));
+            msg.setDeliveryStatus(models::Message::Pending);
+            QVERIFY(m_repository->insert(msg).has_value());
+        }
+        models::Message other(0, 1, 200, QStringLiteral("autre expediteur"));
+        other.setDeliveryStatus(models::Message::Pending);
+        QVERIFY(m_repository->insert(other).has_value());
+        models::Message sent(0, 1, 100, QStringLiteral("deja envoye"));
+        QVERIFY(m_repository->insert(sent).has_value()); // "sent" par defaut
+
+        auto pending = m_repository->pendingMessages(100);
+        QCOMPARE(pending.size(), 3);
+        QCOMPARE(pending[0].content(), QStringLiteral("attente 0"));
+        QVERIFY(pending[0].isPending());
+        QCOMPARE(m_repository->allPendingMessages().size(), 4);
+
+        QVERIFY(m_repository->setDeliveryStatus(QStringLiteral("u1"), models::Message::Sent));
+        QVERIFY(!m_repository->setDeliveryStatus(QStringLiteral("u1"), models::Message::Sent)); // deja fait
+        QVERIFY(!m_repository->setDeliveryStatus(QStringLiteral("inconnu"), models::Message::Sent));
+        pending = m_repository->pendingMessages(100);
+        QCOMPARE(pending.size(), 2);
+        QCOMPARE(m_repository->findByUuid(QStringLiteral("u1"))->deliveryStatus(), models::Message::Sent);
     }
 };
 

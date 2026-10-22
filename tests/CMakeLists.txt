@@ -203,3 +203,22 @@ add_test(NAME test_applicationgroupwiring COMMAND test_applicationgroupwiring)
 add_executable(test_transferintegrity UnitTests/test_transferintegrity.cpp)
 target_link_libraries(test_transferintegrity PRIVATE Qt6::Test Qt6::Network network)
 add_test(NAME test_transferintegrity COMMAND test_transferintegrity)
+
+# Poste hors ligne : messages conserves par le serveur, synchro au retour,
+# reconnexion automatique, file d'envoi.
+add_executable(test_hors_ligne_e2e UnitTests/test_hors_ligne_e2e.cpp)
+target_link_libraries(test_hors_ligne_e2e PRIVATE Qt6::Test Qt6::Widgets app_core)
+add_test(NAME test_hors_ligne_e2e COMMAND test_hors_ligne_e2e)
+
+# Messagerie de bout en bout : accuses, modification/suppression, groupes,
+# message pendant une panne recupere par le serveur officiel.
+add_executable(test_messages_e2e UnitTests/test_messages_e2e.cpp)
+target_link_libraries(test_messages_e2e PRIVATE Qt6::Test Qt6::Widgets app_core)
+add_test(NAME test_messages_e2e COMMAND test_messages_e2e)
+
+# Partage de dossiers de bout en bout : lecture seule, mises a jour sans faux
+# conflit, ajouts d'un membre, suppression vs modification, conflit simultane,
+# arret du partage et depart d'un membre.
+add_executable(test_dossiers_e2e UnitTests/test_dossiers_e2e.cpp)
+target_link_libraries(test_dossiers_e2e PRIVATE Qt6::Test Qt6::Widgets app_core)
+add_test(NAME test_dossiers_e2e COMMAND test_dossiers_e2e)

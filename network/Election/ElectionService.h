@@ -116,6 +116,8 @@ public:
     /// server_promoted. À utiliser à la place de son propre messagingServerPort
     /// pour se connecter à lui (voir messagingPort()).
     quint16 activeServerPort() const;
+    /// Vrai si le serveur actif est un serveur de secours (TEMP_SERVER).
+    bool activeServerTemporary() const { return m_activeServerTemporary; }
 
     /**
      * @brief A appeler par le poste officiel Server une fois la reconciliation
@@ -275,6 +277,7 @@ private:
     QString m_activeServerUuid;
     QHostAddress m_activeServerAddress;
     quint16 m_activeServerPort = 0;
+    bool m_activeServerTemporary = false;
     qint64 m_lastHeartbeatSeenMs = 0;
     bool m_heartbeatEverSeen = false;
 

@@ -423,6 +423,259 @@ private slots:
         QVERIFY(query.next());
         QCOMPARE(query.value(0).toInt(), 0);
     }
+
+    // Synchronisation incrementale : suite du journal par id local, curseur
+    // par (serveur, utilisateur), detection d'un enregistrement deja journalise.
+    void entriesAfterIdAndCursor()
+    {
+        freshDatabase();
+        QCOMPARE(m_repository->maxEntryId(), 0);
+        // Lamport volontairement decroissant : l'ordre suit l'ecriture locale.
+        QVERIFY(m_repository->append(makeEntry(QStringLiteral("e1"), 1, 30)));
+        QVERIFY(m_repository->append(makeEntry(QStringLiteral("e2"), 1, 20)));
+        QVERIFY(m_repository->append(makeEntry(QStringLiteral("e3"), 1, 10)));
+        const qint64 last = m_repository->maxEntryId();
+        QVERIFY(last >= 3);
+
+        const auto after = m_repository->entriesAfterId(last - 2);
+        QCOMPARE(after.size(), static_cast<size_t>(2));
+        QCOMPARE(after[0].entryUuid(), QStringLiteral("e2"));
+        QCOMPARE(after[1].entryUuid(), QStringLiteral("e3"));
+        QVERIFY(m_repository->entriesAfterId(last).empty());
+
+        QVERIFY(m_repository->hasRecord(QStringLiteral("Messages"), QStringLiteral("1020")));
+        QVERIFY(!m_repository->hasRecord(QStringLiteral("Messages"), QStringLiteral("9999")));
+        QVERIFY(!m_repository->hasRecord(QStringLiteral("Groups"), QStringLiteral("1020")));
+
+        QCOMPARE(m_repository->syncCursor(QStringLiteral("srv"), QStringLiteral("bob")), 0);
+        QVERIFY(m_repository->setSyncCursor(QStringLiteral("srv"), QStringLiteral("bob"), 42));
+        QVERIFY(m_repository->setSyncCursor(QStringLiteral("srv"), QStringLiteral("bob"), 43));
+        QCOMPARE(m_repository->syncCursor(QStringLiteral("srv"), QStringLiteral("bob")), 43);
+        QCOMPARE(m_repository->syncCursor(QStringLiteral("srv"), QStringLiteral("alice")), 0);
+        QCOMPARE(m_repository->syncCursor(QStringLiteral("autre"), QStringLiteral("bob")), 0);
+    }
+
+    // Une entree differee (dependance absente) est signalee : le client ne fait
+    // alors pas avancer son curseur.
+    void applyBatchReportsPendingEntries()
+    {
+        freshDatabase();
+        models::SyncLogEntry orphan = makeEntry(QStringLiteral("orphan"), 1, 5);
+        orphan.setPayloadJson(QStringLiteral(
+            R"json({"senderUuid":"inconnu","conversationUuid":"c","content":"x","timestamp":"2026-01-01T00:00:00Z"})json"));
+        QCOMPARE(m_repository->applyBatch({orphan, makeEntry(QStringLiteral("ok"), 1, 6)}), 1);
+        QCOMPARE(m_repository->lastBatchPendingCount(), 1);
+        QCOMPARE(m_repository->applyBatch({makeEntry(QStringLiteral("ok2"), 1, 7)}), 1);
+        QCOMPARE(m_repository->lastBatchPendingCount(), 0);
+    }
+
+    // Message de groupe applique avant son groupe : la conversation est creee
+    // en groupe, et un ancien typage "individuel" est corrige a l'arrivee du groupe.
+    void groupMessageBeforeGroupKeepsGroupType()
+    {
+        freshDatabase();
+        models::SyncLogEntry message = makeEntry(QStringLiteral("gm"), 1, 1);
+        message.setPayloadJson(QStringLiteral(
+            R"json({"senderUuid":"user-uuid-1","conversationUuid":"conv-groupe","conversationType":"group","conversationName":"Equipe","content":"salut","timestamp":"2026-01-01T00:00:00Z"})json"));
+        QCOMPARE(m_repository->applyBatch({message}), 1);
+        QSqlQuery query(m_dbManager->database());
+        QVERIFY(query.exec(QStringLiteral("SELECT type, name FROM Conversations WHERE uuid = 'conv-groupe'")) && query.next());
+        QCOMPARE(query.value(0).toString(), QStringLiteral("group"));
+        QCOMPARE(query.value(1).toString(), QStringLiteral("Equipe"));
+
+        QVERIFY(query.exec(QStringLiteral(
+            "INSERT INTO Conversations (type, name, uuid) VALUES ('individual', 'Conversation', 'conv-ancienne')")));
+        QVERIFY(m_repository->ensureConversationByUuid(QStringLiteral("conv-ancienne"), QStringLiteral("group"),
+                                                       QStringLiteral("Projet")) > 0);
+        QVERIFY(query.exec(QStringLiteral("SELECT type, name FROM Conversations WHERE uuid = 'conv-ancienne'")) && query.next());
+        QCOMPARE(query.value(0).toString(), QStringLiteral("group"));
+        QCOMPARE(query.value(1).toString(), QStringLiteral("Projet"));
+    }
+
+    // Source autre que le serveur officiel : creation acceptee mais jamais en
+    // administrateur, ni role ni mot de passe modifies, pas de suppression.
+    void restrictUserEntriesFromUntrustedSource()
+    {
+        freshDatabase();
+        const auto insertEntry = makeUserEntry(QStringLiteral("r1"), QStringLiteral("record-r"),
+                                                models::SyncOperation::Insert, QStringLiteral("mallory"),
+                                                QStringLiteral("2026-01-01T00:00:00Z"), QStringLiteral("Admin"));
+        QCOMPARE(m_repository->applyBatch(SyncLogRepository::restrictUserEntries({insertEntry})), 1);
+        database::UserRepository users(m_dbManager->database());
+        auto created = users.findByUuid(QStringLiteral("record-r"));
+        QVERIFY(created.has_value());
+        QCOMPARE(created->role(), models::UserRole::User);
+        const QString originalHash = created->passwordHash();
+
+        auto update = makeUserEntry(QStringLiteral("r2"), QStringLiteral("record-r"),
+                                    models::SyncOperation::Update, QStringLiteral("mallory2"),
+                                    QStringLiteral("2026-01-02T00:00:00Z"), QStringLiteral("Admin"));
+        update.setPayloadJson(update.payloadJson().replace(QStringLiteral("\"passwordHash\":\"h\""),
+                                                           QStringLiteral("\"passwordHash\":\"pirate\"")));
+        models::SyncLogEntry deletion = update;
+        deletion.setEntryUuid(QStringLiteral("r3"));
+        deletion.setOperation(models::SyncOperation::Delete);
+        const auto restricted = SyncLogRepository::restrictUserEntries({update, deletion});
+        QCOMPARE(restricted.size(), static_cast<size_t>(1)); // suppression retiree
+        QCOMPARE(m_repository->applyBatch(restricted), 1);
+
+        const auto after = users.findByUuid(QStringLiteral("record-r"));
+        QVERIFY(after.has_value());
+        QCOMPARE(after->name(), QStringLiteral("mallory2")); // champ ordinaire : applique
+        QCOMPARE(after->role(), models::UserRole::User);
+        QCOMPARE(after->passwordHash(), originalHash);
+
+        // Les autres tables passent telles quelles.
+        const auto message = makeEntry(QStringLiteral("m"), 1, 1);
+        QCOMPARE(SyncLogRepository::restrictUserEntry(message)->payloadJson(), message.payloadJson());
+    }
+
+    // Modification puis suppression d'un message par son auteur, appliquees par
+    // le journal ; une modification d'un autre que l'auteur est ignoree.
+    void applyMessageChangeFromAuthorOnly()
+    {
+        freshDatabase();
+        QCOMPARE(m_repository->applyBatch({makeEntry(QStringLiteral("ins"), 1, 1)}), 1); // message 1001
+        models::SyncLogEntry edit = makeEntry(QStringLiteral("upd-pirate"), 1, 2);
+        edit.setOperation(models::SyncOperation::Update);
+        edit.setPayloadJson(QStringLiteral(
+            R"json({"senderUuid":"autre","content":"pirate","editedAt":"2026-01-02T00:00:00Z"})json"));
+        edit.setRecordUuid(QStringLiteral("1001"));
+        QCOMPARE(m_repository->applyBatch({edit}), 1);
+        QSqlQuery query(m_dbManager->database());
+        QVERIFY(query.exec(QStringLiteral("SELECT content FROM Messages WHERE uuid = '1001'")) && query.next());
+        QCOMPARE(query.value(0).toString(), QStringLiteral("hello"));
+
+        edit.setEntryUuid(QStringLiteral("upd"));
+        edit.setPayloadJson(QStringLiteral(
+            R"json({"senderUuid":"user-uuid-1","content":"corrige","editedAt":"2026-01-02T00:00:00Z"})json"));
+        QCOMPARE(m_repository->applyBatch({edit}), 1);
+        QVERIFY(query.exec(QStringLiteral("SELECT content, edited_at FROM Messages WHERE uuid = '1001'")) && query.next());
+        QCOMPARE(query.value(0).toString(), QStringLiteral("corrige"));
+        QVERIFY(!query.value(1).toString().isEmpty());
+
+        models::SyncLogEntry del = edit;
+        del.setEntryUuid(QStringLiteral("del"));
+        del.setOperation(models::SyncOperation::Delete);
+        del.setPayloadJson(QStringLiteral(R"json({"senderUuid":"user-uuid-1","deletedAt":"2026-01-03T00:00:00Z"})json"));
+        QCOMPARE(m_repository->applyBatch({del}), 1);
+        QVERIFY(query.exec(QStringLiteral("SELECT content, deleted_at FROM Messages WHERE uuid = '1001'")) && query.next());
+        QVERIFY(query.value(0).toString().isEmpty());
+        QVERIFY(!query.value(1).toString().isEmpty());
+    }
+
+    // Accuse applique : enregistre, heures deja connues gardees, signale pour
+    // recalcul de l'etat d'envoi.
+    void applyReceiptEntryMergesAndReports()
+    {
+        freshDatabase();
+        models::SyncLogEntry receipt;
+        receipt.setEntryUuid(QStringLiteral("r1"));
+        receipt.setTableName(QStringLiteral("MessageReceipts"));
+        receipt.setRecordUuid(QStringLiteral("m1|bob"));
+        receipt.setOperation(models::SyncOperation::Update);
+        receipt.setPayloadJson(QStringLiteral(
+            R"json({"messageUuid":"m1","userUuid":"bob","senderUuid":"alice","deliveredAt":"2026-01-01T10:00:00Z","readAt":""})json"));
+        receipt.setEpoch(1);
+        receipt.setOriginMachineId(QStringLiteral("srv"));
+        QCOMPARE(m_repository->applyBatch({receipt}), 1);
+        models::SyncLogEntry read = receipt;
+        read.setEntryUuid(QStringLiteral("r2"));
+        read.setPayloadJson(QStringLiteral(
+            R"json({"messageUuid":"m1","userUuid":"bob","senderUuid":"alice","deliveredAt":"2026-01-01T11:00:00Z","readAt":"2026-01-01T12:00:00Z"})json"));
+        QCOMPARE(m_repository->applyBatch({read}), 1);
+        QCOMPARE(m_repository->takeTouchedReceiptMessages(), QStringList({QStringLiteral("m1")}));
+        QVERIFY(m_repository->takeTouchedReceiptMessages().isEmpty());
+
+        QSqlQuery query(m_dbManager->database());
+        QVERIFY(query.exec(QStringLiteral(
+            "SELECT delivered_at, read_at FROM MessageReceipts WHERE message_uuid = 'm1' AND user_uuid = 'bob'")) && query.next());
+        QCOMPARE(query.value(0).toString(), QStringLiteral("2026-01-01T10:00:00Z")); // la premiere heure reste
+        QCOMPARE(query.value(1).toString(), QStringLiteral("2026-01-01T12:00:00Z"));
+    }
+
+    // Renommage puis suppression d'un groupe appliques par le journal.
+    void applyGroupRenameAndDelete()
+    {
+        freshDatabase();
+        models::SyncLogEntry group = makeEntry(QStringLiteral("g-ins"), 1, 1);
+        group.setTableName(QStringLiteral("Groups"));
+        group.setRecordUuid(QStringLiteral("grp-1"));
+        group.setPayloadJson(QStringLiteral(
+            R"json({"name":"Equipe","ownerUuid":"user-uuid-1","conversationUuid":"conv-grp","memberUuids":["user-uuid-1"]})json"));
+        models::SyncLogEntry message = makeEntry(QStringLiteral("g-msg"), 1, 2);
+        message.setPayloadJson(QStringLiteral(
+            R"json({"senderUuid":"user-uuid-1","conversationUuid":"conv-grp","conversationType":"group","content":"hello","timestamp":"2026-01-01T00:00:00Z"})json"));
+        QCOMPARE(m_repository->applyBatch({group, message}), 2);
+
+        models::SyncLogEntry rename = group;
+        rename.setEntryUuid(QStringLiteral("g-upd"));
+        rename.setOperation(models::SyncOperation::Update);
+        rename.setPayloadJson(QStringLiteral(R"json({"name":"Equipe projet"})json"));
+        QCOMPARE(m_repository->applyBatch({rename}), 1);
+        QSqlQuery query(m_dbManager->database());
+        QVERIFY(query.exec(QStringLiteral("SELECT g.name, c.name FROM Groups g JOIN Conversations c ON c.id = g.conversation_id WHERE g.uuid = 'grp-1'")) && query.next());
+        QCOMPARE(query.value(0).toString(), QStringLiteral("Equipe projet"));
+        QCOMPARE(query.value(1).toString(), QStringLiteral("Equipe projet"));
+
+        models::SyncLogEntry del = group;
+        del.setEntryUuid(QStringLiteral("g-del"));
+        del.setOperation(models::SyncOperation::Delete);
+        del.setPayloadJson(QStringLiteral("{}"));
+        QCOMPARE(m_repository->applyBatch({del}), 1);
+        QVERIFY(query.exec(QStringLiteral("SELECT COUNT(*) FROM Groups WHERE uuid = 'grp-1'")) && query.next());
+        QCOMPARE(query.value(0).toInt(), 0);
+        QVERIFY(query.exec(QStringLiteral("SELECT COUNT(*) FROM Conversations WHERE uuid = 'conv-grp'")) && query.next());
+        QCOMPARE(query.value(0).toInt(), 0);
+        QVERIFY(query.exec(QStringLiteral("SELECT COUNT(*) FROM Messages WHERE uuid = '1002'")) && query.next());
+        QCOMPARE(query.value(0).toInt(), 0);
+    }
+
+    // Purge : seul l'etat le plus recent par enregistrement reste ; le texte
+    // d'un message supprime disparait du journal ; les messages restent.
+    void compactKeepsOnlyLatestState()
+    {
+        freshDatabase();
+        const auto entryFor = [this](const QString &uuid, const QString &table, const QString &record,
+                                     const QString &op, const QString &payload) {
+            models::SyncLogEntry e = makeEntry(uuid, 1, 1);
+            e.setTableName(table);
+            e.setRecordUuid(record);
+            e.setOperation(op);
+            e.setPayloadJson(payload);
+            return e;
+        };
+        const QString r1 = QStringLiteral(R"json({"messageUuid":"m","userUuid":"bob","deliveredAt":"2026-01-01T10:00:00Z"})json");
+        const QString r2 = QStringLiteral(R"json({"messageUuid":"m","userUuid":"bob","deliveredAt":"2026-01-01T10:00:00Z","readAt":"2026-01-01T11:00:00Z"})json");
+        QVERIFY(m_repository->append(entryFor(QStringLiteral("rc1"), QStringLiteral("MessageReceipts"), QStringLiteral("m|bob"), models::SyncOperation::Update, r1)));
+        QVERIFY(m_repository->append(entryFor(QStringLiteral("rc2"), QStringLiteral("MessageReceipts"), QStringLiteral("m|bob"), models::SyncOperation::Update, r2)));
+        QVERIFY(m_repository->append(makeUserEntry(QStringLiteral("u-new"), QStringLiteral("acct"), models::SyncOperation::Update,
+                                                   QStringLiteral("neuf"), QStringLiteral("2026-03-01T00:00:00Z"))));
+        // Ecrite apres mais plus ancienne (fusionnee d'un serveur de secours).
+        QVERIFY(m_repository->append(makeUserEntry(QStringLiteral("u-old"), QStringLiteral("acct"), models::SyncOperation::Update,
+                                                   QStringLiteral("ancien"), QStringLiteral("2026-02-01T00:00:00Z"))));
+        QVERIFY(m_repository->append(entryFor(QStringLiteral("msg"), QStringLiteral("Messages"), QStringLiteral("mx"), models::SyncOperation::Insert,
+                                              QStringLiteral(R"json({"senderUuid":"user-uuid-1","content":"secret"})json"))));
+        QVERIFY(m_repository->append(entryFor(QStringLiteral("msg-u1"), QStringLiteral("Messages"), QStringLiteral("mx"), models::SyncOperation::Update,
+                                              QStringLiteral(R"json({"content":"v2"})json"))));
+        QVERIFY(m_repository->append(entryFor(QStringLiteral("msg-d"), QStringLiteral("Messages"), QStringLiteral("mx"), models::SyncOperation::Delete,
+                                              QStringLiteral(R"json({"senderUuid":"user-uuid-1"})json"))));
+        QVERIFY(m_repository->append(entryFor(QStringLiteral("keep"), QStringLiteral("Messages"), QStringLiteral("my"), models::SyncOperation::Insert,
+                                              QStringLiteral(R"json({"content":"garde"})json"))));
+
+        QCOMPARE(m_repository->compact(), 3); // rc1, u-old, msg-u1
+        QStringList left;
+        for (const auto &e : m_repository->entriesAfterId(0))
+            left << e.entryUuid();
+        QCOMPARE(left, QStringList({QStringLiteral("rc2"), QStringLiteral("u-new"), QStringLiteral("msg"),
+                                    QStringLiteral("msg-d"), QStringLiteral("keep")}));
+        const auto insert = m_repository->messageInsertPayload(QStringLiteral("mx"));
+        QVERIFY(insert.has_value());
+        QVERIFY(insert->value(QStringLiteral("content")).toString().isEmpty());
+        QCOMPARE(m_repository->messageInsertPayload(QStringLiteral("my"))->value(QStringLiteral("content")).toString(),
+                 QStringLiteral("garde"));
+        QCOMPARE(m_repository->compact(), 0); // rien de plus a retirer
+    }
 };
 
 QTEST_GUILESS_MAIN(TestSyncLogRepository)

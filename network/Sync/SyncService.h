@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QHostAddress>
+#include <functional>
 #include <vector>
 
 #include "models/SyncLogEntry.h"
@@ -25,6 +26,14 @@ class MessagingService;
 /// identifie (poste neuf, personne de connecte) : uniquement les comptes.
 std::vector<models::SyncLogEntry> syncEntriesVisibleTo(const std::vector<models::SyncLogEntry> &entries,
                                                        const QString &userUuid);
+
+/// Suite incrementale : parmi toutes les entrees (allEntries), celles visibles par
+/// `userUuid` qu'il n'a pas encore recues, sachant que recentEntries sont les
+/// entrees ecrites apres son curseur. Comprend l'historique d'un groupe rejoint
+/// apres le curseur (ses anciennes entrees n'etaient pas visibles a l'epoque).
+std::vector<models::SyncLogEntry> syncEntriesNewlyVisibleTo(const std::vector<models::SyncLogEntry> &allEntries,
+                                                            const std::vector<models::SyncLogEntry> &recentEntries,
+                                                            const QString &userUuid);
 
 /**
  * @brief Reconciliation post-panne pour l'architecture hybride
@@ -84,6 +93,24 @@ public:
      */
     bool requestReconciliation(int fromEpoch, const QString &localMachineUuid);
 
+    /**
+     * @brief Synchronisation incrementale d'un CLIENT avec le serveur connecte :
+     *        demande seulement la suite du journal depuis le dernier id recu de ce
+     *        serveur (serverKey, typiquement l'empreinte de son certificat) pour
+     *        cet utilisateur (le serveur filtre selon l'utilisateur identifie).
+     *        Le serveur renvoie "last_id" ; le curseur n'avance que si tout le lot
+     *        a pu etre applique (sinon la meme portion sera redemandee).
+     */
+    bool requestIncrementalSync(const QString &serverKey, const QString &userUuid,
+                                const QString &localMachineUuid);
+
+    /// Condition evaluee a chaque lot recu : vraie quand la source n'est pas le
+    /// serveur officiel (ce poste est le serveur officiel et reconcilie un
+    /// serveur de secours, ou il est client d'un serveur de secours). Les
+    /// changements de comptes sensibles sont alors retires du lot
+    /// (SyncLogRepository::restrictUserEntries).
+    void setUntrustedSourceCheck(std::function<bool()> check);
+
 signals:
     /// Emis cote TEMP_SERVER apres avoir repondu a un sync_request (audit/tests).
     void batchSentToPeer(int entryCount);
@@ -109,6 +136,7 @@ private:
     MessagingServer *m_messagingServer = nullptr;
     MessagingService *m_messagingService = nullptr;
     QObject *m_permissionManager = nullptr;
+    std::function<bool()> m_untrustedSource;
 };
 
 } // namespace network

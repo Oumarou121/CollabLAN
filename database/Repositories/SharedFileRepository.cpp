@@ -25,6 +25,7 @@ models::SharedFile SharedFileRepository::fileFromQuery(const QSqlQuery &query) c
     file.setVersion(query.value(QStringLiteral("version")).toInt());
     file.setDeleted(query.value(QStringLiteral("deleted")).toInt() != 0);
     file.setPendingDownload(query.value(QStringLiteral("pending_download")).toInt() != 0);
+    file.setSyncedHash(query.value(QStringLiteral("synced_hash")).toString());
     return file;
 }
 
@@ -194,6 +195,21 @@ int SharedFileRepository::count(qint64 folderId) const
 QString SharedFileRepository::lastError() const
 {
     return m_lastError;
+}
+
+bool SharedFileRepository::setSyncedHash(qint64 folderId, const QString &relativePath, const QString &hash)
+{
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "UPDATE SharedFiles SET synced_hash = :hash WHERE folder_id = :folder_id AND relative_path = :relative_path"));
+    query.bindValue(QStringLiteral(":hash"), hash);
+    query.bindValue(QStringLiteral(":folder_id"), folderId);
+    query.bindValue(QStringLiteral(":relative_path"), relativePath);
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    return query.numRowsAffected() > 0;
 }
 
 } // namespace database

@@ -360,6 +360,7 @@ void ElectionService::enterServerRole(int newEpoch, bool temporary)
     m_activeServerUuid = m_localMachineUuid;
     m_activeServerAddress = QHostAddress::LocalHost;
     m_activeServerPort = m_messagingPort;
+    m_activeServerTemporary = temporary;
     // Ce poste est sa propre autorite : rien a valider en TLS pour lui-meme
     // (voir setRequireValidatedServer).
     m_validatedServerUuid = m_localMachineUuid;
@@ -665,6 +666,7 @@ void ElectionService::applyRemoteServer(const QString &machineUuid, const QHostA
     m_activeServerUuid = machineUuid;
     m_activeServerAddress = address;
     m_activeServerPort = port;
+    m_activeServerTemporary = temporary;
     m_lastHeartbeatSeenMs = QDateTime::currentMSecsSinceEpoch();
     m_heartbeatEverSeen = true;
 

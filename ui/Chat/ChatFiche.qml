@@ -10,7 +10,7 @@ import "../Components/icons.js" as Icons
  * repliable. Personne : presence, poste et adresse tant qu'elle est sur le
  * reseau local, Appeler, Envoyer un fichier, Dossier d'echanges (Transferts).
  * Groupe : nombre de membres (la liste n'est pas exposee a l'interface),
- * messages charges, non lus.
+ * messages charges, non lus ; pour son proprietaire, Renommer et Supprimer.
  */
 Rectangle {
     id: root
@@ -24,10 +24,13 @@ Rectangle {
     property int messageCount: 0
     property int unreadCount: 0
     readonly property bool reachable: root.machineName.length > 0
+    property bool canManageGroup: false     // proprietaire du groupe
 
     signal callRequested()
     signal sendFileRequested()
     signal exchangesRequested()
+    signal renameRequested()
+    signal deleteRequested()
 
     color: Theme.bg
 
@@ -143,6 +146,25 @@ Rectangle {
                     FicheAction { first: true; text: qsTr("Appeler"); iconPath: Icons.phone; enabled: root.reachable; hint: root.reachable ? "" : qsTr("hors ligne"); onClicked: root.callRequested() }
                     FicheAction { text: qsTr("Envoyer un fichier"); iconPath: Icons.arrowUp; enabled: root.reachable; onClicked: root.sendFileRequested() }
                     FicheAction { text: qsTr("Dossier d'échanges"); iconPath: Icons.folder; hint: qsTr("Transferts"); onClicked: root.exchangesRequested() }
+                }
+            }
+            Rectangle {
+                visible: root.group && root.canManageGroup
+                Layout.fillWidth: true
+                Layout.topMargin: 16
+                implicitHeight: groupActions.implicitHeight + 2
+                radius: Theme.radiusSheet
+                color: "transparent"
+                border.width: 1
+                border.color: Theme.lineStrong
+                clip: true
+                ColumnLayout {
+                    id: groupActions
+                    x: 1; y: 1
+                    width: parent.width - 2
+                    spacing: 0
+                    FicheAction { first: true; text: qsTr("Renommer le groupe"); iconPath: Icons.pencil; onClicked: root.renameRequested() }
+                    FicheAction { text: qsTr("Supprimer le groupe"); iconPath: Icons.trash; hint: qsTr("pour tous"); onClicked: root.deleteRequested() }
                 }
             }
             Text {

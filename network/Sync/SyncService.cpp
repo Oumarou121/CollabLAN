@@ -132,6 +132,12 @@ std::vector<models::SyncLogEntry> syncEntriesVisibleTo(const std::vector<models:
         } else if (table == QStringLiteral("GroupMembers")) {
             if (groups.contains(payload.value(QStringLiteral("groupUuid")).toString()))
                 visible.push_back(entry);
+        } else if (table == QStringLiteral("MessageReceipts")) {
+            // Accuse : interesse l'expediteur du message, et le lecteur lui-meme
+            // (son etat "lu" sur ses autres postes).
+            if (payload.value(QStringLiteral("senderUuid")).toString() == userUuid
+                || payload.value(QStringLiteral("userUuid")).toString() == userUuid)
+                visible.push_back(entry);
         } else if (table == QStringLiteral("Messages")) {
             const bool direct = payload.value(QStringLiteral("senderUuid")).toString() == userUuid
                 || payload.value(QStringLiteral("participant1Uuid")).toString() == userUuid
@@ -142,6 +148,36 @@ std::vector<models::SyncLogEntry> syncEntriesVisibleTo(const std::vector<models:
         // Tout autre type d'entree : jamais envoye a un client (fail closed).
     }
     return visible;
+}
+
+std::vector<models::SyncLogEntry> syncEntriesNewlyVisibleTo(const std::vector<models::SyncLogEntry> &allEntries,
+                                                            const std::vector<models::SyncLogEntry> &recentEntries,
+                                                            const QString &userUuid)
+{
+    QSet<QString> recent;
+    for (const auto &entry : recentEntries)
+        recent.insert(entry.entryUuid());
+
+    // Ce que le client a deja recu : les entrees anterieures au curseur qui lui
+    // etaient visibles a l'epoque.
+    std::vector<models::SyncLogEntry> older;
+    older.reserve(allEntries.size());
+    for (const auto &entry : allEntries) {
+        if (!recent.contains(entry.entryUuid()))
+            older.push_back(entry);
+    }
+    QSet<QString> alreadySent;
+    for (const auto &entry : syncEntriesVisibleTo(older, userUuid))
+        alreadySent.insert(entry.entryUuid());
+
+    // Tout ce qui est visible maintenant et n'a pas encore ete envoye : les
+    // nouvelles entrees, mais aussi l'historique d'un groupe rejoint depuis.
+    std::vector<models::SyncLogEntry> out;
+    for (const auto &entry : syncEntriesVisibleTo(allEntries, userUuid)) {
+        if (!alreadySent.contains(entry.entryUuid()))
+            out.push_back(entry);
+    }
+    return out;
 }
 
 SyncService::SyncService(database::SyncLogRepository *repository, QObject *parent)
@@ -201,6 +237,33 @@ bool SyncService::requestReconciliation(int fromEpoch, const QString &localMachi
     return m_messagingService->sendMessage(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
 }
 
+bool SyncService::requestIncrementalSync(const QString &serverKey, const QString &userUuid,
+                                         const QString &localMachineUuid)
+{
+    if (!m_messagingService || !m_messagingService->isConnected() || !m_repository) {
+        emit reconciliationFailed(QStringLiteral("MessagingService non connecte"));
+        return false;
+    }
+
+    QJsonObject obj;
+    obj.insert(QStringLiteral("type"), QString::fromLatin1(kMsgSyncRequest));
+    obj.insert(QStringLiteral("from_epoch"), 0);
+    obj.insert(QStringLiteral("requester_uuid"), localMachineUuid);
+    obj.insert(QStringLiteral("since_id"), static_cast<double>(m_repository->syncCursor(serverKey, userUuid)));
+    // Renvoyes tels quels par le serveur : le curseur est enregistre pour la
+    // demande a laquelle le lot repond (deux demandes peuvent se croiser, par
+    // exemple a la connexion puis au login).
+    obj.insert(QStringLiteral("cursor_server"), serverKey);
+    obj.insert(QStringLiteral("cursor_user"), userUuid);
+
+    return m_messagingService->sendMessage(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+}
+
+void SyncService::setUntrustedSourceCheck(std::function<bool()> check)
+{
+    m_untrustedSource = std::move(check);
+}
+
 void SyncService::onServerMessageReceived(const QString &message, const QHostAddress &senderAddress)
 {
     Q_UNUSED(senderAddress);
@@ -218,7 +281,16 @@ void SyncService::onServerMessageReceived(const QString &message, const QHostAdd
 
     if (msg == QString::fromLatin1(kMsgSyncRequest)) {
         const int fromEpoch = obj.value(QStringLiteral("from_epoch")).toInt();
-        auto entries = m_repository->entriesSinceEpoch(fromEpoch);
+        // Demande incrementale d'un client (since_id) : seulement la suite du
+        // journal. Un curseur au-dela de notre journal (base du serveur
+        // recreee) repart de zero.
+        const bool incremental = obj.contains(QStringLiteral("since_id"));
+        const qint64 lastId = m_repository->maxEntryId();
+        qint64 sinceId = static_cast<qint64>(obj.value(QStringLiteral("since_id")).toDouble());
+        if (sinceId < 0 || sinceId > lastId)
+            sinceId = 0;
+        auto entries = incremental ? m_repository->entriesAfterId(sinceId)
+                                   : m_repository->entriesSinceEpoch(fromEpoch);
 
         // Le journal contient TOUS les messages prives et tous les groupes. Il n'est envoye en
         // entier qu'a un pair reconnu comme serveur (reconciliation SERVER <-> TEMP_SERVER) ;
@@ -230,8 +302,13 @@ void SyncService::onServerMessageReceived(const QString &message, const QHostAdd
                                       Q_RETURN_ARG(bool, peerIsServer),
                                       Q_ARG(QString, m_messagingServer->currentSenderFingerprint()));
         }
-        if (!peerIsServer && m_messagingServer)
-            entries = syncEntriesVisibleTo(entries, m_messagingServer->currentSenderUserUuid());
+        const QString filteredUser = m_messagingServer ? m_messagingServer->currentSenderUserUuid() : QString();
+        if (!peerIsServer && m_messagingServer) {
+            if (incremental && sinceId > 0)
+                entries = syncEntriesNewlyVisibleTo(m_repository->entriesAfterId(0), entries, filteredUser);
+            else
+                entries = syncEntriesVisibleTo(entries, filteredUser);
+        }
 
         QJsonArray array;
         for (const auto &entry : entries) {
@@ -241,6 +318,14 @@ void SyncService::onServerMessageReceived(const QString &message, const QHostAdd
         QJsonObject batch;
         batch.insert(QStringLiteral("type"), QString::fromLatin1(kMsgSyncBatch));
         batch.insert(QStringLiteral("entries"), array);
+        if (incremental) {
+            batch.insert(QStringLiteral("last_id"), static_cast<double>(lastId));
+            batch.insert(QStringLiteral("cursor_server"), obj.value(QStringLiteral("cursor_server")).toString());
+            // L'utilisateur pour lequel le lot a VRAIMENT ete filtre (celui de la
+            // connexion), pas celui annonce : le client range le curseur sous cette cle.
+            batch.insert(QStringLiteral("cursor_user"),
+                         peerIsServer ? obj.value(QStringLiteral("cursor_user")).toString() : filteredUser);
+        }
 
         // Rattrapage ServerElectionLog (cf. setServerElectionRepository) :
         // couvre notamment HEARTBEAT_LOST/TEMP_PROMOTED, emis au moment
@@ -299,7 +384,19 @@ void SyncService::onClientMessageReceived(const QString &message)
         entries.push_back(entryFromJson(value.toObject()));
     }
 
+    if (m_untrustedSource && m_untrustedSource())
+        entries = database::SyncLogRepository::restrictUserEntries(entries);
+
     const int mergedCount = m_repository->applyBatch(entries);
+
+    // Synchronisation incrementale : le curseur n'avance que si tout le lot a ete
+    // applique, sinon les entrees differees seraient sautees pour toujours.
+    const QString cursorServer = obj.value(QStringLiteral("cursor_server")).toString();
+    if (obj.contains(QStringLiteral("last_id")) && !cursorServer.isEmpty()
+        && m_repository->lastBatchPendingCount() == 0) {
+        m_repository->setSyncCursor(cursorServer, obj.value(QStringLiteral("cursor_user")).toString(),
+                                    static_cast<qint64>(obj.value(QStringLiteral("last_id")).toDouble()));
+    }
 
     // Rattrapage ServerElectionLog : applyRemoteLogEntry est idempotent sur
     // log_uuid (INSERT OR IGNORE), donc rejouer une entree deja recue via le

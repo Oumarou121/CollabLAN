@@ -23,6 +23,8 @@ models::FileSyncOperation SyncOperationRepository::operationFromQuery(const QSql
     operation.setVersion(query.value(QStringLiteral("version")).toInt());
     operation.setMachineId(query.value(QStringLiteral("machine_id")).toString());
     operation.setCreatedAt(query.value(QStringLiteral("created_at")).toDateTime());
+    operation.setBaseHash(query.value(QStringLiteral("base_hash")).toString());
+    operation.setAuthorUuid(query.value(QStringLiteral("author_uuid")).toString());
     return operation;
 }
 
@@ -30,8 +32,8 @@ std::optional<models::FileSyncOperation> SyncOperationRepository::insert(const m
 {
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
-        "INSERT INTO SyncOperations (type, file_id, old_relative_path, version, machine_id) "
-        "VALUES (:type, :file_id, :old_relative_path, :version, :machine_id)"));
+        "INSERT INTO SyncOperations (type, file_id, old_relative_path, version, machine_id, base_hash, author_uuid) "
+        "VALUES (:type, :file_id, :old_relative_path, :version, :machine_id, :base_hash, :author_uuid)"));
     query.bindValue(QStringLiteral(":type"), models::syncChangeTypeToString(operation.type()));
     query.bindValue(QStringLiteral(":file_id"), operation.fileId());
     if (operation.oldRelativePath().isEmpty()) {
@@ -41,6 +43,8 @@ std::optional<models::FileSyncOperation> SyncOperationRepository::insert(const m
     }
     query.bindValue(QStringLiteral(":version"), operation.version());
     query.bindValue(QStringLiteral(":machine_id"), operation.machineId());
+    query.bindValue(QStringLiteral(":base_hash"), operation.baseHash());
+    query.bindValue(QStringLiteral(":author_uuid"), operation.authorUuid());
 
     if (!query.exec()) {
         m_lastError = query.lastError().text();

@@ -1,7 +1,9 @@
 #ifndef CORE_GROUPMANAGER_H
 #define CORE_GROUPMANAGER_H
 
+#include <QJsonObject>
 #include <QObject>
+#include <QStringList>
 #include <QString>
 #include <QVector>
 #include <optional>
@@ -99,6 +101,17 @@ public:
     /// Retourne true si succès, false si échec (groupe ou membre inconnu).
     bool receiveMemberRemoved(const QString &jsonPayload);
 
+    /// Renommage / suppression par le proprietaire, diffuses aux membres
+    /// ("group_renamed" / "group_deleted"). La suppression retire aussi la
+    /// conversation et son fil sur tous les postes.
+    bool renameGroup(qint64 groupId, const QString &newName, qint64 requesterId);
+    bool deleteGroup(qint64 groupId, qint64 requesterId);
+    bool receiveGroupRenamed(const QString &jsonPayload);
+    bool receiveGroupDeleted(const QString &jsonPayload);
+
+    /// Uuid du proprietaire d'un groupe connu localement (vide sinon).
+    QString ownerUuidOf(const QString &groupUuid);
+
     /// Derniere erreur survenue.
     GroupManagerError lastError() const { return m_lastError; }
     QString lastErrorString() const { return m_lastErrorString; }
@@ -112,6 +125,16 @@ signals:
 
     /// Emis lorsqu'un membre est retire d'un groupe.
     void memberRemoved(qint64 groupId, qint64 memberId);
+
+    void groupRenamed(qint64 groupId, const QString &groupUuid, const QString &name);
+    /// Emis apres suppression (le groupe n'existe plus localement).
+    void groupDeleted(const QString &groupUuid, qint64 conversationId);
+
+    /// Changement local a transmettre ("group_created", "member_added",
+    /// "member_removed", "group_renamed", "group_deleted") et ses destinataires.
+    /// L'appelant l'envoie au serveur, le met en file d'attente sans connexion,
+    /// ou le relaie lui-meme si ce poste est le serveur.
+    void groupChangeOutgoing(const QJsonObject &payload, const QStringList &targetUuids);
 
 private:
     database::DatabaseManager *m_dbManager = nullptr;

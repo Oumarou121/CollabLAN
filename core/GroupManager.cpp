@@ -18,6 +18,22 @@
 
 namespace core {
 
+namespace {
+QStringList memberUuidsOf(database::DatabaseManager *db, const models::Group &group)
+{
+    QStringList uuids;
+    database::UserRepository users(db->database());
+    QVector<qint64> ids = group.memberIds();
+    if (!ids.contains(group.ownerId()))
+        ids << group.ownerId();
+    for (qint64 id : ids) {
+        if (const auto user = users.findById(static_cast<int>(id)); user.has_value() && !user->uuid().isEmpty())
+            uuids << user->uuid();
+    }
+    return uuids;
+}
+} // namespace
+
 GroupManager::GroupManager(database::DatabaseManager *dbManager, QObject *parent)
     : QObject(parent)
     , m_dbManager(dbManager)
@@ -119,15 +135,10 @@ std::optional<models::Group> GroupManager::createGroup(const QString &name, qint
     // SyncLogRepository::applyGroupEntry, afin que receiveGroupCreated()
     // puisse s'appuyer sur cette meme logique de resolution par uuid.
     //
-    // Envoi via les DEUX canaux, comme MessagingManager::sendMessage : le
-    // createur peut etre le SERVER actif (m_messagingServer diffuse alors
-    // directement a tous les clients connectes) OU un simple CLIENT
-    // (m_messagingServer n'ecoute jamais dans ce role, cf. Application.cpp
-    // - seul m_messagingService, la connexion sortante vers le SERVER,
-    // permet alors de faire parvenir la creation du groupe a qui que ce
-    // soit). Sans le second canal, un groupe cree depuis un poste Client
-    // n'etait jamais transmis a personne avant la prochaine reconciliation.
-    if (m_messagingServer || m_messagingService) {
+    // Transmission par l'appelant (groupChangeOutgoing) : envoi au serveur, ou
+    // file d'attente sans connexion (un groupe cree hors connexion n'etait
+    // jusqu'ici jamais transmis), ou relais direct si ce poste est le serveur.
+    {
         database::UserRepository users(m_dbManager->database());
         QString ownerUuid;
         if (const auto owner = users.findById(static_cast<int>(ownerId)); owner.has_value()) {
@@ -148,14 +159,12 @@ std::optional<models::Group> GroupManager::createGroup(const QString &name, qint
         payload.insert(QStringLiteral("ownerUuid"), ownerUuid);
         payload.insert(QStringLiteral("conversationUuid"), conversationUuid);
         payload.insert(QStringLiteral("memberUuids"), memberUuids);
-        const QString jsonMessage = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
-
-        if (m_messagingService && m_messagingService->isConnected()) {
-            m_messagingService->sendMessage(jsonMessage);
-        }
-        if (m_messagingServer) {
-            m_messagingServer->broadcastMessage(jsonMessage);
-        }
+        QStringList targets{ownerUuid};
+        for (const QJsonValue &uuid : std::as_const(memberUuids))
+            targets << uuid.toString();
+        targets.removeAll(QString());
+        targets.removeDuplicates();
+        emit groupChangeOutgoing(payload, targets);
     }
 
     emit groupCreated(group);
@@ -195,10 +204,10 @@ bool GroupManager::addMember(qint64 groupId, qint64 memberId, qint64 requesterId
         return false;
     }
 
-    // Diffuser l'ajout du membre en temps réel à tous les postes connectés
-    if (m_messagingServer || m_messagingService) {
+    // Transmis par l'appelant (groupChangeOutgoing) aux membres, ajoute compris.
+    {
         database::UserRepository users(m_dbManager->database());
-        
+
         const auto group = m_repository.getById(groupId);
         if (group.has_value()) {
             QString memberUuid;
@@ -210,14 +219,7 @@ bool GroupManager::addMember(qint64 groupId, qint64 memberId, qint64 requesterId
             payload.insert(QStringLiteral("type"), QStringLiteral("member_added"));
             payload.insert(QStringLiteral("groupUuid"), group->uuid());
             payload.insert(QStringLiteral("memberUuid"), memberUuid);
-            const QString jsonMessage = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
-
-            if (m_messagingService && m_messagingService->isConnected()) {
-                m_messagingService->sendMessage(jsonMessage);
-            }
-            if (m_messagingServer) {
-                m_messagingServer->broadcastMessage(jsonMessage);
-            }
+            emit groupChangeOutgoing(payload, memberUuidsOf(m_dbManager, *group));
         }
     }
 
@@ -260,10 +262,10 @@ bool GroupManager::removeMember(qint64 groupId, qint64 memberId, qint64 requeste
         return false;
     }
 
-    // Diffuser le retrait du membre en temps réel à tous les postes connectés
-    if (m_messagingServer || m_messagingService) {
+    // Transmis par l'appelant aux membres restants et a la personne retiree.
+    {
         database::UserRepository users(m_dbManager->database());
-        
+
         const auto group = m_repository.getById(groupId);
         if (group.has_value()) {
             QString memberUuid;
@@ -275,14 +277,10 @@ bool GroupManager::removeMember(qint64 groupId, qint64 memberId, qint64 requeste
             payload.insert(QStringLiteral("type"), QStringLiteral("member_removed"));
             payload.insert(QStringLiteral("groupUuid"), group->uuid());
             payload.insert(QStringLiteral("memberUuid"), memberUuid);
-            const QString jsonMessage = QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact));
-
-            if (m_messagingService && m_messagingService->isConnected()) {
-                m_messagingService->sendMessage(jsonMessage);
-            }
-            if (m_messagingServer) {
-                m_messagingServer->broadcastMessage(jsonMessage);
-            }
+            QStringList targets = memberUuidsOf(m_dbManager, *group);
+            if (!memberUuid.isEmpty() && !targets.contains(memberUuid))
+                targets << memberUuid;
+            emit groupChangeOutgoing(payload, targets);
         }
     }
 
@@ -513,6 +511,141 @@ bool GroupManager::receiveMemberRemoved(const QString &jsonPayload)
     }
 
     emit memberRemoved(group->id(), member->id());
+    return true;
+}
+
+
+QString GroupManager::ownerUuidOf(const QString &groupUuid)
+{
+    if (!m_dbManager)
+        return QString();
+    const auto group = m_repository.findByUuid(groupUuid);
+    if (!group)
+        return QString();
+    database::UserRepository users(m_dbManager->database());
+    const auto owner = users.findById(static_cast<int>(group->ownerId()));
+    return owner ? owner->uuid() : QString();
+}
+
+bool GroupManager::renameGroup(qint64 groupId, const QString &newName, qint64 requesterId)
+{
+    const QString name = newName.trimmed();
+    const auto group = getGroup(groupId);
+    if (!m_dbManager || !group) {
+        m_lastError = GroupManagerError::InvalidGroup;
+        m_lastErrorString = QStringLiteral("Group not found");
+        return false;
+    }
+    if (group->ownerId() != requesterId) {
+        m_lastError = GroupManagerError::NotOwner;
+        m_lastErrorString = QStringLiteral("Seul le propriétaire peut renommer le groupe");
+        return false;
+    }
+    if (name.isEmpty()) {
+        m_lastError = GroupManagerError::InvalidName;
+        m_lastErrorString = QStringLiteral("Nom de groupe vide");
+        return false;
+    }
+    if (name == group->name())
+        return true;
+
+    QSqlQuery query(m_dbManager->database());
+    query.prepare(QStringLiteral("UPDATE Groups SET name = :name WHERE id = :id"));
+    query.bindValue(QStringLiteral(":name"), name);
+    query.bindValue(QStringLiteral(":id"), groupId);
+    if (!query.exec()) {
+        m_lastError = GroupManagerError::DatabaseError;
+        m_lastErrorString = query.lastError().text();
+        return false;
+    }
+    QSqlQuery conv(m_dbManager->database());
+    conv.prepare(QStringLiteral("UPDATE Conversations SET name = :name WHERE id = :id"));
+    conv.bindValue(QStringLiteral(":name"), name);
+    conv.bindValue(QStringLiteral(":id"), group->conversationId());
+    conv.exec();
+
+    database::UserRepository users(m_dbManager->database());
+    const auto requester = users.findById(static_cast<int>(requesterId));
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("group_renamed"));
+    payload.insert(QStringLiteral("groupUuid"), group->uuid());
+    payload.insert(QStringLiteral("name"), name);
+    payload.insert(QStringLiteral("requesterUuid"), requester ? requester->uuid() : QString());
+    emit groupChangeOutgoing(payload, memberUuidsOf(m_dbManager, *group));
+
+    emit groupRenamed(groupId, group->uuid(), name);
+    return true;
+}
+
+bool GroupManager::deleteGroup(qint64 groupId, qint64 requesterId)
+{
+    const auto group = getGroup(groupId);
+    if (!m_dbManager || !group) {
+        m_lastError = GroupManagerError::InvalidGroup;
+        m_lastErrorString = QStringLiteral("Group not found");
+        return false;
+    }
+    if (group->ownerId() != requesterId) {
+        m_lastError = GroupManagerError::NotOwner;
+        m_lastErrorString = QStringLiteral("Seul le propriétaire peut supprimer le groupe");
+        return false;
+    }
+
+    // Destinataires releves avant la suppression.
+    const QStringList members = memberUuidsOf(m_dbManager, *group);
+    database::UserRepository users(m_dbManager->database());
+    const auto requester = users.findById(static_cast<int>(requesterId));
+    QString error;
+    if (!database::SyncLogRepository::deleteGroupByUuid(m_dbManager->database(), group->uuid(), &error)) {
+        m_lastError = GroupManagerError::DatabaseError;
+        m_lastErrorString = error;
+        return false;
+    }
+
+    QJsonObject payload;
+    payload.insert(QStringLiteral("type"), QStringLiteral("group_deleted"));
+    payload.insert(QStringLiteral("groupUuid"), group->uuid());
+    payload.insert(QStringLiteral("requesterUuid"), requester ? requester->uuid() : QString());
+    emit groupChangeOutgoing(payload, members);
+
+    emit groupDeleted(group->uuid(), group->conversationId());
+    return true;
+}
+
+bool GroupManager::receiveGroupRenamed(const QString &jsonPayload)
+{
+    const QJsonObject obj = QJsonDocument::fromJson(jsonPayload.toUtf8()).object();
+    const QString name = obj.value(QStringLiteral("name")).toString().trimmed();
+    const auto group = m_repository.findByUuid(obj.value(QStringLiteral("groupUuid")).toString());
+    if (!m_dbManager || !group || name.isEmpty())
+        return false;
+    if (name == group->name())
+        return true;
+    QSqlQuery query(m_dbManager->database());
+    query.prepare(QStringLiteral("UPDATE Groups SET name = :name WHERE id = :id"));
+    query.bindValue(QStringLiteral(":name"), name);
+    query.bindValue(QStringLiteral(":id"), group->id());
+    if (!query.exec())
+        return false;
+    QSqlQuery conv(m_dbManager->database());
+    conv.prepare(QStringLiteral("UPDATE Conversations SET name = :name WHERE id = :id"));
+    conv.bindValue(QStringLiteral(":name"), name);
+    conv.bindValue(QStringLiteral(":id"), group->conversationId());
+    conv.exec();
+    emit groupRenamed(group->id(), group->uuid(), name);
+    return true;
+}
+
+bool GroupManager::receiveGroupDeleted(const QString &jsonPayload)
+{
+    const QJsonObject obj = QJsonDocument::fromJson(jsonPayload.toUtf8()).object();
+    const QString groupUuid = obj.value(QStringLiteral("groupUuid")).toString();
+    const auto group = m_repository.findByUuid(groupUuid);
+    if (!m_dbManager || !group)
+        return false;
+    if (!database::SyncLogRepository::deleteGroupByUuid(m_dbManager->database(), groupUuid))
+        return false;
+    emit groupDeleted(groupUuid, group->conversationId());
     return true;
 }
 

@@ -9,6 +9,10 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDebug>
+#include <QHash>
+#include <QSet>
+#include <QTimeZone>
+#include <limits>
 
 #include "UserRepository.h"
 
@@ -89,9 +93,114 @@ std::vector<models::SyncLogEntry> SyncLogRepository::entriesSinceEpoch(int fromE
     return entries;
 }
 
+std::vector<models::SyncLogEntry> SyncLogRepository::entriesAfterId(qint64 afterId) const
+{
+    std::vector<models::SyncLogEntry> entries;
+
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral("SELECT * FROM SyncLog WHERE id > :after ORDER BY id ASC"));
+    query.bindValue(QStringLiteral(":after"), afterId);
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return entries;
+    }
+    while (query.next()) {
+        entries.push_back(entryFromQuery(query));
+    }
+    return entries;
+}
+
+qint64 SyncLogRepository::maxEntryId() const
+{
+    QSqlQuery query(m_db);
+    if (!query.exec(QStringLiteral("SELECT COALESCE(MAX(id), 0) FROM SyncLog"))) {
+        m_lastError = query.lastError().text();
+        return 0;
+    }
+    return query.next() ? query.value(0).toLongLong() : 0;
+}
+
+bool SyncLogRepository::hasRecord(const QString &tableName, const QString &recordUuid) const
+{
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral("SELECT 1 FROM SyncLog WHERE table_name = :table AND record_uuid = :uuid LIMIT 1"));
+    query.bindValue(QStringLiteral(":table"), tableName);
+    query.bindValue(QStringLiteral(":uuid"), recordUuid);
+    return query.exec() && query.next();
+}
+
+qint64 SyncLogRepository::syncCursor(const QString &serverKey, const QString &userUuid) const
+{
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral("SELECT last_log_id FROM SyncCursors WHERE server_key = :server AND user_uuid = :user"));
+    query.bindValue(QStringLiteral(":server"), serverKey);
+    query.bindValue(QStringLiteral(":user"), userUuid);
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return 0;
+    }
+    return query.next() ? query.value(0).toLongLong() : 0;
+}
+
+bool SyncLogRepository::setSyncCursor(const QString &serverKey, const QString &userUuid, qint64 lastLogId)
+{
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "INSERT INTO SyncCursors (server_key, user_uuid, last_log_id, updated_at) "
+        "VALUES (:server, :user, :id, datetime('now')) "
+        "ON CONFLICT(server_key, user_uuid) DO UPDATE SET last_log_id = :id, updated_at = datetime('now')"));
+    query.bindValue(QStringLiteral(":server"), serverKey);
+    query.bindValue(QStringLiteral(":user"), userUuid);
+    query.bindValue(QStringLiteral(":id"), lastLogId);
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+std::optional<models::SyncLogEntry> SyncLogRepository::restrictUserEntry(const models::SyncLogEntry &entry)
+{
+    if (entry.tableName() != QStringLiteral("Users"))
+        return entry;
+    if (entry.operation() == models::SyncOperation::Delete)
+        return std::nullopt;
+
+    QJsonObject payload = QJsonDocument::fromJson(entry.payloadJson().toUtf8()).object();
+    if (entry.operation() == models::SyncOperation::Insert) {
+        // Nouveau compte accepte, mais jamais administrateur. Une creation ne peut
+        // pas detourner un compte existant (uuid deja connu : sans effet).
+        payload.insert(QStringLiteral("role"), QStringLiteral("user"));
+    } else {
+        // Mise a jour : ni role ni mot de passe (applyUserEntry garde alors
+        // les valeurs locales).
+        payload.remove(QStringLiteral("role"));
+        payload.remove(QStringLiteral("passwordHash"));
+        payload.remove(QStringLiteral("passwordSalt"));
+    }
+    models::SyncLogEntry restricted = entry;
+    restricted.setPayloadJson(QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+    return restricted;
+}
+
+std::vector<models::SyncLogEntry> SyncLogRepository::restrictUserEntries(const std::vector<models::SyncLogEntry> &entries)
+{
+    std::vector<models::SyncLogEntry> out;
+    out.reserve(entries.size());
+    for (const auto &entry : entries) {
+        if (auto restricted = restrictUserEntry(entry))
+            out.push_back(*restricted);
+    }
+    return out;
+}
+
 int SyncLogRepository::applyBatch(const std::vector<models::SyncLogEntry> &batch)
 {
     int inserted = 0;
+    m_lastBatchPending = 0;
+    // Une seule transaction pour tout le lot : bien plus rapide qu'une ecriture
+    // disque par entree. Si une transaction est deja ouverte, on s'y inscrit.
+    const bool ownTransaction = m_db.transaction();
 
     // CORRECTIF (retry des entrees differees) : le batch recu n'est PAS
     // garanti d'etre trie par dependance (Users avant Groups avant
@@ -148,7 +257,14 @@ int SyncLogRepository::applyBatch(const std::vector<models::SyncLogEntry> &batch
                    << "entree(s) toujours differee(s) apres ce batch (dependance introuvable localement),"
                    << "en attente d'une prochaine reconciliation";
     }
+    m_lastBatchPending = static_cast<int>(pending.size());
 
+    if (ownTransaction && !m_db.commit()) {
+        m_lastError = m_db.lastError().text();
+        m_db.rollback();
+        m_lastBatchPending = static_cast<int>(batch.size()); // rien d'acquis
+        return 0;
+    }
     return inserted;
 }
 
@@ -214,6 +330,9 @@ bool SyncLogRepository::applyDomainEntry(const models::SyncLogEntry &entry)
     if (entry.tableName() == QStringLiteral("Users")) {
         return applyUserEntry(entry);
     }
+    if (entry.tableName() == QStringLiteral("MessageReceipts")) {
+        return applyReceiptEntry(entry);
+    }
 
     // Les tables non encore supportees restent au moins fusionnees dans SyncLog.
     return true;
@@ -228,7 +347,7 @@ qint64 SyncLogRepository::ensureConversationByUuid(const QString &conversationUu
 
     QSqlQuery findQuery(m_db);
     findQuery.prepare(QStringLiteral(
-        "SELECT id, participant1_id, participant2_id FROM Conversations WHERE uuid = :uuid"));
+        "SELECT id, participant1_id, participant2_id, type FROM Conversations WHERE uuid = :uuid"));
     findQuery.bindValue(QStringLiteral(":uuid"), conversationUuid);
     if (!findQuery.exec()) {
         m_lastError = findQuery.lastError().text();
@@ -236,6 +355,16 @@ qint64 SyncLogRepository::ensureConversationByUuid(const QString &conversationUu
     }
     if (findQuery.next()) {
         const qint64 conversationId = findQuery.value(0).toLongLong();
+        // Conversation creee a tort en "individuelle" par un message de groupe
+        // arrive avant son groupe (ancienne version) : corrigee quand le groupe arrive.
+        if (type == QStringLiteral("group") && findQuery.value(3).toString() != type) {
+            QSqlQuery fixType(m_db);
+            fixType.prepare(QStringLiteral("UPDATE Conversations SET type = 'group', name = :name WHERE id = :id"));
+            fixType.bindValue(QStringLiteral(":name"), name.isEmpty() ? QStringLiteral("Conversation") : name);
+            fixType.bindValue(QStringLiteral(":id"), conversationId);
+            if (!fixType.exec())
+                m_lastError = fixType.lastError().text(); // non bloquant
+        }
         // Backfill : une conversation deja creee ici par un appel anterieur
         // (avant ce correctif, ou parce que l'appelant ne connaissait pas
         // encore les deux participants) peut avoir participant1_id/
@@ -289,10 +418,205 @@ qint64 SyncLogRepository::ensureConversationByUuid(const QString &conversationUu
     return insertQuery.lastInsertId().toLongLong();
 }
 
+bool SyncLogRepository::applyMessageChange(const models::SyncLogEntry &entry)
+{
+    const QJsonObject obj = QJsonDocument::fromJson(entry.payloadJson().toUtf8()).object();
+    QSqlQuery current(m_db);
+    current.prepare(QStringLiteral(
+        "SELECT u.uuid FROM Messages m JOIN Users u ON u.id = m.senderId WHERE m.uuid = :uuid"));
+    current.bindValue(QStringLiteral(":uuid"), entry.recordUuid());
+    // Message absent ici (pas encore recu, ou hors de nos conversations) : rien a faire.
+    if (!current.exec() || !current.next())
+        return true;
+    // Seul l'auteur modifie ou supprime son message.
+    if (current.value(0).toString() != obj.value(QStringLiteral("senderUuid")).toString())
+        return true;
+
+    QSqlQuery query(m_db);
+    if (entry.operation() == models::SyncOperation::Delete) {
+        query.prepare(QStringLiteral(
+            "UPDATE Messages SET content = '', deleted_at = :at WHERE uuid = :uuid AND deleted_at IS NULL"));
+        query.bindValue(QStringLiteral(":at"), obj.value(QStringLiteral("deletedAt")).toString(
+                                                   QDateTime::currentDateTimeUtc().toString(Qt::ISODate)));
+    } else {
+        // Modifications concurrentes : la plus recente gagne.
+        query.prepare(QStringLiteral(
+            "UPDATE Messages SET content = :content, edited_at = :at WHERE uuid = :uuid AND deleted_at IS NULL "
+            "AND (edited_at IS NULL OR datetime(edited_at) < datetime(:at))"));
+        query.bindValue(QStringLiteral(":content"), obj.value(QStringLiteral("content")).toString());
+        query.bindValue(QStringLiteral(":at"), obj.value(QStringLiteral("editedAt")).toString(
+                                                   QDateTime::currentDateTimeUtc().toString(Qt::ISODate)));
+    }
+    query.bindValue(QStringLiteral(":uuid"), entry.recordUuid());
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+bool SyncLogRepository::applyReceiptEntry(const models::SyncLogEntry &entry)
+{
+    const QJsonObject obj = QJsonDocument::fromJson(entry.payloadJson().toUtf8()).object();
+    const QString messageUuid = obj.value(QStringLiteral("messageUuid")).toString();
+    const QString userUuid = obj.value(QStringLiteral("userUuid")).toString();
+    if (messageUuid.isEmpty() || userUuid.isEmpty() || userUuid == QStringLiteral("*"))
+        return true;
+    QString deliveredAt = obj.value(QStringLiteral("deliveredAt")).toString();
+    const QString readAt = obj.value(QStringLiteral("readAt")).toString();
+    if (deliveredAt.isEmpty())
+        deliveredAt = readAt;
+    if (deliveredAt.isEmpty())
+        return true;
+
+    // Les heures deja connues ici sont gardees ; l'accuse produit ici n'est plus
+    // a transmettre si le serveur le connait deja en entier.
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "INSERT INTO MessageReceipts (message_uuid, user_uuid, delivered_at, read_at, pending_send) "
+        "VALUES (:m, :u, :d, NULLIF(:r, ''), 0) "
+        "ON CONFLICT(message_uuid, user_uuid) DO UPDATE SET "
+        "  pending_send = CASE WHEN (read_at IS NULL OR NULLIF(:r, '') IS NOT NULL) THEN 0 ELSE pending_send END, "
+        "  delivered_at = COALESCE(delivered_at, :d), "
+        "  read_at = COALESCE(read_at, NULLIF(:r, ''))"));
+    query.bindValue(QStringLiteral(":m"), messageUuid);
+    query.bindValue(QStringLiteral(":u"), userUuid);
+    query.bindValue(QStringLiteral(":d"), deliveredAt);
+    query.bindValue(QStringLiteral(":r"), readAt);
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    if (!m_touchedReceiptMessages.contains(messageUuid))
+        m_touchedReceiptMessages << messageUuid;
+    return true;
+}
+
+QStringList SyncLogRepository::takeTouchedReceiptMessages()
+{
+    QStringList out;
+    out.swap(m_touchedReceiptMessages);
+    return out;
+}
+
+std::optional<QJsonObject> SyncLogRepository::messageInsertPayload(const QString &messageUuid) const
+{
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "SELECT payload_json FROM SyncLog WHERE table_name = 'Messages' AND record_uuid = :uuid "
+        "AND operation = :op ORDER BY id ASC LIMIT 1"));
+    query.bindValue(QStringLiteral(":uuid"), messageUuid);
+    query.bindValue(QStringLiteral(":op"), models::SyncOperation::Insert);
+    if (!query.exec() || !query.next())
+        return std::nullopt;
+    return QJsonDocument::fromJson(query.value(0).toString().toUtf8()).object();
+}
+
+int SyncLogRepository::compact()
+{
+    struct Row { qint64 id; QString record; QString op; QString payload; };
+    const auto rowsOf = [this](const QString &table) {
+        std::vector<Row> rows;
+        QSqlQuery query(m_db);
+        query.prepare(QStringLiteral(
+            "SELECT id, record_uuid, operation, payload_json FROM SyncLog WHERE table_name = :t ORDER BY id ASC"));
+        query.bindValue(QStringLiteral(":t"), table);
+        if (query.exec()) {
+            while (query.next())
+                rows.push_back({query.value(0).toLongLong(), query.value(1).toString(),
+                                query.value(2).toString(), query.value(3).toString()});
+        }
+        return rows;
+    };
+
+    QList<qint64> toRemove;
+    // Accuses et membres de groupe : chaque entree porte l'etat complet, seule
+    // la derniere par enregistrement compte.
+    for (const QString &table : {QStringLiteral("MessageReceipts"), QStringLiteral("GroupMembers")}) {
+        QHash<QString, qint64> latest;
+        const auto rows = rowsOf(table);
+        for (const Row &row : rows)
+            latest.insert(row.record, row.id);
+        for (const Row &row : rows)
+            if (latest.value(row.record) != row.id) toRemove << row.id;
+    }
+    // Comptes : la version la plus recente (updatedAt, puis ordre d'ecriture),
+    // qu'applyUserEntry applique aussi en creation si le compte est inconnu.
+    {
+        QHash<QString, std::pair<QDateTime, qint64>> best;
+        const auto rows = rowsOf(QStringLiteral("Users"));
+        for (const Row &row : rows) {
+            const QDateTime at = row.op == models::SyncOperation::Delete
+                ? QDateTime::fromSecsSinceEpoch(std::numeric_limits<qint32>::max(), QTimeZone::UTC)
+                : QDateTime::fromString(QJsonDocument::fromJson(row.payload.toUtf8()).object()
+                                            .value(QStringLiteral("updatedAt")).toString(), Qt::ISODate);
+            const auto it = best.constFind(row.record);
+            if (it == best.constEnd() || at > it->first || (at == it->first && row.id > it->second))
+                best.insert(row.record, {at, row.id});
+        }
+        for (const Row &row : rows)
+            if (best.value(row.record).second != row.id) toRemove << row.id;
+    }
+    // Messages et groupes : la creation reste ; seule la derniere modification
+    // compte, et aucune apres une suppression.
+    QStringList deletedMessages;
+    for (const QString &table : {QStringLiteral("Messages"), QStringLiteral("Groups")}) {
+        QHash<QString, qint64> lastUpdate;
+        QSet<QString> deleted;
+        const auto rows = rowsOf(table);
+        for (const Row &row : rows) {
+            if (row.op == models::SyncOperation::Update) lastUpdate.insert(row.record, row.id);
+            if (row.op == models::SyncOperation::Delete) deleted.insert(row.record);
+        }
+        for (const Row &row : rows) {
+            if (row.op == models::SyncOperation::Update
+                && (deleted.contains(row.record) || lastUpdate.value(row.record) != row.id))
+                toRemove << row.id;
+        }
+        if (table == QStringLiteral("Messages"))
+            deletedMessages = deleted.values();
+    }
+
+    const bool ownTransaction = m_db.transaction();
+    int removed = 0;
+    for (qint64 id : std::as_const(toRemove)) {
+        QSqlQuery del(m_db);
+        del.prepare(QStringLiteral("DELETE FROM SyncLog WHERE id = :id"));
+        del.bindValue(QStringLiteral(":id"), id);
+        if (del.exec())
+            removed += del.numRowsAffected();
+    }
+    // Le texte d'un message supprime ne reste pas dans le journal du serveur.
+    for (const QString &uuid : std::as_const(deletedMessages)) {
+        QSqlQuery read(m_db);
+        read.prepare(QStringLiteral(
+            "SELECT id, payload_json FROM SyncLog WHERE table_name = 'Messages' AND record_uuid = :uuid AND operation = :op"));
+        read.bindValue(QStringLiteral(":uuid"), uuid);
+        read.bindValue(QStringLiteral(":op"), models::SyncOperation::Insert);
+        if (!read.exec() || !read.next())
+            continue;
+        QJsonObject payload = QJsonDocument::fromJson(read.value(1).toString().toUtf8()).object();
+        if (payload.value(QStringLiteral("content")).toString().isEmpty())
+            continue;
+        payload.insert(QStringLiteral("content"), QString());
+        QSqlQuery write(m_db);
+        write.prepare(QStringLiteral("UPDATE SyncLog SET payload_json = :p WHERE id = :id"));
+        write.bindValue(QStringLiteral(":p"), QString::fromUtf8(QJsonDocument(payload).toJson(QJsonDocument::Compact)));
+        write.bindValue(QStringLiteral(":id"), read.value(0).toLongLong());
+        write.exec();
+    }
+    if (ownTransaction && !m_db.commit()) {
+        m_lastError = m_db.lastError().text();
+        m_db.rollback();
+        return 0;
+    }
+    return removed;
+}
+
 bool SyncLogRepository::applyMessageEntry(const models::SyncLogEntry &entry)
 {
     if (entry.operation() != models::SyncOperation::Insert) {
-        return true;
+        return applyMessageChange(entry);
     }
 
     // Deja connu localement (rejeu d'un sync_batch) : l'uuid du message
@@ -349,7 +673,11 @@ bool SyncLogRepository::applyMessageEntry(const models::SyncLogEntry &entry)
         }
     }
 
-    const qint64 conversationId = ensureConversationByUuid(conversationUuid, QStringLiteral("individual"), QStringLiteral("Conversation"),
+    // Type et nom transmis par l'emetteur : un message de groupe applique avant
+    // l'entree Groups creait sinon une conversation "individuelle" definitive.
+    const QString conversationType = obj.value(QStringLiteral("conversationType")).toString(QStringLiteral("individual"));
+    const QString conversationName = obj.value(QStringLiteral("conversationName")).toString(QStringLiteral("Conversation"));
+    const qint64 conversationId = ensureConversationByUuid(conversationUuid, conversationType, conversationName,
                                                             participant1Id, participant2Id);
     if (conversationId < 0) {
         return false;
@@ -374,8 +702,66 @@ bool SyncLogRepository::applyMessageEntry(const models::SyncLogEntry &entry)
     return true;
 }
 
+bool SyncLogRepository::deleteGroupByUuid(QSqlDatabase db, const QString &groupUuid, QString *error)
+{
+    QSqlQuery find(db);
+    find.prepare(QStringLiteral("SELECT id, conversation_id FROM Groups WHERE uuid = :uuid"));
+    find.bindValue(QStringLiteral(":uuid"), groupUuid);
+    if (!find.exec() || !find.next())
+        return true; // deja absent : idempotent
+    const qint64 groupId = find.value(0).toLongLong();
+    const QVariant conversationId = find.value(1);
+
+    // Fil du groupe, membres, groupe, puis conversation (cles etrangeres).
+    const QStringList statements = {
+        QStringLiteral("DELETE FROM MessageReceipts WHERE message_uuid IN (SELECT uuid FROM Messages WHERE conversationId = :conv)"),
+        QStringLiteral("DELETE FROM Messages WHERE conversationId = :conv"),
+        QStringLiteral("DELETE FROM GroupMembers WHERE group_id = :group"),
+        QStringLiteral("DELETE FROM Groups WHERE id = :group"),
+        QStringLiteral("DELETE FROM Conversations WHERE id = :conv"),
+    };
+    for (const QString &sql : statements) {
+        QSqlQuery query(db);
+        query.prepare(sql);
+        if (sql.contains(QStringLiteral(":conv")))
+            query.bindValue(QStringLiteral(":conv"), conversationId);
+        if (sql.contains(QStringLiteral(":group")))
+            query.bindValue(QStringLiteral(":group"), groupId);
+        if (!query.exec()) {
+            if (error) *error = query.lastError().text();
+            return false;
+        }
+    }
+    return true;
+}
+
 bool SyncLogRepository::applyGroupEntry(const models::SyncLogEntry &entry)
 {
+    if (entry.operation() == models::SyncOperation::Update) {
+        // Renommage (seule modification d'un groupe journalisee).
+        const QString name = QJsonDocument::fromJson(entry.payloadJson().toUtf8()).object()
+                                 .value(QStringLiteral("name")).toString().trimmed();
+        if (name.isEmpty())
+            return true;
+        QSqlQuery query(m_db);
+        query.prepare(QStringLiteral("UPDATE Groups SET name = :name WHERE uuid = :uuid"));
+        query.bindValue(QStringLiteral(":name"), name);
+        query.bindValue(QStringLiteral(":uuid"), entry.recordUuid());
+        if (!query.exec()) {
+            m_lastError = query.lastError().text();
+            return false;
+        }
+        QSqlQuery conv(m_db);
+        conv.prepare(QStringLiteral(
+            "UPDATE Conversations SET name = :name WHERE id = (SELECT conversation_id FROM Groups WHERE uuid = :uuid)"));
+        conv.bindValue(QStringLiteral(":name"), name);
+        conv.bindValue(QStringLiteral(":uuid"), entry.recordUuid());
+        conv.exec();
+        return true;
+    }
+    if (entry.operation() == models::SyncOperation::Delete) {
+        return deleteGroupByUuid(m_db, entry.recordUuid(), &m_lastError);
+    }
     if (entry.operation() != models::SyncOperation::Insert) {
         return true;
     }

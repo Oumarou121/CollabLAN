@@ -38,10 +38,15 @@ public:
     /// Uniquement renseigne pour type() == Rename.
     QString oldRelativePath() const { return m_oldRelativePath; }
 
+    /// Empreinte du fichier avant ce changement (vide pour une creation).
+    QString previousHash() const { return m_previousHash; }
+    void setPreviousHash(const QString &hash) { m_previousHash = hash; }
+
 private:
     SyncChangeType m_type = SyncChangeType::Update;
     models::SharedFile m_file;
     QString m_oldRelativePath;
+    QString m_previousHash;
 };
 
 } // namespace models

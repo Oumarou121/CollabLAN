@@ -55,6 +55,13 @@ public:
     QString relativePath() const { return m_relativePath; }
     void setRelativePath(const QString &relativePath) { m_relativePath = relativePath; }
 
+    /// Version dont part la modification (empreinte precedente chez l'auteur).
+    QString baseHash() const { return m_baseHash; }
+    void setBaseHash(const QString &hash) { m_baseHash = hash; }
+    /// Auteur reel (uuid du compte), vide si inconnu.
+    QString authorUuid() const { return m_authorUuid; }
+    void setAuthorUuid(const QString &uuid) { m_authorUuid = uuid; }
+
 private:
     qint64 m_id = 0;
     SyncChangeType m_type = SyncChangeType::Update;
@@ -64,6 +71,8 @@ private:
     QString m_machineId;
     QDateTime m_createdAt;
     QString m_relativePath;
+    QString m_baseHash;
+    QString m_authorUuid;
 };
 
 } // namespace models

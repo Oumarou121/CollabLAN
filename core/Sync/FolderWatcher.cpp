@@ -58,7 +58,7 @@ void FolderWatcher::watchFolder(qint64 folderId, const QString &rootPath, const 
     watched.watchedDirectories.insert(rootPath);
     m_directoryToFolderId.insert(rootPath, folderId);
 
-    QDirIterator dirIt(rootPath, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    QDirIterator dirIt(rootPath, QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks, QDirIterator::Subdirectories);
     while (dirIt.hasNext()) {
         const QString absoluteDir = dirIt.next();
         if (isWatchExcludedDirName(dirIt.fileName())) {
@@ -153,23 +153,42 @@ void FolderWatcher::refreshWatchedFiles(qint64 folderId, const QStringList &know
     }
 
     // Nouveaux fichiers : a surveiller pour detecter leurs futures
-    // modifications de contenu en place.
+    // modifications de contenu en place. La liste reelle du watcher fait foi :
+    // un fichier connu mais absent au premier ajout (recu ensuite du reseau),
+    // ou remplace depuis, n'y figure pas et n'etait jamais resurveille -- ses
+    // modifications locales ne partaient plus.
+    const QStringList actuallyWatched = m_watcher->files();
+    const QSet<QString> watchedNow(actuallyWatched.cbegin(), actuallyWatched.cend());
     QStringList toAdd;
     for (const QString &desired : desiredAbsolutePaths) {
-        if (!it->watchedFilePaths.contains(desired)) {
-            toAdd.append(desired);
+        if (!it->watchedFilePaths.contains(desired) || !watchedNow.contains(desired)) {
             it->watchedFilePaths.insert(desired);
             m_fileToFolderId.insert(desired, folderId);
+            if (QFile::exists(desired)) // pas encore recu : repris au prochain rafraichissement
+                toAdd.append(desired);
         }
     }
     if (!toAdd.isEmpty()) {
         m_watcher->addPaths(toAdd);
     }
 
+    // Sous-dossiers supprimes : QFileSystemWatcher les a deja retires de sa
+    // liste. On les oublie aussi ici, sinon un sous-dossier recree sous le
+    // meme nom n'etait plus jamais surveille (il passait pour deja connu).
+    const QStringList stillWatched = m_watcher->directories();
+    for (auto dirIt = it->watchedDirectories.begin(); dirIt != it->watchedDirectories.end();) {
+        if (!stillWatched.contains(*dirIt)) {
+            m_directoryToFolderId.remove(*dirIt);
+            dirIt = it->watchedDirectories.erase(dirIt);
+        } else {
+            ++dirIt;
+        }
+    }
+
     // Nouveaux sous-dossiers eventuellement crees depuis le dernier scan :
     // il faut aussi les surveiller pour capter de futurs ajouts/suppressions
     // en leur sein.
-    QDirIterator dirIt(it->rootPath, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    QDirIterator dirIt(it->rootPath, QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks, QDirIterator::Subdirectories);
     QStringList newDirs;
     while (dirIt.hasNext()) {
         const QString absoluteDir = dirIt.next();

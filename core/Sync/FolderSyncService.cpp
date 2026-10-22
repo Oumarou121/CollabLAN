@@ -1,4 +1,7 @@
 #include "FolderSyncService.h"
+
+#include <limits>
+#include <QSqlQuery>
 #include "SafePath.h"
 
 #include "core/SharedFolderManager.h"
@@ -21,6 +24,7 @@
 #include <QFileInfo>
 #include <QDateTime>
 #include <QCryptographicHash>
+#include <QRegularExpression>
 #include <QPair>
 namespace core::sync {
 
@@ -33,6 +37,7 @@ constexpr const char *kTypeFileRequest    = "folder_file_request";
 constexpr const char *kTypeAccessGranted  = "folder_access_granted";
 constexpr const char *kTypeAccessRevoked  = "folder_access_revoked";
 constexpr const char *kTypeResyncRequest  = "folder_resync_request";
+constexpr const char *kTypeFolderLeave    = "folder_leave";
 /// op_type special (pas dans models::SyncChangeType, jamais persiste tel
 /// quel dans SyncOperations -- cf. FolderSyncService::onLocalFolderReindexed()
 /// / applyRemoteDirectoryRename()) : deplacement d'un sous-dossier entier,
@@ -79,12 +84,17 @@ FolderSyncService::FolderSyncService(database::DatabaseManager *dbManager,
                                       core::SharedFolderManager *folderManager,
                                       QObject *parent)
     : QObject(parent)
+    , m_db(dbManager ? dbManager->database() : QSqlDatabase())
     , m_repository(dbManager ? dbManager->database() : QSqlDatabase())
     , m_fileRepository(dbManager ? dbManager->database() : QSqlDatabase())
     , m_accessRepository(dbManager ? dbManager->database() : QSqlDatabase())
     , m_userRepository(dbManager ? dbManager->database() : QSqlDatabase())
     , m_folderManager(folderManager)
 {
+    m_pendingSweepTimer = new QTimer(this);
+    m_pendingSweepTimer->setInterval(30000);
+    connect(m_pendingSweepTimer, &QTimer::timeout, this, &FolderSyncService::sweepStalePendingRequests);
+    m_pendingSweepTimer->start();
 }
 
 FolderSyncService::~FolderSyncService() = default;
@@ -178,6 +188,8 @@ bool FolderSyncService::isClaimFromSender(const QString &type, const QJsonObject
         return claimIs("requester_user_uuid");
     if (type == QString::fromLatin1(kTypeAccessGranted) || type == QString::fromLatin1(kTypeAccessRevoked))
         return claimIs("owner_uuid"); // seul le proprietaire du dossier accorde ou retire un acces
+    if (type == QString::fromLatin1(kTypeFolderLeave))
+        return claimIs("user_uuid");  // seul le membre lui-meme quitte un dossier
     if (type == QString::fromLatin1(kTypeCatchupBatch)) {
         // Rattrapage envoye par un client : uniquement le contenu de SES dossiers, jamais d'octroi
         // d'acces (sinon un pair pourrait s'accorder l'acces au dossier d'un autre).
@@ -199,6 +211,53 @@ QString FolderSyncService::ownerUuidOf(const models::SharedFolder &folder) const
 {
     const auto owner = m_userRepository.findById(static_cast<int>(folder.ownerId()));
     return owner.has_value() ? owner->uuid() : QString();
+}
+
+void FolderSyncService::recordRevocation(const QString &folderUuid, const QString &userUuid, bool revoked, bool keepFiles)
+{
+    if (folderUuid.isEmpty() || userUuid.isEmpty() || !m_db.isValid())
+        return;
+    QSqlQuery query(m_db);
+    query.prepare(revoked
+        ? QStringLiteral("INSERT INTO FolderAccessRevocations (folder_uuid, user_uuid, revoked_at, keep_files) "
+                         "VALUES (:f, :u, datetime('now'), :k) "
+                         "ON CONFLICT(folder_uuid, user_uuid) DO UPDATE SET revoked_at = datetime('now'), keep_files = :k")
+        : QStringLiteral("DELETE FROM FolderAccessRevocations WHERE folder_uuid = :f AND user_uuid = :u"));
+    query.bindValue(QStringLiteral(":f"), folderUuid);
+    query.bindValue(QStringLiteral(":u"), userUuid);
+    if (revoked)
+        query.bindValue(QStringLiteral(":k"), keepFiles ? 1 : 0);
+    query.exec();
+}
+
+QStringList FolderSyncService::folderAudience(const QString &folderUuid) const
+{
+    QStringList uuids;
+    if (!m_folderManager)
+        return uuids;
+    const auto folder = m_folderManager->getFolderByUuid(folderUuid);
+    if (!folder.has_value())
+        return uuids;
+    uuids << ownerUuidOf(*folder);
+    for (const auto &access : m_accessRepository.listForFolder(folder->id())) {
+        if (const auto user = m_userRepository.findById(static_cast<int>(access.userId())); user.has_value())
+            uuids << user->uuid();
+    }
+    uuids.removeAll(QString());
+    uuids.removeDuplicates();
+    return uuids;
+}
+
+void FolderSyncService::relayTo(const QString &message, const QStringList &targets, const QHostAddress &senderAddress)
+{
+    if (!m_messagingServer || !m_messagingServer->isRunning())
+        return;
+    QStringList recipients = targets;
+    recipients.removeAll(QString());
+    if (recipients.isEmpty())
+        m_messagingServer->broadcastMessage(message, senderAddress);
+    else
+        m_messagingServer->sendToUuids(message, recipients);
 }
 
 void FolderSyncService::cleanupRevokedFolder(const models::SharedFolder &folder)
@@ -303,25 +362,24 @@ QJsonObject FolderSyncService::buildFolderOpJson(const models::FileSyncOperation
     obj[QStringLiteral("version")]           = op.version();
     obj[QStringLiteral("machine_id")]        = op.machineId();
     obj[QStringLiteral("op_id")]             = op.id();
-    // Ajouter user_uuid pour la vérification des permissions effectivePermission()
-    // (machine_id est un identifiant de machine, pas de compte utilisateur)
-    if (m_userManager) {
-        obj[QStringLiteral("user_uuid")] = m_userManager->currentUserUuid();
-    }
+    // Version dont part la modification : un destinataire qui l'a exactement
+    // avance sans conflit (cf. integrateReceivedFile).
+    obj[QStringLiteral("base_hash")]         = op.baseHash();
+    // Auteur reel pour la verification des droits (machine_id identifie une
+    // machine, pas un compte) ; a defaut, l'utilisateur de ce poste.
+    QString author = op.authorUuid();
+    if (author.isEmpty() && m_userManager)
+        author = m_userManager->currentUserUuid();
+    obj[QStringLiteral("user_uuid")] = author;
 
     const quint16 transferPort = m_transferService
         ? m_transferService->port()
         : network::TransferService::defaultPort();
     obj[QStringLiteral("transfer_port")] = static_cast<int>(transferPort);
 
-    const auto files = m_folderManager ? m_folderManager->getFiles(folder.id())
-                                       : QVector<models::SharedFile>();
-    for (const auto &f : files) {
-        if (f.relativePath() == op.relativePath()) {
-            obj[QStringLiteral("file_hash")] = f.hash();
-            obj[QStringLiteral("file_size")] = f.size();
-            break;
-        }
+    if (const auto file = m_fileRepository.findByRelativePath(folder.id(), op.relativePath()); file.has_value()) {
+        obj[QStringLiteral("file_hash")] = file->hash();
+        obj[QStringLiteral("file_size")] = file->size();
     }
 
     return obj;
@@ -329,125 +387,86 @@ QJsonObject FolderSyncService::buildFolderOpJson(const models::FileSyncOperation
 
 void FolderSyncService::onLocalFolderReindexed(qint64 folderId, int changeCount)
 {
+    Q_UNUSED(changeCount);
     if (!m_folderManager) return;
 
     const auto folderOpt = m_folderManager->getFolder(folderId);
     if (!folderOpt.has_value()) return;
     const models::SharedFolder &folder = *folderOpt;
-    const qint64 lastBroadcastOpId = m_lastBroadcastOpIdByFolder.value(folderId, 0);
 
-    // Ne pas limiter la lecture a changeCount : ce signal peut arriver
-    // apres une indexation dont la diffusion reseau a ete interrompue. En
-    // relisant une fenetre recente du journal, le curseur par dossier permet
-    // de reprendre automatiquement les operations encore non diffusees.
-    const auto ops = m_repository.getByFolderId(folderId, 500);
-    QVector<models::FileSyncOperation> newOps;
-    for (const auto &op : ops) {
-        if (op.id() <= lastBroadcastOpId) break;
-        newOps.prepend(op);
-    }
-
-    if (newOps.isEmpty()) {
+    // Sans utilisateur connecte, le serveur refuserait ces operations (auteur
+    // non identifie) et elles etaient perdues : elles partiront au login (cf.
+    // retryPendingBroadcasts, appele a chaque identification).
+    if (!m_userManager || m_userManager->currentUserUuid().isEmpty())
         return;
+
+    // Curseur persistant : auparavant en memoire, chaque redemarrage
+    // rediffusait les 500 dernieres operations (et chaque membre relisait
+    // alors tous ses fichiers).
+    const qint64 cursor = broadcastCursor(folderId);
+    QVector<models::FileSyncOperation> newOps;
+    for (const auto &op : m_repository.getByFolderId(folderId, std::numeric_limits<int>::max())) {
+        if (op.id() <= cursor) break;
+        newOps.prepend(op); // ordre chronologique
     }
 
-    // Regroupement des renommages (debrief #6) : chaque fichier deplace
-    // reste journalise individuellement dans SyncOperations ci-dessus
-    // (necessaire au rattrapage/replay par fichier), mais les DIFFUSER
-    // individuellement force chaque pair a traiter un message reseau ET un
-    // renommage sur disque par fichier -- couteux pour un deplacement de
-    // sous-dossier entier (potentiellement des centaines de fichiers pour
-    // un seul geste utilisateur). On regroupe donc les Rename partageant
-    // le meme couple (ancien dossier parent, nouveau dossier parent) pour
-    // n'emettre qu'UN SEUL folder_op de type DirectoryRename par groupe
-    // d'au moins 2 fichiers ; applyRemoteDirectoryRename() cote receveur
-    // fait alors UN seul renommage disque pour tout le sous-arbre. Un
-    // renommage isole (fichier seul, ou deplacement a la racine) reste
-    // diffuse normalement : pas de gain a regrouper un seul element, et un
-    // vrai fichier renomme seul ne doit pas etre confondu avec un
-    // deplacement de dossier.
-    QHash<QPair<QString, QString>, QVector<models::FileSyncOperation>> renameGroups;
-    QVector<models::FileSyncOperation> ungrouped;
-    for (const auto &op : newOps) {
-        if (op.type() != models::SyncChangeType::Rename) {
-            ungrouped.append(op);
+    // Diffusion dans l'ordre reel, arretee au premier echec (le curseur ne
+    // depasse jamais une operation non envoyee). Les renommages consecutifs
+    // d'un meme sous-dossier (au moins 2) partent en un seul DirectoryRename.
+    // Seules les operations de CE poste sont diffusees : celles appliquees
+    // depuis le reseau sont deja connues des autres.
+    int i = 0;
+    while (i < newOps.size()) {
+        const models::FileSyncOperation &op = newOps.at(i);
+        if (op.machineId() != m_machineId) {
+            setBroadcastCursor(folderId, op.id());
+            ++i;
             continue;
         }
+
+        int runEnd = i + 1;
         const QString oldDir = parentDirOf(op.oldRelativePath());
         const QString newDir = parentDirOf(op.relativePath());
-        if (oldDir.isEmpty() || newDir.isEmpty() || oldDir == newDir) {
-            ungrouped.append(op);
-            continue;
-        }
-        renameGroups[qMakePair(oldDir, newDir)].append(op);
-    }
-
-    for (const auto &op : ungrouped) {
-        const QString json = QString::fromUtf8(
-            QJsonDocument(buildFolderOpJson(op, folder)).toJson(QJsonDocument::Compact));
-        if (!broadcastMessage(json)) {
-            qDebug() << "[FolderSync] Diffusion retardée : aucun canal disponible pour"
-                     << op.relativePath();
-            break;
-        }
-        m_lastBroadcastOpIdByFolder[folderId] = qMax(
-            m_lastBroadcastOpIdByFolder.value(folderId, 0), op.id());
-        qDebug() << "[FolderSync] Diffusé" << models::syncChangeTypeToString(op.type())
-                 << op.relativePath() << "depuis" << folder.name();
-    }
-
-    for (auto it = renameGroups.constBegin(); it != renameGroups.constEnd(); ++it) {
-        const QVector<models::FileSyncOperation> &group = it.value();
-        qint64 maxOpId = 0;
-        for (const auto &op : group) {
-            maxOpId = qMax(maxOpId, op.id());
-        }
-        if (group.size() < 2) {
-            // Un seul fichier "traverse" ce couple de dossiers : deplacement
-            // isole, pas un vrai deplacement de sous-dossier -- diffuser
-            // normalement plutot que d'introduire un DirectoryRename inutile.
-            const QString json = QString::fromUtf8(
-                QJsonDocument(buildFolderOpJson(group.first(), folder)).toJson(QJsonDocument::Compact));
-            if (!broadcastMessage(json)) {
-                qDebug() << "[FolderSync] Diffusion retardée : aucun canal disponible pour"
-                         << group.first().relativePath();
-                break;
+        const bool movesDirectory = op.type() == models::SyncChangeType::Rename
+            && !oldDir.isEmpty() && !newDir.isEmpty() && oldDir != newDir;
+        if (movesDirectory) {
+            while (runEnd < newOps.size()
+                   && newOps.at(runEnd).type() == models::SyncChangeType::Rename
+                   && newOps.at(runEnd).machineId() == m_machineId
+                   && parentDirOf(newOps.at(runEnd).oldRelativePath()) == oldDir
+                   && parentDirOf(newOps.at(runEnd).relativePath()) == newDir) {
+                ++runEnd;
             }
-            m_lastBroadcastOpIdByFolder[folderId] = qMax(
-                m_lastBroadcastOpIdByFolder.value(folderId, 0), maxOpId);
-            continue;
         }
-
-        const QString oldDir = it.key().first;
-        const QString newDir = it.key().second;
 
         QJsonObject obj;
-        obj[QStringLiteral("type")]              = QString::fromLatin1(kTypeFolderOp);
-        obj[QStringLiteral("folder_uuid")]       = folder.uuid();
-        obj[QStringLiteral("folder_name")]       = folder.name();
-        obj[QStringLiteral("op_type")]            = QString::fromLatin1(kOpTypeDirectoryRename);
-        obj[QStringLiteral("relative_path")]     = newDir;
-        obj[QStringLiteral("old_relative_path")] = oldDir;
-        obj[QStringLiteral("file_count")]         = group.size();
-        obj[QStringLiteral("machine_id")]        = group.first().machineId();
-        obj[QStringLiteral("op_id")]              = maxOpId;
-        if (m_userManager) {
-            obj[QStringLiteral("user_uuid")] = m_userManager->currentUserUuid();
+        if (movesDirectory && runEnd - i >= 2) {
+            obj[QStringLiteral("type")]              = QString::fromLatin1(kTypeFolderOp);
+            obj[QStringLiteral("folder_uuid")]       = folder.uuid();
+            obj[QStringLiteral("folder_name")]       = folder.name();
+            obj[QStringLiteral("op_type")]           = QString::fromLatin1(kOpTypeDirectoryRename);
+            obj[QStringLiteral("relative_path")]     = newDir;
+            obj[QStringLiteral("old_relative_path")] = oldDir;
+            obj[QStringLiteral("file_count")]        = runEnd - i;
+            obj[QStringLiteral("machine_id")]        = op.machineId();
+            obj[QStringLiteral("op_id")]             = newOps.at(runEnd - 1).id();
+            obj[QStringLiteral("user_uuid")]         = op.authorUuid().isEmpty() ? m_userManager->currentUserUuid()
+                                                                                 : op.authorUuid();
+            obj[QStringLiteral("transfer_port")]     = static_cast<int>(
+                m_transferService ? m_transferService->port() : network::TransferService::defaultPort());
+        } else {
+            runEnd = i + 1;
+            obj = buildFolderOpJson(op, folder);
         }
-        const quint16 transferPort = m_transferService
-            ? m_transferService->port()
-            : network::TransferService::defaultPort();
-        obj[QStringLiteral("transfer_port")] = static_cast<int>(transferPort);
 
         if (!broadcastMessage(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)))) {
-            qDebug() << "[FolderSync] Diffusion retardée : aucun canal disponible pour le renommage"
-                     << oldDir << "->" << newDir;
-            break;
+            qDebug() << "[FolderSync] Diffusion retardée : aucun canal disponible pour" << op.relativePath();
+            return;
         }
-        m_lastBroadcastOpIdByFolder[folderId] = qMax(
-            m_lastBroadcastOpIdByFolder.value(folderId, 0), maxOpId);
-        qDebug() << "[FolderSync] Diffusé DirectoryRename" << oldDir << "->" << newDir
-                 << "(" << group.size() << "fichiers regroupés en 1 message) depuis" << folder.name();
+        setBroadcastCursor(folderId, newOps.at(runEnd - 1).id());
+        qDebug() << "[FolderSync] Diffusé" << obj[QStringLiteral("op_type")].toString()
+                 << obj[QStringLiteral("relative_path")].toString() << "depuis" << folder.name();
+        i = runEnd;
     }
 }
 
@@ -518,13 +537,14 @@ void FolderSyncService::announceAccessGranted(qint64 folderId, qint64 userId,
         return;
     }
 
+    recordRevocation((*obj)[QStringLiteral("folder_uuid")].toString(), (*obj)[QStringLiteral("user_uuid")].toString(), false);
     const QString json = QString::fromUtf8(QJsonDocument(*obj).toJson(QJsonDocument::Compact));
     broadcastMessage(json);
     qDebug() << "[FolderSync] Annonce d'acces diffusée : dossier" << (*obj)[QStringLiteral("folder_name")].toString()
              << "-> utilisateur uuid" << (*obj)[QStringLiteral("user_uuid")].toString();
 }
 
-void FolderSyncService::announceAccessRevoked(qint64 folderId, qint64 userId)
+void FolderSyncService::announceAccessRevoked(qint64 folderId, qint64 userId, bool keepFiles)
 {
     if (!m_folderManager) return;
 
@@ -544,6 +564,10 @@ void FolderSyncService::announceAccessRevoked(qint64 folderId, qint64 userId)
     obj[QStringLiteral("user_uuid")]         = revokedUser->uuid();
     obj[QStringLiteral("owner_uuid")]        = ownerUuidOf(*folder); // verifie par le serveur relais
     obj[QStringLiteral("origin_machine_id")] = m_machineId;
+    // keep_files : arret du partage (le membre garde ses fichiers) plutot
+    // qu'un retrait d'acces (ses copies sont effacees).
+    obj[QStringLiteral("keep_files")]        = keepFiles;
+    recordRevocation(folder->uuid(), revokedUser->uuid(), true, keepFiles);
 
     const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
     broadcastMessage(json);
@@ -607,16 +631,31 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
         // pour eviter de renvoyer l'echo au client qui vient de l'emettre --
         // c'est sans risque : handleFolderOp() ignore deja localement toute
         // operation dont machine_id == m_machineId (ligne ci-dessus).
+        // Aux seuls utilisateurs ayant acces au dossier (et a son proprietaire).
         const QString opMachineId = obj[QStringLiteral("machine_id")].toString();
-        if (opMachineId != m_machineId
-            && m_messagingServer && m_messagingServer->isRunning()) {
-            m_messagingServer->broadcastMessage(message, senderAddress);
-        }
+        if (opMachineId != m_machineId)
+            relayTo(message, folderAudience(obj[QStringLiteral("folder_uuid")].toString()), senderAddress);
     }
     else if (type == QString::fromLatin1(kTypeFolderHello))
         handleFolderHello(obj);
-    else if (type == QString::fromLatin1(kTypeFileRequest))
+    else if (type == QString::fromLatin1(kTypeFileRequest)) {
         handleFolderFileRequest(obj, senderAddress);
+        // Fichier tenu par un autre client (auteur de la modification) :
+        // transmis a son compte, avec l'adresse du demandeur que seul le
+        // serveur connait. Sans ce relais, un client ne recevait jamais le
+        // fichier d'un autre client.
+        const QString target = obj[QStringLiteral("owner_machine_id")].toString();
+        const QString sourceUser = obj[QStringLiteral("source_user_uuid")].toString();
+        if (!target.isEmpty() && target != m_machineId && !sourceUser.isEmpty() && !senderAddress.isNull()) {
+            QJsonObject relayed = obj;
+            bool mapped = false;
+            const quint32 v4 = senderAddress.toIPv4Address(&mapped);
+            relayed[QStringLiteral("requester_address")] =
+                mapped ? QHostAddress(v4).toString() : senderAddress.toString();
+            relayTo(QString::fromUtf8(QJsonDocument(relayed).toJson(QJsonDocument::Compact)), {sourceUser},
+                    senderAddress);
+        }
+    }
     else if (type == QString::fromLatin1(kTypeAccessGranted)) {
         handleFolderAccessGranted(obj);
         // Relais vers les autres clients connectes : ce message peut nous
@@ -637,24 +676,28 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
         // avant que les vrais folder_op/folder_file_request ne passent).
         //
         // On ne relaie donc que si l'annonce ne vient pas de nous-memes.
+        // Au proprietaire et a l'utilisateur concerne seulement : un partage ne
+        // regarde personne d'autre (tous les postes enregistraient sinon le
+        // dossier, puisque tous les comptes y sont connus).
         const QString originMachineId = obj[QStringLiteral("origin_machine_id")].toString();
-        if (originMachineId != m_machineId
-            && m_messagingServer && m_messagingServer->isRunning()) {
-            // excludeAddress=senderAddress : evite de renvoyer l'echo au
-            // client qui vient d'emettre ce message (cf. debrief resync_request
-            // ci-dessous, meme correctif applique par coherence a tous les
-            // relais de ce bloc).
-            m_messagingServer->broadcastMessage(message, senderAddress);
-        }
+        if (originMachineId != m_machineId)
+            relayTo(message, {obj[QStringLiteral("owner_uuid")].toString(), obj[QStringLiteral("user_uuid")].toString()},
+                    senderAddress);
     }
     else if (type == QString::fromLatin1(kTypeAccessRevoked)) {
         handleFolderAccessRevoked(obj);
-        // Meme correctif anti-boucle que pour kTypeAccessGranted ci-dessus.
+        // Meme correctif anti-boucle et memes destinataires que pour kTypeAccessGranted ci-dessus.
         const QString originMachineId = obj[QStringLiteral("origin_machine_id")].toString();
-        if (originMachineId != m_machineId
-            && m_messagingServer && m_messagingServer->isRunning()) {
-            m_messagingServer->broadcastMessage(message, senderAddress);
-        }
+        if (originMachineId != m_machineId)
+            relayTo(message, {obj[QStringLiteral("owner_uuid")].toString(), obj[QStringLiteral("user_uuid")].toString()},
+                    senderAddress);
+    }
+    else if (type == QString::fromLatin1(kTypeFolderLeave)) {
+        // Un membre quitte le dossier : applique ici (acces retire, retrait note
+        // pour le rattrapage) et transmis au proprietaire.
+        handleFolderLeave(obj);
+        QStringList owner{obj[QStringLiteral("owner_uuid")].toString()};
+        relayTo(message, owner, senderAddress);
     }
     else if (type == QString::fromLatin1(kTypeResyncRequest)) {
         handleFolderResyncRequest(obj);
@@ -672,10 +715,15 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
         // ci-dessus -- observe en pratique dans les logs (le SERVER recoit
         // la meme requete de nombreuses fois de suite). On exclut desormais
         // l'emetteur d'origine du relais via excludeAddress.
+        // Au proprietaire du dossier seulement (c'est lui qui repond).
         const QString requesterMachineId = obj[QStringLiteral("requester_machine_id")].toString();
-        if (requesterMachineId != m_machineId
-            && m_messagingServer && m_messagingServer->isRunning()) {
-            m_messagingServer->broadcastMessage(message, senderAddress);
+        if (requesterMachineId != m_machineId) {
+            QStringList owner;
+            if (m_folderManager) {
+                if (const auto folder = m_folderManager->getFolderByUuid(obj[QStringLiteral("folder_uuid")].toString()))
+                    owner << ownerUuidOf(*folder);
+            }
+            relayTo(message, owner, senderAddress);
         }
     }
     else if (type == QString::fromLatin1(kTypeCatchupBatch)) {
@@ -704,9 +752,8 @@ void FolderSyncService::onServerMessageReceived(const QString &message,
         // folder_access_granted qui peuvent repartir dans l'autre sens en
         // topologie mesh).
         handleFolderCatchupBatch(obj);
-        if (m_messagingServer && m_messagingServer->isRunning()) {
-            m_messagingServer->broadcastMessage(message, senderAddress);
-        }
+        // Au seul demandeur quand la reponse le designe.
+        relayTo(message, {obj[QStringLiteral("requester_user_uuid")].toString()}, senderAddress);
     }
 }
 
@@ -728,17 +775,25 @@ void FolderSyncService::onClientMessageReceived(const QString &message)
         // ne recevait donc jamais les octets du fichier : le placeholder créé par
         // registerCatchupPlaceholder() (taille 0 par défaut) n'était jamais
         // complété et le fichier n'était jamais écrit sur le disque -- c'est la
-        // cause du bug "fichiers reçus par le serveur toujours à 0 Ko". On passe
-        // QHostAddress() (l'adresse du serveur n'est pas connue ici, contrairement
-        // à handleFolderOp ci-dessus) : handleFolderFileRequest() se rabat alors
-        // sur m_discoveryService pour résoudre requester_machine_id en adresse IP.
-        handleFolderFileRequest(obj, QHostAddress());
+        // cause du bug "fichiers reçus par le serveur toujours à 0 Ko".
+    {
+        // Un client ne recoit une demande que du serveur : la sienne (adresse
+        // de la connexion ; la decouverte ne suffisait pas, introuvable hors
+        // diffusion UDP) ou celle d'un autre client, relayee avec l'adresse
+        // du demandeur.
+        QHostAddress requester(obj[QStringLiteral("requester_address")].toString());
+        if (requester.isNull() && m_messagingService)
+            requester = m_messagingService->peerAddress();
+        handleFolderFileRequest(obj, requester);
+    }
     else if (type == QString::fromLatin1(kTypeAccessGranted))
         handleFolderAccessGranted(obj);
     else if (type == QString::fromLatin1(kTypeAccessRevoked))
         handleFolderAccessRevoked(obj);
     else if (type == QString::fromLatin1(kTypeResyncRequest))
         handleFolderResyncRequest(obj);
+    else if (type == QString::fromLatin1(kTypeFolderLeave))
+        handleFolderLeave(obj);
 }
 
 // ---------------------------------------------------------------------------
@@ -755,6 +810,7 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
     const QString machineId    = obj[QStringLiteral("machine_id")].toString();
     const QString userUuid     = obj[QStringLiteral("user_uuid")].toString();
     const QString fileHash     = obj[QStringLiteral("file_hash")].toString();
+    const QString baseHash     = obj[QStringLiteral("base_hash")].toString();
     const int version          = obj[QStringLiteral("version")].toInt();
     const quint16 transferPort = static_cast<quint16>(
         obj[QStringLiteral("transfer_port")].toInt(
@@ -807,31 +863,15 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
             // n'aurait donc jamais dû se produire pour ce cas précis : un
             // dossier non accepté ne doit jamais déclencher de transfert
             // reseau, seulement une mise a jour de metadonnee locale.
+            // Deja a jour ici ? (empreinte connue en base pour un fichier inchange,
+            // sinon recalculee). Sans chemin local : le repere suffit.
             bool needsUpdate = true;
-            if (!folder.localPath().isEmpty() && !fileHash.isEmpty()) {
-                const QString expectedAbsPath = resolveInsideFolder(folder.localPath(), relativePath);
-                // La base peut conserver une version/hash historique après
-                // une réindexation locale ou un ancien téléchargement. Le
-                // contenu présent sur disque est la source de vérité pour
-                // décider si un transfert est réellement nécessaire.
-                if (QFile::exists(expectedAbsPath)
-                    && computeHash(expectedAbsPath) == fileHash) {
-                    needsUpdate = false;
-                }
-            }
-            if (needsUpdate && !fileHash.isEmpty()) {
-                const auto files = m_folderManager->getFiles(folder.id());
-                for (const auto &f : files) {
-                    if (f.relativePath() == relativePath && f.hash() == fileHash
-                        && f.version() >= version) {
-                        if (folder.localPath().isEmpty()) {
-                            needsUpdate = false;
-                        } else {
-                            const QString expectedAbsPath = resolveInsideFolder(folder.localPath(), relativePath);
-                            needsUpdate = !QFile::exists(expectedAbsPath);
-                        }
-                        break;
-                    }
+            if (!fileHash.isEmpty()) {
+                if (folder.localPath().isEmpty()) {
+                    const auto known = m_fileRepository.findByRelativePath(folder.id(), relativePath);
+                    needsUpdate = !(known.has_value() && known->hash() == fileHash);
+                } else {
+                    needsUpdate = !localMatches(folder, relativePath, fileHash);
                 }
             }
             if (!needsUpdate) {
@@ -846,7 +886,7 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
             }
             requestRemoteFile(folderUuid, relativePath, machineId,
                               folder.id(), folder.localPath(),
-                              fileHash, version);
+                              fileHash, version, baseHash, userUuid);
             break;
         }
         // CORRECTIF (course folder_op / folder_access_granted) : un partage
@@ -885,7 +925,7 @@ void FolderSyncService::handleFolderOp(const QJsonObject &obj,
                 qWarning() << "[FolderSync] folder_op Delete ignoré : accès révoqué pour" << peerIdentifier;
                 break;
             }
-            applyRemoteDelete(folder, relativePath, machineId);
+            applyRemoteDelete(folder, relativePath, machineId, baseHash);
             break;
         }
     } else if (opType == QStringLiteral("Rename")) {
@@ -965,11 +1005,16 @@ void FolderSyncService::handleFolderHello(const QJsonObject &obj)
         // inspecte (toujours 0 en pratique, cf. onConnectedToServer()) mais
         // n'a plus d'effet de troncature ici puisque chaque fichier n'a
         // desormais qu'une seule ligne candidate.
-        const auto ops = m_repository.getLatestPerFileByFolderId(folder.id());
+        const auto ops = m_repository.getLatestPerFileByFolderId(folder.id(), std::numeric_limits<int>::max());
         for (const auto &op : ops) {
             if (op.id() <= lastOpId) break;
             QJsonObject opObj = buildFolderOpJson(op, folder);
             opObj.remove(QStringLiteral("type"));
+            // Auteur reel, a defaut le proprietaire (jamais l'utilisateur
+            // connecte sur ce serveur : s'il n'etait pas membre, tout le
+            // rattrapage etait ignore par les destinataires).
+            if (op.authorUuid().isEmpty())
+                opObj[QStringLiteral("user_uuid")] = ownerUuidOf(folder);
             opObj[QStringLiteral("transfer_port")] = static_cast<int>(selfPort);
             opsArray.append(opObj);
         }
@@ -984,13 +1029,34 @@ void FolderSyncService::handleFolderHello(const QJsonObject &obj)
     // hors-ligne au moment de l'annonce initiale -- des qu'il se reconnecte,
     // il rattrape les acces manques sans qu'une nouvelle action de partage
     // soit necessaire.
+    // Seuls les acces qui concernent le demandeur : les siens, et ceux des
+    // dossiers dont il est proprietaire (auparavant : tous, et limites aux 500
+    // premiers).
+    const QString requester = obj[QStringLiteral("requester_user_uuid")].toString();
     QJsonArray accessArray;
-    for (const auto &access : m_accessRepository.getSinceId(lastAccessId, 500)) {
+    for (const auto &access : m_accessRepository.getSinceId(lastAccessId, std::numeric_limits<int>::max())) {
         const auto accessJson = buildAccessGrantedJson(access.folderId(), access.userId(), access.permission());
-        if (accessJson.has_value()) {
-            QJsonObject entry = *accessJson;
-            entry.remove(QStringLiteral("type"));
-            accessArray.append(entry);
+        if (!accessJson.has_value())
+            continue;
+        if ((*accessJson)[QStringLiteral("user_uuid")].toString() != requester
+            && (*accessJson)[QStringLiteral("owner_uuid")].toString() != requester)
+            continue;
+        QJsonObject entry = *accessJson;
+        entry.remove(QStringLiteral("type"));
+        accessArray.append(entry);
+    }
+    // Retraits d'acces du demandeur : un poste absent au moment du retrait le
+    // rattrape (il gardait sinon le dossier et ses fichiers indefiniment).
+    QJsonArray revocations;
+    if (m_db.isValid() && !requester.isEmpty()) {
+        QSqlQuery query(m_db);
+        query.prepare(QStringLiteral("SELECT folder_uuid, keep_files FROM FolderAccessRevocations WHERE user_uuid = :u"));
+        query.bindValue(QStringLiteral(":u"), requester);
+        if (query.exec()) {
+            while (query.next())
+                revocations.append(QJsonObject{{QStringLiteral("folder_uuid"), query.value(0).toString()},
+                                               {QStringLiteral("user_uuid"), requester},
+                                               {QStringLiteral("keep_files"), query.value(1).toInt() != 0}});
         }
     }
 
@@ -998,9 +1064,15 @@ void FolderSyncService::handleFolderHello(const QJsonObject &obj)
     batch[QStringLiteral("type")]         = QString::fromLatin1(kTypeCatchupBatch);
     batch[QStringLiteral("operations")]   = opsArray;
     batch[QStringLiteral("access_grants")] = accessArray;
+    batch[QStringLiteral("access_revocations")] = revocations;
     const QString json = QString::fromUtf8(
         QJsonDocument(batch).toJson(QJsonDocument::Compact));
-    broadcastMessage(json);
+    // Au seul demandeur (auparavant diffuse a tous les clients connectes, qui
+    // recevaient ainsi le rattrapage des autres).
+    if (m_messagingServer && m_messagingServer->isRunning() && !m_messagingServer->currentSenderFingerprint().isEmpty())
+        m_messagingServer->replyToCurrentSender(json);
+    else
+        broadcastMessage(json);
     qDebug() << "[FolderSync] folder_catchup_batch envoyé :" << opsArray.size() << "ops,"
              << accessArray.size() << "access_grants";
 }
@@ -1030,6 +1102,14 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
     if (!accessArray.isEmpty()) {
         qDebug() << "[FolderSync] folder_catchup_batch : " << accessArray.size() << "access_grants rattrapés";
     }
+    // Retraits d'acces manques pendant une absence.
+    for (const auto &value : obj[QStringLiteral("access_revocations")].toArray()) {
+        if (!value.isObject())
+            continue;
+        QJsonObject revocation = value.toObject();
+        revocation.insert(QStringLiteral("origin_machine_id"), QStringLiteral("catchup"));
+        handleFolderAccessRevoked(revocation);
+    }
 
     if (opsArray.isEmpty()) return;
 
@@ -1055,6 +1135,7 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
         const QString machineId    = opObj[QStringLiteral("machine_id")].toString();
         const QString userUuid     = opObj[QStringLiteral("user_uuid")].toString();
         const QString fileHash     = opObj[QStringLiteral("file_hash")].toString();
+        const QString baseHash     = opObj[QStringLiteral("base_hash")].toString();
         const int version          = opObj[QStringLiteral("version")].toInt();
 
         if (machineId == m_machineId || !m_folderManager) continue;
@@ -1110,30 +1191,15 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
                 // fichier existe RÉELLEMENT sur disque à l'emplacement attendu ;
                 // sans localPath, aucun contenu réel n'est de toute façon possible
                 // (le hash connu ne peut provenir que d'un placeholder).
+                // Deja a jour ici ? (empreinte connue en base pour un fichier inchange,
+                // sinon recalculee). Sans chemin local : le repere suffit.
                 bool needsUpdate = true;
-                if (!folder.localPath().isEmpty() && !fileHash.isEmpty()) {
-                    const QString expectedAbsPath = resolveInsideFolder(folder.localPath(), relativePath);
-                    // Priorité au contenu réel : des métadonnées locales
-                    // périmées ne doivent pas provoquer un téléchargement
-                    // d'un fichier déjà identique sur disque.
-                    if (QFile::exists(expectedAbsPath)
-                        && computeHash(expectedAbsPath) == fileHash) {
-                        needsUpdate = false;
-                    }
-                }
-                if (needsUpdate && !fileHash.isEmpty()) {
-                    const auto files = m_folderManager->getFiles(folder.id());
-                    for (const auto &f : files) {
-                        if (f.relativePath() == relativePath && f.hash() == fileHash
-                            && f.version() >= version) {
-                            if (folder.localPath().isEmpty()) {
-                                needsUpdate = false;
-                            } else {
-                                const QString expectedAbsPath = resolveInsideFolder(folder.localPath(), relativePath);
-                                needsUpdate = !QFile::exists(expectedAbsPath);
-                            }
-                            break;
-                        }
+                if (!fileHash.isEmpty()) {
+                    if (folder.localPath().isEmpty()) {
+                        const auto known = m_fileRepository.findByRelativePath(folder.id(), relativePath);
+                        needsUpdate = !(known.has_value() && known->hash() == fileHash);
+                    } else {
+                        needsUpdate = !localMatches(folder, relativePath, fileHash);
                     }
                 }
                 if (!needsUpdate) {
@@ -1158,7 +1224,7 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
                 }
                 requestRemoteFile(folderUuid, relativePath, machineId,
                                   folder.id(), folder.localPath(),
-                                  fileHash, version);
+                                  fileHash, version, baseHash, userUuid);
                 break;
             }
         } else if (opType == QStringLiteral("Delete")) {
@@ -1169,7 +1235,7 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
                     qWarning() << "[FolderSync] catchup Delete ignoré : accès révoqué pour" << peerIdentifier;
                     break;
                 }
-                applyRemoteDelete(folder, relativePath, machineId);
+                applyRemoteDelete(folder, relativePath, machineId, baseHash);
                 break;
             }
         } else if (opType == QStringLiteral("Rename")) {
@@ -1204,7 +1270,7 @@ void FolderSyncService::handleFolderCatchupBatch(const QJsonObject &obj)
                         registerCatchupPlaceholder(folder, relativePath, fileHash, version, machineId);
                     } else {
                         requestRemoteFile(folderUuid, relativePath, machineId,
-                                          folder.id(), folder.localPath(), fileHash, version);
+                                          folder.id(), folder.localPath(), fileHash, version, baseHash, userUuid);
                     }
                     break;
                 }
@@ -1272,9 +1338,13 @@ void FolderSyncService::handleFolderFileRequest(const QJsonObject &obj,
         // récupérer les octets. None (révoqué ou jamais accordé) est refusé
         // pour la même raison -- canWrite() couvre les deux cas en un seul
         // test (None et Read renvoient tous deux false).
+        // Tout membre recoit le contenu, lecture seule comprise (« Consulte » :
+        // il recoit les fichiers mais ses modifications ne repartent pas, cf.
+        // SyncEngine::canWatchFolder). Auparavant reserve a l'ecriture : un
+        // membre en lecture seule voyait la liste sans jamais recevoir un fichier.
         const auto perm = effectivePermission(folder, obj[QStringLiteral("requester_user_uuid")].toString());
-        if (!models::canWrite(perm)) {
-            qWarning() << "[FolderSync] folder_file_request : accès refusé (lecture seule ou révoqué) pour"
+        if (perm == models::SharedFolderPermission::None) {
+            qWarning() << "[FolderSync] folder_file_request : accès refusé (révoqué) pour"
                        << requesterMachineId << "sur le dossier" << folder.name();
             return;
         }
@@ -1385,6 +1455,7 @@ void FolderSyncService::handleFolderAccessGranted(const QJsonObject &obj)
     }
 
     const QString folderUuid = obj[QStringLiteral("folder_uuid")].toString();
+    recordRevocation(folderUuid, userUuid, false);
     auto folder = m_folderManager->getFolderByUuid(folderUuid);
     if (!folder.has_value()) {
         folder = m_folderManager->registerRemoteFolder(
@@ -1590,11 +1661,13 @@ void FolderSyncService::handleFolderResyncRequest(const QJsonObject &obj)
     // risque de troncature par un fichier très réédité que pour le
     // rattrapage de reconnexion.
     QJsonArray opsArray;
-    const auto ops = m_repository.getLatestPerFileByFolderId(folder->id());
+    const auto ops = m_repository.getLatestPerFileByFolderId(folder->id(), std::numeric_limits<int>::max());
     for (const auto &op : ops) {
         if (op.id() <= sinceOpId) break;
         QJsonObject opObj = buildFolderOpJson(op, *folder);
         opObj.remove(QStringLiteral("type"));
+        if (op.authorUuid().isEmpty())
+            opObj[QStringLiteral("user_uuid")] = ownerUuidOf(*folder);
         opObj[QStringLiteral("transfer_port")] = static_cast<int>(selfPort);
         opsArray.append(opObj);
     }
@@ -1616,7 +1689,7 @@ void FolderSyncService::handleFolderResyncRequest(const QJsonObject &obj)
             opObj[QStringLiteral("version")] = file.version();
             opObj[QStringLiteral("machine_id")] = m_machineId;
             opObj[QStringLiteral("transfer_port")] = static_cast<int>(selfPort);
-            // user_uuid sera ajouté par buildFolderOpJson si nécessaire
+            opObj[QStringLiteral("user_uuid")] = ownerUuidOf(*folder);
             opsArray.append(opObj);
         }
     }
@@ -1630,6 +1703,7 @@ void FolderSyncService::handleFolderResyncRequest(const QJsonObject &obj)
     batch[QStringLiteral("type")]          = QString::fromLatin1(kTypeCatchupBatch);
     batch[QStringLiteral("operations")]    = opsArray;
     batch[QStringLiteral("access_grants")] = QJsonArray(); // déjà géré par folder_access_granted
+    batch[QStringLiteral("requester_user_uuid")] = obj[QStringLiteral("requester_user_uuid")].toString();
     const QString json = QString::fromUtf8(QJsonDocument(batch).toJson(QJsonDocument::Compact));
     broadcastMessage(json);
     qDebug() << "[FolderSync] folder_resync_request : rattrapage ciblé envoyé pour" << folder->name()
@@ -1648,6 +1722,8 @@ void FolderSyncService::handleFolderAccessRevoked(const QJsonObject &obj)
     if (!revokedUser.has_value()) return; // utilisateur inconnu sur ce poste
 
     const QString folderUuid = obj[QStringLiteral("folder_uuid")].toString();
+    const bool keepFiles = obj[QStringLiteral("keep_files")].toBool(false);
+    recordRevocation(folderUuid, userUuid, true, keepFiles);
     const auto folder = m_folderManager->getFolderByUuid(folderUuid);
     if (!folder.has_value()) return; // dossier inconnu sur ce poste
 
@@ -1660,7 +1736,13 @@ void FolderSyncService::handleFolderAccessRevoked(const QJsonObject &obj)
         // du dossier ; nous n'avons plus le droit de les conserver.
         qDebug() << "[FolderSync] Notre accès au dossier" << folder->name()
                  << "a été révoqué — nettoyage local en cours";
-        cleanupRevokedFolder(*folder); // supprime aussi l'accès via removeFolder
+        if (keepFiles) {
+            // Partage arrete par le proprietaire : le dossier quitte LocaLink
+            // ici, les fichiers restent sur le disque.
+            m_folderManager->removeFolder(folder->id());
+        } else {
+            cleanupRevokedFolder(*folder); // supprime aussi l'accès via removeFolder
+        }
     } else {
         // Un autre utilisateur a été révoqué ; on met simplement à jour la DB
         // locale, SANS rediffuser (broadcastNetwork=false) : cet évènement
@@ -1696,7 +1778,9 @@ void FolderSyncService::requestRemoteFile(const QString &folderUuid,
                                            qint64 folderId,
                                            const QString &localFolderPath,
                                            const QString &incomingHash,
-                                           int incomingVersion)
+                                           int incomingVersion,
+                                           const QString &baseHash,
+                                           const QString &authorUuid)
 {
     const quint16 myPort = m_transferService ? m_transferService->port()
                                              : network::TransferService::defaultPort();
@@ -1709,6 +1793,8 @@ void FolderSyncService::requestRemoteFile(const QString &folderUuid,
     req[QStringLiteral("requester_machine_id")]    = m_machineId;
     req[QStringLiteral("requester_transfer_port")] = static_cast<int>(myPort);
     req[QStringLiteral("owner_machine_id")]        = ownerMachineId;
+    if (!authorUuid.isEmpty())
+        req[QStringLiteral("source_user_uuid")]    = authorUuid; // pour le relais vers un autre client
 
     const QString json = QString::fromUtf8(QJsonDocument(req).toJson(QJsonDocument::Compact));
     if (folderId > 0 && !localFolderPath.isEmpty()) {
@@ -1744,6 +1830,9 @@ void FolderSyncService::requestRemoteFile(const QString &folderUuid,
         pending.ownerMachineId   = ownerMachineId;
         pending.incomingHash     = incomingHash;
         pending.incomingVersion  = incomingVersion;
+        pending.baseHash         = baseHash;
+        pending.authorUuid       = authorUuid;
+        pending.requestedAtMs    = QDateTime::currentMSecsSinceEpoch();
         m_pendingByKey.insert(pendingKey, pending);
 
         // Connu de façon synchrone et fiable ici, contrairement à
@@ -2107,15 +2196,51 @@ void FolderSyncService::flushFolderSentNotification(const QString &folderUuid)
 
 void FolderSyncService::applyRemoteDelete(const models::SharedFolder &folder,
                                            const QString &relativePath,
-                                           const QString &machineId)
+                                           const QString &machineId,
+                                           const QString &baseHash)
 {
     const QString absPath = resolveInsideFolder(folder.localPath(), relativePath);
     if (absPath.isEmpty()) {
         qWarning() << "[FolderSync] Suppression distante refusée : chemin hors du dossier partagé :" << relativePath;
         return;
     }
-    if (QFile::exists(absPath) && !QFile::remove(absPath)) {
-        qWarning() << "[FolderSync] Suppression distante : échec de la suppression sur disque :" << absPath;
+
+    const auto known = m_fileRepository.findByRelativePath(folder.id(), relativePath);
+    if (QFile::exists(absPath)) {
+        // Le fichier a-t-il ete modifie ici depuis la version que l'auteur de la
+        // suppression connaissait ? Si oui, la modification locale est gardee
+        // sous un autre nom au lieu d'etre effacee.
+        const QString localHash = computeHash(absPath);
+        const QString synced = known.has_value() ? known->syncedHash() : QString();
+        const bool localUnchanged = (!baseHash.isEmpty() && localHash == baseHash)
+            || (!synced.isEmpty() && localHash == synced)
+            || (baseHash.isEmpty() && synced.isEmpty() && known.has_value() && localHash == known->hash());
+        if (localUnchanged) {
+            if (!moveToTrashOrRemove(absPath))
+                qWarning() << "[FolderSync] Suppression distante : échec de la suppression sur disque :" << absPath;
+        } else {
+            const QString localName = displayNameOf(m_userManager ? m_userManager->currentUserUuid() : QString(),
+                                                    m_machineId);
+            const QString keptRel = makeConflictPath(relativePath, localName);
+            const QString keptAbs = resolveInsideFolder(folder.localPath(), keptRel);
+            if (!keptAbs.isEmpty() && (QFile::exists(keptAbs) ? QFile::remove(keptAbs) : true)
+                && QFile::rename(absPath, keptAbs)) {
+                const QFileInfo info(keptAbs);
+                models::SharedFile kept(0, folder.id(), keptRel);
+                kept.setHash(localHash);
+                kept.setSize(info.size());
+                kept.setLastModified(info.lastModified());
+                if (m_fileRepository.upsert(kept).has_value())
+                    m_fileRepository.setSyncedHash(folder.id(), keptRel, localHash);
+                qWarning() << "[FolderSync] Suppression distante d'un fichier modifié ici : version locale gardée sous"
+                           << keptRel;
+                emit conflictDetected(folder.uuid(), relativePath, keptRel);
+            } else {
+                qWarning() << "[FolderSync] Suppression distante ignorée : fichier modifié ici et impossible à mettre de côté :"
+                           << absPath;
+                return;
+            }
+        }
     }
 
     if (!m_fileRepository.markDeleted(folder.id(), relativePath)) {
@@ -2136,6 +2261,7 @@ void FolderSyncService::applyRemoteDelete(const models::SharedFolder &folder,
         op.setFileId(existing->id());
         op.setRelativePath(relativePath);
         op.setMachineId(machineId);
+        op.setBaseHash(baseHash);
         if (!m_repository.insert(op).has_value()) {
             qWarning() << "[FolderSync] SyncOperations insert (Delete) échoué pour" << relativePath
                        << "-- erreur SQL:" << m_repository.lastError();
@@ -2166,7 +2292,22 @@ void FolderSyncService::applyRemoteRename(const models::SharedFolder &folder,
 
     if (QFile::exists(oldAbsPath)) {
         if (QFile::exists(newAbsPath)) {
-            QFile::remove(newAbsPath);
+            // Un fichier local porte deja le nouveau nom : identique, il est
+            // remplace ; different, il est mis de cote plutot qu'ecrase.
+            if (computeHash(newAbsPath) == computeHash(oldAbsPath)) {
+                QFile::remove(newAbsPath);
+            } else {
+                const QString localName = displayNameOf(m_userManager ? m_userManager->currentUserUuid() : QString(),
+                                                        m_machineId);
+                const QString keptRel = makeConflictPath(newRelativePath, localName);
+                const QString keptAbs = resolveInsideFolder(folder.localPath(), keptRel);
+                if (keptAbs.isEmpty() || !QFile::rename(newAbsPath, keptAbs)) {
+                    qWarning() << "[FolderSync] Renommage distant : cible occupée et impossible à mettre de côté :"
+                               << newAbsPath;
+                    return;
+                }
+                emit conflictDetected(folder.uuid(), newRelativePath, keptRel);
+            }
         }
         if (!QFile::rename(oldAbsPath, newAbsPath)) {
             qWarning() << "[FolderSync] Renommage distant : échec du renommage sur disque :"
@@ -2298,16 +2439,23 @@ QString FolderSyncService::computeHash(const QString &filePath)
 }
 
 QString FolderSyncService::makeConflictPath(const QString &relativePath,
-                                             const QString &shortMachineId)
+                                             const QString &authorName)
 {
     const QFileInfo fi(relativePath);
     const QString baseName  = fi.completeBaseName();
     const QString suffix    = fi.suffix();
     const QString dir       = fi.path(); // "" or "Docs" etc.
 
+    // « rapport (conflit Awa).txt » : lisible, et identique sur tous les postes
+    // pour un meme conflit (nom de l'auteur de la version mise de cote).
+    QString name = authorName.trimmed();
+    static const QRegularExpression forbidden(QStringLiteral("[\\\\/:*?\"<>|()]"));
+    name.replace(forbidden, QStringLiteral("_"));
+    if (name.isEmpty())
+        name = QStringLiteral("autre poste");
     const QString conflictName = suffix.isEmpty()
-        ? QStringLiteral("%1 (%2)").arg(baseName, shortMachineId)
-        : QStringLiteral("%1 (%2).%3").arg(baseName, shortMachineId, suffix);
+        ? QStringLiteral("%1 (conflit %2)").arg(baseName, name)
+        : QStringLiteral("%1 (conflit %2).%3").arg(baseName, name, suffix);
 
     return (dir.isEmpty() || dir == QStringLiteral("."))
         ? conflictName
@@ -2392,6 +2540,23 @@ void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending
         return;
     }
 
+    // Integrite : le fichier recu n'a pas l'empreinte annoncee (transfert
+    // altere, ou fichier modifie a la source entre-temps). Une nouvelle demande
+    // tranche ; au deuxieme ecart, la version recue est celle de la source.
+    if (!pending.incomingHash.isEmpty() && receivedHash != pending.incomingHash && pending.attempts < 2) {
+        qWarning() << "[FolderSync] Empreinte reçue différente de l'annonce pour" << pending.relativePath
+                   << "-- nouvelle demande";
+        QFile::remove(sourcePath);
+        requestRemoteFile(pending.folderUuid, pending.relativePath, pending.ownerMachineId, pending.folderId,
+                          pending.localFolderPath, pending.incomingHash, pending.incomingVersion,
+                          pending.baseHash, pending.authorUuid);
+        const QString key = pending.ownerMachineId + QStringLiteral("::")
+                            + folderTransferFileName(pending.folderUuid, pending.relativePath);
+        if (auto it = m_pendingByKey.find(key); it != m_pendingByKey.end())
+            it.value().attempts = pending.attempts + 1;
+        return;
+    }
+
     // 2. Chemin cible absolu.
     const QString targetAbsPath = resolveInsideFolder(pending.localFolderPath, pending.relativePath);
     if (targetAbsPath.isEmpty()) {
@@ -2400,116 +2565,369 @@ void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending
         return;
     }
 
-    // CORRECTIF (historique "Créé" + "Modifié" simultanés côté destinataire) :
-    // capturé AVANT toute copie/suppression ci-dessous, car ces opérations
-    // vont justement créer/écraser ce fichier. Sert à distinguer une vraie
-    // mise à jour (contenu déjà présent physiquement) d'une première
-    // réception (aucun octet réel encore sur disque), indépendamment de la
-    // ligne SharedFiles qui, elle, peut n'être qu'un placeholder "creux"
-    // (taille 0) posé par registerCatchupPlaceholder() lors d'un rattrapage
-    // pour un dossier distant sans localPath -- ce placeholder ne doit pas
-    // faire passer cette réception pour une "Update".
+    // Capture AVANT toute ecriture : distingue une premiere reception d'une
+    // mise a jour, independamment d'une ligne SharedFiles qui peut n'etre qu'un
+    // repere sans contenu (registerCatchupPlaceholder).
     const bool hadRealContentOnDisk = QFile::exists(targetAbsPath);
+    const QString localHash = hadRealContentOnDisk ? computeHash(targetAbsPath) : QString();
+    const auto known = m_fileRepository.findByRelativePath(pending.folderId, pending.relativePath);
 
-    // 3. Détection de conflit (Release 8).
+    // 3. Mise a jour ou conflit ?
+    //    Mise a jour simple si ce poste n'a rien modifie : il a exactement la
+    //    version dont part l'auteur (base), ou il n'a pas touche au fichier
+    //    depuis la derniere version echangee (synced). Auparavant, toute version
+    //    differente de la derniere connue etait prise pour un conflit : chaque
+    //    mise a jour creait une copie et l'original restait perime.
+    const QString synced = known.has_value() && !known->pendingDownload() ? known->syncedHash() : QString();
+    const bool alreadyThere = hadRealContentOnDisk && localHash == receivedHash;
+    const bool localUnchanged = !hadRealContentOnDisk
+        || (!pending.baseHash.isEmpty() && localHash == pending.baseHash)
+        || (!synced.isEmpty() && localHash == synced);
+
     bool wasConflict = false;
-    QString effectiveRelativePath = pending.relativePath;
+    QString conflictRelativePath;
+    QString winnerHash = receivedHash;
 
-    const auto existing = m_fileRepository.findByRelativePath(
-        pending.folderId, pending.relativePath);
-
-    if (existing.has_value()
-        && !existing->hash().isEmpty()
-        && existing->hash() != receivedHash
-        && QFile::exists(targetAbsPath))
-    {
-        // Conflit : une version locale différente existe déjà.
-        // On renomme le fichier reçu plutôt que d'écraser.
-        const QString shortId = pending.ownerMachineId.left(6);
-        effectiveRelativePath = makeConflictPath(pending.relativePath, shortId);
-        const QString conflictAbsPath = resolveInsideFolder(pending.localFolderPath, effectiveRelativePath);
-
-        // Crée les répertoires parents si nécessaire.
-        QDir().mkpath(QFileInfo(conflictAbsPath).absolutePath());
-
-        if (!QFile::copy(sourcePath, conflictAbsPath)) {
-            qWarning() << "[FolderSync] Copie conflit échouée vers" << conflictAbsPath;
+    if (alreadyThere) {
+        QFile::remove(sourcePath);
+    } else if (localUnchanged) {
+        if (!replaceFileSafely(sourcePath, targetAbsPath)) {
+            qWarning() << "[FolderSync] Remplacement échoué vers" << targetAbsPath << "(version locale intacte)";
             return;
         }
-        // Supprimer le fichier temporaire après copie réussie
         QFile::remove(sourcePath);
-
+    } else {
+        // Vrai conflit : les deux versions ont change. Meme decision sur chaque
+        // poste (la plus grande empreinte garde le nom d'origine), pour que tous
+        // convergent vers le meme fichier et la meme copie de conflit, nommee
+        // d'apres l'auteur de la version mise de cote.
         wasConflict = true;
-        qWarning() << "[FolderSync] Conflit détecté :" << pending.relativePath
-                   << "→" << effectiveRelativePath;
-        emit conflictDetected(pending.folderUuid, pending.relativePath, effectiveRelativePath);
-    }
-    else
-    {
-        // Pas de conflit : copie normale vers le chemin cible.
-        // Crée les répertoires parents si nécessaire.
-        QDir().mkpath(QFileInfo(targetAbsPath).absolutePath());
-
-        // Supprime l'ancienne version si elle existe (update).
-        if (QFile::exists(targetAbsPath)) {
-            QFile::remove(targetAbsPath);
-        }
-
-        if (!QFile::copy(sourcePath, targetAbsPath)) {
-            qWarning() << "[FolderSync] Copie échouée vers" << targetAbsPath;
+        const QString localName = displayNameOf(m_userManager ? m_userManager->currentUserUuid() : QString(),
+                                                m_machineId);
+        const QString remoteName = displayNameOf(pending.authorUuid, pending.ownerMachineId);
+        const bool receivedWins = receivedHash > localHash;
+        conflictRelativePath = makeConflictPath(pending.relativePath, receivedWins ? localName : remoteName);
+        const QString conflictAbsPath = resolveInsideFolder(pending.localFolderPath, conflictRelativePath);
+        if (conflictAbsPath.isEmpty()) {
+            QFile::remove(sourcePath);
             return;
         }
-        // Supprimer le fichier temporaire après copie réussie
+        QDir().mkpath(QFileInfo(conflictAbsPath).absolutePath());
+        QFile::remove(conflictAbsPath);
+        QString conflictHash;
+        if (receivedWins) {
+            // La version locale est mise de cote, la version recue prend le nom.
+            if (!QFile::copy(targetAbsPath, conflictAbsPath) || !replaceFileSafely(sourcePath, targetAbsPath)) {
+                qWarning() << "[FolderSync] Conflit : mise de côté échouée pour" << pending.relativePath;
+                QFile::remove(sourcePath);
+                return;
+            }
+            conflictHash = localHash;
+        } else {
+            winnerHash = localHash;
+            if (!QFile::copy(sourcePath, conflictAbsPath)) {
+                qWarning() << "[FolderSync] Copie conflit échouée vers" << conflictAbsPath;
+                QFile::remove(sourcePath);
+                return;
+            }
+            conflictHash = receivedHash;
+        }
         QFile::remove(sourcePath);
+
+        // La copie de conflit est connue en base : l'indexation ne la diffuse
+        // pas (chaque poste la produit lui-meme, a l'identique).
+        const QFileInfo ci(conflictAbsPath);
+        models::SharedFile copy(0, pending.folderId, conflictRelativePath);
+        copy.setHash(conflictHash);
+        copy.setSize(ci.size());
+        copy.setLastModified(ci.lastModified());
+        if (const auto saved = m_fileRepository.upsert(copy); saved.has_value()) {
+            m_fileRepository.setSyncedHash(pending.folderId, conflictRelativePath, conflictHash);
+            models::FileSyncOperation copyOp;
+            copyOp.setType(models::SyncChangeType::Create);
+            copyOp.setFileId(saved->id());
+            copyOp.setRelativePath(conflictRelativePath);
+            copyOp.setVersion(saved->version());
+            copyOp.setMachineId(pending.ownerMachineId);
+            copyOp.setAuthorUuid(pending.authorUuid);
+            m_repository.insert(copyOp);
+        }
+        qWarning() << "[FolderSync] Conflit détecté :" << pending.relativePath << "→" << conflictRelativePath;
+        emit conflictDetected(pending.folderUuid, pending.relativePath, conflictRelativePath);
     }
 
-    // 4. Infos du fichier final sur disque.
-    const QString finalAbsPath = resolveInsideFolder(pending.localFolderPath, effectiveRelativePath);
-    const QFileInfo fi(finalAbsPath);
-
-    // 5. Upsert SharedFile.
-    models::SharedFile sharedFile(0, pending.folderId, effectiveRelativePath);
-    sharedFile.setHash(receivedHash);
+    // 4. Etat du fichier d'origine en base : version gagnante, desormais la
+    //    derniere version echangee (synced).
+    const QFileInfo fi(targetAbsPath);
+    models::SharedFile sharedFile(0, pending.folderId, pending.relativePath);
+    sharedFile.setHash(winnerHash);
     sharedFile.setSize(fi.size());
     sharedFile.setLastModified(fi.lastModified());
-    // Version : utilise la version annoncée si disponible, sinon incrémente.
     sharedFile.setVersion(pending.incomingVersion > 0 ? pending.incomingVersion : 1);
     sharedFile.setDeleted(false);
 
     const auto upserted = m_fileRepository.upsert(sharedFile);
     if (!upserted.has_value()) {
-        qWarning() << "[FolderSync] upsert SharedFile échoué pour" << effectiveRelativePath;
+        qWarning() << "[FolderSync] upsert SharedFile échoué pour" << pending.relativePath;
         return;
     }
+    m_fileRepository.setSyncedHash(pending.folderId, pending.relativePath, winnerHash);
 
-    // 6. Insert FileSyncOperation.
-    // CORRECTIF : anciennement `existing.has_value() && !wasConflict`, ce qui
-    // considérait à tort une ligne SharedFiles placeholder (posée par
-    // registerCatchupPlaceholder(), sans contenu réel) comme une "mise à
-    // jour". On se base désormais sur la présence RÉELLE du fichier sur
-    // disque avant cette intégration -- seul indicateur fiable qu'un
-    // contenu existait déjà localement.
-    const bool isUpdate = hadRealContentOnDisk && !wasConflict;
-    models::FileSyncOperation op;
-    op.setType(isUpdate ? models::SyncChangeType::Update : models::SyncChangeType::Create);
-    op.setFileId(upserted->id());
-    op.setRelativePath(effectiveRelativePath);
-    op.setVersion(upserted->version());
-    op.setMachineId(pending.ownerMachineId);
-    // CORRECTIF (diagnostic) : le résultat de insert() n'était jamais
-    // vérifié -- un échec SQL (table manquante, contrainte FK, etc.)
-    // passait totalement inaperçu, laissant SyncOperations vide sans
-    // aucune trace exploitable dans les logs malgré une intégration de
-    // fichier par ailleurs réussie (SharedFiles à jour, fichier sur disque).
-    if (!m_repository.insert(op).has_value()) {
-        qWarning() << "[FolderSync] SyncOperations insert échoué pour" << effectiveRelativePath
-                   << "-- erreur SQL:" << m_repository.lastError();
+    // 5. Historique (machine de l'auteur : jamais rediffuse par ce poste).
+    if (!alreadyThere && winnerHash == receivedHash) {
+        models::FileSyncOperation op;
+        op.setType(hadRealContentOnDisk ? models::SyncChangeType::Update : models::SyncChangeType::Create);
+        op.setFileId(upserted->id());
+        op.setRelativePath(pending.relativePath);
+        op.setVersion(upserted->version());
+        op.setMachineId(pending.ownerMachineId);
+        op.setBaseHash(pending.baseHash);
+        op.setAuthorUuid(pending.authorUuid);
+        if (!m_repository.insert(op).has_value()) {
+            qWarning() << "[FolderSync] SyncOperations insert échoué pour" << pending.relativePath
+                       << "-- erreur SQL:" << m_repository.lastError();
+        }
+    } else if (wasConflict && !(known.has_value() && known->hash() == localHash)) {
+        // La version locale gagne mais n'avait pas encore ete indexee (modifiee
+        // juste avant la reception). Inscrite en base ci-dessus, l'indexation
+        // ne la verrait plus comme un changement : elle ne partirait jamais et
+        // l'autre poste garderait sa version. Elle est donc journalisee et
+        // diffusee ici, a partir de la version d'avant la modification (l'autre
+        // poste tranche alors le meme conflit, a l'identique).
+        models::FileSyncOperation op;
+        op.setType(models::SyncChangeType::Update);
+        op.setFileId(upserted->id());
+        op.setRelativePath(pending.relativePath);
+        op.setVersion(upserted->version());
+        op.setMachineId(m_machineId);
+        op.setBaseHash(known.has_value() ? known->hash() : QString());
+        op.setAuthorUuid(m_userManager ? m_userManager->currentUserUuid() : QString());
+        if (m_repository.insert(op).has_value())
+            onLocalFolderReindexed(pending.folderId, 1);
     }
 
-    qDebug() << "[FolderSync] Fichier intégré :" << effectiveRelativePath
-             << (wasConflict ? "(conflit)" : "");
-    emit fileIntegrated(pending.folderUuid, effectiveRelativePath, wasConflict);
+    qDebug() << "[FolderSync] Fichier intégré :" << pending.relativePath << (wasConflict ? "(conflit)" : "");
+    emit fileIntegrated(pending.folderUuid, wasConflict ? conflictRelativePath : pending.relativePath, wasConflict);
     scheduleFolderNotification(pending.folderUuid);
+}
+
+// ---------------------------------------------------------------------------
+// Fiabilite : expiration des demandes, echecs de transfert, remplacement sur
+// ---------------------------------------------------------------------------
+
+bool FolderSyncService::localMatches(const models::SharedFolder &folder, const QString &relativePath,
+                                     const QString &fileHash) const
+{
+    if (folder.localPath().isEmpty() || fileHash.isEmpty())
+        return false;
+    const QString absPath = resolveInsideFolder(folder.localPath(), relativePath);
+    if (absPath.isEmpty())
+        return false;
+    const QFileInfo info(absPath);
+    if (!info.exists())
+        return false;
+    // Raccourci : empreinte connue en base pour un fichier dont la taille et la
+    // date n'ont pas bouge depuis (meme regle que l'indexation). Evite de relire
+    // tous les fichiers du dossier a chaque rattrapage.
+    if (const auto known = m_fileRepository.findByRelativePath(folder.id(), relativePath);
+        known.has_value() && !known->deleted() && !known->pendingDownload() && known->size() == info.size()
+        && known->lastModified().toUTC().toSecsSinceEpoch() == info.lastModified().toUTC().toSecsSinceEpoch()) {
+        return known->hash() == fileHash;
+    }
+    return computeHash(absPath) == fileHash;
+}
+
+QString FolderSyncService::displayNameOf(const QString &userUuid, const QString &fallbackId) const
+{
+    if (!userUuid.isEmpty()) {
+        if (const auto user = m_userRepository.findByUuid(userUuid); user.has_value() && !user->name().isEmpty())
+            return user->name();
+    }
+    return fallbackId.left(6);
+}
+
+bool FolderSyncService::replaceFileSafely(const QString &sourcePath, const QString &targetPath)
+{
+    QDir().mkpath(QFileInfo(targetPath).absolutePath());
+    // Copie complete a cote de la cible d'abord : si elle echoue, rien n'est touche.
+    const QString temp = targetPath + QStringLiteral(".localink-tmp");
+    QFile::remove(temp);
+    if (!QFile::copy(sourcePath, temp))
+        return false;
+    if (QFile::exists(targetPath)) {
+        // Echange : l'ancienne version est mise de cote jusqu'a ce que la
+        // nouvelle soit en place, puis supprimee.
+        const QString previous = targetPath + QStringLiteral(".localink-old");
+        QFile::remove(previous);
+        if (!QFile::rename(targetPath, previous)) {
+            QFile::remove(temp);
+            return false;
+        }
+        if (!QFile::rename(temp, targetPath)) {
+            QFile::rename(previous, targetPath); // restaure
+            QFile::remove(temp);
+            return false;
+        }
+        QFile::remove(previous);
+        return true;
+    }
+    if (!QFile::rename(temp, targetPath)) {
+        QFile::remove(temp);
+        return false;
+    }
+    return true;
+}
+
+bool FolderSyncService::moveToTrashOrRemove(const QString &path)
+{
+    if (!QFile::exists(path))
+        return true;
+    // Une suppression venue d'un autre poste reste recuperable par l'utilisateur.
+    if (QFile::moveToTrash(path))
+        return true;
+    return QFile::remove(path);
+}
+
+qint64 FolderSyncService::broadcastCursor(qint64 folderId)
+{
+    if (const auto it = m_lastBroadcastOpIdByFolder.constFind(folderId); it != m_lastBroadcastOpIdByFolder.constEnd())
+        return it.value();
+    qint64 cursor = 0;
+    if (m_db.isValid()) {
+        QSqlQuery query(m_db);
+        query.prepare(QStringLiteral("SELECT last_op_id FROM FolderBroadcastCursors WHERE folder_id = :f"));
+        query.bindValue(QStringLiteral(":f"), folderId);
+        if (query.exec() && query.next())
+            cursor = query.value(0).toLongLong();
+    }
+    m_lastBroadcastOpIdByFolder.insert(folderId, cursor);
+    return cursor;
+}
+
+void FolderSyncService::setBroadcastCursor(qint64 folderId, qint64 opId)
+{
+    if (opId <= broadcastCursor(folderId))
+        return;
+    m_lastBroadcastOpIdByFolder.insert(folderId, opId);
+    if (!m_db.isValid())
+        return;
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "INSERT INTO FolderBroadcastCursors (folder_id, last_op_id) VALUES (:f, :o) "
+        "ON CONFLICT(folder_id) DO UPDATE SET last_op_id = :o"));
+    query.bindValue(QStringLiteral(":f"), folderId);
+    query.bindValue(QStringLiteral(":o"), opId);
+    query.exec();
+}
+
+void FolderSyncService::sweepStalePendingRequests()
+{
+    // Demande restee sans transfert (pair eteint, demande perdue, refus) : elle
+    // bloquait toute nouvelle demande du meme fichier jusqu'au redemarrage.
+    constexpr qint64 kPendingTimeoutMs = 120000;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (auto it = m_pendingByKey.begin(); it != m_pendingByKey.end();) {
+        if (now - it.value().requestedAtMs < kPendingTimeoutMs) {
+            ++it;
+            continue;
+        }
+        qWarning() << "[FolderSync] Demande sans reponse abandonnee :" << it.value().relativePath
+                   << "de" << it.value().ownerMachineId << "(elle sera refaite au prochain rattrapage)";
+        auto progressIt = m_receiveProgress.find(it.value().folderUuid);
+        if (progressIt != m_receiveProgress.end())
+            progressIt.value().filesExpected = qMax(0, progressIt.value().filesExpected - 1);
+        it = m_pendingByKey.erase(it);
+    }
+}
+
+void FolderSyncService::onTransferFailed(const QString &transferKey, const QString &reason)
+{
+    if (const auto oit = m_activeOutgoingByTransferKey.find(transferKey); oit != m_activeOutgoingByTransferKey.end()) {
+        const QString folderUuid = oit.value();
+        m_activeOutgoingByTransferKey.erase(oit);
+        completeBatchTransfer(m_sentProgress, folderUuid, transferKey);
+        emitBatchProgress(folderUuid, false);
+        return;
+    }
+    const auto it = m_activeByTransferKey.find(transferKey);
+    if (it == m_activeByTransferKey.end())
+        return;
+    const PendingFileTransfer failed = it.value();
+    m_activeByTransferKey.erase(it);
+    completeBatchTransfer(m_receiveProgress, failed.folderUuid, transferKey);
+    emitBatchProgress(failed.folderUuid, true);
+    qWarning() << "[FolderSync] Transfert echoue pour" << failed.relativePath << ":" << reason;
+    // Nouvel essai apres un delai (3 au total), sinon au prochain rattrapage.
+    if (failed.attempts < 3) {
+        QTimer::singleShot(5000 * failed.attempts, this, [this, failed]() {
+            requestRemoteFile(failed.folderUuid, failed.relativePath, failed.ownerMachineId, failed.folderId,
+                              failed.localFolderPath, failed.incomingHash, failed.incomingVersion,
+                              failed.baseHash, failed.authorUuid);
+            const QString key = failed.ownerMachineId + QStringLiteral("::")
+                                + folderTransferFileName(failed.folderUuid, failed.relativePath);
+            if (auto pit = m_pendingByKey.find(key); pit != m_pendingByKey.end())
+                pit.value().attempts = failed.attempts + 1;
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Arret du partage (proprietaire) et retrait d'un dossier recu (membre)
+// ---------------------------------------------------------------------------
+
+void FolderSyncService::stopSharing(qint64 folderId)
+{
+    if (!m_folderManager)
+        return;
+    const auto folder = m_folderManager->getFolder(folderId);
+    if (!folder.has_value())
+        return;
+    // Annonce AVANT le retrait : apres, le dossier n'existe plus ici et
+    // l'annonce ne pourrait plus etre construite.
+    for (const auto &access : m_folderManager->accessForFolder(folderId)) {
+        if (access.userId() == folder->ownerId())
+            continue;
+        announceAccessRevoked(folderId, access.userId(), true);
+        m_folderManager->revokeAccess(folderId, access.userId(), false);
+    }
+}
+
+void FolderSyncService::leaveFolder(qint64 folderId)
+{
+    if (!m_folderManager || !m_userManager)
+        return;
+    const auto folder = m_folderManager->getFolder(folderId);
+    if (!folder.has_value() || folder->isLocalOrigin())
+        return;
+    const QString me = m_userManager->currentUserUuid();
+    if (me.isEmpty())
+        return;
+    QJsonObject obj;
+    obj[QStringLiteral("type")]        = QString::fromLatin1(kTypeFolderLeave);
+    obj[QStringLiteral("folder_uuid")] = folder->uuid();
+    obj[QStringLiteral("user_uuid")]   = me;
+    obj[QStringLiteral("owner_uuid")]  = ownerUuidOf(*folder);
+    obj[QStringLiteral("origin_machine_id")] = m_machineId;
+    recordRevocation(folder->uuid(), me, true, true);
+    broadcastMessage(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+}
+
+void FolderSyncService::handleFolderLeave(const QJsonObject &obj)
+{
+    if (!m_folderManager)
+        return;
+    if (obj[QStringLiteral("origin_machine_id")].toString() == m_machineId)
+        return;
+    const QString folderUuid = obj[QStringLiteral("folder_uuid")].toString();
+    const QString userUuid = obj[QStringLiteral("user_uuid")].toString();
+    // Le membre est parti de lui-meme : acces retire ici aussi, fichiers laisses
+    // chez lui (aucun nettoyage a declencher).
+    recordRevocation(folderUuid, userUuid, true, true);
+    const auto folder = m_folderManager->getFolderByUuid(folderUuid);
+    const auto user = m_userRepository.findByUuid(userUuid);
+    if (folder.has_value() && user.has_value())
+        m_folderManager->revokeAccess(folder->id(), user->id(), false);
+    qDebug() << "[FolderSync] Un membre a quitte le dossier" << folderUuid;
 }
 
 } // namespace core::sync

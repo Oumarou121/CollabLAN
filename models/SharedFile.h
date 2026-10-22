@@ -57,6 +57,10 @@ public:
     bool pendingDownload() const { return m_pendingDownload; }
     void setPendingDownload(bool pendingDownload) { m_pendingDownload = pendingDownload; }
 
+    /// Derniere version echangee avec le reseau (migration 037) ; vide si inconnue.
+    QString syncedHash() const { return m_syncedHash; }
+    void setSyncedHash(const QString &hash) { m_syncedHash = hash; }
+
 private:
     qint64 m_id = 0;
     qint64 m_folderId = 0;
@@ -67,6 +71,7 @@ private:
     int m_version = 1;
     bool m_deleted = false;
     bool m_pendingDownload = false;
+    QString m_syncedHash;
 };
 
 } // namespace models

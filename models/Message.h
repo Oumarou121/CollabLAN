@@ -37,6 +37,26 @@ public:
     QString uuid() const { return m_uuid; }
     void setUuid(const QString &uuid) { m_uuid = uuid; }
 
+    /// Etat d'envoi, cote expediteur (migrations 033/034) : "pending" tant que
+    /// le serveur n'en a pas accuse reception (renvoye a la reconnexion),
+    /// "sent" une fois conserve par le serveur, "delivered" quand tous les
+    /// destinataires l'ont recu, "read" quand tous l'ont lu.
+    static inline const QString Pending = QStringLiteral("pending");
+    static inline const QString Sent = QStringLiteral("sent");
+    static inline const QString Delivered = QStringLiteral("delivered");
+    static inline const QString Read = QStringLiteral("read");
+    QString deliveryStatus() const { return m_deliveryStatus; }
+    void setDeliveryStatus(const QString &status) { m_deliveryStatus = status; }
+    bool isPending() const { return m_deliveryStatus == Pending; }
+
+    /// Derniere modification du texte par son auteur (invalide si jamais modifie).
+    QDateTime editedAt() const { return m_editedAt; }
+    void setEditedAt(const QDateTime &at) { m_editedAt = at; }
+    /// Supprime par son auteur : la ligne reste, le texte est efface.
+    QDateTime deletedAt() const { return m_deletedAt; }
+    void setDeletedAt(const QDateTime &at) { m_deletedAt = at; }
+    bool isDeleted() const { return m_deletedAt.isValid(); }
+
 private:
     qint64 m_id = 0;
     qint64 m_conversationId = 0;
@@ -45,6 +65,9 @@ private:
     QDateTime m_timestamp;
     bool m_isRead = false;
     QString m_uuid;
+    QString m_deliveryStatus = Sent;
+    QDateTime m_editedAt;
+    QDateTime m_deletedAt;
 };
 
 } // namespace models

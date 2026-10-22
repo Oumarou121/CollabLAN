@@ -226,12 +226,39 @@ void SyncEngine::onFolderRemoved(qint64 folderId)
 void SyncEngine::onWatcherChangesDetected(qint64 folderId)
 {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (now < m_ignoreWatcherUntilMs.value(folderId)) {
-        qDebug() << "[SyncEngine] notification watcher ignoree apres integration distante pour dossier" << folderId;
+    const qint64 until = m_ignoreWatcherUntilMs.value(folderId);
+    if (now < until) {
+        // Juste apres une integration distante : la notification vient le plus
+        // souvent de notre propre ecriture, mais peut aussi couvrir une vraie
+        // modification locale. On reindexe donc a la fin de la fenetre (les
+        // fichiers integres, deja a jour en base, ne produisent alors rien).
+        QTimer *timer = m_deferredReindex.value(folderId, nullptr);
+        if (!timer) {
+            timer = new QTimer(this);
+            timer->setSingleShot(true);
+            connect(timer, &QTimer::timeout, this, [this, folderId]() { requestReindex(folderId); });
+            m_deferredReindex.insert(folderId, timer);
+        }
+        timer->start(static_cast<int>(until - now) + 50);
         return;
     }
     m_ignoreWatcherUntilMs.remove(folderId);
-    reindexFolder(folderId);
+    requestReindex(folderId);
+}
+
+void SyncEngine::requestReindex(qint64 folderId)
+{
+    // Parcours + empreintes sur le fil d'indexation (auparavant sur le fil
+    // principal : l'interface gelait a chaque changement d'un gros dossier).
+    if (m_indexInFlight.contains(folderId)) {
+        m_indexDirty.insert(folderId);
+        return;
+    }
+    if (!m_indexWorker) {
+        reindexFolder(folderId);
+        return;
+    }
+    reindexFolderAsync(folderId);
 }
 
 int SyncEngine::reindexFolder(qint64 folderId)
@@ -280,6 +307,7 @@ void SyncEngine::reindexFolderAsync(qint64 folderId)
         return;
     }
 
+    m_indexInFlight.insert(folderId);
     emit reindexingStarted(folderId);
     // QueuedConnection implicite : m_indexWorker vit sur m_indexThread,
     // pas sur le thread appelant. L'appel retourne immediatement --
@@ -290,6 +318,10 @@ void SyncEngine::reindexFolderAsync(qint64 folderId)
 void SyncEngine::onIndexWorkerFinished(qint64 folderId, bool ok, QVector<models::SharedFileChange> changes,
                                         QString errorString)
 {
+    m_indexInFlight.remove(folderId);
+    // Changements survenus pendant le parcours : un nouveau passage les prendra.
+    if (m_indexDirty.remove(folderId))
+        QTimer::singleShot(0, this, [this, folderId]() { requestReindex(folderId); });
     if (!ok) {
         qWarning() << "[SyncEngine] Indexation asynchrone échouée pour le dossier" << folderId << ":" << errorString;
         emit folderReindexed(folderId, -1);
@@ -316,6 +348,11 @@ int SyncEngine::persistIndexChanges(qint64 folderId, const QVector<models::Share
         operation.setOldRelativePath(change.oldRelativePath());
         operation.setVersion(change.file().version());
         operation.setMachineId(m_machineId);
+        operation.setBaseHash(change.previousHash());
+        if (m_localUserId > 0) {
+            if (const auto author = m_userRepository.findById(static_cast<int>(m_localUserId)); author.has_value())
+                operation.setAuthorUuid(author->uuid());
+        }
 
         if (m_operationRepository.insert(operation).has_value()) {
             ++persistedCount;
