@@ -146,9 +146,6 @@ Item {
     property var activeTransferProgress: []
     // Machines autorisees (administrateur uniquement, 0 sinon).
     property int authorizedMachineCount: 0
-    // Nombre d'evenements charges dans le journal d'audit.
-    readonly property int auditEventCount: (typeof auditLogModel !== "undefined" && auditLogModel)
-                                           ? auditLogModel.count : 0
 
     function refreshAuthorizedMachineCount() {
         if (!root.isAdmin || typeof authorizedMachineModel === "undefined" || !authorizedMachineModel) {
@@ -981,7 +978,6 @@ Item {
     property string networkView: "hemicycle"     // "hemicycle" | "registre"
     property string selectedId: ""
     property var hiddenStatuses: []
-    property bool selectionInitialized: false
 
     readonly property var liveTransfers: (typeof transferContext !== "undefined" && transferContext)
                                          ? (transferContext.activeTransfers || []) : []
@@ -1059,31 +1055,21 @@ Item {
         if (root.hiddenStatuses.indexOf(p.status) >= 0)
             root.toggleStatus(p.status)
         root.selectedId = id
-        root.selectionInitialized = true
+    }
+    // Clic sur un siege ou une ligne du registre : un second clic sur le
+    // poste deja selectionne referme sa fiche (retour a « A traiter »).
+    function toggleSelect(id) {
+        if (id === root.selectedId) root.selectedId = ""
+        else root.selectPeer(id)
     }
 
-    // Premiere selection automatique (poste en activite de preference),
-    // puis nettoyage si le poste selectionne disparait.
-    function ensureSelection() {
-        const present = root.presentPeers
-        if (root.selectedId.length > 0) {
-            if (!root.peerById(root.selectedId))
-                root.selectedId = ""
-            return
-        }
-        if (root.selectionInitialized || present.length === 0)
-            return
-        let pick = present[0]
-        for (let i = 0; i < present.length; i++) {
-            if (present[i].status === "transferring" || present[i].status === "calling") {
-                pick = present[i]
-                break
-            }
-        }
-        root.selectedId = pick.id
-        root.selectionInitialized = true
+    // Aucune selection par defaut : la colonne de droite montre « A traiter ».
+    // La fiche se referme si le poste selectionne disparait.
+    function dropVanishedSelection() {
+        if (root.selectedId.length > 0 && !root.peerById(root.selectedId))
+            root.selectedId = ""
     }
-    onAllPeersLiveChanged: Qt.callLater(root.ensureSelection)
+    onAllPeersLiveChanged: Qt.callLater(root.dropVanishedSelection)
 
     function toggleStatus(key) {
         const list = root.hiddenStatuses.slice()
@@ -1197,20 +1183,25 @@ Item {
     // ======================================================================
     // Mise en page Ligne claire (A2)
     //
-    //   [surtitre · salutation · phrase + actions ......... 4 chiffres serif]
-    //   [Le reseau : hemicycle | registre + legende ][Poste selectionne    ]
-    //   [Echanges            ][Journal / Appels     ][A traiter           ]
+    //   [surtitre · salutation · phrase + actions ......... 3 chiffres serif]
+    //   [Le reseau : hemicycle | registre + legende ][A traiter | fiche    ]
+    //   [Echanges                       ][Journal / Discussions            ]
     //
-    // Seuils sur la largeur utile de la page (equivalent des @container de
-    // la maquette) : chiffres sous la salutation sous 1180 px ; colonne de
-    // droite de 348 px au-dessus de 1260 px, 312 px jusqu'a 1000 px ; en
-    // dessous, empilement (fiche et « A traiter » cote a cote).
+    // Accueil v2 (design/dashboard-exploration-2026/home-v2-ligne-claire) :
+    // la colonne de droite montre « A traiter », remplacee par la fiche quand
+    // un poste est selectionne. Seuils sur la largeur utile de la page : les
+    // chiffres restent a droite de la salutation jusqu'a 1000 px (sans leur
+    // ligne de contexte sous 1180 px), puis disparaissent ; colonne de droite
+    // de 320 px (296 px sous 1260 px) ; sous 1000 px, empilement, « A traiter »
+    // avant le reseau et la fiche apres.
     // ======================================================================
     readonly property real pageW: root.width - 2 * Theme.pagePadding
-    readonly property bool heroWide: root.pageW > 1180
+    readonly property bool heroWide: root.pageW > 1000
+    readonly property bool figureContext: root.pageW > 1180
     readonly property bool mainWide: root.pageW > 1000
     readonly property bool lowerPaired: root.pageW > 760
-    readonly property real sideWidth: root.pageW > 1260 ? 348 : 312
+    readonly property real sideWidth: root.pageW > 1260 ? 320 : 296
+    readonly property real figureGap: root.figureContext ? 22 : 14
 
     function esc(t) {
         return String(t === undefined || t === null ? "" : t)
@@ -1237,9 +1228,9 @@ Item {
                        : ""
             const n = root.pendingAuthorizations.length
             if (n > 1)
-                return lead + qsTr("<b>%1 postes</b> demandent l'accès au réseau et attendent votre décision.").arg(n)
+                return lead + qsTr("<b>%1 postes</b> attendent votre décision.").arg(n)
             if (n === 1)
-                return lead + qsTr("<b>%1</b> demande l'accès au réseau et attend votre décision.")
+                return lead + qsTr("<b>%1</b> attend votre décision.")
                                   .arg(root.esc(root.pendingAuthorizations[0].title))
             return lead + (lead.length ? qsTr("Aucune décision ne vous attend.")
                                        : qsTr("Le réseau fonctionne normalement. Aucune décision ne vous attend."))
@@ -1267,9 +1258,14 @@ Item {
            root.activeReceiveCount > 0 ? root.plural(root.activeReceiveCount, qsTr("réception"), qsTr("réceptions")) : ""]
           .filter(function(x) { return x.length > 0 }).join(" · ")
 
+    // Trois chiffres : les demandes sont deja dans la phrase et dans « A traiter ».
     readonly property var figureModel: {
-        if (root.isAdmin) {
-            const denied = Math.max(0, root.pendingRequestCount - root.pendingAuthorizationCount)
+        const unreadConvs = root.recentConversations.filter(function(c) { return (c.unreadCount || 0) > 0 }).length
+        const unread = { key: "unread", label: qsTr("Non lus"), value: String(root.unreadTotal), suffix: "",
+                         context: root.unreadTotal > 0 ? qsTr("dans %1").arg(root.plural(unreadConvs, qsTr("conversation"), qsTr("conversations")))
+                                                       : qsTr("tout est lu"),
+                         tip: qsTr("Ouvrir les discussions") }
+        if (root.isAdmin)
             return [
                 { key: "peers", label: qsTr("Postes en ligne"), value: String(root.peersCount),
                   suffix: root.authorizedMachineCount > 0 ? "/" + root.authorizedMachineCount : "",
@@ -1279,35 +1275,15 @@ Item {
                   tip: qsTr("Ouvrir la liste des postes") },
                 { key: "transfers", label: qsTr("Transferts actifs"), value: String(root.totalActiveTransferCount),
                   suffix: "", context: root.transferContextText, tip: qsTr("Ouvrir les transferts") },
-                { key: "requests", label: qsTr("Demandes"), value: String(root.pendingRequestCount), suffix: "",
-                  attention: root.pendingAuthorizationCount > 0,
-                  context: root.pendingRequestCount === 0 ? qsTr("aucune en attente")
-                           : [root.pendingAuthorizationCount > 0 ? root.plural(root.pendingAuthorizationCount, qsTr("autorisation"), qsTr("autorisations")) : "",
-                              denied > 0 ? root.plural(denied, qsTr("refus"), qsTr("refus")) : ""]
-                             .filter(function(x) { return x.length > 0 }).join(" · "),
-                  tip: qsTr("Autorisations en attente et connexions refusées") },
-                { key: "audit", label: qsTr("Journal"), value: String(root.auditEventCount), suffix: "",
-                  context: root.activityItems.length > 0 ? qsTr("dernier à %1").arg(root.timeOf(root.activityItems[0].timestamp))
-                                                         : qsTr("aucun événement"),
-                  tip: qsTr("Ouvrir le journal d'audit") }
+                unread
             ]
-        }
-        const unreadConvs = root.recentConversations.filter(function(c) { return (c.unreadCount || 0) > 0 }).length
         return [
             { key: "peers", label: qsTr("Postes accessibles"), value: String(root.peersCount), suffix: "",
               context: root.peersCount > 0 ? qsTr("serveur joignable") : qsTr("découverte en cours"),
               tip: qsTr("Ouvrir la liste des postes") },
             { key: "transfers", label: qsTr("Transferts"), value: String(root.totalActiveTransferCount), suffix: "",
               context: root.transferContextText, tip: qsTr("Ouvrir les transferts") },
-            { key: "unread", label: qsTr("Non lus"), value: String(root.unreadTotal), suffix: "",
-              context: root.unreadTotal > 0 ? qsTr("dans %1").arg(root.plural(unreadConvs, qsTr("conversation"), qsTr("conversations")))
-                                            : qsTr("tout est lu"),
-              tip: qsTr("Ouvrir les discussions") },
-            { key: "folders", label: qsTr("Dossiers partagés"), value: String(root.folderCount), suffix: "",
-              attention: root.folderConflictCount > 0,
-              context: root.folderConflictCount > 0 ? root.plural(root.folderConflictCount, qsTr("conflit"), qsTr("conflits"))
-                                                    : qsTr("synchronisés"),
-              tip: qsTr("Ouvrir les dossiers partagés") }
+            unread
         ]
     }
 
@@ -1315,10 +1291,7 @@ Item {
         switch (key) {
         case "peers": root.usersRequested(); break
         case "transfers": root.fileTransferRequested(false, null); break
-        case "requests": root.adminSectionRequested(1); break
-        case "audit": root.adminSectionRequested(0); break
         case "unread": root.chatRequested(); break
-        case "folders": root.sharedFoldersRequested(); break
         }
     }
 
@@ -1459,7 +1432,7 @@ Item {
                 id: hero
                 Layout.fillWidth: true
                 columns: root.heroWide ? 2 : 1
-                columnSpacing: 32
+                columnSpacing: root.figureContext ? 32 : 20
                 rowSpacing: 14
 
                 ColumnLayout {
@@ -1520,26 +1493,16 @@ Item {
                     }
                 }
 
-                // Quatre chiffres separes par des filets.
+                // Trois chiffres separes par des filets (masques sous 1000 px :
+                // la phrase dit l'essentiel et le reseau reste visible).
                 Item {
-                    Layout.alignment: root.heroWide ? (Qt.AlignRight | Qt.AlignBottom) : Qt.AlignLeft
-                    Layout.fillWidth: !root.heroWide
+                    visible: root.heroWide
+                    Layout.alignment: Qt.AlignRight | Qt.AlignBottom
                     implicitWidth: figuresRow.implicitWidth
-                    implicitHeight: figuresRow.implicitHeight + (root.heroWide ? 0 : 12)
-
-                    Rectangle {
-                        visible: !root.heroWide
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.top: parent.top
-                        height: 1
-                        color: Theme.line
-                    }
+                    implicitHeight: figuresRow.implicitHeight
 
                     Row {
                         id: figuresRow
-                        y: root.heroWide ? 0 : 12
-                        width: root.heroWide ? implicitWidth : parent.width
 
                         Repeater {
                             model: root.figureModel
@@ -1547,8 +1510,7 @@ Item {
                                 id: fig
                                 required property var modelData
                                 required property int index
-                                width: root.heroWide ? figure.implicitWidth + (index === 0 ? 0 : 22) + (index === 3 ? 0 : 22)
-                                                     : figuresRow.width / 4
+                                width: figure.implicitWidth + (index === 0 ? 0 : root.figureGap) + (index === 2 ? 0 : root.figureGap)
                                 height: figure.implicitHeight
 
                                 Rectangle {
@@ -1559,15 +1521,15 @@ Item {
                                 }
                                 SerifFigure {
                                     id: figure
-                                    x: fig.index === 0 ? 0 : (root.heroWide ? 22 : 18)
-                                    width: Math.max(implicitWidth, 110)
+                                    x: fig.index === 0 ? 0 : root.figureGap
+                                    width: Math.max(implicitWidth, root.figureContext ? 110 : 76)
                                     label: fig.modelData.label
                                     value: fig.modelData.value
                                     suffix: fig.modelData.suffix
-                                    context: fig.modelData.context
+                                    context: root.figureContext ? fig.modelData.context : ""
                                     attention: fig.modelData.attention === true
                                     tooltip: fig.modelData.tip
-                                    valueSize: root.heroWide && root.height >= 720 ? Theme.fontSizeFigure : Theme.fs(32)
+                                    valueSize: root.figureContext && root.height >= 720 ? Theme.fontSizeFigure : Theme.fs(30)
                                     onClicked: root.openFigure(fig.modelData.key)
                                 }
                             }
@@ -1591,43 +1553,28 @@ Item {
                 columnSpacing: root.pageW > 1260 ? 28 : 24
                 rowSpacing: 22
 
-                // -- Feuille « Le reseau » -----------------------------------
-                Rectangle {
+                // -- « Le reseau » : section sur filet d'encre, sans carte -----
+                // Sous 1000 px, « A traiter » passe avant le reseau ; la fiche
+                // d'un poste selectionne reste apres, pres du siege clique.
+                Item {
                     id: sheet
-                    Layout.row: 0
+                    Layout.row: root.mainWide || root.selectedId.length > 0 ? 0 : 1
                     Layout.column: 0
                     Layout.fillWidth: true
                     Layout.preferredHeight: root.mainWide
                         ? Math.max(384, Math.min(470, pageFlick.height - hero.height - 300))
                         : 420
-                    color: Theme.surface0
-                    border.width: 1
-                    border.color: Theme.line
-                    radius: Theme.radiusSheet
 
-                    // Ombre portee tres discrete (papier pose sur la page).
-                    Rectangle {
-                        z: -1
-                        anchors.fill: parent
-                        anchors.topMargin: 6
-                        anchors.bottomMargin: -6
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        radius: 12
-                        color: Theme.shadowColor
-                        opacity: 0.6
-                    }
+                    Rectangle { width: parent.width; height: 2; color: Theme.ruleInk }
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 1
+                        anchors.topMargin: 2
                         spacing: 0
 
                         RowLayout {
                             Layout.fillWidth: true
-                            Layout.leftMargin: 20
-                            Layout.rightMargin: 20
-                            Layout.topMargin: 15
+                            Layout.topMargin: 11
                             spacing: 16
 
                             ColumnLayout {
@@ -1643,7 +1590,9 @@ Item {
                                 }
                                 Text {
                                     Layout.fillWidth: true
-                                    text: qsTr("Regroupés par état · disposition indicative, pas une topologie")
+                                    text: root.networkView === "registre"
+                                          ? qsTr("La sélection est commune aux deux vues")
+                                          : qsTr("Regroupés par état · sélectionnez un siège pour afficher sa fiche")
                                     color: Theme.ink3
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fs(12)
@@ -1699,10 +1648,7 @@ Item {
                                 localName: root.localMachineName
                                 localState: root.localState
                                 localLabel: root.serverStatusLabel
-                                pendingTitle: root.pendingAuthorizations.length > 0 ? root.pendingAuthorizations[0].title : ""
-                                pendingCount: root.pendingAuthorizations.length
-                                onSeatActivated: function(peerId) { root.selectPeer(peerId) }
-                                onDoorActivated: root.adminSectionRequested(1)
+                                onSeatActivated: function(peerId) { root.toggleSelect(peerId) }
                             }
 
                             NetworkRegistry {
@@ -1715,7 +1661,7 @@ Item {
                                 isAdmin: root.isAdmin
                                 activityOf: function(p) { return root.activityText(p) }
                                 trustOf: function(p) { return root.machineTrust(p.id, p.address) }
-                                onPeerSelected: function(peerId) { root.selectPeer(peerId) }
+                                onPeerSelected: function(peerId) { root.toggleSelect(peerId) }
                                 onMessageRequested: function(peer) { root.openConversationWithPeer(peer) }
                                 onFileRequested: function(peer) { root.fileTransferRequested(true, peer) }
                                 onCallRequested: function(peer) { root.callPeer(peer) }
@@ -1787,7 +1733,7 @@ Item {
                             }
                         }
 
-                        // Legende : filtres d'etat + aide.
+                        // Legende : filtres d'etat (la consigne est dans le sous-titre).
                         Rectangle {
                             visible: root.allPeersLive.length > 0
                             Layout.fillWidth: true
@@ -1797,10 +1743,8 @@ Item {
                         Flow {
                             visible: root.allPeersLive.length > 0
                             Layout.fillWidth: true
-                            Layout.leftMargin: 20
-                            Layout.rightMargin: 20
-                            Layout.topMargin: 10
-                            Layout.bottomMargin: 10
+                            Layout.topMargin: 8
+                            Layout.bottomMargin: 8
                             spacing: 18
 
                             Repeater {
@@ -1823,22 +1767,19 @@ Item {
                                 }
                             }
 
+                            // Au-dela de 14 postes, seuls les postes actifs sont nommes.
                             Row {
+                                visible: root.networkView === "hemicycle" && !hemicycle.namesForAll
                                 spacing: 8
                                 height: 24
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    text: root.networkView === "registre"
-                                          ? qsTr("La sélection est commune aux deux vues")
-                                          : (hemicycle.namesForAll
-                                             ? qsTr("Survolez ou sélectionnez un siège")
-                                             : qsTr("%1 postes : noms affichés pour l'activité et la sélection").arg(root.allPeersLive.length))
+                                    text: qsTr("%1 postes : noms affichés pour l'activité et la sélection").arg(root.allPeersLive.length)
                                     color: Theme.ink3
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fs(11.5)
                                 }
                                 TextLink {
-                                    visible: root.networkView === "hemicycle" && !hemicycle.namesForAll
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: qsTr("Parcourir le registre")
                                     fontSize: Theme.fs(11.5)
@@ -1849,31 +1790,29 @@ Item {
                     }
                 }
 
-                // -- Colonne de lecture : poste selectionne + a traiter -------
-                GridLayout {
+                // -- Colonne de droite : « A traiter », ou la fiche du poste
+                // selectionne (« ← A traiter » et la croix y ramenent).
+                Item {
                     id: side
-                    Layout.row: root.mainWide ? 0 : 1
+                    Layout.row: root.mainWide ? 0 : (root.selectedId.length > 0 ? 1 : 0)
                     Layout.column: root.mainWide ? 1 : 0
-                    Layout.rowSpan: root.mainWide ? 2 : 1
                     Layout.fillWidth: !root.mainWide
                     Layout.preferredWidth: root.mainWide ? root.sideWidth : -1
-                    // Large : epouse la hauteur du reseau et des echanges sans
-                    // l'imposer (« A traiter » defile a l'interieur).
+                    // Large : epouse la hauteur du reseau (« A traiter » defile a l'interieur) ;
+                    // une fiche plus haute que le reseau agrandit la rangee au lieu de deborder.
                     Layout.fillHeight: root.mainWide
-                    Layout.preferredHeight: root.mainWide ? 0 : -1
-                    Layout.minimumHeight: 0
+                    Layout.minimumHeight: root.mainWide && root.selectedPeer ? fiche.implicitHeight : 0
                     Layout.alignment: Qt.AlignTop
-                    columns: root.mainWide || !root.lowerPaired ? 1 : 2
-                    columnSpacing: 22
-                    rowSpacing: 18
+                    implicitHeight: root.mainWide ? 0 : (root.selectedPeer ? fiche.implicitHeight : todo.implicitHeight)
 
                     PeerFiche {
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: 1
-                        Layout.alignment: Qt.AlignTop
+                        id: fiche
+                        visible: !!root.selectedPeer
+                        width: parent.width
                         peer: root.selectedPeer
-                        anyPeer: root.allPeersLive.length > 0
                         isAdmin: root.isAdmin
+                        backLabel: root.isAdmin ? qsTr("À traiter") : qsTr("À surveiller")
+                        backCount: todo.rowCount
                         addressText: {
                             const p = root.selectedPeer
                             if (!p || !p.address) return ""
@@ -1890,6 +1829,7 @@ Item {
                         trustText: root.selectedPeer ? root.machineTrust(root.selectedPeer.id, root.selectedPeer.address) : ""
                         conversation: root.conversationFor(root.selectedPeer)
                         conversationTime: conversation ? root.timeOf(conversation.timestamp) : ""
+                        onBackRequested: root.selectedId = ""
                         onMessageRequested: root.openConversationWithPeer(root.selectedPeer)
                         onSendFileRequested: root.fileTransferRequested(true, root.selectedPeer)
                         onCallRequested: root.callPeer(root.selectedPeer)
@@ -1902,12 +1842,10 @@ Item {
                     }
 
                     InterventionList {
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: 1
-                        Layout.fillHeight: root.mainWide
-                        Layout.minimumHeight: 0
-                        Layout.maximumHeight: root.mainWide ? -1 : 360
-                        Layout.alignment: Qt.AlignTop
+                        id: todo
+                        visible: !root.selectedPeer
+                        width: parent.width
+                        height: root.mainWide ? parent.height : implicitHeight
                         items: root.interventions
                         isAdmin: root.isAdmin
                         onActivated: function(item) { root.runIntervention(item) }
@@ -1919,6 +1857,7 @@ Item {
                     id: lower
                     Layout.row: root.mainWide ? 1 : 2
                     Layout.column: 0
+                    Layout.columnSpan: root.mainWide ? 2 : 1
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignTop
                     columns: root.lowerPaired ? 2 : 1
@@ -2145,7 +2084,7 @@ Item {
                         }
 
                         Repeater {
-                            model: root.isAdmin ? root.activityItems.slice(0, 5)
+                            model: root.isAdmin ? root.activityItems.slice(0, 4)
                                                 : root.allConversations.slice().sort(function(a, b) {
                                                       return (b.unreadCount || 0) - (a.unreadCount || 0)
                                                   }).slice(0, 5)
@@ -2158,7 +2097,9 @@ Item {
                                                                          : { glyph: (modelData.unreadCount || 0) > 0 ? "unread" : "read",
                                                                              result: "", ink: Theme.ink3 }
                                 Layout.fillWidth: true
-                                implicitHeight: 34
+                                // Administrateur : deux lignes (phrase + heure, puis
+                                // resultat · precision) pour ne rien tronquer.
+                                implicitHeight: root.isAdmin ? 50 : 34
 
                                 Rectangle {
                                     visible: ev.index > 0
@@ -2172,12 +2113,55 @@ Item {
                                     onTapped: if (ev.modelData.conversationId > 0) root.conversationRequested(ev.modelData.conversationId)
                                 }
 
+                                GridLayout {
+                                    visible: root.isAdmin
+                                    anchors.fill: parent
+                                    anchors.topMargin: 7
+                                    anchors.bottomMargin: 7
+                                    columns: 3
+                                    columnSpacing: 10
+                                    rowSpacing: 1
+                                    StateGlyph { Layout.alignment: Qt.AlignVCenter; kind: ev.look.glyph; size: 10 }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        // Phrase du journal en clair (deja echappee par auditText.js).
+                                        text: root.isAdmin ? ev.modelData.line : ""
+                                        textFormat: Text.StyledText
+                                        color: Theme.ink
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fs(13)
+                                        elide: Text.ElideRight
+                                    }
+                                    Text {
+                                        text: root.timeOf(ev.modelData.timestamp)
+                                        color: Theme.ink3
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fs(12)
+                                        font.features: ({ "tnum": 1 })
+                                    }
+                                    Item { implicitWidth: 10 }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        Layout.columnSpan: 2
+                                        text: !root.isAdmin ? ""
+                                              : (ev.look.result.length ? "<b><font color=\"" + ev.look.ink + "\">" + ev.look.result + "</font></b>" : "")
+                                                + (ev.look.result.length && ev.modelData.sub ? " · " : "")
+                                                + (ev.modelData.sub || "")
+                                        textFormat: Text.StyledText
+                                        color: Theme.ink3
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fs(12)
+                                        elide: Text.ElideRight
+                                    }
+                                }
+
                                 RowLayout {
+                                    visible: !root.isAdmin
                                     anchors.fill: parent
                                     spacing: 10
                                     Text {
                                         Layout.preferredWidth: 40
-                                        text: root.timeOf(root.isAdmin ? ev.modelData.timestamp : ev.modelData.timestamp)
+                                        text: root.timeOf(ev.modelData.timestamp)
                                         color: Theme.ink3
                                         font.family: Theme.fontFamily
                                         font.pixelSize: Theme.fs(12)
@@ -2186,10 +2170,7 @@ Item {
                                     StateGlyph { kind: ev.look.glyph; size: 10 }
                                     Text {
                                         Layout.fillWidth: true
-                                        // Administrateur : phrase du journal en clair (deja echappee
-                                        // par auditText.js) puis sa precision en gris.
-                                        text: root.isAdmin
-                                              ? ev.modelData.line + (ev.modelData.sub ? "&nbsp;&nbsp;<font color=\"" + Theme.ink3 + "\">" + ev.modelData.sub + "</font>" : "")
+                                        text: root.isAdmin ? ""
                                               : "<b>" + root.esc(ev.modelData.name) + "</b>&nbsp;&nbsp;<font color=\"" + Theme.ink2 + "\">"
                                                 + root.esc(ev.modelData.lastMessage || "") + "</font>"
                                         textFormat: Text.StyledText
@@ -2198,13 +2179,6 @@ Item {
                                         font.pixelSize: Theme.fs(13)
                                         font.underline: evHover.hovered
                                         elide: Text.ElideRight
-                                    }
-                                    CapsLabel {
-                                        visible: root.isAdmin && ev.look.result.length > 0
-                                        text: ev.look.result
-                                        color: ev.look.ink
-                                        font.pixelSize: Theme.fs(10)
-                                        font.weight: Theme.weightBold
                                     }
                                     Text {
                                         visible: !root.isAdmin && (ev.modelData.unreadCount || 0) > 0

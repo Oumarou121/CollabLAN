@@ -73,7 +73,9 @@ function computeSeats(peers, width, height) {
     var W = width, H = height
     var n = peers.length
     var floorY = H - 48
-    var labelW = clamp(W * 0.17, 116, 196)
+    // Marge des noms : 20 % de la largeur (accueil v2) pour que les noms
+    // usuels tiennent en 1366 px ; nom complet en infobulle sinon.
+    var labelW = clamp(W * 0.2, 134, 200)
     var out = { cx: W / 2, cy: floorY, rOut: 0, rIn: 0, rows: 0, s: 10, rT: 26,
                 labelW: labelW, floorY: floorY, seats: [], allLabels: n <= MAX_ALL_LABELS }
     if (n === 0 || W <= 0 || H <= 0)

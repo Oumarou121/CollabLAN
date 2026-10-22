@@ -34,12 +34,8 @@ Item {
     // "server" | "backup" | "client"
     property string localState: "server"
     property string localLabel: ""
-    // Demande d'autorisation la plus recente (administrateur) : « a l'entree ».
-    property string pendingTitle: ""
-    property int pendingCount: 0
 
     signal seatActivated(string peerId)
-    signal doorActivated()
 
     readonly property int peerCount: peers.length
     readonly property bool namesForAll: peerCount <= L.MAX_ALL_LABELS
@@ -504,80 +500,6 @@ Item {
             text: root.localLabel + " · " + qsTr("vous")
             color: root.localState === "backup" ? Theme.warningInk : Theme.ink3
             font.pixelSize: Theme.fs(9.5)
-        }
-    }
-
-    // ---- « A l'entree » : demande d'autorisation en attente ------------------
-    AbstractButton {
-        id: door
-        visible: root.pendingCount > 0 && root.peerCount > 0
-        x: 16
-        y: root.cy + 10
-        width: doorRow.implicitWidth
-        height: doorRow.implicitHeight
-        hoverEnabled: true
-        focusPolicy: Qt.TabFocus
-        Accessible.name: qsTr("%1 demande l'accès au réseau").arg(root.pendingTitle)
-        onClicked: root.doorActivated()
-        HoverHandler { cursorShape: Qt.PointingHandCursor }
-
-        background: Rectangle {
-            color: "transparent"
-            border.width: door.visualFocus ? 2 : 0
-            border.color: Theme.focusRing
-            radius: Theme.radiusSheet
-        }
-        contentItem: Row {
-            id: doorRow
-            spacing: 10
-
-            Item {
-                width: 18
-                height: 18
-                anchors.verticalCenter: parent.verticalCenter
-                Rectangle {
-                    id: doorPulse
-                    anchors.centerIn: parent
-                    width: 16; height: 16; radius: 8
-                    color: Theme.warningColor
-                    opacity: 0.3
-                    SequentialAnimation on opacity {
-                        running: door.visible && root.visible
-                        loops: Animation.Infinite
-                        NumberAnimation { from: 0.35; to: 0.05; duration: 1100 }
-                        NumberAnimation { from: 0.05; to: 0.35; duration: 1100 }
-                    }
-                }
-                Shape {
-                    anchors.fill: parent
-                    preferredRendererType: Shape.CurveRenderer
-                    ShapePath {
-                        fillColor: "transparent"
-                        strokeColor: Theme.warningColor
-                        strokeWidth: 1.5
-                        strokeStyle: ShapePath.DashLine
-                        dashPattern: [1.6, 1.4]
-                        PathAngleArc { centerX: 9; centerY: 9; radiusX: 8; radiusY: 8; startAngle: 0; sweepAngle: 360 }
-                    }
-                }
-            }
-            Column {
-                spacing: 1
-                CapsLabel {
-                    text: qsTr("À l'entrée")
-                    color: Theme.warningInk
-                    font.pixelSize: Theme.fs(9.5)
-                }
-                Text {
-                    text: qsTr("%1 demande l'accès").arg(root.pendingTitle)
-                          + (root.pendingCount > 1 ? " · +" + (root.pendingCount - 1) : "")
-                    color: door.hovered ? Theme.ink : Theme.ink2
-                    font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fs(12)
-                    font.weight: Theme.weightMedium
-                    font.underline: door.hovered
-                }
-            }
         }
     }
 }
