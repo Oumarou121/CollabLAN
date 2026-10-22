@@ -471,8 +471,20 @@ Item {
             let name = ""
             for (let i = 0; i < root.folderRows.length; i++)
                 if (root.folderRows[i].uuid === folderUuid) name = root.folderRows[i].name
-            root.showNotice("conflict", qsTr("<b>Conflit dans %1.</b> « %2 » a été reçu alors qu'il avait changé ici ; la version reçue est mise de côté.")
-                                        .arg(root.esc(name)).arg(root.esc(relativePath)), folderUuid)
+            root.showNotice("conflict", qsTr("<b>Conflit dans %1.</b> « %2 » a changé ici et ailleurs en même temps ; l'autre version est gardée dans « %3 ».")
+                                        .arg(root.esc(name)).arg(root.esc(relativePath)).arg(root.esc(conflictPath)), folderUuid)
+            root.scheduleRebuild()
+        }
+        function onSyncNotice(folderUuid, relativePath, kind) {
+            let name = ""
+            for (let i = 0; i < root.folderRows.length; i++)
+                if (root.folderRows[i].uuid === folderUuid) name = root.folderRows[i].name
+            if (kind === "kept-after-delete")
+                root.showNotice("info", qsTr("<b>%1 :</b> « %2 » a été supprimé sur un autre poste, mais vous l'aviez modifié ici. Il est gardé et renvoyé aux autres membres.")
+                                            .arg(root.esc(name)).arg(root.esc(relativePath)), folderUuid)
+            else if (kind === "case-collision")
+                root.showNotice("conflict", qsTr("<b>%1 :</b> « %2 » n'a pas été reçu : un autre fichier porte déjà ce nom à la casse près sur ce poste. Renommez l'un des deux.")
+                                         .arg(root.esc(name)).arg(root.esc(relativePath)), folderUuid)
             root.scheduleRebuild()
         }
         function onFolderTransferProgress(folderUuid, folderName, incoming, filesCompleted, filesTotal, bytesTransferred, bytesTotal) {
@@ -1483,7 +1495,7 @@ Item {
                                                     Layout.fillWidth: true
                                                     textFormat: Text.StyledText
                                                     wrapMode: Text.WordWrap
-                                                    text: qsTr("Le fichier a changé ici et chez un membre. La version reçue est mise de côté sous « %1 ».")
+                                                    text: qsTr("Le fichier a changé ici et ailleurs en même temps. L'autre version est gardée sous « %1 ».")
                                                           .arg(root.esc(cf.copyPath.split("/").pop()))
                                                     color: Theme.ink3
                                                     font.family: Theme.fontFamily
@@ -1504,8 +1516,8 @@ Item {
                                                     x: 1; y: 1
                                                     Repeater {
                                                         model: [
-                                                            { t: qsTr("Garder la mienne"), r: "keep_local" },
-                                                            { t: qsTr("Garder la reçue"), r: "keep_remote" },
+                                                            { t: qsTr("Garder l'original"), r: "keep_local" },
+                                                            { t: qsTr("Garder la copie"), r: "keep_remote" },
                                                             { t: qsTr("Garder les deux"), r: "keep_both" }
                                                         ]
                                                         delegate: AbstractButton {
@@ -1982,6 +1994,7 @@ Item {
                 localPath: root.composerPath
                 done: root.composerDone
                 errorText: root.composerError
+                builtinExcludes: root.context ? root.context.builtinExcludePatterns() : []
 
                 onCloseRequested: root.composerOpen = false
                 onBrowseRequested: composerPicker.open()

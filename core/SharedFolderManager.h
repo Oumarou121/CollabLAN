@@ -261,6 +261,11 @@ public:
     /// (aucune exclusion applicable, l'appelant gere ce cas autrement).
     bool isPathExcluded(qint64 folderId, const QString &relativePath) const;
 
+    /// Exclusions toujours actives (dossiers de versionnage, fichiers
+    /// systeme, verrous d'editeurs, fichiers temporaires), sous forme de
+    /// motifs lisibles pour l'interface.
+    static QStringList builtinExcludePatterns();
+
     SharedFolderManagerError lastError() const { return m_lastError; }
     QString lastErrorString() const { return m_lastErrorString; }
 

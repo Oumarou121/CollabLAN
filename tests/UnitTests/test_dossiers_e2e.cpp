@@ -6,7 +6,9 @@
 //  - un membre en lecture seule ne recevait jamais les fichiers ;
 //  - chaque mise a jour creait une copie de conflit (l'original restait perime) ;
 //  - le dossier choisi par un membre n'etait pas surveille (ses ajouts ne partaient pas) ;
-//  - une suppression distante effacait une modification locale ;
+//  - une suppression distante effacait une modification locale (desormais la
+//    modification l'emporte, sur tous les postes) ;
+//  - noms differant par la casse seulement, renommage de casse ;
 //  - arret du partage / depart d'un membre non propages.
 #include <QtTest>
 #include <QDir>
@@ -77,13 +79,6 @@ class TestDossiersE2E : public QObject
     {
         return QDir(dir).entryList({QStringLiteral("* (conflit *)*")}, QDir::Files);
     }
-    static bool anyCopyContains(const QString &dir, const QByteArray &content)
-    {
-        for (const QString &name : conflictCopies(dir))
-            if (read(dir + QLatin1Char('/') + name) == content)
-                return true;
-        return false;
-    }
 
     // Reseau S (alice, proprietaire) + B (bob) ; dossier d'alice avec un fichier,
     // partage a bob (ecriture ou lecture) ; bob l'accepte dans un dossier choisi.
@@ -150,6 +145,17 @@ private slots:
         write(x.bobDir + QStringLiteral("/note-lecteur.txt"), "ne doit pas partir");
         QTest::qWait(5000);
         QVERIFY(!QFile::exists(x.ownerDir + QStringLiteral("/note-lecteur.txt")));
+
+        // Fichier d'alice dont le nom ne differe que par la casse d'un fichier
+        // de bob (cas d'un poste Linux) : non ecrit, le fichier de bob est intact
+        // et un avis est emis.
+        QSignalSpy notices(x.b.app->folderSyncService(), &core::sync::FolderSyncService::syncNotice);
+        write(x.bobDir + QStringLiteral("/notes.txt"), "notes de bob");
+        write(x.ownerDir + QStringLiteral("/Notes.txt"), "notes d'alice");
+        QTRY_VERIFY_WITH_TIMEOUT(!notices.isEmpty(), 15000);
+        QCOMPARE(notices.first().at(2).toString(), QStringLiteral("case-collision"));
+        QCOMPARE(read(x.bobDir + QStringLiteral("/notes.txt")), QByteArray("notes de bob"));
+        QVERIFY(QDir(x.bobDir).entryList(QDir::Files).contains(QStringLiteral("notes.txt")));
     }
 
     void writeMemberUpdatesAddsAndDeletes()
@@ -179,14 +185,23 @@ private slots:
         QVERIFY(QFile::remove(x.ownerDir + QStringLiteral("/notes/note-bob.txt")));
         QTRY_VERIFY_WITH_TIMEOUT(!QFile::exists(x.bobDir + QStringLiteral("/notes/note-bob.txt")), 15000);
 
-        // Bob modifie rapport.txt pendant qu'alice le supprime : la modification
-        // de bob n'est jamais perdue.
+        // Renommage par alice qui ne change que la casse : meme fichier chez bob,
+        // renomme sans etre perdu.
         QTest::qWait(1500);
-        write(x.bobDir + QStringLiteral("/rapport.txt"), "modification locale de bob");
-        QVERIFY(QFile::remove(x.ownerDir + QStringLiteral("/rapport.txt")));
-        QTest::qWait(8000);
-        QVERIFY(read(x.bobDir + QStringLiteral("/rapport.txt")) == "modification locale de bob"
-                || anyCopyContains(x.bobDir, "modification locale de bob"));
+        QVERIFY(QFile::rename(x.ownerDir + QStringLiteral("/rapport.txt"), x.ownerDir + QStringLiteral("/Rapport.txt")));
+        QTRY_VERIFY_WITH_TIMEOUT(QDir(x.bobDir).entryList(QDir::Files).contains(QStringLiteral("Rapport.txt")), 15000);
+        QCOMPARE(read(x.bobDir + QStringLiteral("/Rapport.txt")), QByteArray("version 3 de bob"));
+
+        // Bob modifie le fichier pendant qu'alice le supprime : la modification
+        // l'emporte, le fichier revient chez alice avec la version de bob.
+        QTest::qWait(1500);
+        write(x.bobDir + QStringLiteral("/Rapport.txt"), "modification locale de bob");
+        QVERIFY(QFile::remove(x.ownerDir + QStringLiteral("/Rapport.txt")));
+        QTRY_VERIFY_WITH_TIMEOUT(read(x.ownerDir + QStringLiteral("/Rapport.txt")) == "modification locale de bob", 15000);
+        QTest::qWait(3000); // plus rien ne doit bouger
+        QCOMPARE(read(x.bobDir + QStringLiteral("/Rapport.txt")), QByteArray("modification locale de bob"));
+        QCOMPARE(read(x.ownerDir + QStringLiteral("/Rapport.txt")), QByteArray("modification locale de bob"));
+        QVERIFY(conflictCopies(x.bobDir).isEmpty());
     }
 
     // Deux modifications simultanees du meme fichier : meme decision des deux

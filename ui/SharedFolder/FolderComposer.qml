@@ -26,6 +26,7 @@ Rectangle {
     property var picked: []                // userIds
     property bool allowWrite: true
     property var patterns: []
+    property var builtinExcludes: []       // exclusions toujours actives (SharedFolderContext)
     property string createdName: ""
 
     signal closeRequested()
@@ -543,7 +544,9 @@ Rectangle {
                     Text {
                         Layout.fillWidth: true
                         Layout.leftMargin: 30
-                        text: qsTr("S'ajoutent aux exclusions par défaut (dossiers système, fichiers temporaires). Local à ce poste.")
+                        text: root.builtinExcludes.length
+                              ? qsTr("S'ajoutent aux exclusions par défaut : %1. Local à ce poste.").arg(root.builtinExcludes.join(", "))
+                              : qsTr("S'ajoutent aux exclusions par défaut (dossiers système, fichiers temporaires). Local à ce poste.")
                         color: Theme.ink3
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fs(12)

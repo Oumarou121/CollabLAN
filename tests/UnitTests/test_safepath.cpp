@@ -82,6 +82,40 @@ private slots:
         QVERIFY(resolveInsideFolder(root.path(), QStringLiteral("lien/secret.txt")).isEmpty());
         QDir().rmdir(link);
     }
+
+    // Noms reserves de Windows : impossibles a creer correctement ici.
+    void rejectsWindowsReservedNames_data()
+    {
+        QTest::addColumn<QString>("relativePath");
+        QTest::newRow("CON") << QStringLiteral("CON");
+        QTest::newRow("nul.txt") << QStringLiteral("docs/nul.txt");
+        QTest::newRow("COM1 dossier") << QStringLiteral("COM1/a.txt");
+        QTest::newRow("point final") << QStringLiteral("rapport.");
+        QTest::newRow("espace final") << QStringLiteral("dossier /a.txt");
+    }
+    void rejectsWindowsReservedNames()
+    {
+        QFETCH(QString, relativePath);
+        QTemporaryDir root;
+        QVERIFY(resolveInsideFolder(root.path(), relativePath).isEmpty());
+        QVERIFY(!resolveInsideFolder(root.path(), QStringLiteral("console.txt")).isEmpty());
+    }
+
+    // Deux noms qui ne different que par la casse designent ici le meme fichier.
+    void detectsCaseOnlyDifference()
+    {
+        QTemporaryDir root;
+        QVERIFY(QDir(root.path()).mkpath(QStringLiteral("Docs")));
+        QFile f(root.filePath(QStringLiteral("Docs/rapport.txt")));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.close();
+
+        using core::sync::caseDiffersOnDisk;
+        QVERIFY(!caseDiffersOnDisk(root.path(), QStringLiteral("Docs/rapport.txt")));
+        QVERIFY(caseDiffersOnDisk(root.path(), QStringLiteral("Docs/Rapport.txt")));
+        QVERIFY(caseDiffersOnDisk(root.path(), QStringLiteral("docs/rapport.txt")));
+        QVERIFY(!caseDiffersOnDisk(root.path(), QStringLiteral("Docs/autre.txt")));
+    }
 #endif
 };
 

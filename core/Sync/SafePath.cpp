@@ -133,4 +133,26 @@ QString resolveInsideFolder(const QString &root, const QString &relativePath)
     return target;
 }
 
+bool caseDiffersOnDisk(const QString &root, const QString &relativePath)
+{
+#ifdef Q_OS_WIN
+    const QString target = resolveInsideFolder(root, relativePath);
+    if (target.isEmpty() || !QFileInfo::exists(target))
+        return false;
+    // Noms reels (casse du disque) de la racine et de la cible : la fin du
+    // chemin reel de la cible est comparee au chemin demande.
+    const QString realRoot = realPath(QDir::cleanPath(QFileInfo(root).absoluteFilePath()));
+    const QString realTarget = realPath(target);
+    if (realRoot.isEmpty() || realTarget.length() <= realRoot.length())
+        return false;
+    const QString onDisk = realTarget.mid(realRoot.length() + 1);
+    const QString requested = QDir::cleanPath(QString(relativePath).replace(QLatin1Char('\\'), QLatin1Char('/')));
+    return onDisk.compare(requested, Qt::CaseInsensitive) == 0 && onDisk.compare(requested, Qt::CaseSensitive) != 0;
+#else
+    Q_UNUSED(root);
+    Q_UNUSED(relativePath);
+    return false;
+#endif
+}
+
 } // namespace core::sync

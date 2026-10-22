@@ -198,8 +198,10 @@ SheetModal {
         Flow {
             Layout.fillWidth: true
             spacing: 6
-            Chip { label: qsTr("dossiers système"); removable: false }
-            Chip { label: qsTr("fichiers temporaires"); removable: false }
+            Repeater {
+                model: root.context ? root.context.builtinExcludePatterns() : []
+                Chip { label: modelData; removable: false }
+            }
         }
     }
 

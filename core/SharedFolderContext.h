@@ -212,6 +212,9 @@ public:
     /// n'apparaitra qu'a la sauvegarde reelle, cf. updateExcludePatterns()).
     Q_INVOKABLE QStringList previewExcludePatternsImpact(qint64 folderId, const QString &excludePatterns) const;
 
+    /// Exclusions toujours actives, affichees dans la feuille des exclusions.
+    Q_INVOKABLE QStringList builtinExcludePatterns() const;
+
 signals:
     void errorOccurred(const QString &message);
 
@@ -230,6 +233,9 @@ signals:
     void conflictDetected(const QString &folderUuid,
                           const QString &relativePath,
                           const QString &conflictPath);
+
+    /// Retransmis depuis FolderSyncService::syncNotice.
+    void syncNotice(const QString &folderUuid, const QString &relativePath, const QString &kind);
 
     /// Emis apres chaque reindexation reussie (qu'elle soit declenchee par
     /// FolderWatcher ou par l'utilisateur via shareFolder()), avec le nombre

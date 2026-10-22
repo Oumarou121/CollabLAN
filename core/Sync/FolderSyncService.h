@@ -252,6 +252,12 @@ signals:
                           const QString &relativePath,
                           const QString &conflictPath);
 
+    /// Avis a montrer a l'utilisateur, sans conflit a proprement parler :
+    /// kind = "kept-after-delete" (supprime ailleurs mais modifie ici : garde
+    /// et renvoye aux autres) ou "case-collision" (recu mais un autre fichier
+    /// porte deja ce nom a la casse pres sur ce poste : non ecrit).
+    void syncNotice(const QString &folderUuid, const QString &relativePath, const QString &kind);
+
     /**
      * @brief Émis groupé (anti-rebond) après une rafale de fichiers reçus
      *        pour un même dossier partagé, afin qu'une seule notification

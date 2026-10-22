@@ -16,6 +16,13 @@ namespace core::sync {
 /// symboliques resolus) sort du dossier.
 QString resolveInsideFolder(const QString &root, const QString &relativePath);
 
+/// Vrai si `relativePath` designe, dans `root`, un element qui existe deja
+/// sur le disque sous un nom different par la casse seulement ("Rapport.txt"
+/// demande, "rapport.txt" present). Sur un systeme de fichiers insensible a la
+/// casse (Windows), ce sont alors deux fichiers distincts d'un poste Linux qui
+/// tomberaient sur le meme fichier ici. Toujours faux ailleurs.
+bool caseDiffersOnDisk(const QString &root, const QString &relativePath);
+
 } // namespace core::sync
 
 #endif // SAFEPATH_H

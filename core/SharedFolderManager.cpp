@@ -38,20 +38,40 @@ namespace {
  *    quelle profondeur, pas seulement a la racine).
  * Comparaison insensible a la casse (usage mixte Windows/Linux en LAN).
  */
-bool isExcludedRelativePath(const QString &relativePath, const QVector<QRegularExpression> &userPatterns = {})
+// Exclusions toujours actives, aussi affichees telles quelles dans l'interface
+// (SharedFolderManager::builtinExcludePatterns).
+const QStringList &excludedDirNameList()
 {
-    static const QSet<QString> excludedDirNames = {
+    static const QStringList names = {
         QStringLiteral(".git"), QStringLiteral(".svn"), QStringLiteral(".hg"),
         QStringLiteral("node_modules"), QStringLiteral("__pycache__"),
     };
-    static const QSet<QString> excludedFileNames = {
+    return names;
+}
+const QStringList &excludedFileNameList()
+{
+    static const QStringList names = {
         QStringLiteral(".DS_Store"), QStringLiteral("Thumbs.db"), QStringLiteral("desktop.ini"),
     };
-    static const QSet<QString> excludedSuffixes = {
+    return names;
+}
+const QStringList &excludedSuffixList()
+{
+    // localink-tmp : copie temporaire d'un fichier recu, le temps du
+    // remplacement (FolderSyncService::replaceFileSafely).
+    static const QStringList suffixes = {
         QStringLiteral("tmp"), QStringLiteral("temp"), QStringLiteral("obj"),
         QStringLiteral("o"), QStringLiteral("swp"), QStringLiteral("bak"),
-        QStringLiteral("crdownload"), QStringLiteral("part"),
+        QStringLiteral("crdownload"), QStringLiteral("part"), QStringLiteral("localink-tmp"),
     };
+    return suffixes;
+}
+
+bool isExcludedRelativePath(const QString &relativePath, const QVector<QRegularExpression> &userPatterns = {})
+{
+    static const QSet<QString> excludedDirNames(excludedDirNameList().cbegin(), excludedDirNameList().cend());
+    static const QSet<QString> excludedFileNames(excludedFileNameList().cbegin(), excludedFileNameList().cend());
+    static const QSet<QString> excludedSuffixes(excludedSuffixList().cbegin(), excludedSuffixList().cend());
 
     const QStringList segments = relativePath.split(QLatin1Char('/'), Qt::SkipEmptyParts);
     for (const QString &segment : segments) {
@@ -149,6 +169,18 @@ bool validateExcludePatterns(const QString &raw, QString *normalized, QString *e
 }
 
 } // namespace
+
+QStringList SharedFolderManager::builtinExcludePatterns()
+{
+    QStringList patterns;
+    for (const QString &name : excludedDirNameList())
+        patterns << name + QLatin1Char('/');
+    patterns << excludedFileNameList();
+    patterns << QStringLiteral("~$*") << QStringLiteral(".~lock.*");
+    for (const QString &suffix : excludedSuffixList())
+        patterns << QStringLiteral("*.") + suffix;
+    return patterns;
+}
 
 SharedFolderManager::SharedFolderManager(database::DatabaseManager *dbManager, QObject *parent)
     : QObject(parent)

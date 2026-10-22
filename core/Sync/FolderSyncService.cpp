@@ -2208,39 +2208,22 @@ void FolderSyncService::applyRemoteDelete(const models::SharedFolder &folder,
     const auto known = m_fileRepository.findByRelativePath(folder.id(), relativePath);
     if (QFile::exists(absPath)) {
         // Le fichier a-t-il ete modifie ici depuis la version que l'auteur de la
-        // suppression connaissait ? Si oui, la modification locale est gardee
-        // sous un autre nom au lieu d'etre effacee.
+        // suppression connaissait ? Si oui, la modification l'emporte : le
+        // fichier reste ici sous son nom et sa version repart vers les autres
+        // postes (indexation), qui le recuperent. Auparavant mis de cote dans
+        // une copie de conflit connue de ce seul poste.
         const QString localHash = computeHash(absPath);
         const QString synced = known.has_value() ? known->syncedHash() : QString();
         const bool localUnchanged = (!baseHash.isEmpty() && localHash == baseHash)
             || (!synced.isEmpty() && localHash == synced)
             || (baseHash.isEmpty() && synced.isEmpty() && known.has_value() && localHash == known->hash());
-        if (localUnchanged) {
-            if (!moveToTrashOrRemove(absPath))
-                qWarning() << "[FolderSync] Suppression distante : échec de la suppression sur disque :" << absPath;
-        } else {
-            const QString localName = displayNameOf(m_userManager ? m_userManager->currentUserUuid() : QString(),
-                                                    m_machineId);
-            const QString keptRel = makeConflictPath(relativePath, localName);
-            const QString keptAbs = resolveInsideFolder(folder.localPath(), keptRel);
-            if (!keptAbs.isEmpty() && (QFile::exists(keptAbs) ? QFile::remove(keptAbs) : true)
-                && QFile::rename(absPath, keptAbs)) {
-                const QFileInfo info(keptAbs);
-                models::SharedFile kept(0, folder.id(), keptRel);
-                kept.setHash(localHash);
-                kept.setSize(info.size());
-                kept.setLastModified(info.lastModified());
-                if (m_fileRepository.upsert(kept).has_value())
-                    m_fileRepository.setSyncedHash(folder.id(), keptRel, localHash);
-                qWarning() << "[FolderSync] Suppression distante d'un fichier modifié ici : version locale gardée sous"
-                           << keptRel;
-                emit conflictDetected(folder.uuid(), relativePath, keptRel);
-            } else {
-                qWarning() << "[FolderSync] Suppression distante ignorée : fichier modifié ici et impossible à mettre de côté :"
-                           << absPath;
-                return;
-            }
+        if (!localUnchanged) {
+            qWarning() << "[FolderSync] Suppression distante d'un fichier modifié ici : fichier gardé" << relativePath;
+            emit syncNotice(folder.uuid(), relativePath, QStringLiteral("kept-after-delete"));
+            return;
         }
+        if (!moveToTrashOrRemove(absPath))
+            qWarning() << "[FolderSync] Suppression distante : échec de la suppression sur disque :" << absPath;
     }
 
     if (!m_fileRepository.markDeleted(folder.id(), relativePath)) {
@@ -2290,8 +2273,12 @@ void FolderSyncService::applyRemoteRename(const models::SharedFolder &folder,
 
     QDir().mkpath(QFileInfo(newAbsPath).absolutePath());
 
+    // Changement de casse seul ("rapport.txt" -> "Rapport.txt") : meme fichier
+    // sur un disque insensible a la casse, la cible n'est pas « occupee »
+    // (auparavant prise pour un autre fichier et supprimee).
+    const bool sameFile = oldAbsPath.compare(newAbsPath, Qt::CaseInsensitive) == 0;
     if (QFile::exists(oldAbsPath)) {
-        if (QFile::exists(newAbsPath)) {
+        if (!sameFile && QFile::exists(newAbsPath)) {
             // Un fichier local porte deja le nouveau nom : identique, il est
             // remplace ; different, il est mis de cote plutot qu'ecrase.
             if (computeHash(newAbsPath) == computeHash(oldAbsPath)) {
@@ -2562,6 +2549,15 @@ void FolderSyncService::integrateReceivedFile(const PendingFileTransfer &pending
     if (targetAbsPath.isEmpty()) {
         qWarning() << "[FolderSync] Fichier reçu ignoré : chemin hors du dossier partagé :" << pending.relativePath;
         QFile::remove(sourcePath);
+        return;
+    }
+    // Un autre fichier porte deja ce nom a la casse pres (dossier partage
+    // depuis un poste Linux) : l'ecrire ecraserait cet autre fichier.
+    if (caseDiffersOnDisk(pending.localFolderPath, pending.relativePath)) {
+        qWarning() << "[FolderSync] Fichier reçu ignoré : un autre fichier porte ce nom à la casse près :"
+                   << pending.relativePath;
+        QFile::remove(sourcePath);
+        emit syncNotice(pending.folderUuid, pending.relativePath, QStringLiteral("case-collision"));
         return;
     }
 

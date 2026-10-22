@@ -126,6 +126,8 @@ void SharedFolderContext::setFolderSyncService(core::sync::FolderSyncService *sv
         // afficher un badge ou une banniere sans connaitre FolderSyncService.
         connect(m_folderSyncService, &core::sync::FolderSyncService::conflictDetected,
                 this, &SharedFolderContext::conflictDetected);
+        connect(m_folderSyncService, &core::sync::FolderSyncService::syncNotice,
+                this, &SharedFolderContext::syncNotice);
 
         // Retransmet fileIntegrated a QML (fileReceived) ET rafraîchit le
         // modele de dossiers (compteur de fichiers sur les tuiles) : sans
@@ -574,6 +576,11 @@ QStringList SharedFolderContext::previewExcludePatternsImpact(qint64 folderId, c
         return {};
     }
     return m_manager->previewExcludePatternsImpact(folderId, excludePatterns);
+}
+
+QStringList SharedFolderContext::builtinExcludePatterns() const
+{
+    return SharedFolderManager::builtinExcludePatterns();
 }
 
 QVariantList SharedFolderContext::syncHistoryForFolder(qint64 folderId, int limit) const
