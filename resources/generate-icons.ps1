@@ -1,8 +1,10 @@
 # generate-icons.ps1 - regenere les icones de LocaLink depuis le trace
 # vectoriel de la marque (le meme que ui/Components/BrandMark.qml).
 #
-# Tuile papier (#F3EFE6) a filet discret, personne de gauche a l'encre du
-# texte (#17161B), personne de droite a l'Encre de la marque (#2F3FCF).
+# Tuile papier (#F3EFE6) a filet discret ; trois postes, cercle interrompu
+# et rayons a l'encre du texte (#17161B), serveur central a l'Encre de la
+# marque (#2F3FCF). Les
+# traits s'epaississent aux petites tailles pour rester lisibles.
 # Produit :
 #   resources/win/app.ico                      16 a 256 px (BMP, PNG pour 256 comme avant)
 #   resources/mac/app.icns                     16 a 1024 px (PNG)
@@ -34,17 +36,43 @@ public static class LocaLinkIcon {
         return p;
     }
 
-    // Trace de la marque sur la grille 64 (cf. BrandMark.qml).
-    static void DrawMark(Graphics g, Color paper) {
-        var circle = new RectangleF(32f - 22.5f, 33.5f - 22.5f, 45f, 45f);
-        using (var b = new SolidBrush(Ink)) g.FillEllipse(b, 13.4f - 6.2f, 7.2f - 6.2f, 12.4f, 12.4f);
-        using (var b = new SolidBrush(Brand)) g.FillEllipse(b, 50.6f - 6.2f, 7.2f - 6.2f, 12.4f, 12.4f);
-        using (var p = Stroke(Ink, 11f)) g.DrawArc(p, circle, 215f, -143f);
-        using (var p = Stroke(Ink, 10f)) g.DrawLine(p, 14f, 20.68f, 32f, 39f);
-        using (var p = Stroke(paper, 14.4f)) g.DrawArc(p, circle, 325f, 143f);
-        using (var p = Stroke(paper, 13.4f)) g.DrawLine(p, 50f, 20.68f, 31.4f, 39.6f);
-        using (var p = Stroke(Brand, 11f)) g.DrawArc(p, circle, 325f, 143f);
-        using (var p = Stroke(Brand, 10f)) g.DrawLine(p, 50f, 20.68f, 31.4f, 39.6f);
+    static Pen Flat(Color c, float w) {
+        var p = new Pen(c, w);
+        p.StartCap = LineCap.Flat; p.EndCap = LineCap.Flat; p.LineJoin = LineJoin.Round;
+        return p;
+    }
+
+    // Trace de la marque sur la grille 64 (cf. BrandMark.qml), w = epaississement.
+    // Cercle commun : centre (32.05, 35.62), rayon 22.31 ; angles en degres, sens horaire.
+    static void DrawMark(Graphics g, float w) {
+        var circle = new RectangleF(32.05f - 22.31f, 35.62f - 22.31f, 44.62f, 44.62f);
+        using (var p = Flat(Ink, 2.8f * w)) {
+            g.DrawArc(p, circle, 236.5f, -63.8f);
+            g.DrawArc(p, circle, 303.5f, 63.8f);
+            g.DrawArc(p, circle, 123.8f, -67.6f);
+        }
+        using (var p = Stroke(Ink, 2.64f * w)) {
+            using (var r = RoundRect(23.95f, 5.79f, 16.19f, 11.48f, 1.04f)) g.DrawPath(p, r);
+            using (var r = RoundRect(3.06f, 42.02f, 14.4f, 10.83f, 1.04f)) g.DrawPath(p, r);
+            using (var r = RoundRect(46.64f, 42.02f, 14.3f, 10.83f, 1.04f)) g.DrawPath(p, r);
+        }
+        using (var b = new SolidBrush(Ink)) {
+            g.FillRectangle(b, 30.64f, 18.2f, 3.38f, 2.4f);
+            g.FillRectangle(b, 8.52f, 53.9f, 2.63f, 1.9f);
+            g.FillRectangle(b, 52.94f, 53.9f, 2.64f, 1.9f);
+        }
+        using (var p = Stroke(Ink, 2.35f * w)) {
+            g.DrawLine(p, 29.32f, 20.75f, 34.68f, 20.75f);
+            g.DrawLine(p, 7.67f, 56.42f, 12.94f, 56.42f);
+            g.DrawLine(p, 51.15f, 56.42f, 56.42f, 56.42f);
+        }
+        using (var p = Flat(Ink, 2.4f * w)) {
+            g.DrawLine(p, 32.05f, 23.29f, 32.05f, 28f);
+            g.DrawLine(p, 23.11f, 37.98f, 20.09f, 42.02f);
+            g.DrawLine(p, 40.99f, 37.98f, 44f, 42.02f);
+        }
+        using (var b = new SolidBrush(Brand))
+        using (var r = RoundRect(24.61f, 29.41f, 14.87f, 14.97f, 2.35f)) g.FillPath(b, r);
     }
 
     static GraphicsPath RoundRect(float x, float y, float w, float h, float r) {
@@ -71,9 +99,9 @@ public static class LocaLinkIcon {
                     using (var b = new SolidBrush(Paper)) g.FillPath(b, tile);
                     using (var p = new Pen(Color.FromArgb(46, Ink), 1f)) g.DrawPath(p, tile);
                 }
-                g.TranslateTransform(9.6f, 9.6f);
-                g.ScaleTransform(0.7f, 0.7f);
-                DrawMark(g, Paper);
+                g.TranslateTransform(6.4f, 6.4f);
+                g.ScaleTransform(0.8f, 0.8f);
+                DrawMark(g, size <= 16 ? 1.9f : size <= 24 ? 1.6f : size <= 32 ? 1.35f : size <= 48 ? 1.15f : 1f);
             }
             var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
             using (var g = Graphics.FromImage(bmp)) {
