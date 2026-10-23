@@ -34,23 +34,26 @@ QtObject {
         property string density: "comfortable"
         property bool sidebarCollapsed: false
         // 2 = identite Ligne claire (papier / nuit, accent "encre").
+        // 3 = encres d'accent (Bleu et Indigo retires au profit d'Encre).
         property int styleVersion: 0
     }
 
     // Passage a Ligne claire : l'ancien accent par defaut ("blue") devient
-    // l'encre de la marque ; un accent choisi explicitement est conserve.
+    // l'encre de la marque ; puis Bleu et Indigo, doublons d'Encre, sont
+    // retires (un reglage enregistre passe a Encre). "teal" et "graphite"
+    // gardent leur cle (Bleu canard, Encre noire).
     Component.onCompleted: {
-        if (prefs.styleVersion < 2) {
-            if (prefs.accent === "blue")
+        if (prefs.styleVersion < 3) {
+            if (prefs.accent === "blue" || prefs.accent === "indigo")
                 prefs.accent = "encre"
-            prefs.styleVersion = 2
+            prefs.styleVersion = 3
         }
     }
 
     // "light" | "dark" | "system"
     readonly property string mode: prefs.mode.length > 0 ? prefs.mode
                                                           : (prefs.savedDarkMode ? "dark" : "light")
-    // "encre" | "blue" | "indigo" | "teal" | "graphite"
+    // "encre" | "teal" | "prune" | "graphite"
     readonly property string accentName: accentPalettes[prefs.accent] !== undefined ? prefs.accent : "encre"
     // 0.9 | 1.0 | 1.1 | 1.2
     readonly property real fontScale: Math.max(0.85, Math.min(1.3, prefs.fontScale))
@@ -101,29 +104,32 @@ QtObject {
     }
 
     // ======================================================================
-    // Accents selectionnables : [accent, survol, voile, attenue]
-    // Tous verifies >= 4,5:1 contre leur fond (texte blanc en clair, texte
-    // encre en sombre).
+    // Encres d'accent : [accent, survol, voile, attenue]
+    // Accordees au papier chaud et a la nuit, nettement distinctes entre
+    // elles (DeltaE >= 25) et des couleurs d'etat (vert, ambre, rouge,
+    // violet d'appel). Texte >= 5,8:1 sur papier comme sur nuit ; le texte
+    // pose sur l'accent plein (accentInk) reste >= 6,7:1.
     // ======================================================================
     readonly property var accentPalettes: ({
-        // Encre indigo de Ligne claire (accent par defaut).
+        // Encre indigo de la marque (accent par defaut).
         "encre":    { label: qsTr("Encre"),
+                      line: qsTr("Par défaut. L'indigo de la marque."),
                       light: ["#2F3FCF", "#2733B0", "#ECEDFA", "#C5CAF3"],
                       dark:  ["#9BA5FF", "#B3BBFF", "#1C2240", "#343C70"] },
-        "blue":     { label: qsTr("Bleu"),
-                      light: ["#2563EB", "#1D4ED8", "#EEF3FE", "#C7D7FD"],
-                      dark:  ["#5B8DEF", "#7DA5F3", "#16223A", "#28407A"] },
-        "indigo":   { label: qsTr("Indigo"),
-                      light: ["#4F46E5", "#4338CA", "#EFEEFD", "#CFCCF8"],
-                      dark:  ["#8B85F2", "#A6A1F6", "#1F1D3D", "#36326E"] },
-        "teal":     { label: qsTr("Sarcelle"),
-                      light: ["#0E7490", "#0B5F76", "#E6F3F6", "#B5DCE5"],
-                      dark:  ["#2BA7C6", "#4CBBD6", "#0F2E37", "#1C4E5C"] },
-        "graphite": { label: qsTr("Graphite"),
-                      light: ["#334155", "#1E293B", "#EEF1F5", "#CBD3DF"],
-                      dark:  ["#A5B4C8", "#C3CEDC", "#1E2736", "#3A475C"] }
+        "teal":     { label: qsTr("Bleu canard"),
+                      line: qsTr("Un bleu-vert profond, plus calme que l'indigo."),
+                      light: ["#0E6670", "#105861", "#E8EDE9", "#C2D6D4"],
+                      dark:  ["#5EB6BC", "#7BC3C8", "#1C2D36", "#2B4E56"] },
+        "prune":    { label: qsTr("Prune"),
+                      line: qsTr("Une encre chaude, loin du rouge des erreurs et du violet des appels."),
+                      light: ["#8B2F62", "#762B55", "#F2E9E8", "#E0C9D1"],
+                      dark:  ["#E592BD", "#EAA6C9", "#312736", "#5C4156"] },
+        "graphite": { label: qsTr("Encre noire"),
+                      line: qsTr("L'encre du texte, pour un écran sans couleur."),
+                      light: ["#2B2A31", "#17161B", "#EAE8E4", "#C9C7C5"],
+                      dark:  ["#E2DDD2", "#EEEAE1", "#313339", "#5B5C5E"] }
     })
-    readonly property var accentKeys: ["encre", "blue", "indigo", "teal", "graphite"]
+    readonly property var accentKeys: ["encre", "teal", "prune", "graphite"]
     readonly property var _accent: accentPalettes[accentName][darkMode ? "dark" : "light"]
 
     // ======================================================================

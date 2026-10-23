@@ -124,13 +124,15 @@ ColumnLayout {
         }
     }
 
+    // Specimen d'encre : « Aa » serif dans l'encre, pose sur un filet de la
+    // meme encre ; la pastille choisie est une feuille au filet d'encre.
     component AccentSwatch: AbstractButton {
         id: sw
         property string key: ""
         readonly property bool selected: Theme.accentName === sw.key
         readonly property color tint: Theme.accentPalettes[sw.key][Theme.darkMode ? "dark" : "light"][0]
-        implicitWidth: 74
-        implicitHeight: 64
+        implicitWidth: Math.max(96, swCol.implicitWidth + 20)
+        implicitHeight: swCol.implicitHeight + 20
         hoverEnabled: true
         focusPolicy: Qt.StrongFocus
         Accessible.role: Accessible.RadioButton
@@ -141,25 +143,39 @@ ColumnLayout {
         background: Rectangle {
             radius: Theme.radiusSheet
             color: sw.selected ? Theme.surface0 : sw.hovered ? Theme.hover : "transparent"
-            border.width: sw.selected ? 1 : (sw.visualFocus ? 2 : 0)
-            border.color: sw.visualFocus ? Theme.focusRing : Theme.lineStrong
+            border.width: sw.visualFocus ? 2 : 1
+            border.color: sw.visualFocus ? Theme.focusRing : sw.selected ? Theme.ruleInk : Theme.line
         }
         contentItem: Item {
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: 9
-                width: 26; height: 26; radius: 13
-                color: sw.tint
-                LineIcon { anchors.centerIn: parent; visible: sw.selected; path: Icons.check; size: 14; strokeWidth: 2.6; color: Theme.darkMode ? "#10141D" : "#FFFFFF" }
+            Column {
+                id: swCol
+                anchors.centerIn: parent
+                spacing: 0
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "Aa"
+                    color: sw.tint
+                    font.family: Theme.fontFamilySerif
+                    font.pixelSize: Theme.fs(28)
+                }
+                Rectangle { anchors.horizontalCenter: parent.horizontalCenter; width: 30; height: 3; color: sw.tint }
+                Item { width: 1; height: 8 }
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: Theme.accentPalettes[sw.key].label
+                    color: sw.selected ? Theme.ink : Theme.ink2
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fs(12)
+                    font.weight: sw.selected ? Theme.weightSemibold : Theme.weightRegular
+                }
             }
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: 41
-                text: Theme.accentPalettes[sw.key].label
-                color: sw.selected ? Theme.ink : Theme.ink2
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fs(12)
-                font.weight: sw.selected ? Theme.weightSemibold : Theme.weightRegular
+            Rectangle {
+                visible: sw.selected
+                x: parent.width - width + 5
+                y: -5
+                width: 16; height: 16; radius: 8
+                color: Theme.ink
+                LineIcon { anchors.centerIn: parent; path: Icons.check; size: 10; strokeWidth: 3; color: Theme.bg }
             }
         }
     }
@@ -194,15 +210,25 @@ ColumnLayout {
             }
         }
         SettingRow {
-            label: qsTr("Couleur d'accent")
-            help: qsTr("Pour les liens, la sélection et ce qui est en cours. Les états (en ligne, alerte, erreur) gardent leurs couleurs.")
+            label: qsTr("Encre d'accent")
+            help: qsTr("Pour les liens, la sélection, ce qui est en cours et le logo. Les états (en ligne, alerte, erreur, appel) gardent leurs couleurs.")
             Flow {
                 Layout.fillWidth: true
-                spacing: 6
+                spacing: 8
                 Repeater {
                     model: Theme.accentKeys
                     delegate: AccentSwatch { required property string modelData; key: modelData }
                 }
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: 2
+                textFormat: Text.StyledText
+                text: "<b>" + Theme.accentPalettes[Theme.accentName].label + "</b> · " + Theme.accentPalettes[Theme.accentName].line
+                wrapMode: Text.WordWrap
+                color: Theme.ink3
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fs(12)
             }
         }
     }
