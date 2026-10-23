@@ -314,25 +314,35 @@ jobs:
           cp -r resources/linux package/ 2>/dev/null || true
 
       # --- Upload des artefacts ---
-      - name: Upload artifact (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: build/app/*.exe
-
+      # Quota de stockage des artefacts du compte : conservation courte (7 jours
+      # au lieu de 90), et seulement ce qui sert. L'ancien artefact « exe seul »
+      # (inutilisable sans les DLL) est supprime ; le dossier Windows exclut les
+      # fichiers intermediaires de compilation (objets, bibliotheque statique
+      # app_core, fichiers generes par moc/CMake) qui en faisaient l'essentiel.
       - name: Upload full deployed folder (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}-full
-          path: build/app/
+          retention-days: 7
+          path: |
+            build/app/
+            !build/app/CMakeFiles/
+            !build/app/*_autogen/
+            !build/app/**/*.lib
+            !build/app/**/*.obj
+            !build/app/**/*.pdb
+            !build/app/**/*.ilk
+            !build/app/**/*.exp
+            !build/app/**/*.cmake
+            !build/app/**/*.ninja
 
       - name: Upload artifact (Linux)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
+          retention-days: 7
           path: package/
 
       - name: Upload artifact (macOS)
@@ -340,4 +350,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
+          retention-days: 7
           path: build/app/*.dmg
