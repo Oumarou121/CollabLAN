@@ -338,8 +338,15 @@ QString VoiceSignalingChannel::serialize(const SignalingMessage &message, const 
     if (message.signalingPort > 0)    obj[QStringLiteral("port")] = message.signalingPort;
     if (message.group)                obj[QStringLiteral("group")] = true;
     if (message.mesh)                 obj[QStringLiteral("mesh")] = true;
-    if (message.type == SignalingMessageType::State)
+    if (message.type == SignalingMessageType::State) {
         obj[QStringLiteral("muted")] = message.muted;
+        obj[QStringLiteral("presenting")] = message.presenting;
+        if (message.presenting) {
+            obj[QStringLiteral("presentingSince")] = static_cast<double>(message.presentingSince);
+            obj[QStringLiteral("presentToken")] = static_cast<double>(message.presentToken);
+            obj[QStringLiteral("screenTitle")] = message.screenTitle;
+        }
+    }
     if (!message.roster.isEmpty()) {
         QJsonArray roster;
         for (const SignalingRosterEntry &entry : message.roster) {
@@ -410,6 +417,10 @@ SignalingMessage VoiceSignalingChannel::parseMessage(const QString &json)
     msg.group = obj.value(QStringLiteral("group")).toBool();
     msg.mesh = obj.value(QStringLiteral("mesh")).toBool();
     msg.muted = obj.value(QStringLiteral("muted")).toBool();
+    msg.presenting = obj.value(QStringLiteral("presenting")).toBool();
+    msg.presentingSince = static_cast<qint64>(obj.value(QStringLiteral("presentingSince")).toDouble());
+    msg.presentToken = static_cast<quint32>(obj.value(QStringLiteral("presentToken")).toDouble());
+    msg.screenTitle = obj.value(QStringLiteral("screenTitle")).toString().left(120);
     const QJsonArray roster = obj.value(QStringLiteral("roster")).toArray();
     // Un appel de groupe compte 4 personnes au plus : une liste plus longue
     // est tronquee plutot que de faire ouvrir des dizaines de liaisons.

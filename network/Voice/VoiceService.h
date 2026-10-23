@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QHostAddress>
+#include <QImage>
 #include <QList>
 #include <QPair>
 #include <QTimer>
@@ -12,12 +13,18 @@
 
 #include "VoiceSignalingChannel.h"
 
+namespace rtc {
+class DataChannel;
+} // namespace rtc
+
 namespace network {
 
 class SecurityService;
 class VoiceAudioIO;
 class VoiceMixer;
 class OpusVoiceEncoder;
+class ScreenTileEncoder;
+class ScreenCanvas;
 
 /// Etat d'un appel vocal, expose a l'UI (QML) pour piloter l'affichage.
 enum class CallState {
@@ -123,6 +130,26 @@ public:
     /// conservees jusqu'au suivant.
     QStringList callParticipantAddresses() const { return m_seenAddresses; }
 
+    // ---- Partage d'ecran : une presentation a la fois ------------------------
+    /// Personne ne presente et l'appel est etabli.
+    bool canPresent() const;
+    bool isPresenting() const { return m_presenting; }
+    QString presentingTitle() const { return m_presentTitle; }
+    /// Commence a presenter (title : « Écran 1 », titre de fenetre...). Les
+    /// images arrivent ensuite par pushScreenFrame().
+    bool startPresenting(const QString &title);
+    void stopPresenting();
+    /// Derniere image capturee (envoyee au plus 10 fois par seconde).
+    void pushScreenFrame(const QImage &frame);
+    QImage localScreenFrame() const;
+    /// Participant qui presente (adresse nulle si personne, ou si c'est vous).
+    QHostAddress presenterAddress() const;
+    QString presenterTitle() const;
+    /// Ecran recompose du participant qui presente.
+    QImage remoteScreen() const;
+    /// Les images de la presentation arrivent en retard (connexion lente).
+    bool isRemoteScreenSlow() const;
+
 signals:
     void stateChanged(network::CallState state);
 
@@ -151,6 +178,16 @@ signals:
     void participantLeft(const QHostAddress &address, const QString &reason);
     /// reason : "declined", "busy", "noanswer", "full".
     void participantDeclined(const QHostAddress &address, const QString &reason);
+
+    /// Quelqu'un (vous compris) a commence ou arrete de presenter.
+    void presentationChanged();
+    /// Nouvelles images de la presentation (au plus ~30 fois par seconde).
+    void remoteScreenChanged();
+    /// Votre presentation s'est arretee sans que vous l'ayez demande
+    /// ("conflict" : un autre participant avait commence juste avant).
+    void presentingInterrupted(const QString &reason);
+    /// Ce participant ne peut pas voir l'ecran (version trop ancienne).
+    void screenUnsupported(const QHostAddress &address);
 
 private:
     struct Peer;
@@ -184,6 +221,13 @@ private:
     void onCapturedAudioFrame(const QByteArray &pcm16);
     void onHousekeeping();
     void onMixTick();
+    void wireScreenChannel(int linkId, const std::shared_ptr<rtc::DataChannel> &channel);
+    void onScreenMessage(int linkId, const QByteArray &message);
+    void onScreenChannelOpen(int linkId);
+    void onScreenTick();
+    void sendScreenTiles();
+    void updatePresenter();
+    void requestScreenRefresh(int linkId);
     void startAudioWithRetry();
     void scheduleAudioRetry();
     void onAudioRetryTimeout();
@@ -222,6 +266,21 @@ private:
     int m_mixTicks = 0;
     bool m_localSpeaking = false;
     qint64 m_localVoiceAtMs = 0;
+
+    // Partage d'ecran.
+    static constexpr int kScreenTickMs = 100;               // 10 images/s au plus
+    static constexpr std::size_t kScreenBufferLimit = 1u << 20;
+    static constexpr int kScreenUnsupportedAfterMs = 6'000;
+    bool m_presenting = false;
+    qint64 m_presentingSince = 0;
+    quint32 m_presentToken = 0;
+    QString m_presentTitle;
+    std::unique_ptr<ScreenTileEncoder> m_screenEncoder;
+    QImage m_pendingScreen;
+    QTimer m_screenTimer;
+    std::unique_ptr<ScreenCanvas> m_canvas;
+    int m_presenterLinkId = 0;
+    QTimer m_screenNotify;
 };
 
 } // namespace network

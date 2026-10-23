@@ -5,10 +5,14 @@
 #include <QString>
 #include <QHostAddress>
 #include <QVariantList>
+#include <QElapsedTimer>
+#include <QImage>
 
 #include "Voice/VoiceService.h"
 
 namespace core {
+
+class ScreenCapture;
 
 /**
  * @brief Wrapper pour exposer les appels vocaux a QML (issues #60/#61/#64).
@@ -39,6 +43,15 @@ class CallContext : public QObject
     Q_PROPERTY(bool canInvite READ canInvite NOTIFY participantsChanged)
     Q_PROPERTY(bool localSpeaking READ isLocalSpeaking NOTIFY participantsChanged)
     Q_PROPERTY(int maxParticipants READ maxParticipants CONSTANT)
+    // Partage d'ecran (une presentation a la fois).
+    Q_PROPERTY(bool presenting READ isPresenting NOTIFY presentationChanged)
+    Q_PROPERTY(bool canPresent READ canPresent NOTIFY presentationChanged)
+    Q_PROPERTY(QString presentingTitle READ presentingTitle NOTIFY presentationChanged)
+    Q_PROPERTY(QString presenterAddress READ presenterAddress NOTIFY presentationChanged)
+    Q_PROPERTY(QString presenterTitle READ presenterTitle NOTIFY presentationChanged)
+    Q_PROPERTY(int screenFrameId READ screenFrameId NOTIFY screenFrameChanged)
+    Q_PROPERTY(bool screenSlow READ isScreenSlow NOTIFY screenFrameChanged)
+    Q_PROPERTY(int localFrameId READ localFrameId NOTIFY localFrameChanged)
 
 public:
     explicit CallContext(QObject *parent = nullptr);
@@ -69,6 +82,24 @@ public:
     bool canInvite() const;
     bool isLocalSpeaking() const;
     int maxParticipants() const { return network::VoiceService::kMaxParticipants; }
+
+    bool isPresenting() const;
+    bool canPresent() const;
+    QString presentingTitle() const;
+    QString presenterAddress() const;
+    QString presenterTitle() const;
+    int screenFrameId() const { return m_screenFrameId; }
+    bool isScreenSlow() const;
+    int localFrameId() const { return m_localFrameId; }
+    /// Images servies au QML par l'image provider « screenshare ».
+    QImage remoteScreen() const;
+    QImage localScreen() const;
+    QImage sourceThumbnail(const QString &sourceId) const;
+
+    /// Ecrans et fenetres presentables : [{ id, kind, title, detail }].
+    Q_INVOKABLE QVariantList shareSources();
+    Q_INVOKABLE bool startPresenting(const QString &sourceId);
+    Q_INVOKABLE void stopPresenting();
 
     /// Initie un appel sortant vers l'adresse IP donnee (ex. depuis
     /// peersModel, voir UsersView.qml). Retourne false immediatement si
@@ -110,6 +141,16 @@ signals:
     void participantLeft(const QString &address, const QString &reason);
     void participantDeclined(const QString &address, const QString &reason);
 
+    void presentationChanged();
+    void screenFrameChanged();
+    void localFrameChanged();
+    /// Un autre participant a commence / arrete de presenter.
+    void presentationStarted(const QString &address);
+    void presentationStopped(const QString &address);
+    /// Votre presentation s'est arretee d'elle-meme ("conflict", "capture").
+    void presentingStopped(const QString &reason);
+    void screenUnsupported(const QString &address);
+
 private slots:
     void onStateChanged(network::CallState state);
     void onIncomingCall(const QHostAddress &callerAddress);
@@ -119,9 +160,16 @@ private slots:
 private:
     static QString stateToString(network::CallState state);
 
+    void onPresentationChanged();
+
     network::VoiceService *m_voiceService = nullptr;
     QString m_callState = QStringLiteral("idle");
     QString m_remoteAddress;
+    ScreenCapture *m_capture = nullptr;
+    QString m_lastPresenter;
+    int m_screenFrameId = 0;
+    int m_localFrameId = 0;
+    QElapsedTimer m_localFrameAge;
 };
 
 } // namespace core

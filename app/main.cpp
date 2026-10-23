@@ -30,6 +30,7 @@
 #include "TransferContext.h"
 #include "SharedFolderContext.h"
 #include "CallContext.h"
+#include "ScreenShareImageProvider.h"
 #include "NotificationManager.h"
 #include "AudioService.h"
 #include "CallHistoryManager.h"
@@ -405,6 +406,8 @@ int main(int argc, char *argv[])
     core::CallContext *callContext = new core::CallContext(&engine);
     callContext->setVoiceService(application.voiceService());
     engine.rootContext()->setContextProperty("callContext", callContext);
+    // Partage d'ecran : ecran recu, apercu local et miniatures du choix.
+    engine.addImageProvider(QStringLiteral("screenshare"), new ScreenShareImageProvider(callContext));
 
     // Créer et exposer le modèle de l'historique des appels
     // (CallHistoryView.qml) : persiste chaque appel émis/reçu en base

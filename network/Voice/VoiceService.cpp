@@ -1,6 +1,7 @@
 #include "VoiceService.h"
 #include "VoiceAudioIO.h"
 #include "VoiceCodec.h"
+#include "ScreenTiles.h"
 #include "NetworkAddress.h"
 #include "Security/SecurityService.h"
 
@@ -79,6 +80,16 @@ struct VoiceService::Peer {
     std::uint16_t rtpSequence = 0;
     std::uint32_t rtpTimestamp = 0;
 
+    // Partage d'ecran : canal de donnees de la meme session (absent chez un
+    // poste d'une version anterieure), et ce que ce participant a deja recu.
+    std::shared_ptr<rtc::DataChannel> screen;
+    ScreenViewerState screenState;
+    bool screenUnsupportedNotified = false;
+    bool remotePresenting = false;
+    qint64 remotePresentingSince = 0;
+    quint32 remotePresentToken = 0;
+    QString remoteScreenTitle;
+
     void setStatus(PeerStatus s)
     {
         status = s;
@@ -117,6 +128,16 @@ VoiceService::VoiceService(SecurityService *securityService, QObject *parent)
     connect(&m_mixTimer, &QTimer::timeout, this, &VoiceService::onMixTick);
     m_audioRetryTimer.setSingleShot(true);
     connect(&m_audioRetryTimer, &QTimer::timeout, this, &VoiceService::onAudioRetryTimeout);
+
+    m_screenEncoder = std::make_unique<ScreenTileEncoder>();
+    m_canvas = std::make_unique<ScreenCanvas>();
+    m_screenTimer.setInterval(kScreenTickMs);
+    connect(&m_screenTimer, &QTimer::timeout, this, &VoiceService::onScreenTick);
+    // Les carreaux recus sont regroupes : l'ecran n'est redessine qu'au
+    // plus une trentaine de fois par seconde.
+    m_screenNotify.setSingleShot(true);
+    m_screenNotify.setInterval(33);
+    connect(&m_screenNotify, &QTimer::timeout, this, &VoiceService::remoteScreenChanged);
 }
 
 VoiceService::~VoiceService()
@@ -410,6 +431,8 @@ void VoiceService::removePeer(int linkId, const QString &hangupReason)
     releasePeerConnection(*peer);
     m_mixer->remove(linkId);
     m_signaling->closeLink(linkId);
+    if (linkId == m_presenterLinkId)
+        updatePresenter();          // celui qui presentait est parti
     emit participantsChanged();
 }
 
@@ -458,6 +481,15 @@ void VoiceService::finishCall(const QString &reason)
     m_inviteRoster.clear();
     m_groupInvite = false;
     m_localSpeaking = false;
+    const bool hadPresentation = m_presenting || m_presenterLinkId != 0;
+    m_presenting = false;
+    m_presentTitle.clear();
+    m_screenTimer.stop();
+    m_pendingScreen = QImage();
+    m_presenterLinkId = 0;
+    m_canvas->clear();
+    if (hadPresentation)
+        emit presentationChanged();
     const bool wasActive = m_state != CallState::Idle;
     setState(CallState::Idle);
     emit participantsChanged();
@@ -544,6 +576,29 @@ void VoiceService::createPeerConnection(Peer &peer)
         }, Qt::QueuedConnection);
     });
 
+    // Partage d'ecran : canal de donnees ouvert des l'etablissement de la
+    // session, cree par l'appelant avant son offre (qui l'annonce), recu par
+    // l'appele. Un poste d'une version anterieure n'en ouvre pas : il ne
+    // verra pas les presentations (signale a celui qui presente).
+    if (peer.isCaller) {
+        try {
+            peer.screen = peer.pc->createDataChannel("localink-screen");
+            wireScreenChannel(linkId, peer.screen);
+        } catch (const std::exception &ex) {
+            qWarning() << "VoiceService: canal de partage d'ecran indisponible -" << ex.what();
+        }
+    } else {
+        peer.pc->onDataChannel([this, linkId](std::shared_ptr<rtc::DataChannel> channel) {
+            wireScreenChannel(linkId, channel);
+            QMetaObject::invokeMethod(this, [this, linkId, channel]() {
+                if (Peer *p = peerFor(linkId))
+                    p->screen = channel;
+                else
+                    channel->close();
+            }, Qt::QueuedConnection);
+        });
+    }
+
     // disableAutoNegotiation = true : c'est nous qui declenchons l'offre,
     // une seule fois, cote appelant.
     if (peer.isCaller) {
@@ -563,6 +618,13 @@ void VoiceService::releasePeerConnection(Peer &peer)
         peer.pc->onStateChange([](rtc::PeerConnection::State) {});
         peer.pc->onLocalDescription([](rtc::Description) {});
         peer.pc->onLocalCandidate([](rtc::Candidate) {});
+        peer.pc->onDataChannel([](std::shared_ptr<rtc::DataChannel>) {});
+    }
+    if (peer.screen) {
+        peer.screen->onMessage([](rtc::message_variant) {});
+        peer.screen->onOpen([]() {});
+        peer.screen->close();
+        peer.screen.reset();
     }
     if (peer.track) {
         peer.track->onMessage([](rtc::message_variant) {});
@@ -594,7 +656,8 @@ void VoiceService::onPeerConnectionState(int linkId, int stateValue)
         // venu, qui va se relier a chacun.
         if (p->role == PeerRole::Invitee)
             sendRoster(*p);
-        if (isMuted())
+        // Micro coupe ou presentation en cours : le nouveau venu le sait tout de suite.
+        if (isMuted() || m_presenting)
             sendState(*p);
         recomputeState();
         // Windows peut repondre temporairement sans peripherique par defaut
@@ -660,6 +723,10 @@ void VoiceService::sendState(Peer &peer)
 {
     SignalingMessage message = baseMessage(SignalingMessageType::State);
     message.muted = isMuted();
+    message.presenting = m_presenting;
+    message.presentingSince = m_presentingSince;
+    message.presentToken = m_presentToken;
+    message.screenTitle = m_presentTitle;
     m_signaling->send(peer.linkId, message);
 }
 
@@ -754,12 +821,31 @@ void VoiceService::onSignalingMessage(int linkId, const SignalingMessage &messag
     }
     case SignalingMessageType::State: {
         Peer *p = peerFor(linkId);
-        if (!p || p->remoteMuted == message.muted)
+        if (!p)
             return;
-        p->remoteMuted = message.muted;
-        if (message.muted)
-            p->speaking = false;
-        emit participantsChanged();
+        if (p->remoteMuted != message.muted) {
+            p->remoteMuted = message.muted;
+            if (message.muted)
+                p->speaking = false;
+            emit participantsChanged();
+        }
+        const bool wasPresenting = p->remotePresenting;
+        p->remotePresenting = message.presenting;
+        p->remotePresentingSince = message.presentingSince;
+        p->remotePresentToken = message.presentToken;
+        p->remoteScreenTitle = message.presenting ? message.screenTitle : QString();
+        if (message.presenting && m_presenting) {
+            // Deux debuts presque simultanes : le premier garde la parole,
+            // partout de la meme facon (heure de debut, puis jeton tire au sort).
+            const bool theyWin = message.presentingSince < m_presentingSince
+                || (message.presentingSince == m_presentingSince && message.presentToken < m_presentToken);
+            if (theyWin) {
+                stopPresenting();
+                emit presentingInterrupted(QStringLiteral("conflict"));
+            }
+        }
+        if (wasPresenting != message.presenting || linkId == m_presenterLinkId)
+            updatePresenter();
         break;
     }
     case SignalingMessageType::Unknown:
@@ -927,6 +1013,11 @@ void VoiceService::onHousekeeping()
             removePeer(id, QStringLiteral("timeout"));
             emit participantLeft(address, QStringLiteral("connection-lost"));
             dropped = true;
+        } else if (m_presenting && p->status == PeerStatus::Joined && !p->screenUnsupportedNotified
+                   && (!p->screen || !p->screen->isOpen()) && elapsed > kScreenUnsupportedAfterMs) {
+            // Pas de canal de partage d'ecran : poste d'une version anterieure.
+            p->screenUnsupportedNotified = true;
+            emit screenUnsupported(address);
         }
     }
     if (dropped) {
@@ -1103,6 +1194,229 @@ void VoiceService::scheduleAudioRetry()
 void VoiceService::onAudioRetryTimeout()
 {
     startAudioWithRetry();
+}
+
+// ---------------------------------------------------------------------
+// Partage d'ecran
+// ---------------------------------------------------------------------
+
+bool VoiceService::canPresent() const
+{
+    return m_state == CallState::Connected && !m_presenting && m_presenterLinkId == 0;
+}
+
+bool VoiceService::startPresenting(const QString &title)
+{
+    if (!canPresent())
+        return false;
+    m_presenting = true;
+    m_presentingSince = QDateTime::currentMSecsSinceEpoch();
+    m_presentToken = QRandomGenerator::global()->generate();
+    m_presentTitle = title;
+    m_screenEncoder = std::make_unique<ScreenTileEncoder>();
+    m_pendingScreen = QImage();
+    for (auto &entry : m_peers) {
+        Peer &p = *entry.second;
+        p.screenState.reset();
+        p.screenUnsupportedNotified = false;
+        if (p.status == PeerStatus::Joined) {
+            p.since.restart();      // delai avant d'annoncer « version trop ancienne »
+            sendState(p);
+        }
+    }
+    m_screenTimer.start();
+    emit presentationChanged();
+    return true;
+}
+
+void VoiceService::stopPresenting()
+{
+    if (!m_presenting)
+        return;
+    m_presenting = false;
+    m_presentTitle.clear();
+    m_screenTimer.stop();
+    m_pendingScreen = QImage();
+    for (auto &entry : m_peers) {
+        if (entry.second->status == PeerStatus::Joined)
+            sendState(*entry.second);
+    }
+    emit presentationChanged();
+}
+
+void VoiceService::pushScreenFrame(const QImage &frame)
+{
+    // Seule la derniere image compte : elle part a la prochaine echeance.
+    if (m_presenting && !frame.isNull())
+        m_pendingScreen = frame;
+}
+
+QImage VoiceService::localScreenFrame() const
+{
+    return m_screenEncoder ? m_screenEncoder->frame() : QImage();
+}
+
+QHostAddress VoiceService::presenterAddress() const
+{
+    const Peer *p = peerFor(m_presenterLinkId);
+    return p ? p->address : QHostAddress();
+}
+
+QString VoiceService::presenterTitle() const
+{
+    const Peer *p = peerFor(m_presenterLinkId);
+    return p ? p->remoteScreenTitle : QString();
+}
+
+QImage VoiceService::remoteScreen() const
+{
+    return m_presenterLinkId != 0 ? m_canvas->image() : QImage();
+}
+
+bool VoiceService::isRemoteScreenSlow() const
+{
+    return m_presenterLinkId != 0 && m_canvas->lastFrameIncomplete();
+}
+
+void VoiceService::updatePresenter()
+{
+    // Celui qui a commence le premier (meme regle chez tous les participants).
+    int best = 0;
+    const Peer *bestPeer = nullptr;
+    if (!m_presenting) {
+        for (const auto &entry : m_peers) {
+            const Peer &p = *entry.second;
+            if (!p.remotePresenting)
+                continue;
+            if (!bestPeer || p.remotePresentingSince < bestPeer->remotePresentingSince
+                || (p.remotePresentingSince == bestPeer->remotePresentingSince
+                    && p.remotePresentToken < bestPeer->remotePresentToken)) {
+                bestPeer = &p;
+                best = entry.first;
+            }
+        }
+    }
+    if (best != m_presenterLinkId) {
+        m_presenterLinkId = best;
+        m_canvas->clear();
+        if (best != 0)
+            requestScreenRefresh(best);
+        emit remoteScreenChanged();
+    }
+    emit presentationChanged();
+}
+
+void VoiceService::requestScreenRefresh(int linkId)
+{
+    const Peer *p = peerFor(linkId);
+    if (!p || !p->screen || !p->screen->isOpen())
+        return;
+    const QByteArray request = screenRefreshRequest();
+    try {
+        p->screen->send(reinterpret_cast<const std::byte *>(request.constData()),
+                        static_cast<size_t>(request.size()));
+    } catch (const std::exception &ex) {
+        qWarning() << "VoiceService: demande d'ecran non envoyee -" << ex.what();
+    }
+}
+
+void VoiceService::wireScreenChannel(int linkId, const std::shared_ptr<rtc::DataChannel> &channel)
+{
+    if (!channel)
+        return;
+    // Rappels sur les threads de libdatachannel : seul le numero de liaison
+    // est retenu, relu sur le thread de ce service.
+    channel->onMessage([this, linkId](rtc::message_variant data) {
+        if (!std::holds_alternative<rtc::binary>(data))
+            return;
+        const rtc::binary &bin = std::get<rtc::binary>(data);
+        const QByteArray message(reinterpret_cast<const char *>(bin.data()), static_cast<int>(bin.size()));
+        QMetaObject::invokeMethod(this, [this, linkId, message]() {
+            onScreenMessage(linkId, message);
+        }, Qt::QueuedConnection);
+    });
+    channel->onOpen([this, linkId]() {
+        QMetaObject::invokeMethod(this, [this, linkId]() {
+            onScreenChannelOpen(linkId);
+        }, Qt::QueuedConnection);
+    });
+}
+
+void VoiceService::onScreenChannelOpen(int linkId)
+{
+    if (linkId == m_presenterLinkId)
+        requestScreenRefresh(linkId);
+}
+
+void VoiceService::onScreenMessage(int linkId, const QByteArray &message)
+{
+    Peer *p = peerFor(linkId);
+    if (!p)
+        return;
+    if (isScreenRefreshRequest(message)) {
+        p->screenState.reset();     // tout l'ecran repart a la prochaine echeance
+        return;
+    }
+    if (linkId != m_presenterLinkId)
+        return;
+    const bool wasSlow = m_canvas->lastFrameIncomplete();
+    const bool changed = m_canvas->apply(message);
+    if ((changed || wasSlow != m_canvas->lastFrameIncomplete()) && !m_screenNotify.isActive())
+        m_screenNotify.start();
+}
+
+void VoiceService::onScreenTick()
+{
+    if (!m_presenting)
+        return;
+    if (!m_pendingScreen.isNull()) {
+        m_screenEncoder->setFrame(m_pendingScreen);
+        m_pendingScreen = QImage();
+    }
+    sendScreenTiles();
+}
+
+void VoiceService::sendScreenTiles()
+{
+    if (!m_screenEncoder->hasFrame())
+        return;
+    const QSize size = m_screenEncoder->frameSize();
+    for (auto &entry : m_peers) {
+        Peer &p = *entry.second;
+        if (p.status != PeerStatus::Joined || !p.screen || !p.screen->isOpen())
+            continue;
+        ScreenViewerState &viewer = p.screenState;
+        const QVector<int> pending = m_screenEncoder->pendingTiles(viewer);
+        if (pending.isEmpty())
+            continue;
+        if (viewer.frameSize != size) {
+            viewer.sent.clear();
+            viewer.frameSize = size;
+        }
+        // Un spectateur lent ne recoit que ce que son canal absorbe ; le
+        // reste part aux echeances suivantes, sans ralentir les autres.
+        bool complete = true;
+        try {
+            for (int index : pending) {
+                if (p.screen->bufferedAmount() > kScreenBufferLimit) {
+                    complete = false;
+                    break;
+                }
+                const QByteArray message = m_screenEncoder->tileMessage(index);
+                if (message.isEmpty() || static_cast<size_t>(message.size()) > p.screen->maxMessageSize()) {
+                    viewer.sent.insert(index, m_screenEncoder->tileHash(index));   // carreau impossible a envoyer
+                    continue;
+                }
+                p.screen->send(reinterpret_cast<const std::byte *>(message.constData()),
+                               static_cast<size_t>(message.size()));
+                viewer.sent.insert(index, m_screenEncoder->tileHash(index));
+            }
+            const QByteArray end = screenFrameEndMessage(m_screenEncoder->sequence(), complete);
+            p.screen->send(reinterpret_cast<const std::byte *>(end.constData()), static_cast<size_t>(end.size()));
+        } catch (const std::exception &ex) {
+            qWarning() << "VoiceService: envoi de l'ecran interrompu -" << ex.what();
+        }
+    }
 }
 
 void VoiceService::onAudioFault(const QString &reason)

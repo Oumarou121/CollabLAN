@@ -175,6 +175,11 @@ add_executable(test_voicegroupcall UnitTests/test_voicegroupcall.cpp)
 target_link_libraries(test_voicegroupcall PRIVATE Qt6::Test Qt6::WebSockets network)
 add_test(NAME test_voicegroupcall COMMAND test_voicegroupcall)
 
+# Partage d'ecran : capture reelle de l'ecran (ignoree sans ecran).
+add_executable(test_screencapture UnitTests/test_screencapture.cpp)
+target_link_libraries(test_screencapture PRIVATE Qt6::Test Qt6::Gui core)
+add_test(NAME test_screencapture COMMAND test_screencapture)
+
 # Appels et transferts entre clients : liste des machines autorisees envoyee par le serveur.
 add_executable(test_authorizedpeers UnitTests/test_authorizedpeers.cpp)
 target_link_libraries(test_authorizedpeers PRIVATE Qt6::Test Qt6::Widgets app_core)

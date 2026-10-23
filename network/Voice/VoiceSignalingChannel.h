@@ -46,6 +46,10 @@ struct SignalingMessage {
     bool group = false;             ///< Offer : appel de groupe.
     bool mesh = false;              ///< Offer : liaison entre membres d'un appel deja accepte.
     bool muted = false;             ///< State : micro coupe.
+    bool presenting = false;        ///< State : partage son ecran.
+    qint64 presentingSince = 0;     ///< State : debut de la presentation (ms, UTC).
+    quint32 presentToken = 0;       ///< State : departage deux debuts simultanes.
+    QString screenTitle;            ///< State : ce qui est presente (« Écran 1 »...).
     QList<SignalingRosterEntry> roster; ///< Offer (deja dans l'appel) et Roster.
 };
 

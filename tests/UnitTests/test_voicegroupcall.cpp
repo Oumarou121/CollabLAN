@@ -14,6 +14,7 @@
 #include "Voice/VoiceAudioIO.h"
 #include "Voice/VoiceCodec.h"
 #include "Voice/VoiceService.h"
+#include "Voice/ScreenTiles.h"
 
 using network::CallState;
 using network::SecurityService;
@@ -290,6 +291,115 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(declined.count(), 1, 10000);
         QCOMPARE(declined.first().at(1).toString(), QStringLiteral("declined"));
         QCOMPARE(voice(0)->participants().size(), 1);
+    }
+
+    // ---- Partage d'ecran ----------------------------------------------------
+
+    void screenTiles_onlyChangedTilesAreResent()
+    {
+        QImage frame(640, 360, QImage::Format_RGB32);
+        frame.fill(Qt::white);
+        network::ScreenTileEncoder encoder;
+        encoder.setFrame(frame);
+        QCOMPARE(encoder.tileCount(), 5 * 3);
+        network::ScreenViewerState viewer;
+        QCOMPARE(encoder.pendingTiles(viewer).size(), 15);   // nouveau venu : tout l'ecran
+
+        network::ScreenCanvas canvas;
+        viewer.frameSize = encoder.frameSize();
+        for (int i : encoder.pendingTiles(network::ScreenViewerState{})) {
+            QVERIFY(canvas.apply(encoder.tileMessage(i)));
+            viewer.sent.insert(i, encoder.tileHash(i));
+        }
+        QCOMPARE(canvas.image().size(), QSize(640, 360));
+        QVERIFY(encoder.pendingTiles(viewer).isEmpty());
+
+        // Un rectangle rouge dans un seul carreau : seul celui-ci repart.
+        for (int y = 140; y < 160; ++y)
+            for (int x = 300; x < 330; ++x)
+                frame.setPixel(x, y, qRgb(220, 0, 0));
+        encoder.setFrame(frame);
+        const QVector<int> changed = encoder.pendingTiles(viewer);
+        QCOMPARE(changed.size(), 1);
+        QVERIFY(canvas.apply(encoder.tileMessage(changed.first())));
+        const QColor pixel = canvas.image().pixelColor(315, 150);
+        QVERIFY2(pixel.red() > 180 && pixel.green() < 60, qPrintable(pixel.name()));
+        QVERIFY(qGray(canvas.image().pixel(20, 20)) > 240);
+
+        QVERIFY(network::isScreenRefreshRequest(network::screenRefreshRequest()));
+        QVERIFY(!canvas.apply(network::screenFrameEndMessage(3, false)));
+        QVERIFY(canvas.lastFrameIncomplete());
+    }
+
+    void screenShare_viewersSeeThePresentersScreen()
+    {
+        makeStations(3);
+        QVERIFY(voice(0)->callGroup({target(1), target(2)}));
+        acceptAll({1, 2});
+        expectMesh({0, 1, 2});
+
+        QSignalSpy started(voice(1), &VoiceService::presentationChanged);
+        QVERIFY(voice(1)->canPresent());
+        QVERIFY(voice(1)->startPresenting(QStringLiteral("Écran 1")));
+        // Une presentation a la fois : les autres ne peuvent plus presenter.
+        QTRY_VERIFY_WITH_TIMEOUT(!voice(0)->canPresent(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(!voice(2)->presenterAddress().isNull(), 10000);
+        QVERIFY(!voice(2)->startPresenting(QStringLiteral("Écran 2")));
+        QCOMPARE(voice(0)->presenterTitle(), QStringLiteral("Écran 1"));
+
+        QImage frame(800, 450, QImage::Format_RGB32);
+        frame.fill(QColor(30, 90, 200));
+        voice(1)->pushScreenFrame(frame);
+        for (int i : {0, 2}) {
+            QTRY_COMPARE_WITH_TIMEOUT(voice(i)->remoteScreen().size(), QSize(800, 450), 10000);
+            QTRY_VERIFY_WITH_TIMEOUT(voice(i)->remoteScreen().pixelColor(400, 225).blue() > 170, 10000);
+        }
+
+        // Une zone change : les spectateurs la recoivent.
+        for (int y = 0; y < 100; ++y)
+            for (int x = 0; x < 100; ++x)
+                frame.setPixel(x, y, qRgb(250, 250, 0));
+        voice(1)->pushScreenFrame(frame);
+        QTRY_VERIFY_WITH_TIMEOUT(voice(2)->remoteScreen().pixelColor(50, 50).red() > 200, 10000);
+
+        voice(1)->stopPresenting();
+        QTRY_VERIFY_WITH_TIMEOUT(voice(0)->presenterAddress().isNull(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(voice(2)->canPresent(), 10000);
+        QVERIFY(voice(0)->remoteScreen().isNull());
+        QVERIFY(started.count() >= 2);
+    }
+
+    void screenShare_lateViewerGetsTheWholeScreen()
+    {
+        makeStations(3);
+        QVERIFY(voice(0)->call(QHostAddress::LocalHost, station(1)->port));
+        acceptAll({1});
+        expectMesh({0, 1});
+        QVERIFY(voice(0)->startPresenting(QStringLiteral("Bilan.xlsx")));
+        QImage frame(512, 256, QImage::Format_RGB32);
+        frame.fill(QColor(0, 160, 60));
+        voice(0)->pushScreenFrame(frame);
+        QTRY_COMPARE_WITH_TIMEOUT(voice(1)->remoteScreen().size(), QSize(512, 256), 10000);
+
+        // C rejoint pendant la presentation : il recoit l'ecran sans nouvelle capture.
+        QVERIFY(voice(0)->invite(QHostAddress::LocalHost, station(2)->port));
+        acceptAll({2});
+        expectMesh({0, 1, 2});
+        QTRY_COMPARE_WITH_TIMEOUT(voice(2)->remoteScreen().size(), QSize(512, 256), 15000);
+        QTRY_VERIFY_WITH_TIMEOUT(voice(2)->remoteScreen().pixelColor(256, 128).green() > 120, 10000);
+    }
+
+    void screenShare_presenterLeavingEndsThePresentation()
+    {
+        makeStations(3);
+        QVERIFY(voice(0)->callGroup({target(1), target(2)}));
+        acceptAll({1, 2});
+        expectMesh({0, 1, 2});
+        QVERIFY(voice(2)->startPresenting(QStringLiteral("Écran 1")));
+        QTRY_VERIFY_WITH_TIMEOUT(!voice(0)->presenterAddress().isNull(), 10000);
+        voice(2)->hangUp();
+        QTRY_VERIFY_WITH_TIMEOUT(voice(0)->presenterAddress().isNull(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(voice(0)->canPresent(), 10000);
     }
 
     void cancellingBeforeAnyAnswerStopsTheRinging()

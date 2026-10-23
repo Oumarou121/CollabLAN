@@ -70,6 +70,67 @@ Item {
     readonly property string selfMachine: (typeof settingsModel !== "undefined" && settingsModel && settingsModel.machineName)
                                           ? settingsModel.machineName : ""
 
+    // ---- Partage d'ecran (une presentation a la fois) ---------------------------
+    readonly property bool presenting: root.call && root.call.presenting ? true : false
+    readonly property bool canPresent: root.call && root.call.canPresent ? true : false
+    readonly property string presenterAddress: root.call && root.call.presenterAddress ? root.call.presenterAddress : ""
+    readonly property bool watching: root.callState === "connected" && root.presenterAddress.length > 0
+    readonly property string presenterName: root.watching ? root.labelOf(root.presenterAddress) : ""
+    readonly property string presenterTitle: root.call && root.call.presenterTitle ? root.call.presenterTitle : ""
+    readonly property string presentingTitle: root.call && root.call.presentingTitle ? root.call.presentingTitle : ""
+    readonly property int screenFrameId: root.call && root.call.screenFrameId ? root.call.screenFrameId : 0
+    readonly property bool screenSlow: root.call && root.call.screenSlow ? true : false
+    // Images du partage (image provider « screenshare » de main.cpp) ; le harnais
+    // de captures, sans ce fournisseur, remplace cette fonction.
+    property var screenUrl: function(kind, serial) { return "image://screenshare/" + kind + "/" + serial }
+    // Chez les spectateurs : "stage" (scene), "bar" (reduit) ou "full" (plein ecran).
+    property string screenView: "stage"
+    property bool screenFit: true
+    readonly property bool stageOpen: root.watching && root.screenView === "stage" && !root.picking && !root.adding
+    readonly property bool fullOpen: root.watching && root.screenView === "full"
+    // Choix de ce qu'on presente.
+    property bool picking: false
+    property string pickTab: "screen"
+    property string pickId: ""
+    property var sources: []
+    property int pickSeed: 0
+    readonly property var pickList: root.sources.filter(function(s) { return s.kind === root.pickTab })
+    readonly property var pickSource: {
+        for (let i = 0; i < root.sources.length; i++) if (root.sources[i].id === root.pickId) return root.sources[i]
+        return null
+    }
+    function openPicker() {
+        if (!root.call || !root.call.shareSources) return
+        root.sources = root.call.shareSources() || []
+        root.pickTab = "screen"
+        root.pickId = root.pickList.length ? root.pickList[0].id : ""
+        root.pickSeed++
+        root.picking = true
+    }
+    function choosePickTab(tab) {
+        root.pickTab = tab
+        root.pickId = root.pickList.length ? root.pickList[0].id : ""
+    }
+    function confirmPick() {
+        if (!root.call || !root.pickSource) return
+        if (root.call.startPresenting(root.pickId)) {
+            root.picking = false
+            root.expanded = false
+        }
+    }
+    function togglePresent() {
+        if (root.presenting) { if (root.call) root.call.stopPresenting() }
+        else root.openPicker()
+    }
+    // Plein ecran : la fenetre de l'application passe en plein ecran.
+    property int savedVisibility: Window.Windowed
+    onFullOpenChanged: {
+        const w = root.Window.window
+        if (!w) return
+        if (root.fullOpen) { root.savedVisibility = w.visibility; w.visibility = Window.FullScreen }
+        else if (w.visibility === Window.FullScreen) w.visibility = root.savedVisibility === Window.FullScreen ? Window.Windowed : root.savedVisibility
+    }
+
     // ---- Correspondant ----------------------------------------------------
     property var peers: []
     property var users: ({})
@@ -118,6 +179,8 @@ Item {
             if (root.noteKind === "ended" || root.noteKind === "lost") root.noteKind = ""
         } else {
             root.adding = false
+            root.picking = false
+            root.screenView = "stage"
         }
         if (root.callState !== "connected" && root.callState !== "ending") {
             if (root.connectedSeconds > 0) root.lastDuration = root.connectedSeconds
@@ -173,6 +236,27 @@ Item {
             case "unreachable": root.showNote("declined", qsTr("<b>%1 est injoignable.</b>").arg(who)); break
             default: root.showNote("declined", qsTr("<b>%1 a refusé l'invitation.</b>").arg(who))
             }
+        }
+        function onPresentationStarted(address) {
+            // La presentation s'ouvre d'elle-meme chez les spectateurs.
+            root.screenView = "stage"
+            root.screenFit = true
+            root.expanded = false
+            root.picking = false
+        }
+        function onPresentationStopped(address) {
+            root.screenView = "stage"
+            if (root.inCall)
+                root.showNote("screen", qsTr("<b>%1 a arrêté de présenter.</b>").arg(root.esc(root.labelOf(address))))
+        }
+        function onPresentingStopped(reason) {
+            if (reason === "conflict")
+                root.showNote("busy", qsTr("<b>%1 présente déjà.</b> Une seule présentation à la fois.")
+                                      .arg(root.esc(root.presenterName.length ? People.firstName(root.presenterName) : qsTr("Quelqu'un"))))
+        }
+        function onScreenUnsupported(address) {
+            root.showNote("declined", qsTr("<b>%1 ne peut pas voir votre écran</b> : sa version de LocaLink est trop ancienne. Les autres le voient.")
+                                      .arg(root.esc(root.labelOf(address))))
         }
         function onCallEnded(reason) {
             const who = root.esc(root.remoteName)
@@ -242,10 +326,10 @@ Item {
     }
 
     // ---- Fenetre centrale : quel contenu ---------------------------------------------
-    readonly property bool sheetOpen: root.adding || root.callState === "ringing" || root.callState === "calling"
-                                      || root.callState === "connecting" || (root.callState === "connected" && root.expanded)
-    // "add" | "invite" (invitation de groupe recue) | "group" | "duo"
-    readonly property string sheetMode: root.adding ? "add"
+    readonly property bool sheetOpen: root.adding || root.picking || root.callState === "ringing" || root.callState === "calling"
+                                      || root.callState === "connecting" || (root.callState === "connected" && root.expanded && !root.watching)
+    // "pick" | "add" | "invite" (invitation de groupe recue) | "group" | "duo"
+    readonly property string sheetMode: root.picking ? "pick" : root.adding ? "add"
                                        : root.callState === "ringing" ? (root.group ? "invite" : "duo")
                                        : root.group ? "group" : "duo"
 
@@ -307,6 +391,8 @@ Item {
         property string tone: "line"         // "line" | "danger" | "warn"
         property string tip: ""
         property bool iconOnly: false
+        readonly property color fg: bb.tone === "danger" ? Theme.inkOnDanger : bb.tone === "ink" ? Theme.inkOnInk
+                                  : bb.tone === "warn" ? Theme.warningInk : bb.tone === "call" ? Theme.callInk : Theme.ink
         hoverEnabled: true
         focusPolicy: Qt.StrongFocus
         Accessible.name: bb.text.length ? bb.text : bb.tip
@@ -319,17 +405,20 @@ Item {
         HoverHandler { cursorShape: bb.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor }
         background: Rectangle {
             radius: Theme.radiusSheet
-            color: bb.tone === "danger" ? (bb.hovered ? Theme.dangerHover : Theme.dangerColor) : bb.tone === "warn" ? Theme.warningSoft : (bb.hovered && bb.enabled ? Theme.selectWash : "transparent")
-            border.width: bb.tone === "danger" ? 0 : (bb.visualFocus ? 2 : 1)
-            border.color: bb.visualFocus ? Theme.focusRing : bb.tone === "warn" ? Theme.warningColor : (bb.hovered && bb.enabled ? Theme.ink : Theme.lineStrong)
+            color: bb.tone === "danger" ? (bb.hovered ? Theme.dangerHover : Theme.dangerColor) : bb.tone === "ink" ? Theme.ink
+                 : bb.tone === "warn" ? Theme.warningSoft : bb.tone === "call" ? (bb.hovered ? Theme.callSoft : "transparent")
+                 : (bb.hovered && bb.enabled ? Theme.selectWash : "transparent")
+            border.width: bb.tone === "danger" || bb.tone === "ink" ? 0 : (bb.visualFocus ? 2 : 1)
+            border.color: bb.visualFocus ? Theme.focusRing : bb.tone === "warn" ? Theme.warningColor : bb.tone === "call" ? Theme.callColor
+                        : (bb.hovered && bb.enabled ? Theme.ink : Theme.lineStrong)
         }
         contentItem: Item {
             Row {
                 id: bbRow
                 anchors.centerIn: parent
                 spacing: 7
-                LineIcon { anchors.verticalCenter: parent.verticalCenter; path: bb.iconPath; size: 16; strokeWidth: 1.8; color: bb.tone === "danger" ? Theme.inkOnDanger : bb.tone === "warn" ? Theme.warningInk : Theme.ink }
-                Text { visible: !bb.iconOnly; anchors.verticalCenter: parent.verticalCenter; text: bb.text; color: bb.tone === "danger" ? Theme.inkOnDanger : bb.tone === "warn" ? Theme.warningInk : Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: Theme.weightSemibold }
+                LineIcon { anchors.verticalCenter: parent.verticalCenter; path: bb.iconPath; size: 16; strokeWidth: 1.8; color: bb.fg }
+                Text { visible: !bb.iconOnly; anchors.verticalCenter: parent.verticalCenter; text: bb.text; color: bb.fg; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: Theme.weightSemibold }
             }
         }
     }
@@ -455,7 +544,7 @@ Item {
         anchors.fill: parent
         color: Theme.scrim
         visible: opacity > 0
-        opacity: root.sheetOpen ? 1 : 0
+        opacity: root.sheetOpen || root.stageOpen ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: Theme.durationFast } }
         // Avale les clics : l'ecran du dessous n'est pas utilisable pendant la sonnerie.
         MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
@@ -474,9 +563,10 @@ Item {
     Rectangle {
         id: sheet
         anchors.centerIn: parent
-        width: Math.min(root.sheetMode === "group" ? 560 : root.sheetMode === "add" ? 460 : 400, root.width - 32)
+        width: Math.min(root.sheetMode === "pick" ? 640 : root.sheetMode === "group" ? 560 : root.sheetMode === "add" ? 460 : 400, root.width - 32)
         height: Math.min(root.height - 32,
-                         (root.sheetMode === "add" ? addCol.implicitHeight
+                         (root.sheetMode === "pick" ? pickCol.implicitHeight
+                          : root.sheetMode === "add" ? addCol.implicitHeight
                           : root.sheetMode === "group" ? groupCol.implicitHeight
                           : root.sheetMode === "invite" ? inviteCol.implicitHeight
                           : sheetCol.implicitHeight) + 48)
@@ -495,7 +585,7 @@ Item {
 
         AbstractButton {
             id: reduceBtn
-            visible: root.callState === "connected" && !root.adding
+            visible: root.callState === "connected" && !root.adding && !root.picking
             anchors.top: parent.top
             anchors.right: parent.right
             anchors.margins: 10
@@ -612,6 +702,14 @@ Item {
                     tone: root.muted ? "on" : "line"
                     iconPath: root.muted ? Icons.micOff : Icons.mic
                     onClicked: root.call && root.call.toggleMute()
+                }
+                CallAction {
+                    visible: root.callState === "connected"
+                    text: root.presenting ? qsTr("Arrêter") : qsTr("Présenter")
+                    tone: root.presenting ? "on" : "line"
+                    iconPath: root.presenting ? Icons.screenOff : Icons.screenShare
+                    enabled: root.presenting || root.canPresent
+                    onClicked: root.togglePresent()
                 }
                 CallAction {
                     visible: root.callState === "connected"
@@ -830,6 +928,14 @@ Item {
                     onClicked: root.call && root.call.toggleMute()
                 }
                 CallAction {
+                    visible: !groupCol.outgoing
+                    text: root.presenting ? qsTr("Arrêter") : qsTr("Présenter")
+                    tone: root.presenting ? "on" : "line"
+                    iconPath: root.presenting ? Icons.screenOff : Icons.screenShare
+                    enabled: root.presenting || root.canPresent
+                    onClicked: root.togglePresent()
+                }
+                CallAction {
                     text: groupCol.full ? qsTr("Groupe complet") : qsTr("Ajouter")
                     iconPath: Icons.userPlus
                     enabled: root.canInvite
@@ -856,6 +962,216 @@ Item {
                 color: Theme.ink3
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fs(12)
+            }
+        }
+
+        // ---- Presenter : que voulez-vous montrer ? -------------------------------------
+        ColumnLayout {
+            id: pickCol
+            visible: root.sheetMode === "pick"
+            x: 26
+            y: 26
+            width: parent.width - 52
+            spacing: 0
+            readonly property var others: root.joined.map(function(p) { return root.labelOf(p.address) })
+
+            RowLayout {
+                Layout.fillWidth: true
+                CapsLabel { Layout.fillWidth: true; text: qsTr("Présenter pendant l'appel") }
+                AbstractButton {
+                    id: pickClose
+                    Layout.preferredWidth: 30
+                    Layout.preferredHeight: 30
+                    hoverEnabled: true
+                    Accessible.name: qsTr("Fermer")
+                    onClicked: root.picking = false
+                    background: Rectangle { radius: 15; color: pickClose.hovered ? Theme.selectWash : "transparent" }
+                    contentItem: Item { LineIcon { anchors.centerIn: parent; path: Icons.close; size: 14; strokeWidth: 1.8; color: Theme.ink2 } }
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: 4
+                text: qsTr("Que voulez-vous montrer ?")
+                color: Theme.ink
+                font.family: Theme.fontFamilySerif
+                font.pixelSize: Theme.fs(24)
+                font.weight: Theme.weightBold
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: 6
+                text: pickCol.others.length > 1
+                      ? qsTr("%1 verront ce que vous choisissez, en direct.").arg(People.listNames(pickCol.others))
+                      : qsTr("%1 verra ce que vous choisissez, en direct.").arg(pickCol.others.length ? pickCol.others[0] : qsTr("Votre correspondant"))
+                color: Theme.ink2
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fs(13)
+                wrapMode: Text.WordWrap
+            }
+            Row {
+                Layout.topMargin: 12
+                Layout.bottomMargin: 12
+                spacing: 18
+                Repeater {
+                    model: [{ key: "screen", label: qsTr("Écran entier") }, { key: "window", label: qsTr("Une fenêtre") }]
+                    delegate: AbstractButton {
+                        id: ptab
+                        required property var modelData
+                        readonly property bool current: root.pickTab === modelData.key
+                        readonly property int count: root.sources.filter(function(s) { return s.kind === ptab.modelData.key }).length
+                        implicitHeight: 30
+                        implicitWidth: ptabRow.implicitWidth
+                        hoverEnabled: true
+                        Accessible.role: Accessible.PageTab
+                        Accessible.name: modelData.label
+                        onClicked: root.choosePickTab(modelData.key)
+                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                        background: Item { Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 2; color: ptab.current ? Theme.ruleInk : "transparent" } }
+                        contentItem: Item {
+                            Row {
+                                id: ptabRow
+                                spacing: 6
+                                y: 3
+                                Text { text: ptab.modelData.label; color: ptab.current || ptab.hovered ? Theme.ink : Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: ptab.current ? Theme.weightSemibold : Theme.weightMedium }
+                                Text { text: ptab.count; color: Theme.ink3; font.family: Theme.fontFamilySerif; font.pixelSize: Theme.fs(12); font.weight: Theme.weightBold }
+                            }
+                        }
+                    }
+                }
+            }
+            Text {
+                visible: root.pickList.length === 0
+                Layout.fillWidth: true
+                Layout.bottomMargin: 8
+                text: root.pickTab === "screen" ? qsTr("Aucun écran ne peut être capturé sur ce poste.")
+                                                : qsTr("Aucune fenêtre ne peut être capturée sur ce poste.")
+                color: Theme.ink3
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fs(12.5)
+            }
+            GridView {
+                id: pickGrid
+                visible: root.pickList.length > 0
+                Layout.fillWidth: true
+                readonly property int columns: root.pickTab === "screen" ? 2 : 3
+                Layout.preferredHeight: Math.min(Math.ceil(root.pickList.length / columns) * cellHeight, 340)
+                cellWidth: width / columns
+                cellHeight: (cellWidth - 12) * 10 / 16 + 70
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                model: root.pickList
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                delegate: Item {
+                    id: pcell
+                    required property var modelData
+                    width: pickGrid.cellWidth
+                    height: pickGrid.cellHeight
+                    AbstractButton {
+                        id: pitem
+                        readonly property bool on: root.pickId === pcell.modelData.id
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        hoverEnabled: true
+                        Accessible.role: Accessible.RadioButton
+                        Accessible.checked: pitem.on
+                        Accessible.name: pcell.modelData.title
+                        onClicked: root.pickId = pcell.modelData.id
+                        onDoubleClicked: { root.pickId = pcell.modelData.id; root.confirmPick() }
+                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                        background: Rectangle {
+                            radius: Theme.radiusSheet
+                            color: pitem.on ? Theme.selectWash : "transparent"
+                            border.width: pitem.on ? 2 : 1
+                            border.color: pitem.on || pitem.hovered ? Theme.ink : Theme.line
+                        }
+                        contentItem: ColumnLayout {
+                            spacing: 2
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: width * 10 / 16
+                                Layout.margins: 2
+                                radius: 2
+                                color: Theme.surface0
+                                border.width: 1
+                                border.color: Theme.line
+                                clip: true
+                                Image {
+                                    visible: pcell.modelData.kind === "screen"
+                                    anchors.fill: parent
+                                    anchors.margins: 1
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                    cache: false
+                                    source: visible ? root.screenUrl("thumb/" + pcell.modelData.id, root.pickSeed) : ""
+                                }
+                                LineIcon {
+                                    visible: pcell.modelData.kind !== "screen"
+                                    anchors.centerIn: parent
+                                    path: Icons.appWindow
+                                    size: 28
+                                    strokeWidth: 1.5
+                                    color: Theme.ink3
+                                }
+                                Rectangle {
+                                    visible: pitem.on
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: 6
+                                    width: 22
+                                    height: 22
+                                    radius: 11
+                                    color: Theme.ink
+                                    LineIcon { anchors.centerIn: parent; path: Icons.check; size: 13; strokeWidth: 2.4; color: Theme.inkOnInk }
+                                }
+                            }
+                            Text { Layout.fillWidth: true; Layout.leftMargin: 4; text: pcell.modelData.title; color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13); font.weight: Theme.weightSemibold; elide: Text.ElideRight }
+                            Text { Layout.fillWidth: true; Layout.leftMargin: 4; text: pcell.modelData.detail; color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(11.5); elide: Text.ElideRight }
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.topMargin: 12
+                implicitHeight: pickWarn.implicitHeight + 20
+                color: Theme.warningSoft
+                Rectangle { width: 2; height: parent.height; color: Theme.warningColor }
+                RowLayout {
+                    id: pickWarn
+                    x: 12
+                    y: 10
+                    width: parent.width - 24
+                    spacing: 10
+                    LineIcon { Layout.alignment: Qt.AlignTop; path: Icons.eye; size: 16; strokeWidth: 1.8; color: Theme.warningInk }
+                    Text {
+                        Layout.fillWidth: true
+                        textFormat: Text.StyledText
+                        wrapMode: Text.WordWrap
+                        text: root.pickTab === "screen"
+                              ? qsTr("<b>Tout ce qui s'affiche sur cet écran sera visible</b>, notifications comprises. Le son de l'ordinateur n'est pas partagé.")
+                              : qsTr("<b>Seule cette fenêtre sera visible</b>, même si une autre passe devant. Le son de l'ordinateur n'est pas partagé.")
+                        color: Theme.ink2
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fs(12.5)
+                    }
+                }
+            }
+            Rectangle { Layout.fillWidth: true; Layout.topMargin: 16; Layout.preferredHeight: 1; color: Theme.ruleInk }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 14
+                Item { Layout.fillWidth: true }
+                AppButton { variant: "ghost"; text: qsTr("Annuler"); onClicked: root.picking = false }
+                AppButton {
+                    variant: "ink"
+                    iconPath: Icons.screenShare
+                    enabled: root.pickSource !== null && root.canPresent
+                    text: !root.pickSource ? qsTr("Présenter")
+                          : root.pickSource.kind === "screen" ? qsTr("Présenter l'%1").arg(root.pickSource.title.toLowerCase())
+                          : qsTr("Présenter cette fenêtre")
+                    onClicked: root.confirmPick()
+                }
             }
         }
 
@@ -993,6 +1309,472 @@ Item {
     }
 
     // ======================================================================
+    // Partage d'ecran : scene des spectateurs
+    // ======================================================================
+    RectangularShadow {
+        anchors.fill: stage
+        visible: stage.visible
+        offset.y: 14
+        blur: 36
+        spread: -4
+        radius: stage.radius
+        color: Theme.shadowStrong
+    }
+    Rectangle {
+        id: stage
+        visible: root.stageOpen
+        x: root.leftInset + 20
+        y: 70
+        width: root.width - x - 20
+        height: root.height - y - 16
+        radius: Theme.radiusSheet
+        color: Theme.bg
+        border.width: 1
+        border.color: Theme.ruleInk
+        Accessible.role: Accessible.Dialog
+        Accessible.name: qsTr("%1 présente son écran").arg(root.presenterName)
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 0
+
+            // -- En-tete : qui presente, etat de l'image, affichage --
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 18
+                Layout.rightMargin: 18
+                Layout.topMargin: 16
+                Layout.bottomMargin: 12
+                spacing: 16
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    CapsLabel { text: qsTr("Présentation") }
+                    Text {
+                        Layout.fillWidth: true
+                        textFormat: Text.StyledText
+                        text: qsTr("<b>%1</b> présente son écran").arg(root.esc(root.presenterName))
+                        color: Theme.ink
+                        font.family: Theme.fontFamilySerif
+                        font.pixelSize: Theme.fs(24)
+                        elide: Text.ElideRight
+                        Accessible.role: Accessible.Heading
+                    }
+                    Row {
+                        spacing: 6
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: root.presenterTitle.length > 0
+                            text: root.presenterTitle + " ·"
+                            color: Theme.ink3
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fs(12.5)
+                        }
+                        Rectangle {
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: !root.screenSlow
+                            width: 7
+                            height: 7
+                            radius: 3.5
+                            color: Theme.successColor
+                            SequentialAnimation on opacity {
+                                running: stage.visible
+                                loops: Animation.Infinite
+                                NumberAnimation { to: 0.35; duration: 800 }
+                                NumberAnimation { to: 1; duration: 800 }
+                            }
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.screenSlow ? qsTr("connexion lente : image mise à jour moins souvent") : qsTr("image en direct")
+                            color: root.screenSlow ? Theme.warningInk : Theme.successInk
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fs(12.5)
+                            font.weight: Theme.weightSemibold
+                        }
+                    }
+                }
+                Row {
+                    Layout.alignment: Qt.AlignBottom
+                    spacing: 0
+                    Repeater {
+                        model: [{ fit: true, label: qsTr("Ajuster") }, { fit: false, label: qsTr("Taille réelle") }]
+                        delegate: AbstractButton {
+                            id: segBtn
+                            required property var modelData
+                            readonly property bool on: root.screenFit === modelData.fit
+                            implicitHeight: 36
+                            implicitWidth: segText.implicitWidth + 24
+                            hoverEnabled: true
+                            Accessible.name: modelData.label
+                            Accessible.checked: segBtn.on
+                            onClicked: root.screenFit = modelData.fit
+                            HoverHandler { cursorShape: Qt.PointingHandCursor }
+                            background: Rectangle {
+                                color: segBtn.on ? Theme.ink : (segBtn.hovered ? Theme.selectWash : "transparent")
+                                border.width: 1
+                                border.color: segBtn.on ? Theme.ink : Theme.lineStrong
+                            }
+                            contentItem: Item {
+                                Text {
+                                    id: segText
+                                    anchors.centerIn: parent
+                                    text: segBtn.modelData.label
+                                    color: segBtn.on ? Theme.inkOnInk : Theme.ink2
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fs(12.5)
+                                    font.weight: Theme.weightSemibold
+                                }
+                            }
+                        }
+                    }
+                }
+                BarButton { Layout.alignment: Qt.AlignBottom; iconOnly: true; tip: qsTr("Plein écran"); iconPath: Icons.maximize; onClicked: root.screenView = "full" }
+                BarButton { Layout.alignment: Qt.AlignBottom; iconOnly: true; tip: qsTr("Réduire en bande (Échap)"); iconPath: Icons.minimize; onClicked: root.screenView = "bar" }
+            }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 2; color: Theme.ruleInk }
+
+            // -- Ecran partage | participants --
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 0
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    color: Theme.surface1
+                    clip: true
+                    Flickable {
+                        id: screenFlick
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        contentWidth: root.screenFit ? width : Math.max(width, screenImage.implicitWidth)
+                        contentHeight: root.screenFit ? height : Math.max(height, screenImage.implicitHeight)
+                        interactive: !root.screenFit
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar { policy: root.screenFit ? ScrollBar.AlwaysOff : ScrollBar.AsNeeded }
+                        ScrollBar.horizontal: ScrollBar { policy: root.screenFit ? ScrollBar.AlwaysOff : ScrollBar.AsNeeded }
+                        Image {
+                            id: screenImage
+                            width: root.screenFit ? screenFlick.width : implicitWidth
+                            height: root.screenFit ? screenFlick.height : implicitHeight
+                            fillMode: Image.PreserveAspectFit
+                            cache: false
+                            smooth: true
+                            mipmap: root.screenFit
+                            source: stage.visible ? root.screenUrl("remote", root.screenFrameId) : ""
+                        }
+                    }
+                    Text {
+                        visible: screenImage.status !== Image.Ready || screenImage.implicitWidth <= 16
+                        anchors.centerIn: parent
+                        text: qsTr("Réception de l'écran…")
+                        color: Theme.ink3
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fs(13)
+                    }
+                }
+                Rectangle { Layout.fillHeight: true; Layout.preferredWidth: 1; color: Theme.line }
+                ColumnLayout {
+                    // Largeur fixe : une ColumnLayout s'etire par defaut dans une RowLayout.
+                    Layout.fillWidth: false
+                    Layout.preferredWidth: root.width > 1300 ? 220 : 190
+                    Layout.maximumWidth: Layout.preferredWidth
+                    Layout.fillHeight: true
+                    Layout.margins: 14
+                    spacing: 0
+                    CapsLabel { text: qsTr("Dans l'appel · %1").arg(root.joined.length + 1) }
+                    Repeater {
+                        model: [{ address: "", me: true }].concat(root.joined.map(function(p) { return { address: p.address, me: false, muted: p.muted, speaking: p.speaking } }))
+                        delegate: Rectangle {
+                            id: sp
+                            required property var modelData
+                            readonly property bool isPresenter: !modelData.me && modelData.address === root.presenterAddress
+                            readonly property bool talking: modelData.me ? (root.call ? root.call.localSpeaking : false) : !!modelData.speaking
+                            readonly property bool mic: modelData.me ? root.muted : !!modelData.muted
+                            Layout.fillWidth: true
+                            Layout.topMargin: 8
+                            implicitHeight: spRow.implicitHeight + 14
+                            color: "transparent"
+                            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.line }
+                            RowLayout {
+                                id: spRow
+                                width: parent.width
+                                spacing: 10
+                                Item {
+                                    implicitWidth: 36
+                                    implicitHeight: 36
+                                    Rectangle {
+                                        anchors.centerIn: parent
+                                        visible: sp.talking
+                                        width: 38
+                                        height: 38
+                                        radius: 19
+                                        color: "transparent"
+                                        border.width: 2
+                                        border.color: Theme.successColor
+                                    }
+                                    ChatMonogram {
+                                        anchors.centerIn: parent
+                                        size: 32
+                                        label: sp.modelData.me ? root.selfName : root.labelOf(sp.modelData.address)
+                                        machine: !sp.modelData.me && root.isMachine(sp.modelData.address)
+                                    }
+                                    Rectangle {
+                                        visible: sp.mic
+                                        x: parent.width - width + 2
+                                        y: parent.height - height + 2
+                                        width: 18
+                                        height: 18
+                                        radius: 9
+                                        color: Theme.warningSoft
+                                        border.width: 2
+                                        border.color: Theme.bg
+                                        LineIcon { anchors.centerIn: parent; path: Icons.micOff; size: 10; strokeWidth: 2; color: Theme.warningInk }
+                                    }
+                                }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 1
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: sp.modelData.me ? qsTr("Vous") : root.labelOf(sp.modelData.address)
+                                        color: Theme.ink
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fs(13)
+                                        font.weight: Theme.weightSemibold
+                                        elide: Text.ElideRight
+                                    }
+                                    Rectangle {
+                                        visible: sp.isPresenter
+                                        implicitWidth: tagText.implicitWidth + 12
+                                        implicitHeight: tagText.implicitHeight + 2
+                                        radius: 3
+                                        color: Theme.callColor
+                                        Text { id: tagText; anchors.centerIn: parent; text: qsTr("présente"); color: Theme.inkOnInk; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(10.5); font.weight: Theme.weightBold }
+                                    }
+                                    Text {
+                                        visible: !sp.isPresenter
+                                        Layout.fillWidth: true
+                                        text: sp.talking ? qsTr("parle") : sp.mic ? qsTr("micro coupé")
+                                              : sp.modelData.me ? root.selfMachine : root.machineOf(sp.modelData.address)
+                                        color: sp.talking ? Theme.successInk : Theme.ink3
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fs(11.5)
+                                        font.weight: sp.talking ? Theme.weightSemibold : Theme.weightRegular
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Item { Layout.fillHeight: true }
+                }
+            }
+
+            // -- Commandes de l'appel --
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.ruleInk }
+            Item {
+                Layout.fillWidth: true
+                implicitHeight: stageActions.implicitHeight + 22
+                Text {
+                    anchors.left: parent.left
+                    anchors.leftMargin: 18
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.StyledText
+                    text: "<b>" + People.clock(root.connectedSeconds) + "</b>" + (root.muted ? " · " + qsTr("micro coupé") : "")
+                    color: Theme.ink2
+                    font.family: Theme.fontFamilySerif
+                    font.pixelSize: Theme.fs(15)
+                }
+                Row {
+                    id: stageActions
+                    anchors.centerIn: parent
+                    spacing: 22
+                    CallAction {
+                        text: root.muted ? qsTr("Réactiver") : qsTr("Couper le micro")
+                        tone: root.muted ? "on" : "line"
+                        iconPath: root.muted ? Icons.micOff : Icons.mic
+                        onClicked: root.call && root.call.toggleMute()
+                    }
+                    CallAction {
+                        text: qsTr("Présenter")
+                        iconPath: Icons.screenShare
+                        enabled: false
+                        ToolTip.visible: hovered
+                        ToolTip.text: qsTr("%1 présente déjà : une présentation à la fois").arg(People.firstName(root.presenterName))
+                    }
+                    CallAction {
+                        text: root.canInvite ? qsTr("Ajouter") : qsTr("Groupe complet")
+                        iconPath: Icons.userPlus
+                        enabled: root.canInvite
+                        onClicked: root.openAdd()
+                    }
+                    CallAction {
+                        text: root.group ? qsTr("Quitter") : qsTr("Raccrocher")
+                        tone: "danger"
+                        diameter: 64
+                        iconPath: Icons.hangup
+                        onClicked: root.call && root.call.hangUp()
+                    }
+                }
+                Text {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 18
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: root.width > 1100
+                    text: qsTr("Échap : réduire")
+                    color: Theme.inkDisabled
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fs(11.5)
+                }
+            }
+        }
+    }
+
+    // ======================================================================
+    // Partage d'ecran : plein ecran
+    // ======================================================================
+    Rectangle {
+        id: fullView
+        visible: root.fullOpen
+        anchors.fill: parent
+        z: 10
+        color: "#0B0D12"
+        property bool controlsShown: true
+        onVisibleChanged: if (visible) { controlsShown = true; hideControls.restart() }
+        Timer { id: hideControls; interval: 3000; onTriggered: fullView.controlsShown = false }
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.AllButtons
+            onPositionChanged: { fullView.controlsShown = true; hideControls.restart() }
+            cursorShape: fullView.controlsShown ? Qt.ArrowCursor : Qt.BlankCursor
+        }
+        Image {
+            anchors.fill: parent
+            fillMode: Image.PreserveAspectFit
+            cache: false
+            smooth: true
+            mipmap: true
+            source: fullView.visible ? root.screenUrl("remote", root.screenFrameId) : ""
+        }
+        Rectangle {
+            id: fullBar
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 14
+            width: fullRow.implicitWidth + 22
+            height: fullRow.implicitHeight + 16
+            radius: Theme.radiusSheet
+            color: Qt.rgba(0.09, 0.086, 0.106, 0.9)
+            opacity: fullView.controlsShown ? 1 : 0
+            visible: opacity > 0
+            Behavior on opacity { NumberAnimation { duration: 220 } }
+            RowLayout {
+                id: fullRow
+                anchors.centerIn: parent
+                spacing: 14
+                ChatMonogram { size: 28; label: root.presenterName; machine: root.isMachine(root.presenterAddress) }
+                Text {
+                    textFormat: Text.StyledText
+                    text: qsTr("<b>%1</b> présente").arg(root.esc(root.presenterName)) + (root.presenterTitle.length ? " · " + root.esc(root.presenterTitle) : "")
+                    color: "#F3EFE6"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fs(13)
+                }
+                AbstractButton {
+                    id: fullMute
+                    implicitHeight: 34
+                    implicitWidth: fullMuteRow.implicitWidth + 22
+                    hoverEnabled: true
+                    Accessible.name: root.muted ? qsTr("Réactiver le micro") : qsTr("Couper le micro")
+                    onClicked: root.call && root.call.toggleMute()
+                    background: Rectangle { radius: Theme.radiusSheet; color: fullMute.hovered ? Qt.rgba(1, 1, 1, 0.08) : "transparent"; border.width: 1; border.color: Qt.rgba(0.95, 0.94, 0.9, 0.35) }
+                    contentItem: Item { Row { id: fullMuteRow; anchors.centerIn: parent; spacing: 7
+                        LineIcon { anchors.verticalCenter: parent.verticalCenter; path: root.muted ? Icons.micOff : Icons.mic; size: 15; strokeWidth: 1.8; color: "#F3EFE6" }
+                        Text { anchors.verticalCenter: parent.verticalCenter; text: root.muted ? qsTr("Réactiver le micro") : qsTr("Couper le micro"); color: "#F3EFE6"; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: Theme.weightSemibold } } }
+                }
+                AbstractButton {
+                    id: fullExit
+                    implicitHeight: 34
+                    implicitWidth: fullExitRow.implicitWidth + 22
+                    hoverEnabled: true
+                    Accessible.name: qsTr("Quitter le plein écran")
+                    onClicked: root.screenView = "stage"
+                    background: Rectangle { radius: Theme.radiusSheet; color: fullExit.hovered ? Qt.rgba(1, 1, 1, 0.08) : "transparent"; border.width: 1; border.color: Qt.rgba(0.95, 0.94, 0.9, 0.35) }
+                    contentItem: Item { Row { id: fullExitRow; anchors.centerIn: parent; spacing: 7
+                        LineIcon { anchors.verticalCenter: parent.verticalCenter; path: Icons.minimize; size: 15; strokeWidth: 1.8; color: "#F3EFE6" }
+                        Text { anchors.verticalCenter: parent.verticalCenter; text: qsTr("Quitter le plein écran"); color: "#F3EFE6"; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.weight: Theme.weightSemibold } } }
+                }
+                BarButton { text: root.group ? qsTr("Quitter") : qsTr("Raccrocher"); tone: "danger"; iconPath: Icons.hangup; onClicked: root.call && root.call.hangUp() }
+            }
+        }
+    }
+
+    // Vous presentez : rappel discret en haut de l'ecran.
+    Rectangle {
+        id: presentingPill
+        visible: root.presenting && !root.sheetOpen
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.horizontalCenterOffset: root.leftInset / 2
+        y: 12
+        z: 5
+        width: pillRow.implicitWidth + 18
+        height: pillRow.implicitHeight + 12
+        radius: Theme.radiusSheet
+        color: Theme.callColor
+        Accessible.role: Accessible.StaticText
+        Accessible.name: qsTr("Vous présentez %1").arg(root.presentingTitle)
+        RowLayout {
+            id: pillRow
+            anchors.centerIn: parent
+            spacing: 10
+            Rectangle {
+                width: 8
+                height: 8
+                radius: 4
+                color: Theme.inkOnInk
+                SequentialAnimation on opacity {
+                    running: presentingPill.visible
+                    loops: Animation.Infinite
+                    NumberAnimation { to: 0.35; duration: 800 }
+                    NumberAnimation { to: 1; duration: 800 }
+                }
+            }
+            Text {
+                textFormat: Text.StyledText
+                text: qsTr("Vous présentez <b>%1</b>").arg(root.esc(root.presentingTitle))
+                color: Theme.inkOnInk
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fs(12.5)
+            }
+            AbstractButton {
+                id: pillStop
+                implicitHeight: 26
+                implicitWidth: pillStopText.implicitWidth + 20
+                hoverEnabled: true
+                Accessible.name: qsTr("Arrêter la présentation")
+                onClicked: root.call && root.call.stopPresenting()
+                HoverHandler { cursorShape: Qt.PointingHandCursor }
+                background: Rectangle { radius: Theme.radiusSheet; color: Qt.rgba(1, 1, 1, pillStop.hovered ? 0.3 : 0.18) }
+                contentItem: Item { Text { id: pillStopText; anchors.centerIn: parent; text: qsTr("Arrêter"); color: Theme.inkOnInk; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12); font.weight: Theme.weightBold } }
+            }
+        }
+    }
+
+    Shortcut {
+        sequences: [StandardKey.Cancel]
+        enabled: root.picking || root.fullOpen || root.stageOpen
+        onActivated: {
+            if (root.picking) root.picking = false
+            else if (root.fullOpen) root.screenView = "stage"
+            else if (root.stageOpen) root.screenView = "bar"
+        }
+    }
+
+    // ======================================================================
     // Bande d'appel etabli
     // ======================================================================
     RectangularShadow {
@@ -1008,7 +1790,8 @@ Item {
         id: callBar
         readonly property bool ending: root.callState === "ending"
         readonly property bool tight: width < 640
-        visible: ((root.callState === "connected" && !root.expanded) || callBar.ending) && !root.adding
+        visible: ((root.callState === "connected" && (!root.expanded || root.watching)) || callBar.ending)
+                 && !root.adding && !root.picking && !root.stageOpen && !root.fullOpen
         x: root.leftInset + Theme.pagePadding
         width: root.width - x - Theme.pagePadding
         y: root.height - height - 16
@@ -1020,21 +1803,40 @@ Item {
         Accessible.role: Accessible.Grouping
         Accessible.name: root.group ? qsTr("Appel de groupe en cours") : qsTr("Appel en cours avec %1").arg(root.remoteName)
         MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
-        Rectangle { x: 0; y: 0; width: 4; height: parent.height; color: Theme.successColor }
+        Rectangle { x: 0; y: 0; width: 4; height: parent.height; color: root.presenting || root.watching ? Theme.callColor : Theme.successColor }
 
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 16
             anchors.rightMargin: 12
             spacing: 14
+            // Vous presentez : apercu de ce que les autres voient.
+            Rectangle {
+                visible: root.presenting
+                Layout.preferredWidth: 72
+                Layout.preferredHeight: 42
+                radius: 2
+                color: Theme.surface0
+                border.width: 1
+                border.color: Theme.lineStrong
+                clip: true
+                Image {
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    fillMode: Image.PreserveAspectFit
+                    cache: false
+                    sourceSize.width: 160
+                    source: root.presenting ? root.screenUrl("local", root.call ? root.call.localFrameId : 0) : ""
+                }
+            }
             ChatMonogram {
-                visible: !root.group
+                visible: !root.group && !root.presenting
                 size: 32
                 label: root.remoteName
                 machine: !root.remotePeer || People.personOf(root.remotePeer, root.users).length === 0
             }
             FaceStack {
-                visible: root.group
+                visible: root.group && !root.presenting
                 size: 28
                 addresses: root.joined.map(function(p) { return p.address })
             }
@@ -1043,7 +1845,9 @@ Item {
                 spacing: 1
                 Text {
                     Layout.fillWidth: true
-                    text: root.group ? qsTr("Appel de groupe · %1 personnes").arg(root.joined.length + 1) : root.remoteName
+                    text: root.presenting ? qsTr("Vous présentez · %1").arg(root.presentingTitle)
+                          : root.watching ? qsTr("%1 présente son écran").arg(root.presenterName)
+                          : root.group ? qsTr("Appel de groupe · %1 personnes").arg(root.joined.length + 1) : root.remoteName
                     color: Theme.ink
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fs(14)
@@ -1055,6 +1859,10 @@ Item {
                     textFormat: Text.StyledText
                     elide: Text.ElideRight
                     text: callBar.ending ? qsTr("Fin de l'appel…")
+                          : root.presenting ? (root.joined.length > 1
+                                               ? qsTr("%1 voient votre écran").arg(root.esc(root.namesOf(root.joined)))
+                                               : qsTr("%1 voit votre écran").arg(root.esc(root.joined.length ? People.firstName(root.labelOf(root.joined[0].address)) : root.remoteName)))
+                          : root.watching && !root.muted ? (root.group ? qsTr("Appel de groupe · %1 personnes").arg(root.joined.length + 1) : qsTr("En appel · micro actif"))
                           : root.muted ? (!root.group && root.remotePeer && People.personOf(root.remotePeer, root.users).length ? root.esc(root.remotePeer.machine) + " · " : "")
                                          + "<b><font color=\"" + Theme.warningInk + "\">" + qsTr("micro coupé") + "</font></b>"
                           : root.group ? (root.speaker ? "<b><font color=\"" + Theme.successInk + "\">"
@@ -1075,6 +1883,15 @@ Item {
                 font.features: ({ "tnum": 1 })
             }
             BarButton {
+                visible: root.watching
+                text: qsTr("Regarder")
+                tip: callBar.tight ? text : ""
+                iconOnly: callBar.tight
+                tone: "ink"
+                iconPath: Icons.eye
+                onClicked: root.screenView = "stage"
+            }
+            BarButton {
                 text: root.muted ? qsTr("Réactiver le micro") : qsTr("Couper le micro")
                 tip: callBar.tight ? text : ""
                 iconOnly: callBar.tight
@@ -1084,13 +1901,31 @@ Item {
                 onClicked: root.call && root.call.toggleMute()
             }
             BarButton {
+                visible: root.presenting
+                text: qsTr("Arrêter la présentation")
+                tip: callBar.tight ? text : ""
+                iconOnly: callBar.tight
+                tone: "call"
+                iconPath: Icons.screenOff
+                onClicked: root.call && root.call.stopPresenting()
+            }
+            BarButton {
+                visible: !root.presenting
+                iconOnly: true
+                tip: root.canPresent ? qsTr("Présenter votre écran")
+                     : root.watching ? qsTr("%1 présente déjà").arg(People.firstName(root.presenterName)) : qsTr("Présenter votre écran")
+                iconPath: Icons.screenShare
+                enabled: !callBar.ending && root.canPresent
+                onClicked: root.openPicker()
+            }
+            BarButton {
                 iconOnly: true
                 tip: root.canInvite ? qsTr("Ajouter une personne") : qsTr("Groupe complet (%1 personnes)").arg(root.maxPeople)
                 iconPath: Icons.userPlus
                 enabled: !callBar.ending && root.canInvite
                 onClicked: root.openAdd()
             }
-            BarButton { iconOnly: true; tip: qsTr("Agrandir"); iconPath: Icons.maximize; enabled: !callBar.ending; onClicked: root.expanded = true }
+            BarButton { iconOnly: true; tip: qsTr("Agrandir"); iconPath: Icons.maximize; enabled: !callBar.ending; onClicked: if (root.watching) root.screenView = "stage"; else root.expanded = true }
             BarButton {
                 text: root.group ? qsTr("Quitter") : qsTr("Raccrocher")
                 tip: callBar.tight ? text : ""
@@ -1108,8 +1943,8 @@ Item {
     // ======================================================================
     Rectangle {
         id: note
-        readonly property bool positive: root.noteKind === "ended" || root.noteKind === "joined" || root.noteKind === "left"
-        visible: root.noteKind.length > 0 && !root.sheetOpen
+        readonly property bool positive: root.noteKind === "ended" || root.noteKind === "joined" || root.noteKind === "left" || root.noteKind === "screen"
+        visible: root.noteKind.length > 0 && !root.sheetOpen && !root.fullOpen
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.horizontalCenterOffset: root.leftInset / 2
         // Pendant l'appel, au-dessus de la bande.
@@ -1130,7 +1965,8 @@ Item {
             LineIcon {
                 path: root.noteKind === "ended" ? Icons.phoneLine
                       : root.noteKind === "joined" ? Icons.userPlus
-                      : root.noteKind === "left" ? Icons.users : Icons.alertTriangle
+                      : root.noteKind === "left" ? Icons.users
+                      : root.noteKind === "screen" ? Icons.screenOff : Icons.alertTriangle
                 size: 16
                 strokeWidth: 1.8
                 color: note.positive ? Theme.ink2 : Theme.dangerInk

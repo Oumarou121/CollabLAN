@@ -1,4 +1,5 @@
 #include "CallContext.h"
+#include "ScreenCapture.h"
 
 #include <QHostAddress>
 #include <QVariantMap>
@@ -7,7 +8,25 @@ namespace core {
 
 CallContext::CallContext(QObject *parent)
     : QObject(parent)
+    , m_capture(new ScreenCapture(this))
 {
+    connect(m_capture, &ScreenCapture::frameReady, this, [this](const QImage &frame) {
+        if (!m_voiceService)
+            return;
+        m_voiceService->pushScreenFrame(frame);
+        // Apercu de la bande (presentateur) : une image par seconde suffit.
+        if (!m_localFrameAge.isValid() || m_localFrameAge.elapsed() > 1000) {
+            m_localFrameAge.start();
+            ++m_localFrameId;
+            emit localFrameChanged();
+        }
+    });
+    connect(m_capture, &ScreenCapture::failed, this, [this](const QString &message) {
+        if (m_voiceService)
+            m_voiceService->stopPresenting();
+        emit errorOccurred(tr("La présentation s'est arrêtée : %1").arg(message));
+        emit presentingStopped(QStringLiteral("capture"));
+    });
 }
 
 CallContext::~CallContext() = default;
@@ -45,6 +64,18 @@ void CallContext::setVoiceService(network::VoiceService *service)
                 this, [this](const QHostAddress &address, const QString &reason) {
                     emit participantDeclined(address.toString(), reason);
                 });
+        connect(m_voiceService, &network::VoiceService::presentationChanged,
+                this, &CallContext::onPresentationChanged);
+        connect(m_voiceService, &network::VoiceService::remoteScreenChanged, this, [this]() {
+            ++m_screenFrameId;
+            emit screenFrameChanged();
+        });
+        connect(m_voiceService, &network::VoiceService::presentingInterrupted, this, [this](const QString &reason) {
+            m_capture->stop();
+            emit presentingStopped(reason);
+        });
+        connect(m_voiceService, &network::VoiceService::screenUnsupported,
+                this, [this](const QHostAddress &address) { emit screenUnsupported(address.toString()); });
 
         // Etat initial : VoiceService peut deja exister depuis un moment
         // (creee tot dans Application::initialize()) au moment ou ce
@@ -177,6 +208,109 @@ bool CallContext::isLocalSpeaking() const
     return m_voiceService && m_voiceService->isLocalSpeaking();
 }
 
+// ---- Partage d'ecran ------------------------------------------------------
+
+bool CallContext::isPresenting() const
+{
+    return m_voiceService && m_voiceService->isPresenting();
+}
+
+bool CallContext::canPresent() const
+{
+    return m_voiceService && m_voiceService->canPresent();
+}
+
+QString CallContext::presentingTitle() const
+{
+    return m_voiceService ? m_voiceService->presentingTitle() : QString();
+}
+
+QString CallContext::presenterAddress() const
+{
+    if (!m_voiceService)
+        return QString();
+    const QHostAddress address = m_voiceService->presenterAddress();
+    return address.isNull() ? QString() : address.toString();
+}
+
+QString CallContext::presenterTitle() const
+{
+    return m_voiceService ? m_voiceService->presenterTitle() : QString();
+}
+
+bool CallContext::isScreenSlow() const
+{
+    return m_voiceService && m_voiceService->isRemoteScreenSlow();
+}
+
+QImage CallContext::remoteScreen() const
+{
+    return m_voiceService ? m_voiceService->remoteScreen() : QImage();
+}
+
+QImage CallContext::localScreen() const
+{
+    return m_voiceService ? m_voiceService->localScreenFrame() : QImage();
+}
+
+QImage CallContext::sourceThumbnail(const QString &sourceId) const
+{
+    return m_capture->thumbnail(sourceId, 320);
+}
+
+QVariantList CallContext::shareSources()
+{
+    QVariantList list;
+    for (const ScreenCapture::Source &source : m_capture->sources()) {
+        QVariantMap entry;
+        entry[QStringLiteral("id")] = source.id;
+        entry[QStringLiteral("kind")] = source.kind;
+        entry[QStringLiteral("title")] = source.title;
+        entry[QStringLiteral("detail")] = source.detail;
+        list.append(entry);
+    }
+    return list;
+}
+
+bool CallContext::startPresenting(const QString &sourceId)
+{
+    if (!m_voiceService || !m_voiceService->canPresent())
+        return false;
+    if (!m_capture->start(sourceId)) {
+        emit errorOccurred(tr("Cet écran ou cette fenêtre ne peut pas être capturé."));
+        return false;
+    }
+    if (!m_voiceService->startPresenting(m_capture->title())) {
+        m_capture->stop();
+        return false;
+    }
+    return true;
+}
+
+void CallContext::stopPresenting()
+{
+    m_capture->stop();
+    if (m_voiceService)
+        m_voiceService->stopPresenting();
+}
+
+void CallContext::onPresentationChanged()
+{
+    // Presentation terminee ailleurs (appel fini, conflit) : la capture s'arrete.
+    if (m_voiceService && !m_voiceService->isPresenting() && m_capture->isActive())
+        m_capture->stop();
+    const QString presenter = presenterAddress();
+    if (presenter != m_lastPresenter) {
+        const QString previous = m_lastPresenter;
+        m_lastPresenter = presenter;
+        if (!previous.isEmpty())
+            emit presentationStopped(previous);
+        if (!presenter.isEmpty())
+            emit presentationStarted(presenter);
+    }
+    emit presentationChanged();
+}
+
 void CallContext::acceptCall()
 {
     if (m_voiceService) {
@@ -204,8 +338,9 @@ void CallContext::onStateChanged(network::CallState state)
     }
     m_callState = newState;
     emit callStateChanged();
-    // canInvite depend aussi de l'etat de l'appel.
+    // canInvite et canPresent dependent aussi de l'etat de l'appel.
     emit participantsChanged();
+    emit presentationChanged();
 
     if (state == network::CallState::Idle && !m_remoteAddress.isEmpty()) {
         m_remoteAddress.clear();
