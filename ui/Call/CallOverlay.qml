@@ -1101,7 +1101,6 @@ Item {
                                     anchors.fill: parent
                                     anchors.margins: 1
                                     fillMode: Image.PreserveAspectCrop
-                                    asynchronous: true
                                     cache: false
                                     source: visible ? root.screenUrl("thumb/" + pcell.modelData.id, root.pickSeed) : ""
                                 }

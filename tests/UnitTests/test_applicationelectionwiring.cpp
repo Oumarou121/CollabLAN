@@ -41,6 +41,7 @@ private slots:
         QVERIFY(dir.isValid());
 
         Application app;
+        app.setDiscoveryPort(nextPort());   // jamais 45454 : postes fantomes sur le reseau
         app.initialize(nextPort(), dir.filePath(QStringLiteral("test.db")),
                         QStringLiteral("SERVER"), -1, nextPort());
 
@@ -55,6 +56,7 @@ private slots:
         QVERIFY(dir.isValid());
 
         Application app;
+        app.setDiscoveryPort(nextPort());   // jamais 45454 : postes fantomes sur le reseau
         app.initialize(nextPort(), dir.filePath(QStringLiteral("test.db")),
                         QStringLiteral("CLIENT"), -1, nextPort());
 
@@ -69,6 +71,7 @@ private slots:
         QVERIFY(dir.isValid());
 
         Application app;
+        app.setDiscoveryPort(nextPort());   // jamais 45454 : postes fantomes sur le reseau
         app.initialize(nextPort(), dir.filePath(QStringLiteral("test.db")),
                         QStringLiteral("CLIENT"), -1, nextPort());
 
@@ -94,6 +97,7 @@ private slots:
 
         // --- Le poste sous test : promu TempServer suite a une panne. ---
         Application app;
+        app.setDiscoveryPort(nextPort());   // jamais 45454 : postes fantomes sur le reseau
         app.initialize(nextPort(), dir.filePath(QStringLiteral("test.db")),
                         QStringLiteral("CLIENT"), -1, electionPort);
 
@@ -150,6 +154,7 @@ private slots:
         const quint16 electionPort = nextPort();
 
         Application app;
+        app.setDiscoveryPort(nextPort());   // jamais 45454 : postes fantomes sur le reseau
         app.initialize(nextPort(), dir.filePath(QStringLiteral("test.db")),
                         QStringLiteral("CLIENT"), -1, electionPort);
 

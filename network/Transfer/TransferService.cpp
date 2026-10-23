@@ -377,8 +377,10 @@ QString TransferService::receiveDirectory() const
     if (!m_receiveDirOverride.isEmpty()) {
         return m_receiveDirOverride;
     }
-    const QString base = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-    return base + QStringLiteral("/LocaLink Transfers");
+    // ~/LocaLink/Fichiers reçus : hors de Documents, que OneDrive synchronise
+    // souvent sous Windows (gros fichiers reçus envoyés dans le nuage).
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    return base + QStringLiteral("/LocaLink/Fichiers reçus");
 }
 
 QString TransferService::makeTransferKey(QTcpSocket *socket)

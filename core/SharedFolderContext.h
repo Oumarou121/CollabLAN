@@ -159,7 +159,7 @@ public:
 
     /// Accepte un partage de dossier distant en attente de confirmation
     /// (cf. folderShareConfirmationRequested()) : assigne le chemin local
-    /// par défaut sous Documents/LocaLink Shared Folders/<nom>
+    /// par défaut sous ~/LocaLink/Dossiers partagés/<nom>
     /// (SharedFolderManager::provisionDefaultLocalPath()) et déclenche un
     /// resync auprès du propriétaire pour récupérer le contenu (via le
     /// signal SharedFolderManager::folderLocalPathProvisioned, câblé dans

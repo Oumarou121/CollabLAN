@@ -1364,7 +1364,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
 
         // Regroupe cote reception tous les fichiers d'un meme
         // correspondant dans un seul sous-dossier de receiveDirectory()
-        // (ex. "LocaLink Transfers/laptop-marie/"), a la maniere d'un
+        // (ex. "LocaLink/Fichiers reçus/laptop-marie/"), a la maniere d'un
         // explorateur de fichiers Windows organise par contact plutot
         // qu'un unique repertoire plat.
         //

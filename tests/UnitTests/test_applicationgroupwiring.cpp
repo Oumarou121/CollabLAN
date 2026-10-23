@@ -32,6 +32,10 @@ class TestApplicationGroupWiring : public QObject
     void startApplication()
     {
         m_app = std::make_unique<Application>();
+        // Port de decouverte propre au test : sur 45454 (valeur par defaut),
+        // chaque essai s'annoncait aux vrais postes du reseau local comme un
+        // nouveau poste (dizaines de postes fantomes chez eux).
+        m_app->setDiscoveryPort(nextPort());
         static int run = 0;
         m_app->initialize(nextPort(), m_dir.filePath(QStringLiteral("groupes-%1.db").arg(++run)),
                           QStringLiteral("SERVER"), -1, nextPort());

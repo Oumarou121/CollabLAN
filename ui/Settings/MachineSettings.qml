@@ -14,8 +14,8 @@ import "../Components/icons.js" as Icons
  *     puis Enregistrer / Annuler sur la ligne. Le setter est branche sur la
  *     decouverte (main.cpp) : on ne l'appelle qu'a l'enregistrement, pour
  *     qu'aucune annonce ne diffuse un nom a moitie tape.
- *   - Fichiers recus (defaultDownloadPath, vide = Documents/LocaLink
- *     Transfers) et dossier partage propose (defaultSharedFolderPath) :
+ *   - Fichiers recus (defaultDownloadPath, vide = ~/LocaLink/Fichiers reçus)
+ *     et dossier partage propose (defaultSharedFolderPath) :
  *     choisis par le selecteur de dossier, enregistres aussitot.
  */
 ColumnLayout {
@@ -29,8 +29,10 @@ ColumnLayout {
     property string savedKey: ""            // name | dl | share : ligne qui affiche « Enregistré »
     onSavedNameChanged: if (!nameField.field.activeFocus) { root.draftName = root.savedName; nameField.text = root.savedName }
 
-    // Dossier de reception par defaut de TransferService::receiveDirectory().
-    readonly property string defaultDownload: root.localPath(StandardPaths.writableLocation(StandardPaths.DocumentsLocation)) + "/LocaLink Transfers"
+    // Meme valeur que TransferService::receiveDirectory() (dossier personnel, hors Documents).
+    readonly property string defaultDownload: root.localPath(StandardPaths.writableLocation(StandardPaths.HomeLocation)) + "/LocaLink/Fichiers reçus"
+    // Dossiers partages recus : SharedFolderManager::previewDefaultLocalPath().
+    readonly property string receivedShares: root.localPath(StandardPaths.writableLocation(StandardPaths.HomeLocation)) + "/LocaLink/Dossiers partagés"
     readonly property string downloadPath: root.settings ? root.settings.defaultDownloadPath : ""
     readonly property string sharePath: root.settings ? root.settings.defaultSharedFolderPath : ""
 
@@ -179,6 +181,15 @@ ColumnLayout {
                 AppButton { variant: "line"; size: "small"; iconPath: Icons.folderOpen; text: root.sharePath.length ? qsTr("Changer…") : qsTr("Choisir…"); onClicked: shareDialog.open() }
                 SavedNote { visible: root.savedKey === "share"; height: 30 }
             }
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: 4
+                textFormat: Text.StyledText
+                text: qsTr("Les dossiers que d'autres postes partagent avec vous arrivent dans <b>%1</b>, un sous-dossier par partage (sauf si vous en choisissez un autre en l'acceptant).")
+                      .arg(root.nativePath(root.receivedShares))
+                wrapMode: Text.WordWrap
+                color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12)
+            }
         }
     }
 
@@ -191,7 +202,7 @@ ColumnLayout {
     FolderDialog {
         id: shareDialog
         title: qsTr("Emplacement proposé pour les dossiers partagés")
-        currentFolder: root.sharePath.length ? "file:///" + root.sharePath : StandardPaths.writableLocation(StandardPaths.DocumentsLocation)
+        currentFolder: root.sharePath.length ? "file:///" + root.sharePath : StandardPaths.writableLocation(StandardPaths.HomeLocation)
         onAccepted: { root.settings.defaultSharedFolderPath = root.localPath(selectedFolder); root.persist("share") }
     }
 }

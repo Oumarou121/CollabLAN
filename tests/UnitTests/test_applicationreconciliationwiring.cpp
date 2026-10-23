@@ -70,6 +70,9 @@ private slots:
 
         // --- Poste "officiel" : demarre Server, epoch 1. ---------------
         Application server;
+        // Jamais le port de decouverte reel (45454) : les vrais postes du reseau
+        // verraient sinon un poste fantome a chaque essai.
+        server.setDiscoveryPort(nextPort());
         server.initialize(serverMessagingPort, serverDir.filePath(QStringLiteral("server.db")),
                            QStringLiteral("SERVER"), -1, electionPort);
         QVERIFY(server.messagingServer()->isRunning());
@@ -85,6 +88,9 @@ private slots:
         // --- Poste "pair" : Client, timeout tres court -> election quasi
         // immediate faute de heartbeat recu du serveur officiel. -----------
         Application peer;
+        // Jamais le port de decouverte reel (45454) : les vrais postes du reseau
+        // verraient sinon un poste fantome a chaque essai.
+        peer.setDiscoveryPort(nextPort());
         peer.initialize(peerMessagingPort, peerDir.filePath(QStringLiteral("peer.db")),
                          QStringLiteral("CLIENT"), -1, electionPort);
         trustEachOther(server, peer);
@@ -138,6 +144,9 @@ private slots:
         // est deja plus eleve que celui du client qui sera promu temporaire.
         // C'est le cas qui etait bloque par le filtrage remoteEpoch < m_epoch.
         Application server;
+        // Jamais le port de decouverte reel (45454) : les vrais postes du reseau
+        // verraient sinon un poste fantome a chaque essai.
+        server.setDiscoveryPort(nextPort());
         server.initialize(serverMessagingPort, serverDir.filePath(QStringLiteral("server.db")),
                           QStringLiteral("SERVER"), -1, electionPort);
         server.electionService()->setInitialState(models::ServerRole::Server, 10);
@@ -149,6 +158,9 @@ private slots:
                                                &network::SyncService::reconciliationCompleted);
 
         Application peer;
+        // Jamais le port de decouverte reel (45454) : les vrais postes du reseau
+        // verraient sinon un poste fantome a chaque essai.
+        peer.setDiscoveryPort(nextPort());
         peer.initialize(peerMessagingPort, peerDir.filePath(QStringLiteral("peer.db")),
                         QStringLiteral("CLIENT"), -1, electionPort);
         trustEachOther(server, peer);

@@ -7,6 +7,7 @@
 #include <QVariantList>
 #include <QElapsedTimer>
 #include <QImage>
+#include <QHash>
 
 #include "Voice/VoiceService.h"
 
@@ -170,6 +171,7 @@ private:
     int m_screenFrameId = 0;
     int m_localFrameId = 0;
     QElapsedTimer m_localFrameAge;
+    QHash<QString, QImage> m_thumbnails;
 };
 
 } // namespace core

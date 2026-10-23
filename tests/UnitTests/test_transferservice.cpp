@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QCryptographicHash>
 #include <QRandomGenerator>
+#include <QStandardPaths>
 
 #include "Transfer/TransferService.h"
 #include "TestTlsIdentity.h"
@@ -52,6 +53,18 @@ private slots:
         QCOMPARE(service.port(), static_cast<quint16>(23460));
         service.stop();
         QVERIFY(!service.isRunning());
+    }
+
+    // Fichiers recus : ~/LocaLink/Fichiers reçus par defaut (hors de Documents,
+    // souvent synchronise par OneDrive) ; un dossier choisi le remplace.
+    void defaultReceiveDirectoryIsInHomeLocaLinkFolder()
+    {
+        TransferService service;
+        const QString home = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+        QCOMPARE(service.receiveDirectory(), home + QStringLiteral("/LocaLink/Fichiers reçus"));
+        QTemporaryDir chosen;
+        service.setReceiveDirectory(chosen.path());
+        QCOMPARE(service.receiveDirectory(), chosen.path());
     }
 
     void transferSmallFileWithoutCorruption()

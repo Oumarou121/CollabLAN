@@ -142,7 +142,7 @@ public:
     Q_INVOKABLE bool openFileLocation(const QString &filePath) const;
 
     /// Ouvre directement le dossier dans lequel LocaLink enregistre les
-    /// fichiers recus (par defaut "LocaLink Transfers" dans les documents
+    /// fichiers recus (par defaut "LocaLink/Fichiers reçus" dans le dossier personnel
     /// de l'utilisateur), independamment de tout transfert particulier.
     Q_INVOKABLE bool openDownloadsFolder() const;
 

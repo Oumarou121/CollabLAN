@@ -27,6 +27,9 @@ class TestAuthorizedPeers : public QObject
     void startApplication(const QString &role = QStringLiteral("CLIENT"))
     {
         m_app = std::make_unique<Application>();
+        // Jamais le port de decouverte reel (45454) : les vrais postes du reseau
+        // verraient sinon un poste fantome a chaque essai.
+        m_app->setDiscoveryPort(nextPort());
         static int run = 0;
         m_app->initialize(nextPort(), m_dir.filePath(QStringLiteral("pairs-%1.db").arg(++run)),
                           role, -1, nextPort());

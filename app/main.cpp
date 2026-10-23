@@ -459,7 +459,7 @@ int main(int argc, char *argv[])
     // CORRECTIF : defaultDownloadPath restait une simple valeur d'affichage
     // dans SettingsView.qml, jamais consommee par le reseau -- les fichiers
     // recus continuaient d'atterrir dans le repertoire par defaut de
-    // TransferService (~/Documents/LocaLink Transfers) quel que soit le
+    // TransferService (~/LocaLink/Fichiers reçus) quel que soit le
     // reglage. On applique la valeur persistee au demarrage, puis on
     // repercute tout changement ulterieur (ecran Parametres) en temps reel.
     if (application.transferService() && !settingsModel->defaultDownloadPath().isEmpty()) {

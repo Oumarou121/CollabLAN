@@ -255,13 +255,19 @@ QImage CallContext::localScreen() const
 
 QImage CallContext::sourceThumbnail(const QString &sourceId) const
 {
-    return m_capture->thumbnail(sourceId, 320);
+    // Apercus pris par shareSources() : QScreen::grabWindow ne doit etre
+    // appele que sur le fil de l interface (sous X11 notamment), jamais depuis
+    // le fil de chargement des images.
+    return m_thumbnails.value(sourceId);
 }
 
 QVariantList CallContext::shareSources()
 {
     QVariantList list;
+    m_thumbnails.clear();
     for (const ScreenCapture::Source &source : m_capture->sources()) {
+        if (source.kind == QLatin1String("screen"))
+            m_thumbnails.insert(source.id, m_capture->thumbnail(source.id, 320));
         QVariantMap entry;
         entry[QStringLiteral("id")] = source.id;
         entry[QStringLiteral("kind")] = source.kind;

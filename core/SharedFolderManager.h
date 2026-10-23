@@ -228,7 +228,7 @@ public:
     /// devaient nettoyer le vrai dossier Documents de la machine avant/après
     /// chaque exécution, ce qui supprimait les vrais dossiers/fichiers
     /// partagés de l'utilisateur à chaque `ctest`. Chaîne vide (défaut) =
-    /// comportement normal (vrai Documents/LocaLink Shared Folders).
+    /// comportement normal (vrai ~/LocaLink/Dossiers partagés).
     void setSharedFoldersBaseDirOverrideForTests(const QString &baseDir);
 
     /// Met a jour les motifs d'exclusion (debrief point #4, sync

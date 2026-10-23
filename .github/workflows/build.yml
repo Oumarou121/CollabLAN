@@ -42,9 +42,9 @@ jobs:
           MACOS='{"os":"macos-latest","key":"macos","artifact_name":"LocaLink-macos"}'
 
           # Lancement manuel : la plateforme choisie. Push / pull request :
-          # DEFAULT_TARGET ci-dessous (« linux » pour l'instant ; remettre
-          # « all » pour compiler a nouveau les trois plateformes).
-          DEFAULT_TARGET="linux"
+          # DEFAULT_TARGET ci-dessous : les trois plateformes (« linux »,
+          # « windows » ou « macos » pour n'en compiler qu'une).
+          DEFAULT_TARGET="all"
           TARGET="${{ github.event.inputs.target }}"
           TARGET="${TARGET:-$DEFAULT_TARGET}"
 
