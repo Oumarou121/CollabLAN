@@ -7,8 +7,8 @@
 #include <QSslCertificate>
 #include <QSslConfiguration>
 #include <QSslKey>
-#include <QSslCertificate>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDebug>
@@ -30,6 +30,8 @@ QString typeToString(SignalingMessageType type)
     case SignalingMessageType::Answer:       return QStringLiteral("call-answer");
     case SignalingMessageType::IceCandidate: return QStringLiteral("ice-candidate");
     case SignalingMessageType::Hangup:       return QStringLiteral("call-hangup");
+    case SignalingMessageType::Roster:       return QStringLiteral("call-roster");
+    case SignalingMessageType::State:        return QStringLiteral("call-state");
     case SignalingMessageType::Unknown:      break;
     }
     return QStringLiteral("unknown");
@@ -41,7 +43,33 @@ SignalingMessageType typeFromString(const QString &type)
     if (type == QStringLiteral("call-answer"))  return SignalingMessageType::Answer;
     if (type == QStringLiteral("ice-candidate")) return SignalingMessageType::IceCandidate;
     if (type == QStringLiteral("call-hangup"))  return SignalingMessageType::Hangup;
+    if (type == QStringLiteral("call-roster"))  return SignalingMessageType::Roster;
+    if (type == QStringLiteral("call-state"))   return SignalingMessageType::State;
     return SignalingMessageType::Unknown;
+}
+
+// Certificat et cle du poste, communs aux liaisons sortantes et a l'ecoute.
+QSslConfiguration localSslConfiguration(SecurityService *securityService)
+{
+    QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
+    const QByteArray certPem = securityService->certificatePem();
+    if (!certPem.isEmpty()) {
+        QSslCertificate localCert(certPem, QSsl::Pem);
+        if (!localCert.isNull())
+            sslConfig.setLocalCertificate(localCert);
+    }
+    QFile keyFile(securityService->privateKeyPath());
+    if (keyFile.open(QIODevice::ReadOnly)) {
+        QSslKey privateKey(keyFile.readAll(), QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+        if (!privateKey.isNull())
+            sslConfig.setPrivateKey(privateKey);
+    }
+    // Postes P2P a certificats auto-signes : chiffrement actif, verification
+    // d'autorite desactivee ; QueryPeer demande le certificat du pair, dont
+    // l'empreinte est ensuite comparee aux machines autorisees.
+    sslConfig.setPeerVerifyMode(QSslSocket::QueryPeer);
+    sslConfig.setProtocol(QSsl::TlsV1_2OrLater);
+    return sslConfig;
 }
 
 } // namespace
@@ -50,14 +78,6 @@ VoiceSignalingChannel::VoiceSignalingChannel(SecurityService *securityService, Q
     : QObject(parent)
     , m_securityService(securityService)
 {
-    m_outgoingSocket = new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this);
-    connect(m_outgoingSocket, &QWebSocket::connected, this, &VoiceSignalingChannel::onClientConnected);
-    connect(m_outgoingSocket, &QWebSocket::disconnected, this, &VoiceSignalingChannel::onClientDisconnected);
-    connect(m_outgoingSocket, &QWebSocket::textMessageReceived, this, &VoiceSignalingChannel::onTextMessageReceived);
-    connect(m_outgoingSocket, &QWebSocket::sslErrors, this, &VoiceSignalingChannel::onSslErrors);
-
-    configureClientSsl();
-
     m_server = new QWebSocketServer(QStringLiteral("LocaLink-VoiceSignaling"),
                                      QWebSocketServer::SecureMode, this);
     connect(m_server, &QWebSocketServer::newConnection, this, &VoiceSignalingChannel::onServerNewConnection);
@@ -66,43 +86,16 @@ VoiceSignalingChannel::VoiceSignalingChannel(SecurityService *securityService, Q
 VoiceSignalingChannel::~VoiceSignalingChannel()
 {
     stopListening();
-    disconnectFromPeer();
+    closeAllLinks();
 }
 
-void VoiceSignalingChannel::configureClientSsl()
+void VoiceSignalingChannel::configureClientSsl(QWebSocket *socket) const
 {
     if (!m_securityService || !m_securityService->isReady()) {
         qWarning() << "VoiceSignalingChannel: SecurityService non pret, TLS non configure";
         return;
     }
-
-    QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
-
-    const QByteArray certPem = m_securityService->certificatePem();
-    if (!certPem.isEmpty()) {
-        QSslCertificate localCert(certPem, QSsl::Pem);
-        if (!localCert.isNull()) {
-            sslConfig.setLocalCertificate(localCert);
-        }
-    }
-
-    QFile keyFile(m_securityService->privateKeyPath());
-    if (keyFile.open(QIODevice::ReadOnly)) {
-        const QByteArray keyData = keyFile.readAll();
-        keyFile.close();
-        QSslKey privateKey(keyData, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-        if (!privateKey.isNull()) {
-            sslConfig.setPrivateKey(privateKey);
-        }
-    }
-
-    // Postes P2P a certificats auto-signes : chiffrement actif, verification
-    // d'autorite desactivee (voir MessagingService::configureSsl pour le
-    // meme choix applique a la messagerie texte).
-    sslConfig.setPeerVerifyMode(QSslSocket::QueryPeer);
-    sslConfig.setProtocol(QSsl::TlsV1_2OrLater);
-
-    m_outgoingSocket->setSslConfiguration(sslConfig);
+    socket->setSslConfiguration(localSslConfiguration(m_securityService));
 }
 
 bool VoiceSignalingChannel::listen(quint16 port)
@@ -112,25 +105,11 @@ bool VoiceSignalingChannel::listen(quint16 port)
         return false;
     }
 
-    QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
-    const QByteArray certPem = m_securityService->certificatePem();
-    if (!certPem.isEmpty()) {
-        QSslCertificate localCert(certPem, QSsl::Pem);
-        sslConfig.setLocalCertificate(localCert);
-    }
-    QFile keyFile(m_securityService->privateKeyPath());
-    if (keyFile.open(QIODevice::ReadOnly)) {
-        QSslKey privateKey(keyFile.readAll(), QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-        sslConfig.setPrivateKey(privateKey);
-        keyFile.close();
-    }
     // QueryPeer : le certificat de l'appelant est DEMANDE (auto-signe, donc pas de verification
     // d'autorite), puis son empreinte est comparee a la liste des machines autorisees.
     // Avec VerifyNone, aucun certificat client n'etait demande et l'autorisation reposait sur une
     // empreinte simplement annoncee dans la signalisation, recopiable depuis la decouverte UDP.
-    sslConfig.setPeerVerifyMode(QSslSocket::QueryPeer);
-    sslConfig.setProtocol(QSsl::TlsV1_2OrLater);
-    m_server->setSslConfiguration(sslConfig);
+    m_server->setSslConfiguration(localSslConfiguration(m_securityService));
 
     if (!m_server->listen(QHostAddress::AnyIPv4, port)) {
         emit error(QStringLiteral("Impossible d'ecouter les appels entrants sur le port %1 : %2")
@@ -144,11 +123,6 @@ bool VoiceSignalingChannel::listen(quint16 port)
 
 void VoiceSignalingChannel::stopListening()
 {
-    if (m_incomingSocket) {
-        m_incomingSocket->close();
-        m_incomingSocket->deleteLater();
-        m_incomingSocket = nullptr;
-    }
     if (m_server && m_server->isListening()) {
         m_server->close();
     }
@@ -164,116 +138,90 @@ quint16 VoiceSignalingChannel::listenPort() const
     return m_server ? m_server->serverPort() : 0;
 }
 
-bool VoiceSignalingChannel::connectToPeer(const QHostAddress &address, quint16 port)
+int VoiceSignalingChannel::linkOf(const QWebSocket *socket) const
+{
+    for (auto it = m_links.constBegin(); it != m_links.constEnd(); ++it) {
+        if (it->socket == socket)
+            return it.key();
+    }
+    return 0;
+}
+
+int VoiceSignalingChannel::connectToPeer(const QHostAddress &address, quint16 port)
 {
     if (!m_securityService || !m_securityService->isReady()) {
         emit error(QStringLiteral("SecurityService non pret pour la signalisation d'appel"));
-        return false;
+        return 0;
     }
-    if (m_outgoingConnected) {
-        qWarning() << "VoiceSignalingChannel: deja connecte, deconnexion prealable requise";
-        return false;
-    }
+
+    const int linkId = m_nextLinkId++;
+    auto *socket = new QWebSocket(QString(), QWebSocketProtocol::VersionLatest, this);
+    configureClientSsl(socket);
+    m_links.insert(linkId, Link{socket, true, false});
+
+    connect(socket, &QWebSocket::connected, this, [this, linkId]() { onOutgoingConnected(linkId); });
+    connect(socket, &QWebSocket::disconnected, this, [this, linkId]() { onSocketClosed(linkId); });
+    connect(socket, &QWebSocket::textMessageReceived, this,
+            [this, linkId](const QString &message) { onTextMessage(linkId, message); });
+    connect(socket, &QWebSocket::sslErrors, this, [socket](const QList<QSslError> &errors) {
+        // Meme politique que MessagingService : certificats auto-signes en LAN
+        // (l'IP sert a se connecter, pas le CN) ; l'identite est verifiee
+        // ensuite par l'empreinte du certificat (onOutgoingConnected).
+        bool onlyHostnameMismatch = true;
+        for (const QSslError &e : errors) {
+            if (e.error() != QSslError::HostNameMismatch && e.error() != QSslError::SelfSignedCertificate)
+                onlyHostnameMismatch = false;
+        }
+        if (!onlyHostnameMismatch) {
+            for (const QSslError &e : errors)
+                qWarning() << "VoiceSignalingChannel: erreur SSL -" << e.errorString();
+        }
+        socket->ignoreSslErrors();
+    });
 
     const QString url = QStringLiteral("wss://%1:%2").arg(address.toString()).arg(port);
-    qDebug() << "VoiceSignalingChannel: tentative de connexion a" << url;
-    m_outgoingSocket->open(QUrl(url));
-    return true;
+    qDebug() << "VoiceSignalingChannel: liaison" << linkId << "vers" << url;
+    socket->open(QUrl(url));
+    return linkId;
 }
 
-void VoiceSignalingChannel::disconnectFromPeer()
+void VoiceSignalingChannel::onOutgoingConnected(int linkId)
 {
-    if (m_outgoingSocket) {
-        m_outgoingSocket->close();
-    }
-}
-
-bool VoiceSignalingChannel::isConnected() const
-{
-    return m_outgoingConnected || m_incomingSocket != nullptr;
-}
-
-bool VoiceSignalingChannel::sendJson(const QString &type, const QString &sdp, const QString &candidate,
-                                      const QString &mid, const QString &callId,
-                                      const QString &reason)
-{
-    QWebSocket *targetSocket = nullptr;
-    if (m_outgoingConnected) {
-        targetSocket = m_outgoingSocket;
-    } else if (m_incomingSocket) {
-        targetSocket = m_incomingSocket;
-    }
-
-    return sendJsonToSocket(targetSocket, type, sdp, candidate, mid, callId, reason);
-}
-
-bool VoiceSignalingChannel::sendJsonToSocket(QWebSocket *socket, const QString &type,
-                                              const QString &sdp, const QString &candidate,
-                                              const QString &mid, const QString &callId,
-                                              const QString &reason)
-{
-    if (!socket) {
-        qWarning() << "VoiceSignalingChannel: aucun canal ouvert pour envoyer" << type;
-        return false;
-    }
-
-    QJsonObject obj;
-    obj[QStringLiteral("type")] = type;
-    if (!sdp.isEmpty())       obj[QStringLiteral("sdp")] = sdp;
-    if (!candidate.isEmpty()) obj[QStringLiteral("candidate")] = candidate;
-    if (!mid.isEmpty())       obj[QStringLiteral("mid")] = mid;
-    obj[QStringLiteral("callId")] = callId;
-    if (!reason.isEmpty())    obj[QStringLiteral("reason")] = reason;
-    if (m_securityService && m_securityService->isReady()) {
-        const QString localFingerprint = m_securityService->identity().fingerprintSha256.toLower();
-        if (!localFingerprint.isEmpty()) {
-            obj[QStringLiteral("certificate_fingerprint")] = localFingerprint;
+    const auto it = m_links.find(linkId);
+    if (it == m_links.end())
+        return;
+    QWebSocket *socket = it->socket;
+    const QString verifiedFingerprint = SecurityService::certificateFingerprint(
+        socket->sslConfiguration().peerCertificate());
+    if (m_permissionManager) {
+        bool authorized = false;
+        // Un appel direct peut viser un client autorise (ici ou par le serveur
+        // actif) ou le serveur deja approuve ; trustRemoteServerCertificate
+        // n'est consulte qu'en repli.
+        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedOrTrustedServer",
+                                  Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                  Q_ARG(QString, verifiedFingerprint));
+        if (!authorized) {
+            QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
+                                      Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
+                                      Q_ARG(QString, verifiedFingerprint),
+                                      Q_ARG(QString, canonicalAddress(socket->peerAddress()).toString()));
+        }
+        if (!authorized) {
+            emit error(QStringLiteral("Appel refusé : certificat distant non autorisé"));
+            socket->close();
+            return;
         }
     }
-
-    const QString json = QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
-
-    return socket->sendTextMessage(json) >= 0;
-}
-
-bool VoiceSignalingChannel::sendOffer(const QString &sdp, const QString &callId)
-{
-    return sendJson(typeToString(SignalingMessageType::Offer), sdp, QString(), QString(), callId);
-}
-
-bool VoiceSignalingChannel::sendAnswer(const QString &sdp, const QString &callId)
-{
-    return sendJson(typeToString(SignalingMessageType::Answer), sdp, QString(), QString(), callId);
-}
-
-bool VoiceSignalingChannel::sendIceCandidate(const QString &candidate, const QString &mid, const QString &callId)
-{
-    return sendJson(typeToString(SignalingMessageType::IceCandidate), QString(), candidate, mid, callId);
-}
-
-bool VoiceSignalingChannel::sendHangup(const QString &callId, const QString &reason)
-{
-    return sendJson(typeToString(SignalingMessageType::Hangup), QString(), QString(), QString(), callId, reason);
-}
-
-bool VoiceSignalingChannel::sendHangupToPeer(const QHostAddress &peerAddress,
-                                              const QString &callId, const QString &reason)
-{
-    QWebSocket *targetSocket = nullptr;
-    if (m_incomingSocket && canonicalAddress(m_incomingSocket->peerAddress()).isEqual(peerAddress,
-                                                                      QHostAddress::TolerantConversion)) {
-        targetSocket = m_incomingSocket;
-    } else if (m_outgoingConnected && canonicalAddress(m_outgoingSocket->peerAddress()).isEqual(
-                   peerAddress, QHostAddress::TolerantConversion)) {
-        targetSocket = m_outgoingSocket;
-    }
-
-    if (targetSocket == m_incomingSocket && reason == QStringLiteral("busy")) {
-        targetSocket->setProperty("voiceBusyRejected", true);
-    }
-
-    return sendJsonToSocket(targetSocket, typeToString(SignalingMessageType::Hangup),
-                            QString(), QString(), QString(), callId, reason);
+    qDebug() << "VoiceSignalingChannel: liaison" << linkId << "connectee a" << socket->peerAddress();
+    it->ready = true;
+    const QHostAddress peer = canonicalAddress(socket->peerAddress());
+    // Emis apres le retour au boucle d'evenements : l'appelant de
+    // connectToPeer() a enregistre la liaison avant d'en etre notifie.
+    QMetaObject::invokeMethod(this, [this, linkId, peer]() {
+        if (m_links.contains(linkId))
+            emit peerConnected(linkId, peer);
+    }, Qt::QueuedConnection);
 }
 
 void VoiceSignalingChannel::onServerNewConnection()
@@ -287,9 +235,6 @@ void VoiceSignalingChannel::onServerNewConnection()
 
     const QString fingerprint = SecurityService::certificateFingerprint(
         socket->sslConfiguration().peerCertificate());
-    qDebug() << "VoiceSignalingChannel: empreinte certificat entrant"
-             << (fingerprint.isEmpty() ? QStringLiteral("<vide>") : fingerprint);
-    bool tlsAuthorized = !m_permissionManager;
     if (m_permissionManager && fingerprint.isEmpty()) {
         // Pas de certificat client : identite non prouvee, appel refuse.
         qWarning() << "VoiceSignalingChannel: appel refuse, aucun certificat presente par" << socket->peerAddress();
@@ -298,8 +243,8 @@ void VoiceSignalingChannel::onServerNewConnection()
         emit error(QStringLiteral("Appel refusé : certificat distant absent"));
         return;
     }
-    if (m_permissionManager && !fingerprint.isEmpty()) {
-        bool authorized = tlsAuthorized;
+    if (m_permissionManager) {
+        bool authorized = false;
         // Un client appele par son serveur : ce serveur n'est pas une machine
         // autorisee de la liste locale, mais un serveur approuve (TrustedServers).
         // Meme regle que MessagingServer ; la verification ne cree aucune
@@ -308,119 +253,131 @@ void VoiceSignalingChannel::onServerNewConnection()
                                   Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                   Q_ARG(QString, fingerprint));
         if (!authorized) {
-            if (!fingerprint.isEmpty()) {
-                QMetaObject::invokeMethod(m_permissionManager, "registerPendingMachineByCertificate",
-                                          Qt::DirectConnection, Q_ARG(QString, fingerprint),
-                                          Q_ARG(QString, canonicalAddress(socket->peerAddress()).toString()),
-                                          Q_ARG(QString, QString()));
-            }
+            QMetaObject::invokeMethod(m_permissionManager, "registerPendingMachineByCertificate",
+                                      Qt::DirectConnection, Q_ARG(QString, fingerprint),
+                                      Q_ARG(QString, canonicalAddress(socket->peerAddress()).toString()),
+                                      Q_ARG(QString, QString()));
             socket->close();
             socket->deleteLater();
             emit error(QStringLiteral("Appel refusé : certificat distant non autorisé"));
             return;
         }
-        // Identite prouvee par TLS et machine autorisee : l'empreinte annoncee plus tard dans
-        // la signalisation n'est plus consultee pour cette connexion.
-        tlsAuthorized = true;
         QMetaObject::invokeMethod(m_permissionManager, "recordMachineSeen",
                                   Qt::DirectConnection, Q_ARG(QString, fingerprint),
                                   Q_ARG(QString, canonicalAddress(socket->peerAddress()).toString()));
     }
 
-    if (m_incomingSocket) {
-        // Un seul appel entrant gere a la fois : on refuse les suivants.
-        qWarning() << "VoiceSignalingChannel: appel entrant refuse (session deja active)";
-        QJsonObject busyMessage;
-        busyMessage[QStringLiteral("type")] = typeToString(SignalingMessageType::Hangup);
-        busyMessage[QStringLiteral("reason")] = QStringLiteral("busy");
-        socket->sendTextMessage(QString::fromUtf8(
-            QJsonDocument(busyMessage).toJson(QJsonDocument::Compact)));
-        socket->close();
-        socket->deleteLater();
-        return;
-    }
-
-    m_incomingSocket = socket;
-    m_incomingSocket->setProperty("voiceAuthorized", tlsAuthorized);
-    m_incomingSocket->setProperty("voicePeerConnectedEmitted", tlsAuthorized);
-    connect(m_incomingSocket, &QWebSocket::textMessageReceived, this, &VoiceSignalingChannel::onTextMessageReceived);
-    QWebSocket *incomingSocket = m_incomingSocket;
-    connect(incomingSocket, &QWebSocket::disconnected, this, [this, incomingSocket]() {
-        const bool busyRejected = incomingSocket->property("voiceBusyRejected").toBool();
-        qDebug() << "VoiceSignalingChannel: socket entrant deconnecte, erreur:"
-                 << incomingSocket->errorString()
-                 << "busyRejected:" << busyRejected;
-        if (!busyRejected) {
-            emit peerDisconnected();
-        }
-        if (m_incomingSocket == incomingSocket) {
-            incomingSocket->deleteLater();
-            m_incomingSocket = nullptr;
-        }
-    });
-    connect(incomingSocket, &QWebSocket::errorOccurred, this, [incomingSocket](QAbstractSocket::SocketError error) {
-        qDebug() << "VoiceSignalingChannel: erreur socket entrant:" << error << incomingSocket->errorString();
-    });
-    connect(incomingSocket, &QWebSocket::sslErrors, this, [this](const QList<QSslError> &errors) {
-        qDebug() << "VoiceSignalingChannel: erreurs SSL sur socket entrant (" << errors.size() << "):";
-        for (const QSslError &e : errors) {
-            qDebug() << "  -" << e.errorString();
-        }
-        m_incomingSocket->ignoreSslErrors();
+    // Identite prouvee par TLS et machine autorisee : la liaison est prete.
+    // Qu'un appel soit deja en cours n'est pas decide ici : VoiceService
+    // repond « occupe » a une offre etrangere, mais accueille un membre de
+    // l'appel en cours (appel de groupe).
+    const int linkId = m_nextLinkId++;
+    m_links.insert(linkId, Link{socket, false, true});
+    socket->setParent(this);
+    connect(socket, &QWebSocket::disconnected, this, [this, linkId]() { onSocketClosed(linkId); });
+    connect(socket, &QWebSocket::textMessageReceived, this,
+            [this, linkId](const QString &message) { onTextMessage(linkId, message); });
+    connect(socket, &QWebSocket::sslErrors, this, [socket](const QList<QSslError> &) {
+        socket->ignoreSslErrors();
     });
 
-    if (tlsAuthorized) {
-        // Emettre peerConnected dans le thread principal pour eviter les problemes de thread
-        QMetaObject::invokeMethod(this, [this, socket]() {
-            emit peerConnected(canonicalAddress(socket->peerAddress()));
-        }, Qt::QueuedConnection);
-    } else {
-        qDebug() << "VoiceSignalingChannel: attente de l'empreinte annoncee par le message de signalisation";
-    }
-}
-
-void VoiceSignalingChannel::onClientConnected()
-{
-    const QString verifiedFingerprint = SecurityService::certificateFingerprint(
-        m_outgoingSocket->sslConfiguration().peerCertificate());
-    if (m_permissionManager) {
-        bool authorized = false;
-        // Un appel direct peut viser un client autorise (ici ou par le serveur
-        // actif) ou le serveur deja approuve ; trustRemoteServerCertificate
-        // n'est consulte qu'en repli.
-        QMetaObject::invokeMethod(m_permissionManager, "isMachineAuthorizedOrTrustedServer",
-                                  Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
-                                  Q_ARG(QString, verifiedFingerprint));
-        if (!authorized) {
-            QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
-                                      Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
-                                      Q_ARG(QString, verifiedFingerprint),
-                                      Q_ARG(QString, canonicalAddress(m_outgoingSocket->peerAddress()).toString()));
-        }
-        if (!authorized) {
-            m_outgoingSocket->close();
-            emit error(QStringLiteral("Appel refusé : certificat distant non autorisé"));
-            return;
-        }
-    }
-    qDebug() << "VoiceSignalingChannel: client connecte a" << m_outgoingSocket->peerAddress();
-    m_outgoingConnected = true;
-    // Emettre peerConnected dans le thread principal pour eviter les problemes de thread
-    QMetaObject::invokeMethod(this, [this]() {
-        emit peerConnected(canonicalAddress(m_outgoingSocket->peerAddress()));
+    const QHostAddress peer = canonicalAddress(socket->peerAddress());
+    QMetaObject::invokeMethod(this, [this, linkId, peer]() {
+        if (m_links.contains(linkId))
+            emit peerConnected(linkId, peer);
     }, Qt::QueuedConnection);
 }
 
-void VoiceSignalingChannel::onClientDisconnected()
+void VoiceSignalingChannel::onSocketClosed(int linkId)
 {
-    m_outgoingConnected = false;
-    emit peerDisconnected();
+    const auto it = m_links.find(linkId);
+    if (it == m_links.end())
+        return;
+    QWebSocket *socket = it->socket;
+    m_links.erase(it);
+    socket->deleteLater();
+    emit peerDisconnected(linkId);
 }
 
-void VoiceSignalingChannel::onTextMessageReceived(const QString &message)
+void VoiceSignalingChannel::closeLink(int linkId)
 {
-    auto *socket = qobject_cast<QWebSocket *>(sender());
-    const QHostAddress peerAddress = socket ? canonicalAddress(socket->peerAddress()) : QHostAddress();
+    const auto it = m_links.find(linkId);
+    if (it == m_links.end())
+        return;
+    QWebSocket *socket = it->socket;
+    // Retiree avant close() : la fermeture voulue ne remonte pas en
+    // peerDisconnected (VoiceService a deja oublie ce participant).
+    m_links.erase(it);
+    socket->disconnect(this);
+    socket->close();
+    socket->deleteLater();
+}
+
+void VoiceSignalingChannel::closeAllLinks()
+{
+    const QList<int> ids = m_links.keys();
+    for (int id : ids)
+        closeLink(id);
+}
+
+bool VoiceSignalingChannel::isLinkOpen(int linkId) const
+{
+    const auto it = m_links.constFind(linkId);
+    return it != m_links.constEnd() && it->ready;
+}
+
+QString VoiceSignalingChannel::serialize(const SignalingMessage &message, const QString &localFingerprint)
+{
+    QJsonObject obj;
+    obj[QStringLiteral("type")] = typeToString(message.type);
+    if (!message.sdp.isEmpty())       obj[QStringLiteral("sdp")] = message.sdp;
+    if (!message.candidate.isEmpty()) obj[QStringLiteral("candidate")] = message.candidate;
+    if (!message.mid.isEmpty())       obj[QStringLiteral("mid")] = message.mid;
+    obj[QStringLiteral("callId")] = message.callId;
+    if (!message.reason.isEmpty())    obj[QStringLiteral("reason")] = message.reason;
+    if (message.signalingPort > 0)    obj[QStringLiteral("port")] = message.signalingPort;
+    if (message.group)                obj[QStringLiteral("group")] = true;
+    if (message.mesh)                 obj[QStringLiteral("mesh")] = true;
+    if (message.type == SignalingMessageType::State)
+        obj[QStringLiteral("muted")] = message.muted;
+    if (!message.roster.isEmpty()) {
+        QJsonArray roster;
+        for (const SignalingRosterEntry &entry : message.roster) {
+            QJsonObject e;
+            e[QStringLiteral("address")] = entry.address;
+            e[QStringLiteral("port")] = entry.port;
+            roster.append(e);
+        }
+        obj[QStringLiteral("roster")] = roster;
+    }
+    if (!localFingerprint.isEmpty())
+        obj[QStringLiteral("certificate_fingerprint")] = localFingerprint;
+    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
+bool VoiceSignalingChannel::send(int linkId, const SignalingMessage &message)
+{
+    const auto it = m_links.constFind(linkId);
+    if (it == m_links.constEnd() || !it->ready) {
+        qWarning() << "VoiceSignalingChannel: liaison" << linkId << "fermee, message"
+                   << typeToString(message.type) << "non envoye";
+        return false;
+    }
+    QString fingerprint;
+    if (m_securityService && m_securityService->isReady())
+        fingerprint = m_securityService->identity().fingerprintSha256.toLower();
+    return it->socket->sendTextMessage(serialize(message, fingerprint)) >= 0;
+}
+
+void VoiceSignalingChannel::onTextMessage(int linkId, const QString &message)
+{
+    const auto it = m_links.constFind(linkId);
+    if (it == m_links.constEnd() || !it->ready) {
+        // Liaison sortante dont le poste n'a pas (encore) ete reconnu : rien
+        // n'est accepte avant la verification de son certificat.
+        return;
+    }
+    const QHostAddress peerAddress = canonicalAddress(it->socket->peerAddress());
 
     const SignalingMessage parsed = parseMessage(message);
     if (parsed.type == SignalingMessageType::Unknown) {
@@ -428,38 +385,7 @@ void VoiceSignalingChannel::onTextMessageReceived(const QString &message)
         return;
     }
 
-    if (socket == m_incomingSocket && !socket->property("voiceAuthorized").toBool()) {
-        // Ne devrait jamais arriver : une connexion entrante n'est conservee qu'apres verification
-        // du certificat TLS (onNewConnection). L'empreinte annoncee dans la signalisation n'est
-        // pas une preuve d'identite : on refuse au lieu de s'y fier.
-        qWarning() << "VoiceSignalingChannel: message ignore, connexion non authentifiee par TLS" << peerAddress;
-        socket->close();
-        return;
-    }
-
-    emit messageReceived(parsed, peerAddress);
-}
-
-void VoiceSignalingChannel::onSslErrors(const QList<QSslError> &errors)
-{
-    qDebug() << "VoiceSignalingChannel: erreurs SSL (" << errors.size() << "):";
-    bool hasHostnameMismatch = false;
-    for (const QSslError &e : errors) {
-        qDebug() << "  -" << e.errorString();
-        if (e.error() == QSslError::HostNameMismatch) {
-            hasHostnameMismatch = true;
-        }
-    }
-
-    // Meme politique que MessagingService : certificats auto-signes en LAN,
-    // on ignore uniquement le mismatch de hostname (l'IP est utilisee pour
-    // se connecter, pas le CN du certificat).
-    m_outgoingSocket->ignoreSslErrors();
-    if (!hasHostnameMismatch || errors.size() > 1) {
-        for (const QSslError &e : errors) {
-            qWarning() << "VoiceSignalingChannel: erreur SSL -" << e.errorString();
-        }
-    }
+    emit messageReceived(linkId, parsed, peerAddress);
 }
 
 SignalingMessage VoiceSignalingChannel::parseMessage(const QString &json)
@@ -479,6 +405,22 @@ SignalingMessage VoiceSignalingChannel::parseMessage(const QString &json)
     msg.callId = obj.value(QStringLiteral("callId")).toString();
     msg.reason = obj.value(QStringLiteral("reason")).toString();
     msg.certificateFingerprint = obj.value(QStringLiteral("certificate_fingerprint")).toString().toLower();
+    const int port = obj.value(QStringLiteral("port")).toInt();
+    msg.signalingPort = port > 0 && port <= 65535 ? static_cast<quint16>(port) : 0;
+    msg.group = obj.value(QStringLiteral("group")).toBool();
+    msg.mesh = obj.value(QStringLiteral("mesh")).toBool();
+    msg.muted = obj.value(QStringLiteral("muted")).toBool();
+    const QJsonArray roster = obj.value(QStringLiteral("roster")).toArray();
+    // Un appel de groupe compte 4 personnes au plus : une liste plus longue
+    // est tronquee plutot que de faire ouvrir des dizaines de liaisons.
+    for (int i = 0; i < roster.size() && i < 8; ++i) {
+        const QJsonObject e = roster.at(i).toObject();
+        const QHostAddress address(e.value(QStringLiteral("address")).toString());
+        const int entryPort = e.value(QStringLiteral("port")).toInt();
+        if (address.isNull() || entryPort <= 0 || entryPort > 65535)
+            continue;
+        msg.roster.append({canonicalAddress(address).toString(), static_cast<quint16>(entryPort)});
+    }
 
     return msg;
 }

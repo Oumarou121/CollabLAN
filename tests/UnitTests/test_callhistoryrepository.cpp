@@ -179,6 +179,20 @@ private slots:
         QVERIFY(repo.remove(id));
         QVERIFY(!repo.findById(id).has_value());
     }
+
+    // Appel de groupe (migration 040) : une ligne, toutes les personnes.
+    void testParticipantsRoundTrip()
+    {
+        database::CallHistoryRepository repo(m_dbManager->database());
+        const int duo = repo.create(makeEntry(models::CallDirection::Outgoing, QStringLiteral("192.168.1.50")));
+        QVERIFY(duo >= 0);
+        QVERIFY(repo.findById(duo)->participants().isEmpty());
+
+        const QStringList group{QStringLiteral("192.168.1.50"), QStringLiteral("192.168.1.51"),
+                                QStringLiteral("192.168.1.52")};
+        QVERIFY(repo.setParticipants(duo, group));
+        QCOMPARE(repo.findById(duo)->participants(), group);
+    }
 };
 
 QTEST_MAIN(TestCallHistoryRepository)

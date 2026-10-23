@@ -191,6 +191,12 @@ void CallHistoryManager::onCallEnded(const QString &reason)
     }
 
     m_repository.markEnded(id, status, endedAt, durationSeconds);
+    // Appel de groupe : une seule ligne pour toutes les personnes de l'appel.
+    if (m_voiceService) {
+        const QStringList participants = m_voiceService->callParticipantAddresses();
+        if (!participants.isEmpty())
+            m_repository.setParticipants(id, participants);
+    }
     resetActiveState();
 
     emit callFinalized(id, status);

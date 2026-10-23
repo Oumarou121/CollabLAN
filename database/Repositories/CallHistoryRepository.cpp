@@ -16,6 +16,13 @@ QVariant dateTimeToVariant(const QDateTime &dt)
     return dt.toUTC().toString(Qt::ISODateWithMs);
 }
 
+// Jamais NULL (colonne NOT NULL) : join() d'une liste vide rend une chaine nulle.
+QString joinedParticipants(const QStringList &participants)
+{
+    const QString joined = participants.join(QLatin1Char(','));
+    return joined.isNull() ? QString(QLatin1String("")) : joined;
+}
+
 QDateTime variantToDateTime(const QVariant &value)
 {
     if (!value.isValid() || value.isNull())
@@ -47,8 +54,9 @@ int CallHistoryRepository::create(const models::CallHistoryEntry &entry)
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
         "INSERT INTO CallHistory (call_uuid, local_user_id, direction, peer_address, peer_name, "
-        "status, started_at) "
-        "VALUES (:callUuid, :localUserId, :direction, :peerAddress, :peerName, :status, :startedAt)"));
+        "status, started_at, participants) "
+        "VALUES (:callUuid, :localUserId, :direction, :peerAddress, :peerName, :status, :startedAt, "
+        ":participants)"));
 
     query.bindValue(QStringLiteral(":callUuid"),
                      entry.callUuid().isNull() ? QString(QLatin1String("")) : entry.callUuid());
@@ -64,6 +72,7 @@ int CallHistoryRepository::create(const models::CallHistoryEntry &entry)
     query.bindValue(QStringLiteral(":status"), models::callStatusToString(entry.status()));
     const QDateTime startedAt = entry.startedAt().isValid() ? entry.startedAt() : QDateTime::currentDateTimeUtc();
     query.bindValue(QStringLiteral(":startedAt"), dateTimeToVariant(startedAt));
+    query.bindValue(QStringLiteral(":participants"), joinedParticipants(entry.participants()));
 
     if (!query.exec()) {
         m_lastError = query.lastError().text();
@@ -95,6 +104,8 @@ models::CallHistoryEntry CallHistoryRepository::entryFromQuery(const QSqlQuery &
 
     const QVariant durationValue = query.value(rec.indexOf(QLatin1String("duration_seconds")));
     entry.setDurationSeconds(durationValue.isValid() && !durationValue.isNull() ? durationValue.toInt() : -1);
+    entry.setParticipants(query.value(rec.indexOf(QLatin1String("participants"))).toString()
+                              .split(QLatin1Char(','), Qt::SkipEmptyParts));
 
     return entry;
 }
@@ -107,7 +118,7 @@ std::optional<models::CallHistoryEntry> CallHistoryRepository::findById(int id) 
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
         "SELECT id, call_uuid, local_user_id, direction, peer_address, peer_name, status, "
-        "started_at, connected_at, ended_at, duration_seconds FROM CallHistory WHERE id = :id"));
+        "started_at, connected_at, ended_at, duration_seconds, participants FROM CallHistory WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), id);
 
     if (!query.exec() || !query.next()) {
@@ -130,7 +141,7 @@ std::vector<models::CallHistoryEntry> CallHistoryRepository::findAll(int limit, 
     // apres LIMIT/OFFSET.
     query.prepare(QStringLiteral(
         "SELECT id, call_uuid, local_user_id, direction, peer_address, peer_name, status, "
-        "started_at, connected_at, ended_at, duration_seconds FROM CallHistory "
+        "started_at, connected_at, ended_at, duration_seconds, participants FROM CallHistory "
         "ORDER BY started_at DESC, id DESC LIMIT %1 OFFSET %2").arg(limit).arg(offset));
 
     if (!query.exec()) {
@@ -152,7 +163,7 @@ std::vector<models::CallHistoryEntry> CallHistoryRepository::findByUser(int user
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
         "SELECT id, call_uuid, local_user_id, direction, peer_address, peer_name, status, "
-        "started_at, connected_at, ended_at, duration_seconds FROM CallHistory "
+        "started_at, connected_at, ended_at, duration_seconds, participants FROM CallHistory "
         "WHERE local_user_id = :userId "
         "ORDER BY started_at DESC, id DESC LIMIT %1 OFFSET %2").arg(limit).arg(offset));
     query.bindValue(QStringLiteral(":userId"), userId);
@@ -201,6 +212,23 @@ bool CallHistoryRepository::markEnded(int id, models::CallStatus status, const Q
     } else {
         query.bindValue(QStringLiteral(":duration"), QVariant(QMetaType(QMetaType::Int)));
     }
+    query.bindValue(QStringLiteral(":id"), id);
+
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+bool CallHistoryRepository::setParticipants(int id, const QStringList &participants)
+{
+    if (!m_db.isOpen())
+        return false;
+
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral("UPDATE CallHistory SET participants = :participants WHERE id = :id"));
+    query.bindValue(QStringLiteral(":participants"), joinedParticipants(participants));
     query.bindValue(QStringLiteral(":id"), id);
 
     if (!query.exec()) {

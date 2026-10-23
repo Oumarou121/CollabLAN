@@ -11,6 +11,7 @@
 #include <QtGlobal>
 
 #include <array>
+#include <cmath>
 #include <cstring>
 
 namespace network {
@@ -240,6 +241,36 @@ QByteArray convertTelephonyToPlayback(const QByteArray &pcm16Mono8k, const QAudi
 }
 
 } // namespace
+
+QByteArray resamplePcm16(const QByteArray &pcm16, int srcRate, int dstRate)
+{
+    if (srcRate == dstRate)
+        return pcm16;
+    QVector<float> samples = toFloatSamples(pcm16, QAudioFormat::Int16);
+    if (srcRate == 2 * dstRate) {
+        // Division par deux (16 -> 8 kHz) : moyenne de chaque paire, filtre
+        // passe-bas minimal qui evite le repliement le plus audible.
+        QVector<float> half(samples.size() / 2);
+        for (int i = 0; i < half.size(); ++i)
+            half[i] = 0.5f * (samples[2 * i] + samples[2 * i + 1]);
+        return fromFloatSamplesInt16(half);
+    }
+    return fromFloatSamplesInt16(resampleLinear(samples, srcRate, dstRate));
+}
+
+float pcm16Level(const QByteArray &pcm16)
+{
+    const int count = pcm16.size() / 2;
+    if (count == 0)
+        return 0.0f;
+    const auto *src = reinterpret_cast<const std::int16_t *>(pcm16.constData());
+    double sum = 0.0;
+    for (int i = 0; i < count; ++i) {
+        const double v = src[i] / 32768.0;
+        sum += v * v;
+    }
+    return static_cast<float>(std::sqrt(sum / count));
+}
 
 QByteArray encodeMuLaw(const QByteArray &pcm16)
 {
@@ -539,12 +570,23 @@ void VoiceAudioIO::onCaptureReadyRead()
     }
 }
 
+int VoiceAudioIO::playbackBufferedMs() const
+{
+    if (!m_audioSink || !m_playbackDevice)
+        return -1;
+    const qsizetype size = m_audioSink->bufferSize();
+    if (size <= 0)
+        return -1;
+    const qsizetype queued = qMax<qsizetype>(0, size - m_audioSink->bytesFree());
+    return static_cast<int>(m_playbackFormat.durationForBytes(static_cast<qint32>(queued)) / 1000);
+}
+
 void VoiceAudioIO::playFrame(const QByteArray &pcm16)
 {
     if (!m_playbackDevice || pcm16.isEmpty()) {
         return;
     }
-    // pcm16 est mono 8kHz Int16 (contrat inchange de ce slot, cf. header) --
+    // pcm16 est mono 16kHz Int16 (format interne, cf. header) --
     // converti ici vers le format REEL du peripherique de sortie
     // (m_playbackFormat/start()) avant l'ecriture. No-op si le peripherique
     // acceptait deja nativement le format telephonique.

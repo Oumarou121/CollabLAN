@@ -2,6 +2,7 @@
 #define MODELS_CALLHISTORYENTRY_H
 
 #include <QString>
+#include <QStringList>
 #include <QDateTime>
 
 namespace models {
@@ -78,6 +79,12 @@ public:
     QString peerName() const { return m_peerName; }
     void setPeerName(const QString &peerName) { m_peerName = peerName; }
 
+    /// Toutes les autres personnes de l'appel (adresses), peerAddress
+    /// compris : plus d'une pour un appel de groupe. Vide pour un appel a
+    /// deux enregistre avant la migration 040.
+    QStringList participants() const { return m_participants; }
+    void setParticipants(const QStringList &participants) { m_participants = participants; }
+
     CallStatus status() const { return m_status; }
     void setStatus(CallStatus status) { m_status = status; }
 
@@ -104,6 +111,7 @@ private:
     CallDirection m_direction = CallDirection::Outgoing;
     QString m_peerAddress;
     QString m_peerName;
+    QStringList m_participants;
     CallStatus m_status = CallStatus::InProgress;
     QDateTime m_startedAt;
     QDateTime m_connectedAt;

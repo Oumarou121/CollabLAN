@@ -69,6 +69,7 @@ Item {
             required property string status
             required property var startedAt
             required property int durationSeconds
+            required property var participants
         }
         onObjectAdded: Qt.callLater(root.rebuildHistory)
         onObjectRemoved: Qt.callLater(root.rebuildHistory)
@@ -79,7 +80,8 @@ Item {
         for (let i = 0; i < historySource.count; i++) {
             const o = historySource.objectAt(i)
             if (o) out.push({ direction: o.direction, address: o.peerAddress, name: o.peerName, status: o.status,
-                              startedAt: o.startedAt, duration: o.durationSeconds })
+                              startedAt: o.startedAt, duration: o.durationSeconds,
+                              participants: root.addressList(o.participants, o.peerAddress) })
         }
         out.sort(function(a, b) { return new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime() })
         root.calls = out
@@ -90,6 +92,16 @@ Item {
     onCallStateChanged: if (!root.inCall && root.history && root.history.refresh) Qt.callLater(root.history.refresh)
 
     function labelOf(address, fallback) { return People.labelFor(root.peers, root.users, address, fallback) }
+    // Participants d'une ligne du journal (liste ou texte « a,b,c »).
+    function addressList(value, fallback) {
+        const out = []
+        if (typeof value === "string") {
+            value.split(",").forEach(function(a) { if (a.length) out.push(a) })
+        } else if (value) {
+            for (let i = 0; i < value.length; i++) out.push(String(value[i]))
+        }
+        return out.length ? out : [fallback]
+    }
     function isToday(iso) { const d = new Date(iso); return !isNaN(d.getTime()) && d.toDateString() === new Date().toDateString() }
     function dayLabel(iso) {
         const d = new Date(iso)
@@ -127,13 +139,54 @@ Item {
     function callBack(address) {
         root.callPeer(People.peerAt(root.peers, address))
     }
+
+    // ---- Appel de groupe : choix de 2 ou 3 personnes -----------------------
+    readonly property int maxPeople: root.call && root.call.maxParticipants ? root.call.maxParticipants : 4
+    readonly property bool groupCall: root.call && root.call.groupCall ? true : false
+    property bool selecting: false
+    property var picked: []                 // identifiants de postes
+    onInCallChanged: if (root.inCall) root.selecting = false
+    onSelectingChanged: root.picked = []
+    function togglePick(id) {
+        if (root.picked.indexOf(id) >= 0) root.picked = root.picked.filter(function(x) { return x !== id })
+        else if (root.picked.length < root.maxPeople - 1) root.picked = root.picked.concat([id])
+    }
+    readonly property var pickedPeers: root.picked.map(function(id) {
+        for (let i = 0; i < root.peers.length; i++) if (root.peers[i].id === id) return root.peers[i]
+        return null
+    }).filter(function(p) { return p !== null })
+    function startGroupCall() {
+        const list = root.pickedPeers.map(function(p) { return { address: p.address, signalingPort: p.signalingPort || 0 } })
+        if (!root.call || list.length < 2) return
+        if (root.call.callGroup(list)) root.selecting = false
+        else root.showError(qsTr("L'appel de groupe n'a pas pu démarrer."))
+    }
+    // « Rappeler le groupe » : les participants encore joignables.
+    function reachableOf(addresses) {
+        return addresses.map(function(a) { return People.peerAt(root.peers, a) })
+                        .filter(function(p) { return p !== null && People.presenceKind(p.status) !== "offline" })
+    }
+    function callGroupBack(addresses) {
+        const list = root.reachableOf(addresses)
+        if (!root.call || root.inCall || list.length === 0) return
+        if (list.length === 1) { root.callPeer(list[0]); return }
+        if (!root.call.callGroup(list.map(function(p) { return { address: p.address, signalingPort: p.signalingPort || 0 } })))
+            root.showError(qsTr("L'appel de groupe n'a pas pu démarrer."))
+    }
+    function namesOf(addresses) {
+        return People.listNames(addresses.map(function(a) { return root.labelOf(a, "") }))
+    }
+    readonly property var inCallAddresses: root.call && root.call.participants
+                                           ? root.call.participants.filter(function(p) { return p.status === "joined" }).map(function(p) { return p.address })
+                                           : []
     function showError(text) { root.errorText = text; errorTimer.restart() }
     Timer { id: errorTimer; interval: 6000; onTriggered: root.errorText = "" }
 
     readonly property var historyRows: {
         const f = root.filter
         const list = root.calls.filter(function(c) {
-            return f === "missed" ? c.status === "missed" : f === "out" ? c.direction === "outgoing" : f === "in" ? c.direction !== "outgoing" : true
+            return f === "missed" ? c.status === "missed" : f === "out" ? c.direction === "outgoing"
+                 : f === "in" ? c.direction !== "outgoing" : f === "group" ? c.participants.length > 1 : true
         })
         const out = []
         let day = ""
@@ -232,12 +285,77 @@ Item {
 
     Rectangle { anchors.fill: parent; color: Theme.bg }
 
+    // Choix des participants : recapitulatif colle au bas de la liste des postes.
+    Rectangle {
+        id: pickBar
+        visible: root.selecting
+        z: 5
+        x: Theme.pagePadding
+        width: root.twoCols ? peerCol.width : root.width - 2 * Theme.pagePadding
+        height: 64
+        anchors.bottom: parent.bottom
+        color: Theme.bg
+        Rectangle { width: parent.width; height: 2; color: Theme.ruleInk }
+        RowLayout {
+            anchors.fill: parent
+            anchors.topMargin: 2
+            spacing: 12
+            Row {
+                visible: root.pickedPeers.length > 0
+                spacing: -4
+                Repeater {
+                    model: root.pickedPeers
+                    delegate: Rectangle {
+                        required property var modelData
+                        readonly property string person: People.personOf(modelData, root.users)
+                        width: 32
+                        height: 32
+                        radius: 16
+                        color: Theme.bg
+                        ChatMonogram { anchors.centerIn: parent; size: 28; label: parent.person.length ? parent.person : parent.modelData.machine; machine: parent.person.length === 0 }
+                    }
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 1
+                Text {
+                    Layout.fillWidth: true
+                    text: root.pickedPeers.length
+                          ? People.listNames(root.pickedPeers.map(function(p) { return People.personOf(p, root.users) || p.machine }))
+                          : qsTr("Aucune personne choisie")
+                    color: Theme.ink
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fs(13.5)
+                    font.weight: Theme.weightBold
+                    elide: Text.ElideRight
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: root.pickedPeers.length ? qsTr("%1 personnes avec vous").arg(root.pickedPeers.length + 1)
+                                                  : qsTr("Choisissez 2 ou 3 personnes")
+                    color: Theme.ink3
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fs(12)
+                    elide: Text.ElideRight
+                }
+            }
+            AppButton {
+                variant: "ink"
+                iconPath: Icons.phoneLine
+                text: root.pickedPeers.length >= 2 ? qsTr("Appeler %1 personnes").arg(root.pickedPeers.length) : qsTr("Appeler")
+                enabled: root.pickedPeers.length >= 2 && !root.inCall
+                onClicked: root.startGroupCall()
+            }
+        }
+    }
+
     Flickable {
         id: pageScroll
         objectName: "pageFlick"
         anchors.fill: parent
         contentWidth: width
-        contentHeight: pageColumn.y + pageColumn.implicitHeight + 24
+        contentHeight: pageColumn.y + pageColumn.implicitHeight + 24 + (root.selecting ? pickBar.height : 0)
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
@@ -292,7 +410,10 @@ Item {
                     Text {
                         Layout.fillWidth: true
                         textFormat: Text.StyledText
-                        text: root.callState === "connected" ? qsTr("En appel avec <b>%1</b>.").arg(root.esc(root.labelOf(root.remoteAddress, "")))
+                        text: root.callState === "connected" && root.groupCall && root.inCallAddresses.length > 0
+                              ? qsTr("En appel de groupe avec <b>%1</b>.").arg(root.esc(root.namesOf(root.inCallAddresses)))
+                              : root.callState === "connected" ? qsTr("En appel avec <b>%1</b>.").arg(root.esc(root.labelOf(root.remoteAddress, "")))
+                              : root.selecting ? qsTr("Nouvel appel de groupe.")
                               : root.peers.length === 0 && root.calls.length === 0 ? qsTr("Aucun appel pour l'instant.")
                               : root.missedToday.length > 1 ? qsTr("<b>%1</b> appels manqués.").arg(root.missedToday.length)
                               : root.missedToday.length === 1 ? qsTr("<b>1</b> appel manqué.")
@@ -317,14 +438,18 @@ Item {
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fs(14.5)
                             text: {
+                                if (root.selecting)
+                                    return qsTr("Choisissez <b>2 ou 3 personnes</b> dans la liste : un appel de groupe réunit %1 personnes au plus, vous compris.").arg(root.maxPeople)
                                 let t = root.peers.length === 0
                                         ? qsTr("Aucun poste n'est joignable : les appels passent de poste à poste sur le réseau local, sans Internet.")
                                         : (root.reachable.length > 1 ? qsTr("<b>%1</b> postes joignables sur le réseau local.").arg(root.reachable.length)
                                                                      : qsTr("<b>%1</b> poste joignable sur le réseau local.").arg(root.reachable.length))
                                 if (root.missedToday.length > 0) {
                                     const m = root.missedToday[0]
-                                    t += " " + qsTr("%1 a essayé de vous joindre à %2.")
-                                         .arg("<b><font color=\"" + Theme.dangerInk + "\">" + root.esc(root.labelOf(m.address, m.name)) + "</font></b>")
+                                    const together = m.participants.length > 1
+                                    t += " " + (together ? qsTr("%1 ont essayé de vous joindre ensemble à %2.") : qsTr("%1 a essayé de vous joindre à %2."))
+                                         .arg("<b><font color=\"" + Theme.dangerInk + "\">"
+                                              + root.esc(together ? root.namesOf(m.participants) : root.labelOf(m.address, m.name)) + "</font></b>")
                                          .arg(root.timeOf(m.startedAt))
                                 }
                                 return t
@@ -335,13 +460,30 @@ Item {
                             spacing: 8
                             AppButton {
                                 readonly property var m: root.missedToday.length ? root.missedToday[0] : null
-                                visible: m !== null
+                                readonly property bool together: m !== null && m.participants.length > 1
+                                visible: m !== null && !root.selecting
                                 variant: "ink"
-                                iconPath: Icons.phoneLine
-                                text: m ? qsTr("Rappeler %1").arg(root.labelOf(m.address, m.name).split(" ")[0]) : ""
-                                enabled: !root.inCall && m !== null && People.peerAt(root.peers, m.address) !== null
-                                tooltip: m && People.peerAt(root.peers, m.address) === null ? qsTr("Ce poste n'est plus sur le réseau") : ""
-                                onClicked: root.callBack(m.address)
+                                iconPath: together ? Icons.users : Icons.phoneLine
+                                text: !m ? "" : together ? qsTr("Rappeler le groupe") : qsTr("Rappeler %1").arg(root.labelOf(m.address, m.name).split(" ")[0])
+                                enabled: !root.inCall && m !== null && root.reachableOf(m.participants).length > 0
+                                tooltip: m && root.reachableOf(m.participants).length === 0 ? qsTr("Ce poste n'est plus sur le réseau") : ""
+                                onClicked: together ? root.callGroupBack(m.participants) : root.callBack(m.address)
+                            }
+                            AppButton {
+                                visible: !root.selecting
+                                variant: "line"
+                                iconPath: Icons.users
+                                text: qsTr("Appel de groupe")
+                                enabled: !root.inCall && root.call !== null && root.reachable.length >= 2
+                                tooltip: root.inCall ? qsTr("Un appel est déjà en cours")
+                                         : root.reachable.length < 2 ? qsTr("Il faut au moins deux postes joignables") : ""
+                                onClicked: root.selecting = true
+                            }
+                            AppButton {
+                                visible: root.selecting
+                                variant: "ghost"
+                                text: qsTr("Annuler")
+                                onClicked: root.selecting = false
                             }
                         }
                     }
@@ -415,8 +557,27 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.bottomMargin: 10
-                        CapsLabel { text: qsTr("Postes joignables"); Layout.fillWidth: true }
-                        Text { text: root.peers.length; color: Theme.ink3; font.family: Theme.fontFamilySerif; font.pixelSize: Theme.fs(16); font.weight: Theme.weightBold }
+                        CapsLabel { text: root.selecting ? qsTr("Participants") : qsTr("Postes joignables"); Layout.fillWidth: true }
+                        Text {
+                            text: root.selecting ? root.picked.length + " / " + (root.maxPeople - 1) : root.peers.length
+                            color: Theme.ink3
+                            font.family: Theme.fontFamilySerif
+                            font.pixelSize: Theme.fs(16)
+                            font.weight: Theme.weightBold
+                        }
+                    }
+                    Text {
+                        visible: root.selecting
+                        Layout.fillWidth: true
+                        Layout.topMargin: -4
+                        Layout.bottomMargin: 10
+                        text: root.picked.length >= root.maxPeople - 1
+                              ? qsTr("Groupe complet : %1 personnes avec vous.").arg(root.maxPeople)
+                              : qsTr("Les personnes choisies reçoivent une invitation et rejoignent l'appel en répondant.")
+                        color: Theme.ink3
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.fs(12.5)
+                        wrapMode: Text.WordWrap
                     }
                     Rectangle {
                         visible: root.peers.length > 0
@@ -468,13 +629,23 @@ Item {
                             required property int index
                             readonly property var p: modelData
                             readonly property string person: People.personOf(pr.p, root.users)
-                            readonly property bool here: root.inCall && pr.p.address === root.remoteAddress
+                            readonly property bool here: root.inCall && (pr.p.address === root.remoteAddress || root.inCallAddresses.indexOf(pr.p.address) >= 0)
+                            readonly property bool on: root.selecting && root.picked.indexOf(pr.p.id) >= 0
+                            readonly property bool pickable: root.selecting && People.presenceKind(pr.p.status) !== "offline"
+                                                             && (pr.on || root.picked.length < root.maxPeople - 1)
                             Layout.fillWidth: true
                             implicitHeight: 60
-                            color: prHover.hovered ? Theme.selectWash : "transparent"
+                            color: pr.on ? Theme.selectWash : (prHover.hovered && (!root.selecting || pr.pickable) ? Theme.selectWash : "transparent")
+                            border.width: pr.on ? 1 : 0
+                            border.color: Theme.ink
                             radius: Theme.radiusSheet
-                            HoverHandler { id: prHover }
-                            Rectangle { visible: pr.index > 0; width: parent.width; height: 1; color: Theme.line }
+                            opacity: root.selecting && !pr.pickable ? 0.5 : 1
+                            Accessible.role: root.selecting ? Accessible.CheckBox : Accessible.ListItem
+                            Accessible.checked: pr.on
+                            Accessible.name: pr.person.length ? pr.person : pr.p.machine
+                            HoverHandler { id: prHover; cursorShape: pr.pickable ? Qt.PointingHandCursor : Qt.ArrowCursor }
+                            TapHandler { enabled: pr.pickable; onTapped: root.togglePick(pr.p.id) }
+                            Rectangle { visible: pr.index > 0 && !pr.on; width: parent.width; height: 1; color: Theme.line }
                             RowLayout {
                                 anchors.fill: parent
                                 anchors.leftMargin: 8
@@ -499,7 +670,19 @@ Item {
                                         }
                                     }
                                 }
+                                Rectangle {
+                                    visible: root.selecting
+                                    Layout.rightMargin: 4
+                                    Layout.preferredWidth: 20
+                                    Layout.preferredHeight: 20
+                                    radius: 3
+                                    color: pr.on ? Theme.ink : "transparent"
+                                    border.width: pr.on ? 0 : 1.5
+                                    border.color: Theme.lineStrong
+                                    LineIcon { visible: pr.on; anchors.centerIn: parent; path: Icons.check; size: 13; strokeWidth: 2.4; color: Theme.inkOnInk }
+                                }
                                 CallButton {
+                                    visible: !root.selecting
                                     text: pr.here ? qsTr("En appel") : qsTr("Appeler")
                                     enabled: !root.inCall && root.call !== null
                                     tip: root.inCall ? qsTr("Un appel est déjà en cours") : qsTr("Appeler %1").arg(pr.person.length ? pr.person : pr.p.machine)
@@ -545,6 +728,7 @@ Item {
                                 InkTab { text: qsTr("Manqués"); danger: true; count: String(root.calls.filter(function(c) { return c.status === "missed" }).length); current: root.filter === "missed"; onClicked: root.filter = "missed" }
                                 InkTab { text: qsTr("Émis"); count: String(root.calls.filter(function(c) { return c.direction === "outgoing" }).length); current: root.filter === "out"; onClicked: root.filter = "out" }
                                 InkTab { text: qsTr("Reçus"); count: String(root.calls.filter(function(c) { return c.direction !== "outgoing" }).length); current: root.filter === "in"; onClicked: root.filter = "in" }
+                                InkTab { text: qsTr("De groupe"); count: String(root.calls.filter(function(c) { return c.participants.length > 1 }).length); current: root.filter === "group"; onClicked: root.filter = "group" }
                             }
                         }
                         Text {
@@ -565,6 +749,9 @@ Item {
                                 readonly property bool missed: hr.c.status === "missed"
                                 readonly property bool out: hr.c.direction === "outgoing"
                                 readonly property var peer: People.peerAt(root.peers, hr.c.address)
+                                // Appel de groupe : une seule ligne pour toutes les personnes.
+                                readonly property bool grouped: hr.c.participants.length > 1
+                                readonly property bool callable: hr.grouped ? root.reachableOf(hr.c.participants).length > 0 : hr.peer !== null
                                 readonly property var st: {
                                     switch (hr.c.status) {
                                     case "completed": return { w: qsTr("Terminé"), g: "ok", c: Theme.successInk }
@@ -604,16 +791,31 @@ Item {
                                             radius: 11
                                             color: "transparent"
                                             border.width: 1
-                                            border.color: hr.missed ? Theme.dangerColor : Theme.lineStrong
-                                            LineIcon { anchors.centerIn: parent; path: hr.out ? Icons.arrowUp : Icons.arrowDown; size: 12; strokeWidth: 2.1; color: hr.missed ? Theme.dangerInk : Theme.ink2 }
+                                            border.color: hr.missed ? Theme.dangerColor : hr.grouped ? Theme.ruleInk : Theme.lineStrong
+                                            LineIcon {
+                                                anchors.centerIn: parent
+                                                path: hr.grouped ? Icons.users : hr.out ? Icons.arrowUp : Icons.arrowDown
+                                                size: 12
+                                                strokeWidth: hr.grouped ? 1.9 : 2.1
+                                                color: hr.missed ? Theme.dangerInk : hr.grouped ? Theme.ink : Theme.ink2
+                                            }
                                         }
                                         ColumnLayout {
                                             Layout.fillWidth: true
                                             spacing: 1
-                                            Text { Layout.fillWidth: true; text: root.labelOf(hr.c.address, hr.c.name); color: hr.missed ? Theme.dangerInk : Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13.5); font.weight: Theme.weightSemibold; elide: Text.ElideRight }
                                             Text {
                                                 Layout.fillWidth: true
-                                                text: (hr.out ? qsTr("Émis") : qsTr("Reçu")) + " · " + (hr.peer ? hr.peer.machine : (hr.c.name && hr.c.name.length ? hr.c.name : hr.c.address))
+                                                text: hr.grouped ? root.namesOf(hr.c.participants) : root.labelOf(hr.c.address, hr.c.name)
+                                                color: hr.missed ? Theme.dangerInk : Theme.ink
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fs(13.5)
+                                                font.weight: Theme.weightSemibold
+                                                elide: Text.ElideRight
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: hr.grouped ? qsTr("Appel de groupe · %1 personnes").arg(hr.c.participants.length + 1)
+                                                      : (hr.out ? qsTr("Émis") : qsTr("Reçu")) + " · " + (hr.peer ? hr.peer.machine : (hr.c.name && hr.c.name.length ? hr.c.name : hr.c.address))
                                                 color: Theme.ink3
                                                 font.family: Theme.fontFamily
                                                 font.pixelSize: Theme.fs(12)
@@ -629,14 +831,14 @@ Item {
                                         Text { Layout.preferredWidth: 66; horizontalAlignment: Text.AlignRight; text: People.duration(hr.c.duration); color: Theme.ink2; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); font.features: ({ "tnum": 1 }) }
                                         Text { visible: histCol.roomy; Layout.preferredWidth: 40; horizontalAlignment: Text.AlignRight; text: root.timeOf(hr.c.startedAt); color: Theme.ink3; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12); font.features: ({ "tnum": 1 }) }
                                         TextLink {
-                                            Layout.preferredWidth: 84
+                                            Layout.preferredWidth: hr.grouped ? 132 : 84
                                             arrow: false
-                                            text: qsTr("Rappeler")
+                                            text: hr.grouped ? qsTr("Rappeler le groupe") : qsTr("Rappeler")
                                             fontSize: Theme.fs(12.5)
                                             opacity: hr.missed || hrHover.hovered ? 1 : 0
-                                            enabled: hr.peer !== null && !root.inCall
-                                            tooltip: hr.peer === null ? qsTr("Poste hors ligne") : ""
-                                            onClicked: root.callBack(hr.c.address)
+                                            enabled: hr.callable && !root.inCall
+                                            tooltip: !hr.callable ? (hr.grouped ? qsTr("Plus personne n'est en ligne") : qsTr("Poste hors ligne")) : ""
+                                            onClicked: hr.grouped ? root.callGroupBack(hr.c.participants) : root.callBack(hr.c.address)
                                         }
                                     }
                                 }

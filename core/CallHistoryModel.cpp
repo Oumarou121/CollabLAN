@@ -40,6 +40,9 @@ QVariant CallHistoryModel::data(const QModelIndex &index, int role) const
         return entry.startedAt().toLocalTime().toString(Qt::ISODate);
     case DurationSecondsRole:
         return entry.durationSeconds();
+    case ParticipantsRole:
+        // Appel a deux enregistre avant la migration 040 : son seul correspondant.
+        return entry.participants().isEmpty() ? QStringList{entry.peerAddress()} : entry.participants();
     default:
         return QVariant();
     }
@@ -55,6 +58,7 @@ QHash<int, QByteArray> CallHistoryModel::roleNames() const
     roles[StatusRole] = "status";
     roles[StartedAtRole] = "startedAt";
     roles[DurationSecondsRole] = "durationSeconds";
+    roles[ParticipantsRole] = "participants";
     return roles;
 }
 

@@ -27,6 +27,9 @@ set(TEST_APPS OFF CACHE BOOL "" FORCE)
 if(EXISTS "${CMAKE_BINARY_DIR}/_deps/libdatachannel-src/CMakeLists.txt")
     set(FETCHCONTENT_FULLY_DISCONNECTED ON)
 endif()
+# Le mode deconnecte ne vaut que pour libdatachannel (retire apres
+# FetchContent_MakeAvailable) : Opus, plus bas, doit pouvoir etre telecharge
+# dans un dossier de compilation qui contient deja libdatachannel.
 
 FetchContent_Declare(
     libdatachannel
@@ -42,6 +45,30 @@ FetchContent_Declare(
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 FetchContent_MakeAvailable(libdatachannel)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
+unset(FETCHCONTENT_FULLY_DISCONNECTED)
+
+# Opus : codec de la voix des appels (a deux comme en groupe), en bande
+# elargie 16 kHz au lieu du G.711 8 kHz. Archive officielle de xiph.org
+# (empreinte verifiee) plutot que le depot git : elle contient
+# package_version, dont le CMake d'Opus tire son numero de version.
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    opus
+    URL https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz
+    URL_HASH SHA256=65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+# Statique, comme libdatachannel : le CMake d'Opus construit une DLL des que
+# BUILD_SHARED_LIBS est vrai (valeur heritee du cache), qu'il faudrait
+# ensuite deployer a cote de l'application et de chaque test.
+set(LOCALINK_SAVED_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF)
+FetchContent_MakeAvailable(opus)
+set(BUILD_SHARED_LIBS ${LOCALINK_SAVED_BUILD_SHARED_LIBS})
 
 file(GLOB_RECURSE NETWORK_SOURCES CONFIGURE_DEPENDS "*.cpp")
 file(GLOB_RECURSE NETWORK_HEADERS CONFIGURE_DEPENDS "*.h")
@@ -65,5 +92,6 @@ target_link_libraries(network PUBLIC
     Qt6::Core Qt6::Network Qt6::WebSockets Qt6::Multimedia
     OpenSSL::SSL OpenSSL::Crypto
     LibDataChannel::LibDataChannelStatic   # <- remplacer LibDataChannel::LibDataChannel par ceci
+    Opus::opus
     database
 )

@@ -3,6 +3,7 @@
 
 #include <QSqlDatabase>
 #include <QString>
+#include <QStringList>
 #include <QDateTime>
 #include <optional>
 #include <vector>
@@ -47,6 +48,9 @@ public:
     /// (calculee par l'appelant, cf. core::CallHistoryManager).
     bool markEnded(int id, models::CallStatus status, const QDateTime &endedAt,
                    std::optional<int> durationSeconds);
+
+    /// Personnes de l'appel (appel de groupe), connues a sa fin.
+    bool setParticipants(int id, const QStringList &participants);
 
     bool remove(int id);
 

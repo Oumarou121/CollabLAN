@@ -12,18 +12,32 @@ class QIODevice;
 
 namespace network {
 
-/// Parametres audio utilises pour l'appel (issue #61) : mono 8 kHz 16 bits,
-/// compatible telephonie et suffisant pour de la voix sur LAN. Ce format
-/// simple permet un encodage/decodage G.711 (mu-law) sans dependance a une
-/// bibliotheque de codec externe (pas d'Opus, cf. README architecture).
-constexpr int kVoiceSampleRate = 8000;
+/// Format interne de la voix (capture, mixage, lecture) : mono 16 kHz 16 bits,
+/// la bande elargie d'Opus. Les postes d'une version anterieure ne parlent
+/// que G.711 (PCMU, 8 kHz) : leur flux est converti a l'envoi et a la
+/// reception (cf. VoiceService).
+constexpr int kVoiceSampleRate = 16000;
 constexpr int kVoiceChannelCount = 1;
 constexpr int kVoiceSampleSizeBits = 16;
 /// Duree d'une trame audio envoyee par paquet RTP (20 ms, standard telephonie).
 constexpr int kVoiceFrameMs = 20;
-constexpr int kVoiceFrameSamples = kVoiceSampleRate * kVoiceFrameMs / 1000; // 160
+constexpr int kVoiceFrameSamples = kVoiceSampleRate * kVoiceFrameMs / 1000; // 320
+constexpr int kVoiceFrameBytes = kVoiceFrameSamples * (kVoiceSampleSizeBits / 8);
+/// G.711 : 8 kHz, horloge RTP 8000, 160 echantillons par trame.
+constexpr int kPcmuSampleRate = 8000;
+constexpr int kPcmuFrameSamples = kPcmuSampleRate * kVoiceFrameMs / 1000; // 160
 /// Type de charge utile RTP standard pour PCMU/G.711 mu-law (RFC 3551).
 constexpr std::uint8_t kRtpPayloadTypePcmu = 0;
+/// Opus (RFC 7587) : type dynamique, horloge RTP toujours a 48 kHz.
+constexpr std::uint8_t kRtpPayloadTypeOpus = 111;
+constexpr int kOpusRtpClockRate = 48000;
+constexpr int kOpusFrameTicks = kOpusRtpClockRate * kVoiceFrameMs / 1000; // 960
+
+/// Reechantillonne du PCM 16 bits mono (ex. 16 kHz -> 8 kHz pour G.711).
+QByteArray resamplePcm16(const QByteArray &pcm16, int srcRate, int dstRate);
+
+/// Niveau RMS d'une trame PCM 16 bits, entre 0 et 1 (detection de la parole).
+float pcm16Level(const QByteArray &pcm16);
 
 /// Encode un bloc de PCM 16 bits signe (little-endian, mono) en G.711 mu-law.
 QByteArray encodeMuLaw(const QByteArray &pcm16);
@@ -81,6 +95,11 @@ public:
     bool hasPlayback() const { return m_playbackDevice != nullptr; }
     bool isFullyActive() const { return hasCapture() && hasPlayback(); }
 
+    /// Duree de son deja ecrite mais pas encore jouee par le haut-parleur, en
+    /// ms (-1 si inconnue) : le mixage de VoiceService ecrit au rythme du
+    /// peripherique au lieu de son propre minuteur.
+    int playbackBufferedMs() const;
+
     /// Coupe/reactive l'envoi du micro sans arreter la capture (mute local).
     void setMuted(bool muted) { m_muted = muted; }
     bool isMuted() const { return m_muted; }
@@ -96,8 +115,8 @@ signals:
     void audioFault(const QString &reason);
 
 public slots:
-    /// Fournit une trame PCM 16 bits (deja decodee) a jouer sur le
-    /// haut-parleur/casque local.
+    /// Fournit une trame PCM 16 bits mono 16 kHz (deja decodee et mixee) a
+    /// jouer sur le haut-parleur/casque local.
     void playFrame(const QByteArray &pcm16);
 
 private slots:

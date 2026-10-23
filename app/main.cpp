@@ -639,8 +639,10 @@ int main(int argc, char *argv[])
                 ? application.peersModel()->nameForAddress(callerAddress.toString())
                 : QString();
             const QString callerLabel = resolvedName.isEmpty() ? callerAddress.toString() : resolvedName;
-            trayIcon.showMessage(QObject::tr("Appel entrant"),
-                                 QObject::tr("Appel de %1").arg(callerLabel),
+            const bool group = application.voiceService()->isGroupCall();
+            trayIcon.showMessage(group ? QObject::tr("Appel de groupe entrant") : QObject::tr("Appel entrant"),
+                                 group ? QObject::tr("%1 vous invite à un appel de groupe").arg(callerLabel)
+                                       : QObject::tr("Appel de %1").arg(callerLabel),
                                  icon, 10000);
             QTimer::singleShot(750, window, [&trayIcon, applicationIcon]() {
                 trayIcon.setIcon(applicationIcon);

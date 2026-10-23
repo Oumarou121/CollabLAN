@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QHostAddress>
+#include <QVariantList>
 
 #include "Voice/VoiceService.h"
 
@@ -31,6 +32,13 @@ class CallContext : public QObject
     Q_PROPERTY(QString callState READ callState NOTIFY callStateChanged)
     Q_PROPERTY(QString remoteAddress READ remoteAddress NOTIFY remoteAddressChanged)
     Q_PROPERTY(bool muted READ isMuted WRITE setMuted NOTIFY mutedChanged)
+    // Appel de groupe (4 personnes au plus, vous compris).
+    Q_PROPERTY(QVariantList participants READ participants NOTIFY participantsChanged)
+    Q_PROPERTY(QVariantList inviteRoster READ inviteRoster NOTIFY participantsChanged)
+    Q_PROPERTY(bool groupCall READ isGroupCall NOTIFY participantsChanged)
+    Q_PROPERTY(bool canInvite READ canInvite NOTIFY participantsChanged)
+    Q_PROPERTY(bool localSpeaking READ isLocalSpeaking NOTIFY participantsChanged)
+    Q_PROPERTY(int maxParticipants READ maxParticipants CONSTANT)
 
 public:
     explicit CallContext(QObject *parent = nullptr);
@@ -51,12 +59,29 @@ public:
     bool isMuted() const;
     void setMuted(bool muted);
 
+    /// Autres personnes de l'appel : [{ address, port, status, muted,
+    /// speaking }], status valant "invited" | "inviting" | "connecting" |
+    /// "joined" (cf. network::VoiceParticipant).
+    QVariantList participants() const;
+    /// Invitation en sonnerie : qui est deja dans l'appel [{ address, port }].
+    QVariantList inviteRoster() const;
+    bool isGroupCall() const;
+    bool canInvite() const;
+    bool isLocalSpeaking() const;
+    int maxParticipants() const { return network::VoiceService::kMaxParticipants; }
+
     /// Initie un appel sortant vers l'adresse IP donnee (ex. depuis
     /// peersModel, voir UsersView.qml). Retourne false immediatement si
     /// aucun appel ne peut etre demarre (adresse invalide, service absent,
     /// appel deja en cours) : dans ce cas errorOccurred n'est pas forcement
     /// emis (l'appelant QML peut deja reagir sur la valeur de retour).
     Q_INVOKABLE bool call(const QString &address, int signalingPort = 0);
+
+    /// Appel de groupe : 1 a 3 postes [{ address, signalingPort }].
+    Q_INVOKABLE bool callGroup(const QVariantList &peers);
+
+    /// Pendant un appel : invite une personne de plus.
+    Q_INVOKABLE bool invite(const QString &address, int signalingPort = 0);
 
     /// Accepte l'appel entrant actuellement en sonnerie (etat "ringing").
     Q_INVOKABLE void acceptCall();
@@ -79,6 +104,11 @@ signals:
 
     void callEnded(const QString &reason);
     void errorOccurred(const QString &message);
+
+    void participantsChanged();
+    void participantJoined(const QString &address);
+    void participantLeft(const QString &address, const QString &reason);
+    void participantDeclined(const QString &address, const QString &reason);
 
 private slots:
     void onStateChanged(network::CallState state);

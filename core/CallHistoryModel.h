@@ -38,6 +38,7 @@ public:
         StatusRole,
         StartedAtRole,
         DurationSecondsRole,
+        ParticipantsRole,
     };
 
     explicit CallHistoryModel(QObject *parent = nullptr);

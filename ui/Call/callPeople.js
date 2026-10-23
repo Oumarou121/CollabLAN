@@ -77,6 +77,18 @@ function initials(label) {
     return ((w[0] || "?").charAt(0) + (w.length > 1 ? w[1].charAt(0) : "")).toUpperCase()
 }
 
+function firstName(label) {
+    return String(label || "").split(" ")[0]
+}
+
+// « Awa », « Awa et Karim », « Awa, Karim et Aminata » (prenoms)
+function listNames(labels) {
+    var n = (labels || []).map(firstName)
+    if (n.length < 2)
+        return n.join("")
+    return n.slice(0, -1).join(", ") + " " + qsTr("et") + " " + n[n.length - 1]
+}
+
 // « 4 min 12 », « 45 s »
 function duration(seconds) {
     if (!seconds || seconds <= 0)
