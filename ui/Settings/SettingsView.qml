@@ -23,7 +23,7 @@ Item {
     objectName: "settingsView"
 
     signal backRequested()
-    signal logoutRequested()
+    signal logoutRequested(var beforeLogout)
     signal historyRequested()
     signal serverTrustRequested()
 
@@ -339,7 +339,7 @@ Item {
         AccountSettings {
             passwordChanged: passwordSheet.done
             onPasswordRequested: passwordSheet.open = true
-            onLogoutRequested: root.logoutRequested()
+            onLogoutRequested: function(beforeLogout) { root.logoutRequested(beforeLogout) }
         }
     }
     Component {

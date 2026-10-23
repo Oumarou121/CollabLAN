@@ -23,7 +23,9 @@ ColumnLayout {
 
     property bool passwordChanged: false     // affiche « Mot de passe modifié » sur la ligne
     signal passwordRequested()
-    signal logoutRequested()
+    /// beforeLogout : action a executer si la deconnexion est confirmee
+    /// (oubli du poste), sinon undefined.
+    signal logoutRequested(var beforeLogout)
 
     readonly property var settings: (typeof settingsModel !== "undefined") ? settingsModel : null
     readonly property var users: (typeof userManager !== "undefined") ? userManager : null
@@ -186,11 +188,11 @@ ColumnLayout {
             Flow {
                 Layout.fillWidth: true
                 spacing: 8
-                AppButton { variant: "line"; size: "small"; iconPath: Icons.logout; text: qsTr("Se déconnecter"); onClicked: root.logoutRequested() }
+                AppButton { variant: "line"; size: "small"; iconPath: Icons.logout; text: qsTr("Se déconnecter"); onClicked: root.logoutRequested(undefined) }
                 AppButton {
                     visible: root.hasSession
                     variant: "ghost"; size: "small"; text: qsTr("Se déconnecter et oublier ce poste")
-                    onClicked: { root.forgetDevice(); root.logoutRequested() }
+                    onClicked: root.logoutRequested(function() { root.forgetDevice() })
                 }
             }
         }

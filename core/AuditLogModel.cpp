@@ -3,6 +3,7 @@
 #include "database/Repositories/AuditLogRepository.h"
 
 #include <QDateTime>
+#include <limits>
 #include <QFile>
 #include <QTextStream>
 #include <QStandardPaths>
@@ -130,8 +131,18 @@ void AuditLogModel::refresh()
         return;
 
     beginResetModel();
-    m_logs.clear();
+    m_logs = m_auditManager->queryEvents(currentFilter());
+    endResetModel();
+    emit countChanged();
+}
 
+int AuditLogModel::exportCount() const
+{
+    return m_auditManager ? m_auditManager->countEvents(currentFilter()) : 0;
+}
+
+database::AuditLogFilter AuditLogModel::currentFilter() const
+{
     database::AuditLogFilter filter;
     if (!m_eventTypeFilter.isEmpty())
         filter.eventType = m_eventTypeFilter;
@@ -141,10 +152,7 @@ void AuditLogModel::refresh()
         filter.from = QDateTime::fromString(m_dateFromFilter, Qt::ISODate);
     if (!m_dateToFilter.isEmpty())
         filter.to = QDateTime::fromString(m_dateToFilter, Qt::ISODate);
-
-    m_logs = m_auditManager->queryEvents(filter);
-    endResetModel();
-    emit countChanged();
+    return filter;
 }
 
 QVariantMap AuditLogModel::get(int row) const
@@ -196,33 +204,59 @@ void AuditLogModel::clearFilters()
 
 QString AuditLogModel::exportToCsv(const QString &filePath)
 {
-    if (m_logs.isEmpty()) {
-        emit error("Aucune entrée à exporter");
+    if (!m_auditManager)
+        return QString();
+
+    // Toutes les entrees du filtre courant : l'affichage s'arrete a 200 par
+    // lecture, l'export ne doit pas.
+    database::AuditLogFilter filter = currentFilter();
+    filter.limit = std::numeric_limits<int>::max();
+    const auto logs = m_auditManager->queryEvents(filter);
+    if (logs.isEmpty()) {
+        emit error(tr("Aucune entrée à exporter."));
         return QString();
     }
 
     QFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        emit error(QString("Impossible d'ouvrir le fichier : %1").arg(filePath));
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        emit error(tr("Impossible d'écrire le fichier : %1").arg(file.errorString()));
         return QString();
     }
 
-    QTextStream out(&file);
-    out.setEncoding(QStringConverter::Utf8);
-
-    // En-tête CSV
-    out << "ID,Timestamp,Type d'événement,Description,Utilisateur,Acteur\n";
-
-    // Données
-    for (const models::AuditLog &log : m_logs) {
-        out << log.id() << ","
-            << log.timestamp().toString(Qt::ISODate) << ","
-            << localizedAuditEventType(log.eventType()) << ","
-            << localizedAuditText(log.description()) << ","
-            << log.userId().value_or(0) << ","
-            << log.actorLabel() << "\n";
+    // Lisible tel quel par Excel en francais : BOM UTF-8 (accents), point-
+    // virgule comme separateur, champs entre guillemets au besoin (les
+    // descriptions contiennent des virgules), fins de ligne Windows.
+    // Auparavant : virgules non echappees et sans BOM, tout tenait dans une
+    // colonne aux accents illisibles.
+    const auto field = [](QString value) {
+        value.replace(QLatin1Char('\r'), QLatin1Char(' ')).replace(QLatin1Char('\n'), QLatin1Char(' '));
+        if (value.contains(QLatin1Char(';')) || value.contains(QLatin1Char('"')))
+            value = QLatin1Char('"') + value.replace(QLatin1Char('"'), QStringLiteral("\"\"")) + QLatin1Char('"');
+        return value;
+    };
+    QByteArray csv("\xEF\xBB\xBF");
+    QStringList header = {tr("N°"), tr("Date"), tr("Heure"), tr("Type"), tr("Description"), tr("Utilisateur"), tr("Acteur")};
+    for (QString &h : header)
+        h = field(h);
+    csv += header.join(QLatin1Char(';')).toUtf8() + "\r\n";
+    for (const models::AuditLog &log : logs) {
+        const QDateTime when = log.timestamp().toLocalTime();
+        const QStringList row = {
+            QString::number(log.id()),
+            when.toString(QStringLiteral("dd/MM/yyyy")),
+            when.toString(QStringLiteral("HH:mm:ss")),
+            field(localizedAuditEventType(log.eventType())),
+            field(localizedAuditText(log.description())),
+            log.userId().has_value() && *log.userId() > 0 ? QString::number(*log.userId()) : QString(),
+            field(log.actorLabel()),
+        };
+        csv += row.join(QLatin1Char(';')).toUtf8() + "\r\n";
     }
 
+    if (file.write(csv) != csv.size()) {
+        emit error(tr("Écriture incomplète : %1").arg(file.errorString()));
+        return QString();
+    }
     file.close();
     return filePath;
 }

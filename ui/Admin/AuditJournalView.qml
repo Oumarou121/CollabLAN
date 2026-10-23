@@ -244,8 +244,11 @@ Item {
         const s = String(url || "")
         return decodeURIComponent(s.replace(/^file:\/{3}(?=[A-Za-z]:)/, "").replace(/^file:\/\//, ""))
     }
+    // Entrees exportees : toute la periode filtree (l'affichage s'arrete a 200).
+    property int exportTotal: 0
     function openExport() {
         root.exportError = ""
+        root.exportTotal = (root.audit && root.audit.exportCount) ? root.audit.exportCount() : root.entries.length
         if (!root.exportPath.length)
             root.exportPath = root.localPath(root.exportFolder) + "/journal-localink-" + root.dayIso(new Date()) + ".csv"
         root.exportStage = "ask"
@@ -1131,7 +1134,7 @@ Item {
                 Fact { key: qsTr("Types"); value: root.typeWords }
                 Fact { key: qsTr("Période"); value: root.periodWords }
                 Fact { visible: root.actorId > 0; key: qsTr("Acteur"); value: root.actorName }
-                Fact { key: qsTr("Événements"); value: String(root.entries.length) }
+                Fact { key: qsTr("Événements"); value: String(root.exportTotal) }
             }
 
             // -- Apres export
@@ -1153,7 +1156,7 @@ Item {
                         id: doneCol
                         Layout.fillWidth: true
                         spacing: 2
-                        Text { text: root.entries.length > 1 ? qsTr("%1 événements exportés.").arg(root.entries.length) : qsTr("1 événement exporté."); color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13); font.weight: Theme.weightSemibold }
+                        Text { text: root.exportTotal > 1 ? qsTr("%1 événements exportés.").arg(root.exportTotal) : qsTr("1 événement exporté."); color: Theme.ink; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(13); font.weight: Theme.weightSemibold }
                         Text { Layout.fillWidth: true; text: qsTr("Le fichier contient les textes enregistrés tels quels (date, type, description, acteur)."); color: Theme.ink2; font.family: Theme.fontFamily; font.pixelSize: Theme.fs(12.5); wrapMode: Text.WordWrap }
                     }
                 }
@@ -1225,8 +1228,8 @@ Item {
                 visible: root.exportStage === "ask"
                 variant: "ink"
                 iconPath: Icons.arrowUpRight
-                text: root.entries.length > 1 ? qsTr("Exporter %1 événements").arg(root.entries.length) : qsTr("Exporter 1 événement")
-                enabled: root.entries.length > 0 && root.exportPath.length > 0
+                text: root.exportTotal > 1 ? qsTr("Exporter %1 événements").arg(root.exportTotal) : qsTr("Exporter 1 événement")
+                enabled: root.exportTotal > 0 && root.exportPath.length > 0
                 onClicked: root.runExport()
             },
             AppButton {

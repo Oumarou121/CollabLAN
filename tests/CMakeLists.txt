@@ -227,3 +227,8 @@ add_test(NAME test_dossiers_e2e COMMAND test_dossiers_e2e)
 # Banc d'essai des temps de l'interface (hors ctest, lancer a la main).
 add_executable(bench_ui UnitTests/bench_ui.cpp)
 target_link_libraries(bench_ui PRIVATE Qt6::Test Qt6::Widgets Qt6::Sql app_core)
+
+# Export CSV du journal d'audit (Excel francais, toutes les entrees de la periode).
+add_executable(test_auditexport UnitTests/test_auditexport.cpp)
+target_link_libraries(test_auditexport PRIVATE Qt6::Test core database)
+add_test(NAME test_auditexport COMMAND test_auditexport)

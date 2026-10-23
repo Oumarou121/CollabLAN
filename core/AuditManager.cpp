@@ -153,4 +153,9 @@ QVector<models::AuditLog> AuditManager::queryEvents(const database::AuditLogFilt
     return m_repository->find(filter);
 }
 
+int AuditManager::countEvents(const database::AuditLogFilter &filter)
+{
+    return m_repository->count(filter);
+}
+
 } // namespace core

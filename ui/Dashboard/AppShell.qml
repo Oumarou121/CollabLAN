@@ -13,6 +13,7 @@ import "../Admin"
 import "../Settings"
 import "../About"
 import "../Login"
+import "../Components/icons.js" as Icons
 
 /*
  * AppShell - cadre unique de l'application connectee (refonte 2026).
@@ -455,7 +456,7 @@ Item {
         onAdminRequested: shell.navigate("admin")
         onSettingsRequested: shell.navigate("settings")
         onAboutRequested: shell.navigate("about")
-        onLogoutRequested: shell.logoutRequested()
+        onLogoutRequested: shell.askLogout()
     }
 
 
@@ -487,7 +488,7 @@ Item {
             onSettingsRequested: shell.navigate("settings")
             onSharedFoldersRequested: shell.navigate("folder")
             onAboutRequested: shell.navigate("about")
-            onLogoutRequested: shell.logoutRequested()
+            onLogoutRequested: shell.askLogout()
         }
     }
 
@@ -516,7 +517,7 @@ Item {
             onPeersRequested: shell.navigate("peers")
             onAdminRequested: shell.navigate("admin")
             onSettingsRequested: shell.navigate("settings")
-            onLogoutRequested: shell.logoutRequested()
+            onLogoutRequested: shell.askLogout()
             onConversationRequested: function(conversationId) { shell.openConversation(conversationId) }
         }
     }
@@ -576,7 +577,7 @@ Item {
         id: settingsComponent
         SettingsView {
             onBackRequested: shell.goBack()
-            onLogoutRequested: shell.logoutRequested()
+            onLogoutRequested: function(beforeLogout) { shell.askLogout(beforeLogout) }
             onHistoryRequested: shell.navigate("admin", { currentTab: 3 })
             onServerTrustRequested: { shell.dismissedServer = ""; serverTrust.open = true }
         }
@@ -588,6 +589,51 @@ Item {
             onBackRequested: shell.goBack()
             onNavigationRequested: function(route) { shell.navigate(route) }
         }
+    }
+
+    // ---- Deconnexion confirmee ---------------------------------------------
+    // Toutes les demandes (barre laterale, menu du profil, accueil, transferts,
+    // parametres) passent par cette fenetre : un clic de trop ne ramene plus a
+    // l'ecran de connexion sans prevenir.
+    property var logoutAction: null        // oubli du poste (parametres), ou null
+    property bool logoutConfirm: false
+    function askLogout(beforeLogout) {
+        shell.logoutAction = (typeof beforeLogout === "function") ? beforeLogout : null
+        shell.logoutConfirm = true
+    }
+    function confirmLogout() {
+        const action = shell.logoutAction
+        shell.logoutConfirm = false
+        shell.logoutAction = null
+        if (action)
+            action()
+        shell.logoutRequested()
+    }
+    SheetModal {
+        id: logoutSheet
+        open: shell.logoutConfirm
+        kicker: qsTr("Déconnexion")
+        title: qsTr("Se déconnecter de LocaLink ?")
+        sheetWidth: 460
+        onCloseRequested: { shell.logoutConfirm = false; shell.logoutAction = null }
+
+        Text {
+            Layout.fillWidth: true
+            // UserManager::logout() retire toujours la session memorisee ;
+            // « oublier ce poste » efface en plus le nom d'utilisateur retenu.
+            text: shell.logoutAction
+                  ? qsTr("Vous revenez à l'écran de connexion et ce poste oublie aussi votre nom d'utilisateur. Vos discussions, transferts et dossiers partagés restent enregistrés.")
+                  : qsTr("Vous revenez à l'écran de connexion ; votre mot de passe sera demandé pour vous reconnecter. Vos discussions, transferts et dossiers partagés restent enregistrés.")
+            wrapMode: Text.WordWrap
+            color: Theme.ink2
+            font.family: Theme.fontFamily
+            font.pixelSize: Theme.fs(13.5)
+        }
+
+        footer: [
+            AppButton { variant: "ghost"; text: qsTr("Annuler"); onClicked: logoutSheet.closeRequested() },
+            AppButton { variant: "danger"; iconPath: Icons.logout; text: qsTr("Se déconnecter"); onClicked: shell.confirmLogout() }
+        ]
     }
 
     // Serveur inconnu pendant la session (serveur de secours, retour du serveur

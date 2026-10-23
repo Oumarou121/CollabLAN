@@ -608,17 +608,7 @@ Item {
             enabled: typeof discoveryService !== "undefined"
             onTriggered: discoveryService.localStatus = "busy"
         }
-        AppMenuSeparator {}
-        AppMenuItem {
-            text: qsTr("Paramètres")
-            iconGlyph: ""
-            onTriggered: root.settingsRequested()
-        }
-        AppMenuItem {
-            text: qsTr("À propos de LocaLink")
-            iconGlyph: ""
-            onTriggered: root.aboutRequested()
-        }
+        // Parametres et A propos sont dans la navigation : pas de doublon ici.
         AppMenuSeparator {}
         AppMenuItem {
             text: qsTr("Se déconnecter")

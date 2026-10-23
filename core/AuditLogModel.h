@@ -8,6 +8,8 @@
 
 #include "models/AuditLog.h"
 
+namespace database { struct AuditLogFilter; }
+
 namespace core {
 
 class AuditManager;
@@ -59,6 +61,9 @@ public:
     Q_INVOKABLE void setDateRange(const QString &from, const QString &to);
     Q_INVOKABLE void clearFilters();
     Q_INVOKABLE QString exportToCsv(const QString &filePath);
+    /// Nombre d'entrees que exportToCsv ecrirait (filtre courant, sans le
+    /// plafond d'affichage de 200).
+    Q_INVOKABLE int exportCount() const;
 
 signals:
     void auditManagerChanged();
@@ -66,6 +71,7 @@ signals:
     void error(const QString &message);
 
 private:
+    database::AuditLogFilter currentFilter() const;
     void loadLogs();
 
     core::AuditManager *m_auditManager = nullptr;

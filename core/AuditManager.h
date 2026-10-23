@@ -91,6 +91,8 @@ public:
     /// Consultation filtree du journal (delegue a AuditLogRepository,
     /// voir issue #63 pour les criteres disponibles).
     QVector<models::AuditLog> queryEvents(const database::AuditLogFilter &filter);
+    /// Nombre d'entrees du filtre, sans tenir compte de limit/offset.
+    int countEvents(const database::AuditLogFilter &filter);
 
 signals:
     /// Emis apres chaque enregistrement reussi, utile pour un affichage
