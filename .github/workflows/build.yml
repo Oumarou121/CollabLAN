@@ -50,6 +50,8 @@ jobs:
     name: Build (${{ matrix.os }})
     needs: set-matrix
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write   # publication de la release « Derniere compilation »
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.set-matrix.outputs.matrix) }}
@@ -313,42 +315,58 @@ jobs:
           cp -r build/app/database package/
           cp -r resources/linux package/ 2>/dev/null || true
 
-      # --- Upload des artefacts ---
-      # Quota de stockage des artefacts du compte : conservation courte (7 jours
-      # au lieu de 90), et seulement ce qui sert. L'ancien artefact « exe seul »
-      # (inutilisable sans les DLL) est supprime ; le dossier Windows exclut les
-      # fichiers intermediaires de compilation (objets, bibliotheque statique
-      # app_core, fichiers generes par moc/CMake) qui en faisaient l'essentiel.
-      - name: Upload full deployed folder (Windows)
+      # --- Publication : release « Derniere compilation » ---
+      # Les artefacts d'Actions comptent dans le quota de stockage du compte
+      # (2 Go inclus, atteint) ; les fichiers d'une release non. Chaque build
+      # remplace donc les fichiers d'une seule release, marquee pre-version, dont
+      # le tag suit le commit compile. Rien n'est publie pour une pull request.
+      - name: Package (Windows)
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}-full
-          retention-days: 7
-          path: |
-            build/app/
-            !build/app/CMakeFiles/
-            !build/app/*_autogen/
-            !build/app/**/*.lib
-            !build/app/**/*.obj
-            !build/app/**/*.pdb
-            !build/app/**/*.ilk
-            !build/app/**/*.exp
-            !build/app/**/*.cmake
-            !build/app/**/*.ninja
+        shell: pwsh
+        run: |
+          # Dossier deploye sans les fichiers intermediaires de compilation.
+          robocopy build/app dist/LocaLink /E /XD CMakeFiles LocaLink_autogen app_core_autogen /XF *.lib *.obj *.pdb *.ilk *.exp *.cmake *.ninja | Out-Null
+          if ($LASTEXITCODE -ge 8) { Write-Error "robocopy a echoue ($LASTEXITCODE)"; exit 1 }
+          Compress-Archive -Path dist/LocaLink -DestinationPath LocaLink-windows.zip -CompressionLevel Optimal
+          "ASSET=LocaLink-windows.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          exit 0
 
-      - name: Upload artifact (Linux)
+      - name: Package archive (Linux)
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          retention-days: 7
-          path: package/
+        shell: bash
+        run: |
+          tar -czf LocaLink-linux.tar.gz -C package .
+          echo "ASSET=LocaLink-linux.tar.gz" >> "$GITHUB_ENV"
 
-      - name: Upload artifact (macOS)
+      - name: Package archive (macOS)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          retention-days: 7
-          path: build/app/*.dmg
+        shell: bash
+        run: |
+          cp build/app/*.dmg LocaLink-macos.dmg
+          echo "ASSET=LocaLink-macos.dmg" >> "$GITHUB_ENV"
+
+      - name: Publish to "Derniere compilation" release
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: derniere-compilation
+        run: |
+          # Creation au premier passage (les trois plateformes peuvent arriver
+          # ensemble : une seule creation reussit, les autres la trouvent).
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
+              --title "Dernière compilation" --notes "Compilation en cours de publication." \
+              || gh release view "$TAG" >/dev/null
+          fi
+          # Le tag suit le commit compile.
+          gh api -X PATCH "repos/$GH_REPO/git/refs/tags/$TAG" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          gh release edit "$TAG" --prerelease --title "Dernière compilation" --notes "Compilée automatiquement depuis la branche \`$GITHUB_REF_NAME\`, commit $GITHUB_SHA, le $(date -u '+%d/%m/%Y à %H:%M UTC').
+
+          - **Windows** : \`LocaLink-windows.zip\` — décompresser puis lancer \`LocaLink\\LocaLink.exe\` (rien à installer, Windows 10 1809 ou plus récent).
+          - **Linux** : \`LocaLink-linux.tar.gz\`
+          - **macOS** : \`LocaLink-macos.dmg\`
+
+          Chaque compilation remplace ces fichiers."
+          gh release upload "$TAG" "$ASSET" --clobber
