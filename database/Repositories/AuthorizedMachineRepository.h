@@ -45,6 +45,9 @@ public:
     std::optional<models::AuthorizedMachine> findByIpAddress(const QString &ipAddress) const;
     std::optional<models::AuthorizedMachine> findByCertificateFingerprint(const QString &fingerprint) const;
     bool updateLastSeen(const QString &fingerprint, const QString &ipAddress);
+    /// Nom du poste et dernier compte annonces par la decouverte (valeurs
+    /// vides ignorees). Vrai seulement si quelque chose a change.
+    bool updateIdentity(const QString &fingerprint, const QString &hostname, const QString &userUuid);
 
     /**
      * @brief Récupère toutes les machines.

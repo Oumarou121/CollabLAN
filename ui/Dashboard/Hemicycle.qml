@@ -269,7 +269,7 @@ Item {
             enabled: !hidden
             activeFocusOnTab: !hidden
             Accessible.role: Accessible.Button
-            Accessible.name: (peer ? peer.name : "") + ", " + root.detailOf(peer) + (selected ? qsTr(", sélectionné") : "")
+            Accessible.name: (peer ? (peer.userName || peer.name) : "") + ", " + root.detailOf(peer) + (selected ? qsTr(", sélectionné") : "")
             Behavior on opacity { NumberAnimation { duration: Theme.durationNormal } }
 
             function activate() { root.seatActivated(seat.modelData.id) }
@@ -369,7 +369,8 @@ Item {
             ToolTip.visible: hover.hovered
             ToolTip.delay: 300
             ToolTip.text: seat.peer
-                          ? seat.peer.name + "\n" + (seat.peer.userName || qsTr("Aucun compte connecté"))
+                          ? (seat.peer.userName || seat.peer.name) + "\n"
+                            + (seat.peer.userName ? seat.peer.name : qsTr("Aucun compte connecté"))
                             + (seat.peer.address ? " · " + seat.peer.address : "") + "\n" + root.detailOf(seat.peer)
                           : ""
         }
@@ -411,7 +412,8 @@ Item {
                 Text {
                     width: parent.width
                     horizontalAlignment: lbl.leftSide ? Text.AlignRight : Text.AlignLeft
-                    text: lbl.peer ? lbl.peer.name : ""
+                    // La personne d'abord, le poste en bulle d'aide.
+                    text: lbl.peer ? (lbl.peer.userName || lbl.peer.name) : ""
                     color: Theme.ink
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fs(12.5)
@@ -432,8 +434,8 @@ Item {
 
             HoverHandler { id: nameHover; cursorShape: Qt.PointingHandCursor }
             TapHandler { onTapped: root.seatActivated(lbl.modelData.id) }
-            ToolTip.visible: nameHover.hovered && lbl.peer && lbl.peer.name.length > 22
-            ToolTip.text: lbl.peer ? lbl.peer.name : ""
+            ToolTip.visible: nameHover.hovered && !!lbl.peer && (!!lbl.peer.userName || lbl.peer.name.length > 22)
+            ToolTip.text: lbl.peer ? (lbl.peer.userName ? lbl.peer.userName + "\n" + lbl.peer.name : lbl.peer.name) : ""
             ToolTip.delay: 400
         }
     }

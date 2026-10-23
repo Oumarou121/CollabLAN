@@ -1,4 +1,5 @@
 #include "MessagingServer.h"
+#include "NetworkAddress.h"
 
 #include "Security/SecurityService.h"
 
@@ -13,6 +14,7 @@
 #include <QMetaObject>
 #include <QJsonDocument>
 #include <QJsonObject>
+
 
 namespace network {
 
@@ -122,7 +124,7 @@ int MessagingServer::broadcastMessage(const QString &message, const QHostAddress
 {
     int sentCount = 0;
     for (QWebSocket *client : m_clients) {
-        if (!excludeAddress.isNull() && client->peerAddress() == excludeAddress) {
+        if (!excludeAddress.isNull() && canonicalAddress(client->peerAddress()) == canonicalAddress(excludeAddress)) {
             continue;
         }
         if (!isClientAuthorized(client)) {
@@ -186,7 +188,7 @@ void MessagingServer::onNewConnection()
         return;
     }
 
-    const QHostAddress clientAddress = client->peerAddress();
+    const QHostAddress clientAddress = canonicalAddress(client->peerAddress());
     qDebug() << "New client connected:" << clientAddress;
     const QString fingerprint = SecurityService::certificateFingerprint(
         client->sslConfiguration().peerCertificate());
@@ -282,7 +284,7 @@ void MessagingServer::onTextMessageReceived(const QString &message)
     // Jamais le contenu dans les journaux (fichier de log lisible sur le poste).
     qDebug() << "Message received from" << client->peerAddress() << "(" << message.size() << "caracteres)";
     m_currentSender = client;
-    emit messageReceived(message, client->peerAddress());
+    emit messageReceived(message, canonicalAddress(client->peerAddress()));
     m_currentSender = nullptr;
 }
 
@@ -332,7 +334,7 @@ void MessagingServer::onSocketDisconnected()
     }
 
     qDebug() << "Client disconnected:" << client->peerAddress();
-    emit clientDisconnected(client->peerAddress());
+    emit clientDisconnected(canonicalAddress(client->peerAddress()));
 
     m_clients.removeAll(client);
     m_clientUuids.remove(client);

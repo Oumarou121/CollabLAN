@@ -1214,6 +1214,16 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     }
     m_peersModel = new network::PeersModel(m_discoveryService, this);
 
+    // Identite des postes : nom et compte connecte, gardes par le serveur pour
+    // les nommer (personne, puis poste) une fois hors ligne -- ils etaient
+    // enregistres sans nom et affiches par leur adresse.
+    const auto recordIdentity = [this](const network::DiscoveredPeer &peer) {
+        if (m_permissionManager && !peer.certificateFingerprint.isEmpty())
+            m_permissionManager->recordMachineIdentity(peer.certificateFingerprint, peer.name, peer.userUuid);
+    };
+    connect(m_discoveryService, &network::DiscoveryService::peerDiscovered, this, recordIdentity);
+    connect(m_discoveryService, &network::DiscoveryService::peerUpdated, this, recordIdentity);
+
     // La decouverte identifie d'abord une machine, pas necessairement un
     // utilisateur authentifie. Une notification utilisateur ne doit donc
     // partir que lorsque l'annonce contient userUuid. Le passage hostname ->
@@ -1226,7 +1236,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 if (m_notifiedPeerUsers.contains(key))
                     return;
                 m_notifiedPeerUsers.insert(key);
-                m_notificationManager->onPeerConnected(peer.name);
+                m_notificationManager->onPeerConnected(peerDisplayName(peer));
             }, Qt::QueuedConnection);
     connect(m_discoveryService, &network::DiscoveryService::peerUpdated,
             m_notificationManager, [this](const network::DiscoveredPeer &peer) {
@@ -1236,7 +1246,7 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
                 if (m_notifiedPeerUsers.contains(key))
                     return;
                 m_notifiedPeerUsers.insert(key);
-                m_notificationManager->onPeerConnected(peer.name);
+                m_notificationManager->onPeerConnected(peerDisplayName(peer));
             }, Qt::QueuedConnection);
     connect(m_discoveryService, &network::DiscoveryService::peerLost,
             m_notificationManager, [this](const network::DiscoveredPeer &peer) {
@@ -3441,6 +3451,18 @@ void Application::broadcastServerElectionEvent(const QString &logUuid, const QSt
     if (m_messagingServer) {
         m_messagingServer->broadcastMessage(jsonMessage);
     }
+}
+
+QString Application::peerDisplayName(const network::DiscoveredPeer &peer) const
+{
+    // Nom du compte connecte sur le poste, sinon nom du poste.
+    if (m_userManager && !peer.userUuid.isEmpty()) {
+        for (const models::User &user : m_userManager->allUsers()) {
+            if (user.uuid() == peer.userUuid)
+                return user.name();
+        }
+    }
+    return peer.name;
 }
 
 network::DiscoveryService *Application::discoveryService() const

@@ -76,6 +76,9 @@ SheetModal {
         property bool current: false
         Layout.fillWidth: true
         Layout.preferredWidth: 1
+        // Meme hauteur pour les deux cartes (celle de la plus haute) : la
+        // description de l'administrateur tient sur deux lignes.
+        Layout.fillHeight: true
         implicitHeight: rcCol.implicitHeight + 22
         hoverEnabled: true
         focusPolicy: Qt.StrongFocus

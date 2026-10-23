@@ -1,4 +1,5 @@
 #include "DiscoveryService.h"
+#include "NetworkAddress.h"
 
 #include <QUdpSocket>
 #include <QNetworkDatagram>
@@ -299,7 +300,7 @@ void DiscoveryService::handleAnnouncePacket(const QByteArray &data, const QHostA
     peer.userUuid = obj.value("userUuid").toString();
     peer.certificateFingerprint = obj.value("certificateFingerprint").toString().toLower();
     peer.status = obj.value("status").toString(QStringLiteral("online"));
-    peer.address = senderAddress;
+    peer.address = network::canonicalAddress(senderAddress);
     peer.port = static_cast<quint16>(obj.value("port").toInt(m_port));
     peer.transferPort = static_cast<quint16>(obj.value("transferPort").toInt(m_transferPort));
     peer.signalingPort = static_cast<quint16>(obj.value("signalingPort").toInt(m_signalingPort));

@@ -32,6 +32,7 @@ public:
         TransferPortRole,
         SignalingPortRole,
         LastSeenMsRole,
+        FingerprintRole,   // empreinte du certificat : identite stable du poste
     };
     Q_ENUM(Roles)
 
@@ -43,11 +44,13 @@ public:
     Q_PROPERTY(int UserUuidRole READ userUuidRoleId CONSTANT)
     Q_PROPERTY(int StatusRole READ statusRoleId CONSTANT)
     Q_PROPERTY(int AddressRole READ addressRoleId CONSTANT)
+    Q_PROPERTY(int FingerprintRole READ fingerprintRoleId CONSTANT)
     int idRoleId() const { return IdRole; }
     int nameRoleId() const { return NameRole; }
     int userUuidRoleId() const { return UserUuidRole; }
     int statusRoleId() const { return StatusRole; }
     int addressRoleId() const { return AddressRole; }
+    int fingerprintRoleId() const { return FingerprintRole; }
 
     explicit PeersModel(DiscoveryService *discoveryService, QObject *parent = nullptr);
 

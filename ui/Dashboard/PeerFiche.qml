@@ -140,7 +140,7 @@ ColumnLayout {
         visible: !!root.peer
         Layout.fillWidth: true
         Layout.topMargin: 9
-        text: root.peer ? root.peer.name : ""
+        text: root.peer ? (root.peer.userName || root.peer.name) : ""
         color: Theme.ink
         font.family: Theme.fontFamilySerif
         font.pixelSize: Theme.fs(24)
@@ -155,7 +155,8 @@ ColumnLayout {
         visible: !!root.peer
         Layout.fillWidth: true
         Layout.topMargin: 2
-        text: root.hasUser ? root.peer.userName
+        // Sous le nom de la personne : son poste (hors ligne : dernier compte vu).
+        text: root.hasUser ? (root.off ? qsTr("%1 · hors ligne").arg(root.peer.name) : root.peer.name)
                            : (root.off ? qsTr("Poste autorisé, actuellement absent") : qsTr("Aucun compte connecté"))
         color: Theme.ink2
         font.family: Theme.fontFamily

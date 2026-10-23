@@ -37,6 +37,7 @@ class FolderSyncService;
 }
 
 namespace network {
+struct DiscoveredPeer;
 class DiscoveryService;
 class PeersModel;
 class MessagingService;
@@ -183,6 +184,8 @@ public:
     int pendingServerPort() const;
     int pendingClientCount() const;
     QString pendingServerPairingCode() const;
+    /// Nom affiche d'un poste decouvert : compte connecte, sinon nom du poste.
+    QString peerDisplayName(const network::DiscoveredPeer &peer) const;
     Q_INVOKABLE bool approvePendingServerCertificate();
     /// Code d'appairage entre ce poste et la machine d'empreinte donnee
     /// (Administration : machine en attente, poste detecte a ajouter).

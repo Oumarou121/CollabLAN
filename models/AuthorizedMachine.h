@@ -50,6 +50,10 @@ public:
     QString hostname() const { return m_hostname; }
     void setHostname(const QString &hostname) { m_hostname = hostname; }
 
+    /// Dernier compte vu sur ce poste (annonces de decouverte).
+    QString lastUserUuid() const { return m_lastUserUuid; }
+    void setLastUserUuid(const QString &userUuid) { m_lastUserUuid = userUuid; }
+
     bool isAuthorized() const { return m_authorized; }
     void setAuthorized(bool authorized) { m_authorized = authorized; }
 
@@ -82,6 +86,7 @@ private:
     QString m_ipAddress;
     QString m_lastIpAddress;
     QString m_hostname;
+    QString m_lastUserUuid;
     bool m_authorized = true;
     QString m_status = MachineStatus::Authorized;
     std::optional<int> m_addedBy;

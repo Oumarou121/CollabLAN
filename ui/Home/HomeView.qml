@@ -330,13 +330,16 @@ Item {
         }
         const presentById = {}
         const presentByAddress = {}
+        const presentByFingerprint = {}
         if (typeof peersModel !== "undefined" && peersModel) {
             for (let i = 0; i < peersModel.count; i++) {
                 const idx = peersModel.index(i, 0)
                 const id = peersModel.data(idx, peersModel.IdRole || 257) || ""
                 const addr = peersModel.data(idx, peersModel.AddressRole || 261) || ""
+                const fp = peersModel.FingerprintRole ? (peersModel.data(idx, peersModel.FingerprintRole) || "") : ""
                 if (id) presentById[id] = true
                 if (addr) presentByAddress[addr] = true
+                if (fp) presentByFingerprint[String(fp).toLowerCase()] = true
             }
         }
         const offline = []
@@ -347,11 +350,15 @@ Item {
             const id = authorizedMachineModel.data(midx, authorizedMachineModel.MachineIdRole) || ""
             const ip = authorizedMachineModel.data(midx, authorizedMachineModel.IpAddressRole) || ""
             const host = authorizedMachineModel.data(midx, authorizedMachineModel.HostnameRole) || ""
+            const fp = String(authorizedMachineModel.data(midx, authorizedMachineModel.CertificateFingerprintRole) || "").toLowerCase()
+            const lastUser = authorizedMachineModel.LastUserNameRole
+                             ? (authorizedMachineModel.data(midx, authorizedMachineModel.LastUserNameRole) || "") : ""
             if (authorized) {
-                // Vérifier par ID en priorité, puis par adresse en repli
-                const isPresent = (id && presentById[id]) || (ip && presentByAddress[ip])
-                if (!isPresent && (id || ip)) {
-                    offline.push({ name: host || ip || id, address: ip || "", id: id || "" })
+                // Meme poste en ligne : par empreinte (identite stable), puis id, puis adresse.
+                const isPresent = (fp && presentByFingerprint[fp]) || (id && presentById[id]) || (ip && presentByAddress[ip])
+                if (!isPresent && (id || ip || fp)) {
+                    offline.push({ name: host || qsTr("Poste sans nom"), userName: lastUser,
+                                   address: ip || "", id: id || fp || ip })
                 }
             }
         }
@@ -1027,11 +1034,18 @@ Item {
             server: root.activeServerUuid.length > 0 && p.id === root.activeServerUuid
         }
     })
-    readonly property var offlinePeersLive: root.networkOfflinePeers.map(function(o) {
+    readonly property var offlinePeersLive: {
+        // Dernier compte vu sur un poste absent, sauf si cette personne est en
+        // ligne ailleurs : le poste reprend alors son propre nom (sinon la meme
+        // personne apparaissait deux fois).
+        const online = {}
+        root.presentPeers.forEach(function(p) { if (p.userName) online[p.userName] = true })
+        return root.networkOfflinePeers.map(function(o) {
         return { id: o.id || o.address || o.name, name: o.name || "", address: o.address || "",
-                 userUuid: "", userName: "", status: "offline", direction: "",
+                 userUuid: "", userName: (o.userName && !online[o.userName]) ? o.userName : "", status: "offline", direction: "",
                  transfer: null, call: null, server: false }
-    })
+        })
+    }
     readonly property var allPeersLive: root.presentPeers.concat(root.offlinePeersLive)
 
     function peerById(id) {

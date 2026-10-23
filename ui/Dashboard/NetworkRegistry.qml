@@ -151,8 +151,8 @@ Item {
                 x: 20
                 height: parent.height
                 HeaderCell { width: root.colState; text: qsTr("État"); key: "state" }
-                HeaderCell { width: root.colName; text: qsTr("Poste"); key: "name" }
-                HeaderCell { width: root.colUser; text: qsTr("Utilisateur"); key: "user" }
+                HeaderCell { width: root.colName; text: qsTr("Personne"); key: "user" }
+                HeaderCell { width: root.colUser; text: qsTr("Poste"); key: "name" }
                 HeaderCell { width: root.colAddress; text: qsTr("Adresse") }
                 HeaderCell { width: root.colActivity; text: qsTr("Activité") }
                 HeaderCell { width: root.colTrust; visible: root.isAdmin; text: qsTr("Confiance") }
@@ -198,7 +198,7 @@ Item {
                 height: Math.max(44, nameText.implicitHeight + 18)
                 color: row.selected ? Theme.accentSoft : (rowHover.hovered ? Theme.selectWash : "transparent")
                 Accessible.role: Accessible.Row
-                Accessible.name: modelData.name + ", " + (root.stateLabels[modelData.status] || "")
+                Accessible.name: (modelData.userName || modelData.name) + ", " + (root.stateLabels[modelData.status] || "")
                                  + (row.selected ? qsTr(", sélectionné") : "")
 
                 // Ligne selectionnee : filet d'encre a gauche (pas seulement la couleur).
@@ -248,7 +248,8 @@ Item {
                             Text {
                                 id: nameText
                                 width: parent.width
-                                text: row.modelData.name
+                                // La personne (compte connecte ou dernier vu), sinon le poste.
+                                text: row.modelData.userName || row.modelData.name
                                 color: Theme.ink
                                 font.family: Theme.fontFamily
                                 font.pixelSize: Theme.fs(13)
@@ -267,7 +268,7 @@ Item {
                     Text {
                         width: root.colUser - 12
                         anchors.verticalCenter: parent.verticalCenter
-                        text: row.modelData.userName || "—"
+                        text: row.modelData.userName ? row.modelData.name : qsTr("aucun compte")
                         color: row.modelData.userName ? Theme.ink : Theme.ink3
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fs(13)
@@ -313,19 +314,19 @@ Item {
 
                         RowAction {
                             iconPath: Icons.phone
-                            tip: qsTr("Appeler %1").arg(row.modelData.name)
+                            tip: qsTr("Appeler %1").arg(row.modelData.userName || row.modelData.name)
                             enabled: !row.off && row.modelData.status !== "calling"
                             onClicked: root.callRequested(row.modelData)
                         }
                         RowAction {
                             iconPath: "M12 19.5v-15 M5.5 11 12 4.5 18.5 11"
-                            tip: qsTr("Envoyer un fichier à %1").arg(row.modelData.name)
+                            tip: qsTr("Envoyer un fichier à %1").arg(row.modelData.userName || row.modelData.name)
                             enabled: !row.off
                             onClicked: root.fileRequested(row.modelData)
                         }
                         RowAction {
                             iconPath: Icons.messageCircle
-                            tip: qsTr("Message à %1").arg(row.modelData.name)
+                            tip: qsTr("Message à %1").arg(row.modelData.userName || row.modelData.name)
                             enabled: !row.off && !!row.modelData.userName
                             onClicked: root.messageRequested(row.modelData)
                         }

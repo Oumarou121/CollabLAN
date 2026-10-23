@@ -18,7 +18,8 @@ function readPeers(peersModel) {
         var idx = peersModel.index(i, 0)
         list.push({ id: peersModel.data(idx, 257) || "", machine: peersModel.data(idx, 258) || "",
                     userUuid: peersModel.data(idx, 259) || "", status: peersModel.data(idx, 260) || "",
-                    address: peersModel.data(idx, 261) || "", signalingPort: peersModel.data(idx, 264) || 0 })
+                    address: peersModel.data(idx, 261) || "", signalingPort: peersModel.data(idx, 264) || 0,
+                    fingerprint: String(peersModel.data(idx, 266) || "").toLowerCase() })
     }
     return list
 }

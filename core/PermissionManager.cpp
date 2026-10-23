@@ -1,4 +1,5 @@
 #include "PermissionManager.h"
+#include "NetworkAddress.h"
 #include "DatabaseManager.h"
 #include "database/Repositories/AuthorizedMachineRepository.h"
 #include "database/Repositories/TrustedServerRepository.h"
@@ -60,8 +61,9 @@ bool PermissionManager::canManageAuthorizedMachines(UserRole role)
     return role == UserRole::Admin;
 }
 
-bool PermissionManager::isMachineAuthorized(const QString &ipAddress) const
+bool PermissionManager::isMachineAuthorized(const QString &rawIpAddress) const
 {
+    const QString ipAddress = network::displayAddress(rawIpAddress);
     if (!m_repository)
         return false; // Fail-closed : refuse par défaut si le repository n'est pas initialisé
     Q_UNUSED(ipAddress)
@@ -148,9 +150,10 @@ bool PermissionManager::isVouchedServer(const QString &fingerprint) const
 }
 
 bool PermissionManager::adoptTempServerAuthorization(const QString &fingerprint, const QString &machineUuid,
-                                                     const QString &hostname, const QString &ipAddress,
+                                                     const QString &hostname, const QString &rawIpAddress,
                                                      std::optional<int> authorizedBy, const QString &reason)
 {
+    const QString ipAddress = network::displayAddress(rawIpAddress);
     if (!m_repository || fingerprint.trimmed().isEmpty()) return false;
     const auto existing = m_repository->findByCertificateFingerprint(fingerprint);
     // Une decision deja prise ici (autorisation ou revocation) fait foi.
@@ -170,15 +173,25 @@ bool PermissionManager::isTrustedServer(const QString &fingerprint) const
     return !fingerprint.trimmed().isEmpty() && m_trustedServers && m_trustedServers->isTrusted(fingerprint);
 }
 
-void PermissionManager::recordMachineSeen(const QString &fingerprint, const QString &ipAddress)
+void PermissionManager::recordMachineSeen(const QString &fingerprint, const QString &rawIpAddress)
 {
+    const QString ipAddress = network::displayAddress(rawIpAddress);
     if (!m_repository || fingerprint.trimmed().isEmpty()) return;
     m_repository->updateLastSeen(fingerprint, ipAddress);
 }
 
-bool PermissionManager::trustRemoteServerCertificate(const QString &fingerprint,
-                                                      const QString &ipAddress)
+void PermissionManager::recordMachineIdentity(const QString &fingerprint, const QString &hostname,
+                                              const QString &userUuid)
 {
+    if (!m_repository || fingerprint.trimmed().isEmpty()) return;
+    if (m_repository->updateIdentity(fingerprint, hostname, userUuid))
+        emit machineIdentityChanged();
+}
+
+bool PermissionManager::trustRemoteServerCertificate(const QString &fingerprint,
+                                                      const QString &rawIpAddress)
+{
+    const QString ipAddress = network::displayAddress(rawIpAddress);
     if (!m_trustedServers || fingerprint.trimmed().isEmpty()) return false;
     if (m_trustedServers->isTrusted(fingerprint)) {
         // setTrusted rafraichit l'adresse et la date sans changer la decision.
@@ -234,9 +247,10 @@ bool PermissionManager::trustRemoteServerCertificate(const QString &fingerprint,
 }
 
 bool PermissionManager::approveServerCertificate(const QString &fingerprint,
-                                                  const QString &ipAddress,
+                                                  const QString &rawIpAddress,
                                                   const QString &hostname)
 {
+    const QString ipAddress = network::displayAddress(rawIpAddress);
     return m_trustedServers
         && m_trustedServers->setTrusted(fingerprint, ipAddress, hostname);
 }
@@ -248,9 +262,10 @@ bool PermissionManager::revokeServerCertificate(const QString &fingerprint,
 }
 
 bool PermissionManager::registerPendingMachineByCertificate(const QString &fingerprint,
-                                                             const QString &ipAddress,
+                                                             const QString &rawIpAddress,
                                                              const QString &hostname)
 {
+    const QString ipAddress = network::displayAddress(rawIpAddress);
     if (!m_repository || fingerprint.trimmed().isEmpty()) return false;
 
     const bool alreadyKnown = m_repository->findByCertificateFingerprint(fingerprint).has_value();
@@ -270,8 +285,9 @@ std::optional<models::AuthorizedMachine> PermissionManager::findMachineByCertifi
     return m_repository->findByCertificateFingerprint(fingerprint);
 }
 
-bool PermissionManager::revokeMachine(const QString &ipAddress, int revokedBy, const QString &reason)
+bool PermissionManager::revokeMachine(const QString &rawIpAddress, int revokedBy, const QString &reason)
 {
+    const QString ipAddress = network::displayAddress(rawIpAddress);
     if (!m_repository)
         return false;
     const bool ok = m_repository->revokeByIpAddress(ipAddress, revokedBy, reason);
@@ -327,8 +343,9 @@ bool PermissionManager::authorizeExistingMachineByCertificate(const QString &fin
     return ok;
 }
 
-bool PermissionManager::authorizeMachine(const QString &ipAddress, int authorizedBy, const QString &reason)
+bool PermissionManager::authorizeMachine(const QString &rawIpAddress, int authorizedBy, const QString &reason)
 {
+    const QString ipAddress = network::displayAddress(rawIpAddress);
     if (!m_repository)
         return false;
     const bool ok = m_repository->authorizeByIpAddress(ipAddress, authorizedBy, reason);
@@ -347,9 +364,10 @@ bool PermissionManager::removeMachine(int id)
 }
 
 bool PermissionManager::authorizeMachineByCertificate(const QString &fingerprint, const QString &machineUuid,
-                                                      const QString &hostname, const QString &ipAddress,
+                                                      const QString &hostname, const QString &rawIpAddress,
                                                       std::optional<int> authorizedBy, const QString &reason)
 {
+    const QString ipAddress = network::displayAddress(rawIpAddress);
     if (!m_repository || fingerprint.trimmed().isEmpty()) return false;
     models::AuthorizedMachine machine;
     machine.setUuid(machineUuid);

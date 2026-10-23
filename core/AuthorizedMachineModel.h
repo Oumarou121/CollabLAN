@@ -2,6 +2,7 @@
 #define CORE_AUTHORIZEDMACHINEMODEL_H
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QVector>
 #include "models/AuthorizedMachine.h"
 
@@ -29,7 +30,9 @@ public:
         StatusRole,
         AddedByRole,
         AddedAtRole,
-        ReasonRole
+        ReasonRole,
+        LastUserUuidRole,
+        LastUserNameRole
     };
     Q_ENUM(Roles)
 
@@ -46,6 +49,8 @@ public:
     Q_PROPERTY(int HostnameRole READ hostnameRoleId CONSTANT)
     Q_PROPERTY(int AuthorizedRole READ authorizedRoleId CONSTANT)
     Q_PROPERTY(int StatusRole READ statusRoleId CONSTANT)
+    Q_PROPERTY(int LastUserNameRole READ lastUserNameRoleId CONSTANT)
+    Q_PROPERTY(int LastUserUuidRole READ lastUserUuidRoleId CONSTANT)
     int idRoleId() const { return IdRole; }
     int ipAddressRoleId() const { return IpAddressRole; }
     int machineIdRoleId() const { return MachineIdRole; }
@@ -53,6 +58,8 @@ public:
     int hostnameRoleId() const { return HostnameRole; }
     int authorizedRoleId() const { return AuthorizedRole; }
     int statusRoleId() const { return StatusRole; }
+    int lastUserNameRoleId() const { return LastUserNameRole; }
+    int lastUserUuidRoleId() const { return LastUserUuidRole; }
 
     explicit AuthorizedMachineModel(QObject *parent = nullptr);
     ~AuthorizedMachineModel() override;
@@ -83,6 +90,8 @@ private:
     QVector<models::AuthorizedMachine> m_machines;
     core::PermissionManager *m_permissionManager = nullptr;
     QObject *m_userManager = nullptr;
+    /// Noms des comptes par uuid, relus a chaque rafraichissement.
+    QHash<QString, QString> m_userNames;
 };
 
 } // namespace core

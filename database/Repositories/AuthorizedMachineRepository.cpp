@@ -34,6 +34,7 @@ models::AuthorizedMachine AuthorizedMachineRepository::machineFromQuery(const QS
     machine.setIpAddress(query.value(rec.indexOf(QLatin1String("ip_address"))).toString());
     machine.setLastIpAddress(query.value(rec.indexOf(QLatin1String("last_ip_address"))).toString());
     machine.setHostname(query.value(rec.indexOf(QLatin1String("hostname"))).toString());
+    machine.setLastUserUuid(query.value(rec.indexOf(QLatin1String("last_user_uuid"))).toString());
     machine.setAuthorized(query.value(rec.indexOf(QLatin1String("authorized"))).toInt() != 0);
     const QString status = query.value(rec.indexOf(QLatin1String("status"))).toString();
     machine.setStatus(status.isEmpty()
@@ -157,6 +158,23 @@ bool AuthorizedMachineRepository::updateLastSeen(const QString &fingerprint, con
     query.prepare(QStringLiteral("UPDATE AuthorizedClients SET last_ip_address = :ip, ip_address = :ip WHERE certificate_fingerprint = :fingerprint"));
     query.bindValue(QStringLiteral(":ip"), ipAddress);
     query.bindValue(QStringLiteral(":fingerprint"), fingerprint.toLower());
+    if (!query.exec()) { m_lastError = query.lastError().text(); return false; }
+    return query.numRowsAffected() > 0;
+}
+
+bool AuthorizedMachineRepository::updateIdentity(const QString &fingerprint, const QString &hostname,
+                                                 const QString &userUuid)
+{
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "UPDATE AuthorizedClients SET "
+        "  hostname = CASE WHEN :hostname <> '' THEN :hostname ELSE hostname END, "
+        "  last_user_uuid = CASE WHEN :user <> '' THEN :user ELSE last_user_uuid END "
+        "WHERE certificate_fingerprint = :fingerprint "
+        "  AND ((:hostname <> '' AND hostname <> :hostname) OR (:user <> '' AND last_user_uuid <> :user))"));
+    query.bindValue(QStringLiteral(":hostname"), hostname.trimmed());
+    query.bindValue(QStringLiteral(":user"), userUuid.trimmed());
+    query.bindValue(QStringLiteral(":fingerprint"), fingerprint.trimmed().toLower());
     if (!query.exec()) { m_lastError = query.lastError().text(); return false; }
     return query.numRowsAffected() > 0;
 }

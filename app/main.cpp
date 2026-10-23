@@ -8,6 +8,7 @@
 #include <QWindow>
 #include <QIcon>
 #include <QPainter>
+#include <QFont>
 #include <QFontDatabase>
 #include <QTimer>
 #include <QSystemTrayIcon>
@@ -340,6 +341,13 @@ int main(int argc, char *argv[])
             }
         }
     }
+
+    // Police a chasse fixe de l interface (empreintes, adresses, ports) :
+    // Cascadia Mono n est livree qu avec Windows 11 / Windows Terminal. Sans
+    // elle (Windows 10), Qt devait chercher un remplacant au hasard, parfois a
+    // chasse variable ; Consolas est presente sur tous les Windows.
+    QFont::insertSubstitutions(QStringLiteral("Cascadia Mono"),
+                               {QStringLiteral("Consolas"), QStringLiteral("Courier New")});
 
     QQmlApplicationEngine engine;
     // Permet d'utiliser "import Themes" (module singleton Theme, cf. ui/Themes/qmldir)

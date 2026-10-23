@@ -117,6 +117,9 @@ public:
     /// partie d'un reseau) ; faux pour un poste neuf.
     bool hasTrustedServer() const;
     Q_INVOKABLE void recordMachineSeen(const QString &fingerprint, const QString &ipAddress);
+    /// Nom et dernier compte d'un poste connu, d'apres la decouverte : le
+    /// poste reste nomme (personne, puis poste) une fois hors ligne.
+    void recordMachineIdentity(const QString &fingerprint, const QString &hostname, const QString &userUuid);
     /// Verifie la confiance LOCALE envers le certificat du serveur. Cette
     /// decision ne quitte jamais ce poste.
     Q_INVOKABLE bool trustRemoteServerCertificate(const QString &fingerprint,
@@ -162,6 +165,9 @@ signals:
     /// Une machine a ete retiree de la liste (les autres changements passent
     /// par machineChanged).
     void machineRemoved(int id);
+    /// Nom ou dernier compte d'un poste mis a jour (affichage seulement : la
+    /// liste des postes autorises ne change pas, rien n'est rediffuse).
+    void machineIdentityChanged();
 
 
 private:

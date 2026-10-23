@@ -1,4 +1,5 @@
 #include "TransferService.h"
+#include "NetworkAddress.h"
 
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -16,6 +17,7 @@
 #include <QUuid>
 #include <QDebug>
 #include <QByteArray>
+
 
 namespace network {
 
@@ -519,7 +521,7 @@ bool TransferService::startSendOnSocket(QTcpSocket *socket, const PendingSendJob
     // contenant des sous-dossiers. Pour un envoi manuel (transferFileName
     // vide), announcedFileName == info.fileName() : comportement inchange.
     emit transferStarted(state.transferKey, announcedFileName, state.fileSize, false, 0,
-                          state.senderUuid, state.recipientUuid, socket->peerAddress(), QString(),
+                          state.senderUuid, state.recipientUuid, canonicalAddress(socket->peerAddress()), QString(),
                           job.isFolderTransfer);
 
     const quint8 compressionFlags = m_compressionEnabled ? 0x01 : 0x00;
@@ -560,7 +562,7 @@ void TransferService::onClientSocketConnected()
             QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
                                       Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                       Q_ARG(QString, fingerprint),
-                                      Q_ARG(QString, socket->peerAddress().toString()));
+                                      Q_ARG(QString, canonicalAddress(socket->peerAddress()).toString()));
         }
         if (!authorized) {
             finishSend(socket, false, QStringLiteral("Certificat distant non autorisé"));
@@ -568,7 +570,7 @@ void TransferService::onClientSocketConnected()
         }
         QMetaObject::invokeMethod(m_permissionManager, "recordMachineSeen",
                                   Qt::DirectConnection, Q_ARG(QString, fingerprint),
-                                  Q_ARG(QString, socket->peerAddress().toString()));
+                                  Q_ARG(QString, canonicalAddress(socket->peerAddress()).toString()));
     }
 
     if (m_securityService && m_securityService->isReady()) {
@@ -872,11 +874,11 @@ void TransferService::onServerSocketReadyRead()
                 QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
                                           Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                           Q_ARG(QString, fingerprint),
-                                          Q_ARG(QString, socket->peerAddress().toString()));
+                                          Q_ARG(QString, canonicalAddress(socket->peerAddress()).toString()));
             }
             if (!authorized) {
                 qWarning() << "TransferService: active transfer interrupted for unauthorized machine"
-                           << socket->peerAddress() << fingerprint;
+                           << canonicalAddress(socket->peerAddress()) << fingerprint;
                 socket->disconnectFromHost();
                 return;
             }
@@ -922,7 +924,7 @@ void TransferService::onServerSocketReadyRead()
                 : QString();
             if (m_permissionManager && (tlsFingerprint.isEmpty() || claimedFingerprint != tlsFingerprint)) {
                 qWarning() << "TransferService: transfer refused, TLS certificate missing or not matching announced identity from"
-                           << socket->peerAddress();
+                           << canonicalAddress(socket->peerAddress());
                 finishReceive(socket, false, QStringLiteral("Certificat distant absent ou non concordant"));
                 return;
             }
@@ -936,17 +938,17 @@ void TransferService::onServerSocketReadyRead()
                     QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
                                               Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                               Q_ARG(QString, announcedFingerprint),
-                                              Q_ARG(QString, socket->peerAddress().toString()));
+                                              Q_ARG(QString, canonicalAddress(socket->peerAddress()).toString()));
                 }
             }
             if (!authorized) {
                 qWarning() << "TransferService: transfer refused for unauthorized certificate"
-                           << announcedFingerprint << socket->peerAddress();
+                           << announcedFingerprint << canonicalAddress(socket->peerAddress());
                 if (m_permissionManager && !announcedFingerprint.isEmpty()) {
                     QMetaObject::invokeMethod(m_permissionManager, "registerPendingMachineByCertificate",
                                               Qt::DirectConnection,
                                               Q_ARG(QString, announcedFingerprint),
-                                              Q_ARG(QString, socket->peerAddress().toString()),
+                                              Q_ARG(QString, canonicalAddress(socket->peerAddress()).toString()),
                                               Q_ARG(QString, QString()));
                 }
                 finishReceive(socket, false, QStringLiteral("Certificat distant non autorisé"));
@@ -958,7 +960,7 @@ void TransferService::onServerSocketReadyRead()
                 QMetaObject::invokeMethod(m_permissionManager, "recordMachineSeen",
                                           Qt::DirectConnection,
                                           Q_ARG(QString, announcedFingerprint),
-                                          Q_ARG(QString, socket->peerAddress().toString()));
+                                          Q_ARG(QString, canonicalAddress(socket->peerAddress()).toString()));
             }
             continue;
         }
@@ -968,7 +970,7 @@ void TransferService::onServerSocketReadyRead()
                 state.identityVerified = true;
             } else {
                 qWarning() << "TransferService: transfer refused, missing identity frame from"
-                           << socket->peerAddress();
+                           << canonicalAddress(socket->peerAddress());
                 finishReceive(socket, false, QStringLiteral("Identité de transfert absente"));
                 return;
             }
@@ -1046,7 +1048,7 @@ void TransferService::onServerSocketReadyRead()
             QString peerFolderName;
             if (m_peerFolderNameResolver) {
                 peerFolderName = sanitizeFolderName(
-                    m_peerFolderNameResolver(socket->peerAddress(), senderMachineId));
+                    m_peerFolderNameResolver(canonicalAddress(socket->peerAddress()), senderMachineId));
             }
             if (peerFolderName.isEmpty()) {
                 peerFolderName = sanitizeFolderName(senderMachineId);
@@ -1105,7 +1107,7 @@ void TransferService::onServerSocketReadyRead()
             state.bytesReceived = resumeOffset;
 
             emit transferStarted(state.transferKey, state.fileName, state.fileSize, true, resumeOffset,
-                                  state.senderUuid, state.recipientUuid, socket->peerAddress(),
+                                  state.senderUuid, state.recipientUuid, canonicalAddress(socket->peerAddress()),
                                   state.senderMachineId, state.isFolderTransfer);
             if (resumeOffset > 0) {
                 emit transferProgress(state.transferKey, state.bytesReceived, state.fileSize);

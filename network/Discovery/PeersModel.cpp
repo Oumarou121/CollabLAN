@@ -55,6 +55,8 @@ QVariant PeersModel::data(const QModelIndex &index, int role) const
         return peer.signalingPort;
     case LastSeenMsRole:
         return peer.lastSeenMs;
+    case FingerprintRole:
+        return peer.certificateFingerprint;
     default:
         return QVariant();
     }
@@ -72,6 +74,7 @@ QHash<int, QByteArray> PeersModel::roleNames() const
         { TransferPortRole, "transferPort" },
         { SignalingPortRole, "signalingPort" },
         { LastSeenMsRole, "lastSeenMs" },
+        { FingerprintRole, "certificateFingerprint" },
     };
 }
 

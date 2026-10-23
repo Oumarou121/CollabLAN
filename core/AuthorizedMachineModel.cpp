@@ -53,6 +53,10 @@ QVariant AuthorizedMachineModel::data(const QModelIndex &index, int role) const
         return machine.addedAt().toString(Qt::ISODate);
     case ReasonRole:
         return machine.reason();
+    case LastUserUuidRole:
+        return machine.lastUserUuid();
+    case LastUserNameRole:
+        return m_userNames.value(machine.lastUserUuid());
     default:
         return QVariant();
     }
@@ -73,6 +77,8 @@ QHash<int, QByteArray> AuthorizedMachineModel::roleNames() const
     roles[AddedByRole] = "addedBy";
     roles[AddedAtRole] = "addedAt";
     roles[ReasonRole] = "reason";
+    roles[LastUserUuidRole] = "lastUserUuid";
+    roles[LastUserNameRole] = "lastUserName";
     return roles;
 }
 
@@ -80,6 +86,13 @@ void AuthorizedMachineModel::refresh()
 {
     beginResetModel();
     m_machines.clear();
+
+    // Noms des comptes (dernier compte vu sur chaque poste).
+    m_userNames.clear();
+    if (auto *users = qobject_cast<UserManager *>(m_userManager)) {
+        for (const models::User &user : users->allUsers())
+            m_userNames.insert(user.uuid(), user.name());
+    }
     
     // Charger depuis AuthorizedMachineRepository via PermissionManager
     if (m_permissionManager) {
@@ -153,6 +166,8 @@ void AuthorizedMachineModel::setPermissionManager(core::PermissionManager *manag
     if (m_permissionManager) {
         connect(m_permissionManager, &PermissionManager::machineChanged,
                 this, [this](const models::AuthorizedMachine &) { refresh(); });
+        connect(m_permissionManager, &PermissionManager::machineIdentityChanged,
+                this, &AuthorizedMachineModel::refresh);
         refresh();
     }
 }

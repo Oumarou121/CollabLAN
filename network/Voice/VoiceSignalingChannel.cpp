@@ -1,4 +1,5 @@
 #include "VoiceSignalingChannel.h"
+#include "NetworkAddress.h"
 #include "Security/SecurityService.h"
 
 #include <QWebSocket>
@@ -11,6 +12,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDebug>
+
 
 namespace network {
 
@@ -258,10 +260,10 @@ bool VoiceSignalingChannel::sendHangupToPeer(const QHostAddress &peerAddress,
                                               const QString &callId, const QString &reason)
 {
     QWebSocket *targetSocket = nullptr;
-    if (m_incomingSocket && m_incomingSocket->peerAddress().isEqual(peerAddress,
+    if (m_incomingSocket && canonicalAddress(m_incomingSocket->peerAddress()).isEqual(peerAddress,
                                                                       QHostAddress::TolerantConversion)) {
         targetSocket = m_incomingSocket;
-    } else if (m_outgoingConnected && m_outgoingSocket->peerAddress().isEqual(
+    } else if (m_outgoingConnected && canonicalAddress(m_outgoingSocket->peerAddress()).isEqual(
                    peerAddress, QHostAddress::TolerantConversion)) {
         targetSocket = m_outgoingSocket;
     }
@@ -309,7 +311,7 @@ void VoiceSignalingChannel::onServerNewConnection()
             if (!fingerprint.isEmpty()) {
                 QMetaObject::invokeMethod(m_permissionManager, "registerPendingMachineByCertificate",
                                           Qt::DirectConnection, Q_ARG(QString, fingerprint),
-                                          Q_ARG(QString, socket->peerAddress().toString()),
+                                          Q_ARG(QString, canonicalAddress(socket->peerAddress()).toString()),
                                           Q_ARG(QString, QString()));
             }
             socket->close();
@@ -322,7 +324,7 @@ void VoiceSignalingChannel::onServerNewConnection()
         tlsAuthorized = true;
         QMetaObject::invokeMethod(m_permissionManager, "recordMachineSeen",
                                   Qt::DirectConnection, Q_ARG(QString, fingerprint),
-                                  Q_ARG(QString, socket->peerAddress().toString()));
+                                  Q_ARG(QString, canonicalAddress(socket->peerAddress()).toString()));
     }
 
     if (m_incomingSocket) {
@@ -370,7 +372,7 @@ void VoiceSignalingChannel::onServerNewConnection()
     if (tlsAuthorized) {
         // Emettre peerConnected dans le thread principal pour eviter les problemes de thread
         QMetaObject::invokeMethod(this, [this, socket]() {
-            emit peerConnected(socket->peerAddress());
+            emit peerConnected(canonicalAddress(socket->peerAddress()));
         }, Qt::QueuedConnection);
     } else {
         qDebug() << "VoiceSignalingChannel: attente de l'empreinte annoncee par le message de signalisation";
@@ -393,7 +395,7 @@ void VoiceSignalingChannel::onClientConnected()
             QMetaObject::invokeMethod(m_permissionManager, "trustRemoteServerCertificate",
                                       Qt::DirectConnection, Q_RETURN_ARG(bool, authorized),
                                       Q_ARG(QString, verifiedFingerprint),
-                                      Q_ARG(QString, m_outgoingSocket->peerAddress().toString()));
+                                      Q_ARG(QString, canonicalAddress(m_outgoingSocket->peerAddress()).toString()));
         }
         if (!authorized) {
             m_outgoingSocket->close();
@@ -405,7 +407,7 @@ void VoiceSignalingChannel::onClientConnected()
     m_outgoingConnected = true;
     // Emettre peerConnected dans le thread principal pour eviter les problemes de thread
     QMetaObject::invokeMethod(this, [this]() {
-        emit peerConnected(m_outgoingSocket->peerAddress());
+        emit peerConnected(canonicalAddress(m_outgoingSocket->peerAddress()));
     }, Qt::QueuedConnection);
 }
 
@@ -418,7 +420,7 @@ void VoiceSignalingChannel::onClientDisconnected()
 void VoiceSignalingChannel::onTextMessageReceived(const QString &message)
 {
     auto *socket = qobject_cast<QWebSocket *>(sender());
-    const QHostAddress peerAddress = socket ? socket->peerAddress() : QHostAddress();
+    const QHostAddress peerAddress = socket ? canonicalAddress(socket->peerAddress()) : QHostAddress();
 
     const SignalingMessage parsed = parseMessage(message);
     if (parsed.type == SignalingMessageType::Unknown) {

@@ -21,6 +21,9 @@ on:
 env:
   QT_VERSION: "6.9.1"
   BUILD_TYPE: Release
+  # Version des installateurs : augmente a chaque compilation (une nouvelle
+  # version remplace proprement la precedente sous Windows).
+  APP_VERSION: 1.0.${{ github.run_number }}
 
 jobs:
   set-matrix:
@@ -32,7 +35,10 @@ jobs:
       - id: set
         run: |
           WINDOWS='{"os":"windows-latest","key":"windows","artifact_name":"LocaLink-windows"}'
-          LINUX='{"os":"ubuntu-latest","key":"linux","artifact_name":"LocaLink-linux"}'
+          # Ubuntu 22.04 (glibc 2.35) : l'AppImage fonctionne sur toutes les
+          # distributions au moins aussi recentes ; compilee sur la derniere
+          # Ubuntu, elle aurait exige une distribution de 2024 ou plus.
+          LINUX='{"os":"ubuntu-22.04","key":"linux","artifact_name":"LocaLink-linux"}'
           MACOS='{"os":"macos-latest","key":"macos","artifact_name":"LocaLink-macos"}'
 
           TARGET="${{ github.event.inputs.target }}"
@@ -133,6 +139,7 @@ jobs:
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DBUILD_TESTS=OFF \
+            -DLOCALINK_VERSION=${{ env.APP_VERSION }} \
             ${{ runner.os == 'macOS' && '-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0' || '' }} \
             ${{ runner.os == 'macOS' && '"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"' || '' }} \
             ${{ runner.os == 'macOS' && format('-DCMAKE_MODULE_PATH={0}/cmake', github.workspace) || '' }} \
@@ -301,19 +308,61 @@ jobs:
           }
           Write-Host "Toutes les dependances sont presentes."
 
-      - name: Deploy Qt runtime (macOS)
+      # Image disque a glisser-deposer : LocaLink.app a cote d'un raccourci vers
+      # Applications (le .dmg de macdeployqt ne contenait que l'application).
+      # Signature ad hoc : sans signature, macOS refuse de lancer une
+      # application arm64 modifiee par macdeployqt (« endommagee »). Sans
+      # compte developpeur Apple, macOS demande encore une confirmation au
+      # premier lancement (Reglages > Confidentialite et securite > Ouvrir).
+      - name: Deploy Qt runtime and build DMG (macOS)
         if: runner.os == 'macOS'
         shell: bash
-        run: macdeployqt build/app/LocaLink.app -qmldir=ui -dmg
+        run: |
+          macdeployqt build/app/LocaLink.app -qmldir=ui
+          codesign --force --deep --sign - build/app/LocaLink.app
+          mkdir -p dmg-root
+          cp -R build/app/LocaLink.app dmg-root/
+          ln -s /Applications dmg-root/Applications
+          hdiutil create -volname "LocaLink" -srcfolder dmg-root -ov -format UDZO LocaLink-macos.dmg
+          echo "ASSET=LocaLink-macos.dmg" >> "$GITHUB_ENV"
 
-      - name: Package (Linux)
+      # AppImage : un seul fichier, a rendre executable puis lancer, sans
+      # installation, sur la plupart des distributions (linuxdeploy + Qt).
+      - name: Install AppImage tools (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          mkdir -p package
-          cp build/app/LocaLink package/
-          cp -r build/app/database package/
-          cp -r resources/linux package/ 2>/dev/null || true
+          # Bibliotheques que les plugins Qt (xcb, multimedia) referencent :
+          # linuxdeploy doit les trouver pour assembler l'AppImage.
+          sudo apt-get install -y libfuse2 libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1 libegl1 libgl1 libpulse0
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
+
+      - name: Build AppImage (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          QML_SOURCES_PATHS: ${{ github.workspace }}/ui
+          VERSION: ${{ env.APP_VERSION }}
+        run: |
+          export QMAKE="$QT_ROOT_DIR/bin/qmake"
+          ICONS=()
+          for size in 64 128 256 512; do ICONS+=(-i "resources/linux/icons/${size}x${size}/localink.png"); done
+          # 1. Dossier de l'application avec Qt (plugins, QML).
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir \
+            -e build/app/LocaLink -d resources/linux/localink.desktop "${ICONS[@]}" --plugin qt
+          # 2. Module TLS OpenSSL de Qt, charge a l'execution : sans lui,
+          #    Qt se rabat sur un module qui refuse les certificats des postes.
+          mkdir -p AppDir/usr/plugins/tls
+          cp -n "$QT_ROOT_DIR"/plugins/tls/libqopensslbackend.so AppDir/usr/plugins/tls/
+          # 3. Image AppImage.
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
+          mv LocaLink*.AppImage LocaLink-linux-x86_64.AppImage
+          echo "ASSET=LocaLink-linux-x86_64.AppImage" >> "$GITHUB_ENV"
 
       # --- Publication : release « Derniere compilation » ---
       # Les artefacts d'Actions comptent dans le quota de stockage du compte
@@ -327,23 +376,18 @@ jobs:
           # Dossier deploye sans les fichiers intermediaires de compilation.
           robocopy build/app dist/LocaLink /E /XD CMakeFiles LocaLink_autogen app_core_autogen /XF *.lib *.obj *.pdb *.ilk *.exp *.cmake *.ninja | Out-Null
           if ($LASTEXITCODE -ge 8) { Write-Error "robocopy a echoue ($LASTEXITCODE)"; exit 1 }
-          Compress-Archive -Path dist/LocaLink -DestinationPath LocaLink-windows.zip -CompressionLevel Optimal
-          "ASSET=LocaLink-windows.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # Installateur (Inno Setup, cf. packaging/windows/LocaLink.iss) :
+          # Program Files, menu Demarrer, pare-feu, desinstallation.
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress | Out-Null
+          }
+          if (-not (Test-Path $iscc)) { Write-Error "Inno Setup introuvable."; exit 1 }
+          & $iscc /Q "/DAppVersion=$env:APP_VERSION" "/DSourceDir=$PWD\dist\LocaLink" "/DOutputDir=$PWD" packaging\windows\LocaLink.iss
+          if ($LASTEXITCODE -ne 0) { Write-Error "La compilation de l'installateur a echoue."; exit 1 }
+          Move-Item "LocaLink-Setup-$env:APP_VERSION.exe" "LocaLink-Setup-windows.exe" -Force
+          "ASSET=LocaLink-Setup-windows.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           exit 0
-
-      - name: Package archive (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          tar -czf LocaLink-linux.tar.gz -C package .
-          echo "ASSET=LocaLink-linux.tar.gz" >> "$GITHUB_ENV"
-
-      - name: Package archive (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          cp build/app/*.dmg LocaLink-macos.dmg
-          echo "ASSET=LocaLink-macos.dmg" >> "$GITHUB_ENV"
 
       - name: Publish to "Derniere compilation" release
         if: github.event_name != 'pull_request'
@@ -362,11 +406,29 @@ jobs:
           fi
           # Le tag suit le commit compile.
           gh api -X PATCH "repos/$GH_REPO/git/refs/tags/$TAG" -f sha="$GITHUB_SHA" -F force=true >/dev/null
-          gh release edit "$TAG" --prerelease --title "Dernière compilation" --notes "Compilée automatiquement depuis la branche \`$GITHUB_REF_NAME\`, commit $GITHUB_SHA, le $(date -u '+%d/%m/%Y à %H:%M UTC').
+          cat > release-notes.md <<EOF
+          **LocaLink $APP_VERSION** — compilée automatiquement le $(date -u '+%d/%m/%Y à %H:%M UTC') (branche \`$GITHUB_REF_NAME\`, commit ${GITHUB_SHA:0:7}).
 
-          - **Windows** : \`LocaLink-windows.zip\` — décompresser puis lancer \`LocaLink\\LocaLink.exe\` (rien à installer, Windows 10 1809 ou plus récent).
-          - **Linux** : \`LocaLink-linux.tar.gz\`
-          - **macOS** : \`LocaLink-macos.dmg\`
+          ### Installer LocaLink
 
-          Chaque compilation remplace ces fichiers."
+          **Windows** (10 version 1809 ou plus récent, 11) — \`LocaLink-Setup-windows.exe\`
+          1. Téléchargez et ouvrez le fichier, puis suivez l'assistant.
+          2. Si Windows affiche « Windows a protégé votre ordinateur » : *Informations complémentaires* puis *Exécuter quand même* (l'installateur n'est pas signé).
+          3. LocaLink se trouve ensuite dans le menu Démarrer. Pour mettre à jour, installez simplement la nouvelle version par-dessus.
+
+          **macOS** (12 ou plus récent) — \`LocaLink-macos.dmg\`
+          1. Ouvrez le fichier et glissez **LocaLink** sur **Applications**.
+          2. Au premier lancement, si macOS bloque l'ouverture : *Réglages Système › Confidentialité et sécurité*, puis *Ouvrir quand même* (l'application n'est pas notariée par Apple).
+
+          **Linux** (Ubuntu 22.04, Debian 12, Fedora 36 ou plus récents) — \`LocaLink-linux-x86_64.AppImage\`
+          1. Rendez le fichier exécutable : clic droit › *Propriétés* › *Autoriser l'exécution*, ou \`chmod +x LocaLink-linux-x86_64.AppImage\`.
+          2. Double-cliquez dessus pour lancer LocaLink (aucune installation).
+
+          Chaque compilation remplace ces fichiers.
+          EOF
+          gh release edit "$TAG" --prerelease --title "Dernière compilation" --notes-file release-notes.md
+          # Anciens fichiers (archives remplacees par les installateurs).
+          for old in LocaLink-windows.zip LocaLink-linux.tar.gz; do
+            gh release delete-asset "$TAG" "$old" -y >/dev/null 2>&1 || true
+          done
           gh release upload "$TAG" "$ASSET" --clobber

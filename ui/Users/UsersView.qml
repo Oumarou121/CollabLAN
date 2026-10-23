@@ -40,7 +40,7 @@ Item {
     signal exchangesRequested(string peerKey)
 
     // Fil d'Ariane global (AppShell) : "Postes / <poste choisi>".
-    readonly property string breadcrumbLeaf: root.selected ? root.selected.machine : ""
+    readonly property string breadcrumbLeaf: root.selected ? root.labelOf(root.selected) : ""
     function breadcrumbRootClicked() { root.selectedKey = "" }
 
     // ======================================================================
@@ -76,6 +76,8 @@ Item {
                 machineId: m.data(idx, m.MachineIdRole) || "",
                 host: m.data(idx, m.HostnameRole) || "",
                 fingerprint: m.data(idx, m.CertificateFingerprintRole) || "",
+                // Dernier compte vu sur ce poste : le nomme une fois hors ligne.
+                lastUser: m.LastUserNameRole ? (m.data(idx, m.LastUserNameRole) || "") : "",
                 addedBy: m.data(idx, m.AddedByRole || 266),
                 addedAt: m.data(idx, m.AddedAtRole || 267) || "",
                 trust: status === "revoked" ? "revoked" : (authorized ? "authorized" : "pending")
@@ -90,20 +92,29 @@ Item {
         const auth = root.readMachines()
         const used = {}
         const out = []
-        // Postes detectes, relies a leur autorisation par identifiant puis adresse.
+        // Postes detectes, relies a leur autorisation par empreinte (identite
+        // stable), puis identifiant, puis adresse.
         for (let i = 0; i < peers.length; i++) {
             const p = peers[i]
             let a = null
+            for (let j = 0; j < auth.length && !a; j++)
+                if (!used[j] && p.fingerprint && String(auth[j].fingerprint).toLowerCase() === p.fingerprint) { a = auth[j]; used[j] = true }
             for (let j = 0; j < auth.length && !a; j++)
                 if (!used[j] && auth[j].machineId.length && auth[j].machineId === p.id) { a = auth[j]; used[j] = true }
             for (let j = 0; j < auth.length && !a; j++)
                 if (!used[j] && auth[j].ip.length && auth[j].ip === p.address) { a = auth[j]; used[j] = true }
             const lastSeen = root.model ? (root.model.data(root.model.index(i, 0), 265) || 0) : 0
-            out.push(root.makeRow(p.machine || p.address, p.address, p, a, lastSeen))
+            out.push(root.makeRow(p.machine || (a && a.host) || qsTr("Poste sans nom"), p.address, p, a, lastSeen))
         }
         // Autorisations sans poste detecte : hors ligne, demandes, acces retires.
+        // Le dernier compte vu n'est pas repris s'il est en ligne sur un autre poste.
+        const onlinePeople = {}
+        out.forEach(function(r) { if (r.person) onlinePeople[r.person] = true })
         for (let j = 0; j < auth.length; j++)
-            if (!used[j]) out.push(root.makeRow(auth[j].host || auth[j].ip || auth[j].machineId, auth[j].ip, null, auth[j], 0))
+            if (!used[j]) {
+                if (onlinePeople[auth[j].lastUser]) auth[j].lastUser = ""
+                out.push(root.makeRow(auth[j].host || qsTr("Poste sans nom"), auth[j].ip, null, auth[j], 0))
+            }
         root.rows = out
         if (root.selectedKey.length && !root.rowByKey(root.selectedKey)) root.selectedKey = ""
         if (!root.selectedKey.length && out.length) root.selectedKey = root.sortedVisible()[0] ? root.sortedVisible()[0].key : out[0].key
@@ -119,7 +130,8 @@ Item {
             machine: machine, address: address,
             port: peer ? root.portOf(peer.id) : 0,
             online: !!peer, st: st, trust: trust,
-            person: person ? person.username : "", userId: person ? person.userId : -1,
+            // Hors ligne : dernier compte vu sur ce poste.
+            person: person ? person.username : (!peer && auth ? auth.lastUser : ""), userId: person ? person.userId : -1,
             userUuid: peer ? peer.userUuid : "",
             peerId: peer ? peer.id : "", signalingPort: peer ? peer.signalingPort : 0,
             lastSeenMs: lastSeen,

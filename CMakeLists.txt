@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 project(LocaLink LANGUAGES CXX)
 
 set(APP_BUNDLE_IDENTIFIER "com.nexis.localink" CACHE STRING "macOS bundle identifier")
+# Version affichee par les installateurs et le paquet macOS (fournie par le CI).
+set(LOCALINK_VERSION "1.0.0" CACHE STRING "Version de LocaLink")
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)

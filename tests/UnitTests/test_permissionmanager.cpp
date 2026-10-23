@@ -231,6 +231,51 @@ private slots:
         QCOMPARE(spy.count(), 1);
     }
 
+    // Adresse IPv4 rapportee au format IPv6 par une socket double pile :
+    // enregistree sous sa forme IPv4 (elle s'affichait comme nom de poste).
+    void ipv4MappedAddressIsStoredAsIpv4()
+    {
+        freshDatabase();
+        QVERIFY(m_manager->registerPendingMachineByCertificate(QStringLiteral("ab12"), QStringLiteral("::ffff:192.168.1.147")));
+        auto machine = m_manager->findMachineByCertificateFingerprint(QStringLiteral("ab12"));
+        QVERIFY(machine.has_value());
+        QCOMPARE(machine->ipAddress(), QStringLiteral("192.168.1.147"));
+
+        m_manager->recordMachineSeen(QStringLiteral("ab12"), QStringLiteral("::ffff:192.168.1.148"));
+        machine = m_manager->findMachineByCertificateFingerprint(QStringLiteral("ab12"));
+        QCOMPARE(machine->lastIpAddress(), QStringLiteral("192.168.1.148"));
+    }
+
+    // Nom du poste et dernier compte (decouverte) gardes pour le nommer hors
+    // ligne ; signal d'affichage seulement quand quelque chose change, sans
+    // machineChanged (qui rediffuserait la liste des postes autorises).
+    void recordMachineIdentity_keepsNameAndLastUser()
+    {
+        freshDatabase();
+        QVERIFY(m_manager->registerPendingMachineByCertificate(QStringLiteral("cd34"), QStringLiteral("192.168.1.20")));
+        QSignalSpy identity(m_manager.get(), &PermissionManager::machineIdentityChanged);
+        QSignalSpy changed(m_manager.get(), &PermissionManager::machineChanged);
+
+        m_manager->recordMachineIdentity(QStringLiteral("CD34"), QStringLiteral("PC-COMPTA"), QStringLiteral("uuid-awa"));
+        auto machine = m_manager->findMachineByCertificateFingerprint(QStringLiteral("cd34"));
+        QCOMPARE(machine->hostname(), QStringLiteral("PC-COMPTA"));
+        QCOMPARE(machine->lastUserUuid(), QStringLiteral("uuid-awa"));
+        QCOMPARE(identity.count(), 1);
+
+        // Annonce identique, puis annonce sans compte (personne connectee) :
+        // rien ne change, le dernier compte reste connu.
+        m_manager->recordMachineIdentity(QStringLiteral("cd34"), QStringLiteral("PC-COMPTA"), QStringLiteral("uuid-awa"));
+        m_manager->recordMachineIdentity(QStringLiteral("cd34"), QStringLiteral("PC-COMPTA"), QString());
+        machine = m_manager->findMachineByCertificateFingerprint(QStringLiteral("cd34"));
+        QCOMPARE(machine->lastUserUuid(), QStringLiteral("uuid-awa"));
+        QCOMPARE(identity.count(), 1);
+        QCOMPARE(changed.count(), 0);
+
+        // Poste inconnu : rien n'est cree.
+        m_manager->recordMachineIdentity(QStringLiteral("zz99"), QStringLiteral("PC-X"), QStringLiteral("uuid-x"));
+        QVERIFY(!m_manager->findMachineByCertificateFingerprint(QStringLiteral("zz99")).has_value());
+    }
+
 };
 
 QTEST_MAIN(TestPermissionManager)

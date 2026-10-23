@@ -1,4 +1,5 @@
 #include "AuditManager.h"
+#include "NetworkAddress.h"
 
 #include "DatabaseManager.h"
 #include "AuditLogRepository.h"
@@ -85,13 +86,13 @@ void AuditManager::logConnection(std::optional<qint64> userId, const QHostAddres
                                   bool established, const QString &detail)
 {
     QString description = established
-        ? QStringLiteral("Connexion etablie avec %1").arg(peerAddress.toString())
-        : QStringLiteral("Connexion perdue avec %1").arg(peerAddress.toString());
+        ? QStringLiteral("Connexion etablie avec %1").arg(network::displayAddress(peerAddress))
+        : QStringLiteral("Connexion perdue avec %1").arg(network::displayAddress(peerAddress));
     if (!detail.isEmpty()) {
         description += QStringLiteral(" (%1)").arg(detail);
     }
 
-    recordEvent(AuditEventType::Connection, description, userId, peerAddress.toString());
+    recordEvent(AuditEventType::Connection, description, userId, network::displayAddress(peerAddress));
 }
 
 void AuditManager::logMessage(qint64 senderId, qint64 conversationId, bool outgoing)
@@ -128,12 +129,12 @@ void AuditManager::logCall(std::optional<qint64> userId, const QHostAddress &pee
                                       QStringLiteral("cancelled"), QStringLiteral("failed")})
         displayStatus.replace(callStatus, auditStatusLabel(callStatus));
 
-    QString description = QStringLiteral("Appel avec %1 : %2").arg(peerAddress.toString(), displayStatus);
+    QString description = QStringLiteral("Appel avec %1 : %2").arg(network::displayAddress(peerAddress), displayStatus);
     if (!detail.isEmpty()) {
         description += QStringLiteral(" (%1)").arg(detail);
     }
 
-    recordEvent(AuditEventType::Call, description, userId, peerAddress.toString());
+    recordEvent(AuditEventType::Call, description, userId, network::displayAddress(peerAddress));
 }
 
 void AuditManager::logRefusedAttempt(const QString &reason, const QHostAddress &peerAddress,
@@ -141,11 +142,11 @@ void AuditManager::logRefusedAttempt(const QString &reason, const QHostAddress &
 {
     QString description = QStringLiteral("Tentative refusee : %1").arg(reason);
     if (!peerAddress.isNull()) {
-        description += QStringLiteral(" (depuis %1)").arg(peerAddress.toString());
+        description += QStringLiteral(" (depuis %1)").arg(network::displayAddress(peerAddress));
     }
 
     recordEvent(AuditEventType::AccessDenied, description, userId,
-                peerAddress.isNull() ? QString() : peerAddress.toString());
+                peerAddress.isNull() ? QString() : network::displayAddress(peerAddress));
 }
 
 QVector<models::AuditLog> AuditManager::queryEvents(const database::AuditLogFilter &filter)

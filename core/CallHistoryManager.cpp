@@ -1,4 +1,5 @@
 #include "CallHistoryManager.h"
+#include "NetworkAddress.h"
 
 #include <QDebug>
 #include <QUuid>
@@ -87,7 +88,7 @@ void CallHistoryManager::beginEntry(network::CallState triggerState, models::Cal
     entry.setLocalUserId(m_userManager && m_userManager->currentUserId().has_value()
                               ? *m_userManager->currentUserId() : -1);
     entry.setDirection(direction);
-    entry.setPeerAddress(peerAddress.toString());
+    entry.setPeerAddress(network::displayAddress(peerAddress));
     entry.setPeerName(resolvePeerName(peerAddress));
     entry.setStatus(models::CallStatus::InProgress);
     entry.setStartedAt(QDateTime::currentDateTimeUtc());
