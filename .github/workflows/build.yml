@@ -341,7 +341,7 @@ jobs:
           # linuxdeploy doit les trouver pour assembler l'AppImage.
           sudo apt-get install -y libfuse2 libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 \
             libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
-            libxcb-xinerama0 libxcb-xkb1 libegl1 libgl1 libpulse0
+            libxcb-xinerama0 libxcb-xkb1 libegl1 libgl1 libopengl0 libpulse0
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
@@ -369,10 +369,53 @@ jobs:
           #    Qt se rabat sur un module qui refuse les certificats des postes.
           mkdir -p AppDir/usr/plugins/tls
           cp -n "$QT_ROOT_DIR"/plugins/tls/libqopensslbackend.so AppDir/usr/plugins/tls/
-          # 3. Image AppImage.
+          # 3. libOpenGL.so.0, requise par Qt 6 (QtGui) : linuxdeploy l'exclut
+          #    (supposee presente), mais Ubuntu ne l'installe pas toujours
+          #    (paquet libopengl0) et l'application refuse alors de demarrer.
+          #    Simple aiguillage GLVND vers le pilote du poste : sans risque.
+          cp -nL /usr/lib/x86_64-linux-gnu/libOpenGL.so.0 AppDir/usr/lib/
+          # 4. Image AppImage.
           ./linuxdeploy-x86_64.AppImage --appdir AppDir --output appimage
           mv LocaLink*.AppImage LocaLink-linux-x86_64.AppImage
           echo "ASSET=LocaLink-linux-x86_64.AppImage" >> "$GITHUB_ENV"
+
+      # Paquet .deb (Ubuntu, Debian) : double-clic › Installer, entree dans le
+      # menu des applications, dependances systeme installees par apt. Meme
+      # contenu que l'AppImage (dossier AppDir), installe dans /opt/localink.
+      - name: Build .deb (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          PKG=deb-root
+          mkdir -p $PKG/opt/localink $PKG/usr/bin $PKG/usr/share/applications $PKG/DEBIAN
+          # bin/, lib/, plugins/, qml/... avec qt.conf (chemins relatifs).
+          cp -a AppDir/usr/. $PKG/opt/localink/
+          rm -rf $PKG/opt/localink/share
+          ln -s /opt/localink/bin/LocaLink $PKG/usr/bin/localink
+          sed 's/^Exec=.*/Exec=localink/' resources/linux/localink.desktop \
+            > $PKG/usr/share/applications/localink.desktop
+          for size in 64 128 256 512; do
+            install -Dm644 "resources/linux/icons/${size}x${size}/localink.png" \
+              "$PKG/usr/share/icons/hicolor/${size}x${size}/apps/localink.png"
+          done
+          # Bibliotheques que linuxdeploy laisse au systeme (pilote graphique,
+          # X11, polices, OpenSSL charge par le module TLS de Qt).
+          cat > $PKG/DEBIAN/control <<EOF
+          Package: localink
+          Version: $APP_VERSION
+          Architecture: amd64
+          Maintainer: Oumarou121 <Oumarou121@users.noreply.github.com>
+          Installed-Size: $(du -sk $PKG/opt $PKG/usr | awk '{s+=$1} END {print s}')
+          Depends: libc6 (>= 2.35), libstdc++6, libgl1, libegl1, libopengl0, libfontconfig1, libfreetype6, libx11-6, libx11-xcb1, libxcb1, libxkbcommon0, libssl3 | libssl3t64
+          Section: net
+          Priority: optional
+          Homepage: https://github.com/$GITHUB_REPOSITORY
+          Description: Collaboration sur le reseau local
+           Messagerie, appels et partage de fichiers entre les postes d'un
+           meme reseau local, sans serveur Internet.
+          EOF
+          dpkg-deb --root-owner-group --build $PKG LocaLink-linux-amd64.deb
+          echo "ASSET=LocaLink-linux-x86_64.AppImage LocaLink-linux-amd64.deb" >> "$GITHUB_ENV"
 
       # --- Publication : release « Derniere compilation » ---
       # Les artefacts d'Actions comptent dans le quota de stockage du compte
@@ -430,9 +473,13 @@ jobs:
           1. Ouvrez le fichier et glissez **LocaLink** sur **Applications**.
           2. Au premier lancement, si macOS bloque l'ouverture : *Réglages Système › Confidentialité et sécurité*, puis *Ouvrir quand même* (l'application n'est pas notariée par Apple).
 
-          **Linux** (Ubuntu 22.04, Debian 12, Fedora 36 ou plus récents) — \`LocaLink-linux-x86_64.AppImage\`
+          **Ubuntu, Debian** (Ubuntu 22.04, Debian 12 ou plus récents) — \`LocaLink-linux-amd64.deb\`
+          1. Double-cliquez sur le fichier, puis *Installer* (ou \`sudo apt install ./LocaLink-linux-amd64.deb\`).
+          2. LocaLink se trouve ensuite dans le menu des applications. Pour mettre à jour, installez la nouvelle version par-dessus.
+
+          **Autres distributions Linux** (Fedora 36 ou plus récent…) — \`LocaLink-linux-x86_64.AppImage\`
           1. Rendez le fichier exécutable : clic droit › *Propriétés* › *Autoriser l'exécution*, ou \`chmod +x LocaLink-linux-x86_64.AppImage\`.
-          2. Double-cliquez dessus pour lancer LocaLink (aucune installation).
+          2. Double-cliquez dessus pour lancer LocaLink (aucune installation). Si un message cite \`libfuse.so.2\`, installez le paquet \`libfuse2\` (\`libfuse2t64\` sur Ubuntu 24.04 et plus récent).
 
           Chaque compilation remplace ces fichiers.
           EOF
@@ -441,4 +488,6 @@ jobs:
           for old in LocaLink-windows.zip LocaLink-linux.tar.gz; do
             gh release delete-asset "$TAG" "$old" -y >/dev/null 2>&1 || true
           done
-          gh release upload "$TAG" "$ASSET" --clobber
+          # ASSET : un ou plusieurs fichiers separes par des espaces (Linux :
+          # AppImage et .deb).
+          gh release upload "$TAG" $ASSET --clobber
