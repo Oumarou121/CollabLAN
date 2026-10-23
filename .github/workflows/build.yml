@@ -41,7 +41,12 @@ jobs:
           LINUX='{"os":"ubuntu-22.04","key":"linux","artifact_name":"LocaLink-linux"}'
           MACOS='{"os":"macos-latest","key":"macos","artifact_name":"LocaLink-macos"}'
 
+          # Lancement manuel : la plateforme choisie. Push / pull request :
+          # DEFAULT_TARGET ci-dessous (« linux » pour l'instant ; remettre
+          # « all » pour compiler a nouveau les trois plateformes).
+          DEFAULT_TARGET="linux"
           TARGET="${{ github.event.inputs.target }}"
+          TARGET="${TARGET:-$DEFAULT_TARGET}"
 
           case "$TARGET" in
             windows) INCLUDE="[$WINDOWS]" ;;
@@ -350,6 +355,11 @@ jobs:
           VERSION: ${{ env.APP_VERSION }}
         run: |
           export QMAKE="$QT_ROOT_DIR/bin/qmake"
+          # Seul SQLite sert : les autres pilotes SQL de Qt exigent des
+          # bibliotheques clientes absentes du runner (libmimerapi.so pour
+          # Mimer : echec de linuxdeploy) et alourdiraient l'AppImage
+          # (PostgreSQL, MySQL...).
+          find "$QT_ROOT_DIR/plugins/sqldrivers" -name 'libqsql*.so' ! -name 'libqsqlite.so' -delete
           ICONS=()
           for size in 64 128 256 512; do ICONS+=(-i "resources/linux/icons/${size}x${size}/localink.png"); done
           # 1. Dossier de l'application avec Qt (plugins, QML).
