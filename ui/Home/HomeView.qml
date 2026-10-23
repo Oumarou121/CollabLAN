@@ -1633,35 +1633,43 @@ Item {
                             Layout.fillHeight: true
                             clip: true
 
-                            Hemicycle {
-                                id: hemicycle
-                                objectName: "hemicycle"
+                            // Seule la vue choisie est creee (les deux l etaient, une
+                            // seule visible).
+                            Loader {
+                                id: hemicycleLoader
                                 anchors.fill: parent
                                 anchors.topMargin: 6
-                                visible: root.networkView === "hemicycle" && root.allPeersLive.length > 0
-                                peers: root.allPeersLive
-                                selectedId: root.selectedId
-                                hiddenStatuses: root.hiddenStatuses
-                                localName: root.localMachineName
-                                localState: root.localState
-                                localLabel: root.serverStatusLabel
-                                onSeatActivated: function(peerId) { root.toggleSelect(peerId) }
+                                active: root.networkView === "hemicycle"
+                                visible: root.allPeersLive.length > 0
+                                sourceComponent: Hemicycle {
+                                    objectName: "hemicycle"
+                                    peers: root.allPeersLive
+                                    selectedId: root.selectedId
+                                    hiddenStatuses: root.hiddenStatuses
+                                    localName: root.localMachineName
+                                    localState: root.localState
+                                    localLabel: root.serverStatusLabel
+                                    onSeatActivated: function(peerId) { root.toggleSelect(peerId) }
+                                }
                             }
 
-                            NetworkRegistry {
+                            Loader {
                                 anchors.fill: parent
                                 anchors.topMargin: 8
-                                visible: root.networkView === "registre" && root.allPeersLive.length > 0
-                                peers: root.allPeersLive
-                                selectedId: root.selectedId
-                                hiddenStatuses: root.hiddenStatuses
-                                isAdmin: root.isAdmin
-                                activityOf: function(p) { return root.activityText(p) }
-                                trustOf: function(p) { return root.machineTrust(p.id, p.address) }
-                                onPeerSelected: function(peerId) { root.toggleSelect(peerId) }
-                                onMessageRequested: function(peer) { root.openConversationWithPeer(peer) }
-                                onFileRequested: function(peer) { root.fileTransferRequested(true, peer) }
-                                onCallRequested: function(peer) { root.callPeer(peer) }
+                                active: root.networkView === "registre"
+                                visible: root.allPeersLive.length > 0
+                                sourceComponent: NetworkRegistry {
+                                    peers: root.allPeersLive
+                                    selectedId: root.selectedId
+                                    hiddenStatuses: root.hiddenStatuses
+                                    isAdmin: root.isAdmin
+                                    activityOf: function(p) { return root.activityText(p) }
+                                    trustOf: function(p) { return root.machineTrust(p.id, p.address) }
+                                    onPeerSelected: function(peerId) { root.toggleSelect(peerId) }
+                                    onMessageRequested: function(peer) { root.openConversationWithPeer(peer) }
+                                    onFileRequested: function(peer) { root.fileTransferRequested(true, peer) }
+                                    onCallRequested: function(peer) { root.callPeer(peer) }
+                                }
                             }
 
                             // Etat vide : aucun poste detecte.
@@ -1766,7 +1774,7 @@ Item {
 
                             // Au-dela de 14 postes, seuls les postes actifs sont nommes.
                             Row {
-                                visible: root.networkView === "hemicycle" && !hemicycle.namesForAll
+                                visible: root.networkView === "hemicycle" && !(hemicycleLoader.item && hemicycleLoader.item.namesForAll)
                                 spacing: 8
                                 height: 24
                                 Text {

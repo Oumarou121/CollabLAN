@@ -2,6 +2,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QVariant>
 #include <QDateTime>
 #include <QUuid>
@@ -24,26 +25,28 @@ AuthorizedMachineRepository::~AuthorizedMachineRepository() = default;
 
 models::AuthorizedMachine AuthorizedMachineRepository::machineFromQuery(const QSqlQuery &query) const
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::AuthorizedMachine machine;
-    machine.setId(query.value(QStringLiteral("id")).toInt());
-    machine.setUuid(query.value(QStringLiteral("machine_uuid")).toString());
-    machine.setCertificateFingerprint(query.value(QStringLiteral("certificate_fingerprint")).toString());
-    machine.setIpAddress(query.value(QStringLiteral("ip_address")).toString());
-    machine.setLastIpAddress(query.value(QStringLiteral("last_ip_address")).toString());
-    machine.setHostname(query.value(QStringLiteral("hostname")).toString());
-    machine.setAuthorized(query.value(QStringLiteral("authorized")).toInt() != 0);
-    const QString status = query.value(QStringLiteral("status")).toString();
+    machine.setId(query.value(rec.indexOf(QLatin1String("id"))).toInt());
+    machine.setUuid(query.value(rec.indexOf(QLatin1String("machine_uuid"))).toString());
+    machine.setCertificateFingerprint(query.value(rec.indexOf(QLatin1String("certificate_fingerprint"))).toString());
+    machine.setIpAddress(query.value(rec.indexOf(QLatin1String("ip_address"))).toString());
+    machine.setLastIpAddress(query.value(rec.indexOf(QLatin1String("last_ip_address"))).toString());
+    machine.setHostname(query.value(rec.indexOf(QLatin1String("hostname"))).toString());
+    machine.setAuthorized(query.value(rec.indexOf(QLatin1String("authorized"))).toInt() != 0);
+    const QString status = query.value(rec.indexOf(QLatin1String("status"))).toString();
     machine.setStatus(status.isEmpty()
         ? (machine.isAuthorized() ? models::MachineStatus::Authorized : models::MachineStatus::Revoked)
         : status);
     
-    const int addedBy = query.value(QStringLiteral("added_by")).toInt();
+    const int addedBy = query.value(rec.indexOf(QLatin1String("added_by"))).toInt();
     if (!query.isNull(QStringLiteral("added_by"))) {
         machine.setAddedBy(addedBy);
     }
     
-    machine.setAddedAt(QDateTime::fromString(query.value(QStringLiteral("added_at")).toString(), Qt::ISODate));
-    machine.setReason(query.value(QStringLiteral("reason")).toString());
+    machine.setAddedAt(QDateTime::fromString(query.value(rec.indexOf(QLatin1String("added_at"))).toString(), Qt::ISODate));
+    machine.setReason(query.value(rec.indexOf(QLatin1String("reason"))).toString());
     return machine;
 }
 

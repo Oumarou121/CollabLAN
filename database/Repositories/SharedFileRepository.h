@@ -3,6 +3,7 @@
 
 #include <QSqlDatabase>
 #include <QString>
+#include <QHash>
 #include <QVector>
 #include <optional>
 
@@ -53,6 +54,14 @@ public:
     /// Nombre de fichiers non supprimes d'un dossier (pour l'UI, cf.
     /// models::SharedFolderModel::FileCountRole).
     int count(qint64 folderId) const;
+
+    /// Nombre de fichiers non supprimes de chaque dossier, en une requete.
+    QHash<qint64, int> countsByFolder() const;
+
+    /// Fichiers non supprimes dont le nom a la forme d'une copie de conflit
+    /// ("nom (xxx).ext") -- les seuls a examiner pour trouver les conflits,
+    /// sans charger tout le dossier. folderId <= 0 : tous les dossiers.
+    QVector<models::SharedFile> conflictCandidates(qint64 folderId) const;
 
     QString lastError() const;
 

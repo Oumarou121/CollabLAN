@@ -14,6 +14,10 @@ MessagingContext::MessagingContext(QObject *parent)
     , m_messageModel(new models::MessageModel(this))
     , m_groupModel(new models::GroupModel(this))
 {
+    // Connexions etablies en premier : le cache est vide avant que les
+    // ecrans ne relisent la liste sur ces memes signaux.
+    connect(this, &MessagingContext::conversationsChanged, this, &MessagingContext::invalidateConversations);
+    connect(this, &MessagingContext::availableUsersChanged, this, &MessagingContext::invalidateConversations);
 }
 
 MessagingContext::~MessagingContext()
@@ -259,15 +263,47 @@ qint64 MessagingContext::currentUserId() const
     return 0;
 }
 
+int MessagingContext::totalUnreadCount()
+{
+    int total = 0;
+    for (const QVariant &entry : conversationsList())
+        total += entry.toMap().value(QStringLiteral("unreadCount")).toInt();
+    return total;
+}
+
 QVariantList MessagingContext::conversationsList()
 {
+    // Plusieurs ecrans (accueil, barre laterale, discussions) relisent la liste
+    // au meme signal : elle n'est reconstruite qu'une fois par changement
+    // (cache vide a chaque conversationsChanged, cf. constructeur), ou apres
+    // 30 s par prudence. Le resume de chaque conversation (dernier message,
+    // non-lus : les lectures couteuses) est garde a part et seule la
+    // conversation touchee est relue a la reception, a l'envoi ou a la lecture.
+    const qint64 currentId = currentUserId();
+    if (m_conversationsCacheUser == currentId && m_conversationsCacheAge.isValid()
+        && m_conversationsCacheAge.elapsed() < 30000) {
+        return m_conversationsCache;
+    }
+    if (m_conversationsCacheUser != currentId)
+        m_conversationSummaries.clear();
+
     QVariantList list;
 
     if (!m_messagingManager) {
         return list;
     }
 
-    const qint64 currentId = currentUserId();
+    // Noms lus une seule fois : userName() relisait tous les utilisateurs pour
+    // chaque conversation.
+    QHash<qint64, QString> names;
+    if (m_userManager) {
+        for (const auto &user : m_userManager->allUsers())
+            names.insert(user.id(), user.name());
+    }
+    const auto nameOf = [&names](qint64 userId) {
+        const auto it = names.constFind(userId);
+        return it != names.constEnd() ? it.value() : QStringLiteral("Utilisateur %1").arg(userId);
+    };
 
     // Conversations individuelles.
     const auto conversations = m_messagingManager->getUserConversations(currentId);
@@ -280,25 +316,21 @@ QVariantList MessagingContext::conversationsList()
         QVariantMap entry;
         entry[QStringLiteral("conversationId")] = conv.id();
         const qint64 otherId = conv.participant1Id() == currentId ? conv.participant2Id() : conv.participant1Id();
-        entry[QStringLiteral("name")] = userName(otherId);
+        entry[QStringLiteral("name")] = nameOf(otherId);
 
-        // Bug rapporte : getMessages(id, 1) retourne le PREMIER message
-        // (ORDER BY id ASC), pas le dernier -> l'apercu restait fige sur
-        // le tout premier message echange, comme si rien de plus recent
-        // n'avait jamais ete envoye. getLastMessage() corrige cela.
-        const auto lastMessage = m_messagingManager->getLastMessage(conv.id());
-        if (lastMessage.has_value()) {
+        const QVariantMap summary = conversationSummary(conv.id(), currentId);
+        if (summary.value(QStringLiteral("hasLast")).toBool()) {
             // Prefixe "Moi :"/"Lui :" pour savoir qui a envoye le dernier
             // message sans avoir a ouvrir la conversation (comme WhatsApp).
-            const QString prefix = lastMessage->senderId() == currentId
+            const QString prefix = summary.value(QStringLiteral("senderId")).toLongLong() == currentId
                 ? tr("Moi : ") : tr("Lui : ");
-            entry[QStringLiteral("lastMessage")] = prefix + (lastMessage->isDeleted() ? tr("Message supprimé") : lastMessage->content());
-            entry[QStringLiteral("timestamp")] = lastMessage->timestamp();
+            entry[QStringLiteral("lastMessage")] = prefix + summary.value(QStringLiteral("text")).toString();
+            entry[QStringLiteral("timestamp")] = summary.value(QStringLiteral("timestamp"));
         } else {
             entry[QStringLiteral("lastMessage")] = QString();
             entry[QStringLiteral("timestamp")] = QVariant();
         }
-        entry[QStringLiteral("unreadCount")] = m_messagingManager->getUnreadCount(conv.id(), currentId);
+        entry[QStringLiteral("unreadCount")] = summary.value(QStringLiteral("unreadCount"));
 
         const auto existingIt = individualEntryByOtherUser.constFind(otherId);
         if (existingIt == individualEntryByOtherUser.constEnd()) {
@@ -329,24 +361,60 @@ QVariantList MessagingContext::conversationsList()
             entry[QStringLiteral("conversationId")] = group.conversationId();
             entry[QStringLiteral("name")] = group.name();
 
-            const auto lastMessage = m_messagingManager->getLastMessage(group.conversationId());
-            if (lastMessage.has_value()) {
+            const QVariantMap summary = conversationSummary(group.conversationId(), currentId);
+            if (summary.value(QStringLiteral("hasLast")).toBool()) {
                 // Pour un groupe, "Lui :" serait ambigu (plusieurs membres
                 // possibles) : on utilise le prenom de l'expediteur reel.
-                const QString prefix = lastMessage->senderId() == currentId
-                    ? tr("Moi : ") : userName(lastMessage->senderId()) + QStringLiteral(" : ");
-                entry[QStringLiteral("lastMessage")] = prefix + (lastMessage->isDeleted() ? tr("Message supprimé") : lastMessage->content());
-                entry[QStringLiteral("timestamp")] = lastMessage->timestamp();
+                const qint64 senderId = summary.value(QStringLiteral("senderId")).toLongLong();
+                const QString prefix = senderId == currentId
+                    ? tr("Moi : ") : nameOf(senderId) + QStringLiteral(" : ");
+                entry[QStringLiteral("lastMessage")] = prefix + summary.value(QStringLiteral("text")).toString();
+                entry[QStringLiteral("timestamp")] = summary.value(QStringLiteral("timestamp"));
             } else {
                 entry[QStringLiteral("lastMessage")] = QString();
                 entry[QStringLiteral("timestamp")] = QVariant();
             }
-            entry[QStringLiteral("unreadCount")] = m_messagingManager->getUnreadCount(group.conversationId(), currentId);
+            entry[QStringLiteral("unreadCount")] = summary.value(QStringLiteral("unreadCount"));
             list.append(entry);
         }
     }
 
+    m_conversationsCache = list;
+    m_conversationsCacheUser = currentId;
+    m_conversationsCacheAge.start();
     return list;
+}
+
+QVariantMap MessagingContext::conversationSummary(qint64 conversationId, qint64 currentId)
+{
+    const auto cached = m_conversationSummaries.constFind(conversationId);
+    if (cached != m_conversationSummaries.constEnd())
+        return cached.value();
+
+    QVariantMap summary;
+    // getLastMessage() et non getMessages(id, 1), qui renvoyait le PREMIER
+    // message (l'apercu restait fige sur le tout premier echange).
+    if (const auto lastMessage = m_messagingManager->getLastMessage(conversationId); lastMessage.has_value()) {
+        summary.insert(QStringLiteral("hasLast"), true);
+        summary.insert(QStringLiteral("senderId"), lastMessage->senderId());
+        summary.insert(QStringLiteral("text"), lastMessage->isDeleted() ? tr("Message supprimé") : lastMessage->content());
+        summary.insert(QStringLiteral("timestamp"), lastMessage->timestamp());
+    }
+    summary.insert(QStringLiteral("unreadCount"), m_messagingManager->getUnreadCount(conversationId, currentId));
+    m_conversationSummaries.insert(conversationId, summary);
+    return summary;
+}
+
+void MessagingContext::invalidateConversations()
+{
+    // Conversation designee juste avant le signal (reception, envoi, lecture) :
+    // seul son resume est relu ; sinon (groupes, synchronisation...) tous.
+    if (m_changedConversation > 0)
+        m_conversationSummaries.remove(m_changedConversation);
+    else
+        m_conversationSummaries.clear();
+    m_changedConversation = 0;
+    m_conversationsCacheAge.invalidate();
 }
 
 qint64 MessagingContext::startConversationWith(qint64 otherUserId)
@@ -424,6 +492,7 @@ void MessagingContext::setConversation(qint64 conversationId)
         // après ouverture de la conversation.
         const qint64 currentId = currentUserId();
         if (currentId > 0 && m_messagingManager->markConversationAsRead(conversationId, currentId)) {
+            m_changedConversation = conversationId;
             emit conversationsChanged();
         }
     } else {
@@ -526,6 +595,7 @@ void MessagingContext::onMessageReceived(const models::Message &message)
     // apercu (dernier message/horodatage) dans ConversationsView doit se
     // mettre a jour sans que l'utilisateur ait besoin de quitter puis
     // revenir sur l'ecran.
+    m_changedConversation = message.conversationId();
     emit conversationsChanged();
 }
 
@@ -535,6 +605,7 @@ void MessagingContext::onMessageSent(const models::Message &message)
     if (message.conversationId() == m_messageModel->conversationId()) {
         m_messageModel->addMessage(message);
     }
+    m_changedConversation = message.conversationId();
     emit conversationsChanged();
 }
 

@@ -2,6 +2,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QVariant>
 
 namespace database {
@@ -15,15 +16,17 @@ SharedFolderAccessRepository::~SharedFolderAccessRepository() = default;
 
 models::SharedFolderAccess SharedFolderAccessRepository::accessFromQuery(const QSqlQuery &query) const
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::SharedFolderAccess access;
-    access.setId(query.value(QStringLiteral("id")).toLongLong());
-    access.setFolderId(query.value(QStringLiteral("folder_id")).toLongLong());
-    access.setUserId(query.value(QStringLiteral("user_id")).toLongLong());
-    access.setPermission(models::stringToSharedFolderPermission(query.value(QStringLiteral("permission")).toString())
+    access.setId(query.value(rec.indexOf(QLatin1String("id"))).toLongLong());
+    access.setFolderId(query.value(rec.indexOf(QLatin1String("folder_id"))).toLongLong());
+    access.setUserId(query.value(rec.indexOf(QLatin1String("user_id"))).toLongLong());
+    access.setPermission(models::stringToSharedFolderPermission(query.value(rec.indexOf(QLatin1String("permission"))).toString())
                               .value_or(models::SharedFolderPermission::Read));
-    const QVariant grantedBy = query.value(QStringLiteral("granted_by"));
+    const QVariant grantedBy = query.value(rec.indexOf(QLatin1String("granted_by")));
     access.setGrantedBy(grantedBy.isNull() ? 0 : grantedBy.toLongLong());
-    access.setCreatedAt(query.value(QStringLiteral("created_at")).toDateTime());
+    access.setCreatedAt(query.value(rec.indexOf(QLatin1String("created_at"))).toDateTime());
     return access;
 }
 

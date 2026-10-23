@@ -88,12 +88,28 @@ Item {
         let properties = props || {}
         if (route === "admin" && properties.currentTab === undefined)
             properties.currentTab = 1
-        if (route === shell.currentRoute && pages.depth === 1 && !props)
+        if (route === shell.currentRoute && pages.depth === 1 && !props && !shell.pendingNavigation)
             return
+        // La barre laterale et la barre de chargement changent tout de suite ;
+        // la page (couteuse a creer) l est a l image suivante. Auparavant le
+        // clic restait sans effet visible le temps de la creation.
         shell.currentRoute = route
-        pages.replace(null, comp, properties)
+        shell.pendingNavigation = { comp: comp, properties: properties }
+        navigationTimer.restart()
+    }
+
+    property var pendingNavigation: null
+    readonly property bool pageLoading: pendingNavigation !== null
+    function flushNavigation() {
+        const next = shell.pendingNavigation
+        if (!next)
+            return
+        navigationTimer.stop()
+        shell.pendingNavigation = null
+        pages.replace(null, next.comp, next.properties)
         shell.refreshBadges()
     }
+    Timer { id: navigationTimer; interval: 16; onTriggered: shell.flushNavigation() }
 
     function pushPage(comp, props) {
         pages.push(comp, props || {})
@@ -111,6 +127,7 @@ Item {
             return
         if (shell.currentRoute !== "chat" || pages.depth > 1)
             shell.navigate("chat")
+        shell.flushNavigation()
         if (pages.currentItem && pages.currentItem.openConversation)
             pages.currentItem.openConversation(conversationId, "")
     }
@@ -137,14 +154,10 @@ Item {
                                          ? (callContext.callState === "connected" || callContext.callState === "ending") : false
 
     function refreshBadges() {
-        // Messages non lus : somme des unreadCount de chaque conversation.
-        let unread = 0
-        if (typeof messagingContext !== "undefined" && messagingContext) {
-            const convs = messagingContext.conversationsList() || []
-            for (let i = 0; i < convs.length; i++)
-                unread += convs[i].unreadCount || 0
-        }
-        shell.unreadMessages = unread
+        // Messages non lus : liste des conversations en cache cote C++
+        // (reconstruite seulement quand une conversation change).
+        shell.unreadMessages = (typeof messagingContext !== "undefined" && messagingContext && messagingContext.totalUnreadCount)
+                               ? messagingContext.totalUnreadCount() : 0
 
         let running = 0
         if (typeof transferContext !== "undefined" && transferContext) {
@@ -190,6 +203,7 @@ Item {
     function showPeer(peerId) {
         if (shell.currentRoute !== "home" || pages.depth > 1)
             shell.navigate("home")
+        shell.flushNavigation()
         const page = pages.currentItem
         if (page && typeof page.selectPeer === "function")
             page.selectPeer(peerId)
@@ -210,6 +224,12 @@ Item {
     Connections {
         target: (typeof transferContext !== "undefined") ? transferContext : null
         function onActiveTransfersChanged() { shell.refreshBadges() }
+    }
+    // Message recu, envoye ou lu : badge a jour sans attendre le prochain tour.
+    Connections {
+        target: (typeof messagingContext !== "undefined") ? messagingContext : null
+        ignoreUnknownSignals: true
+        function onConversationsChanged() { Qt.callLater(shell.refreshBadges) }
     }
     Connections {
         target: (typeof authorizedMachineModel !== "undefined") ? authorizedMachineModel : null
@@ -329,6 +349,31 @@ Item {
                         pages.pop(null)
                     else if (page && typeof page.breadcrumbRootClicked === "function")
                         page.breadcrumbRootClicked()
+                }
+            }
+
+            // Barre de chargement d un ecran (le temps de le creer).
+            Item {
+                // Hauteur nulle : posee sur le haut de la page, sans la decaler.
+                Layout.fillWidth: true
+                Layout.preferredHeight: 0
+                z: 2
+                Item {
+                    width: parent.width
+                    height: 2
+                    clip: true
+                    Rectangle {
+                        visible: shell.pageLoading
+                        width: parent.width * 0.3
+                        height: parent.height
+                        color: Theme.accentColor
+                        NumberAnimation on x {
+                            running: shell.pageLoading
+                            loops: Animation.Infinite
+                            from: -parent.width * 0.3; to: parent.width
+                            duration: 900
+                        }
+                    }
                 }
             }
 

@@ -40,6 +40,12 @@ Item {
     property string initialFolderUuid: ""
     property var currentFiles: []
     property var browserItems: []
+    // Affichage par tranches : un dossier de milliers de fichiers creait
+    // toutes ses lignes d un coup (l ecran se figeait a l ouverture).
+    readonly property int browserPage: 200
+    property int browserLimit: browserPage
+    readonly property var shownBrowserItems: root.browserItems.length > root.browserLimit
+                                             ? root.browserItems.slice(0, root.browserLimit) : root.browserItems
     property string browsedRelativePath: ""
     property var currentSyncHistory: []
     property var currentAccess: []
@@ -166,8 +172,23 @@ Item {
     function scheduleRebuild() {
         if (root.rebuildPending) return
         root.rebuildPending = true
-        Qt.callLater(root.rebuildFolders)
+        // Premier affichage tout de suite ; ensuite, une rafale de signaux
+        // (un par fichier recu) ne reconstruit la liste qu une fois par
+        // fenetre de 150 ms.
+        if (root.folderRows.length === 0) Qt.callLater(root.rebuildFolders)
+        else rebuildTimer.start()
     }
+    Timer { id: rebuildTimer; interval: 150; onTriggered: root.rebuildFolders() }
+
+    // Fichiers et historique du dossier ouvert relus au plus une fois par
+    // 250 ms pendant une synchronisation (auparavant a chaque fichier recu :
+    // tout le dossier etait relu et retrie pour chacun).
+    Timer {
+        id: openedRefreshTimer
+        interval: 250
+        onTriggered: { root.refreshFiles(); root.refreshHistory() }
+    }
+    function scheduleOpenedRefresh() { if (!openedRefreshTimer.running) openedRefreshTimer.start() }
 
     function rebuildFolders() {
         root.rebuildPending = false
@@ -257,6 +278,7 @@ Item {
         root.tab = "files"
         root.searchText = ""
         root.browsedRelativePath = ""
+        root.browserLimit = root.browserPage
         root.conflictedFiles = {}
         root.refreshFiles()
         root.refreshHistory()
@@ -367,6 +389,7 @@ Item {
 
     function openBrowserFolder(path) {
         root.browsedRelativePath = path
+        root.browserLimit = root.browserPage
         root.rebuildFileBrowser()
     }
 
@@ -392,9 +415,14 @@ Item {
         }
         return out
     }
-    function dayCount(day) {
-        return root.historyRows.filter(function(h) { return h.day === day }).length
+    // Comptes par jour calcules une fois par liste : dayCount() refiltrait
+    // toute la liste pour chaque ligne (cout quadratique sur un long historique).
+    readonly property var dayTotals: {
+        const m = {}
+        for (let i = 0; i < root.historyRows.length; i++) m[root.historyRows[i].day] = (m[root.historyRows[i].day] || 0) + 1
+        return m
     }
+    function dayCount(day) { return root.dayTotals[day] || 0 }
 
     // ======================================================================
     // Invitations, avis
@@ -434,10 +462,8 @@ Item {
                 still.splice(idx, 1)
                 root.indexingFolderIds = still
             }
-            if (folderId === root.openedFolderId) {
-                root.refreshFiles()
-                root.refreshHistory()
-            }
+            if (folderId === root.openedFolderId)
+                root.scheduleOpenedRefresh()
             root.scheduleRebuild()
         }
         function onIndexingStarted(folderId) {
@@ -445,10 +471,8 @@ Item {
                 root.indexingFolderIds = root.indexingFolderIds.concat([folderId])
         }
         function onFileReceived(folderUuid, relativePath) {
-            if (folderUuid === root.openedFolderUuid) {
-                root.refreshFiles()
-                root.refreshHistory()
-            }
+            if (folderUuid === root.openedFolderUuid)
+                root.scheduleOpenedRefresh()
             root.scheduleRebuild()
         }
         function onFolderShareConfirmationRequested(folderId, folderName, ownerName, suggestedPath, allowWrite) {
@@ -1686,7 +1710,8 @@ Item {
                                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.ruleInk }
 
                                 Repeater {
-                                    model: root.browserItems
+                                    // Vue masquee : aucune ligne creee.
+                                    model: fileTable.visible ? root.shownBrowserItems : []
                                     delegate: AbstractButton {
                                         id: fr
                                         required property var modelData
@@ -1785,6 +1810,7 @@ Item {
 
                             // Vignettes
                             Flow {
+                                id: fileGrid
                                 visible: root.currentFolder !== null && !root.currentNoPath && root.tab === "files" && root.viewMode === "grid"
                                 Layout.fillWidth: true
                                 Layout.topMargin: 8
@@ -1794,7 +1820,7 @@ Item {
                                     return (width - (n - 1) * 10) / n
                                 }
                                 Repeater {
-                                    model: root.browserItems
+                                    model: fileGrid.visible ? root.shownBrowserItems : []
                                     delegate: AbstractButton {
                                         id: tl
                                         required property var modelData
@@ -1857,6 +1883,18 @@ Item {
                                         }
                                     }
                                 }
+                            }
+
+                            TextLink {
+                                visible: root.currentFolder !== null && !root.currentNoPath && root.tab === "files"
+                                         && root.browserItems.length > root.browserLimit
+                                Layout.topMargin: 12
+                                text: qsTr("Afficher %1 de plus (%2 restants)")
+                                      .arg(Math.min(root.browserPage, root.browserItems.length - root.browserLimit))
+                                      .arg(root.browserItems.length - root.browserLimit)
+                                arrow: false
+                                fontSize: Theme.fs(12.5)
+                                onClicked: root.browserLimit += root.browserPage
                             }
 
                             Text {

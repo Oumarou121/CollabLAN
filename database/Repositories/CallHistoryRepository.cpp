@@ -75,23 +75,25 @@ int CallHistoryRepository::create(const models::CallHistoryEntry &entry)
 
 models::CallHistoryEntry CallHistoryRepository::entryFromQuery(const QSqlQuery &query) const
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::CallHistoryEntry entry;
-    entry.setId(query.value(QStringLiteral("id")).toInt());
-    entry.setCallUuid(query.value(QStringLiteral("call_uuid")).toString());
+    entry.setId(query.value(rec.indexOf(QLatin1String("id"))).toInt());
+    entry.setCallUuid(query.value(rec.indexOf(QLatin1String("call_uuid"))).toString());
 
-    const QVariant localUserIdValue = query.value(QStringLiteral("local_user_id"));
+    const QVariant localUserIdValue = query.value(rec.indexOf(QLatin1String("local_user_id")));
     entry.setLocalUserId(localUserIdValue.isValid() && !localUserIdValue.isNull()
                               ? localUserIdValue.toInt() : -1);
 
-    entry.setDirection(models::callDirectionFromString(query.value(QStringLiteral("direction")).toString()));
-    entry.setPeerAddress(query.value(QStringLiteral("peer_address")).toString());
-    entry.setPeerName(query.value(QStringLiteral("peer_name")).toString());
-    entry.setStatus(models::callStatusFromString(query.value(QStringLiteral("status")).toString()));
-    entry.setStartedAt(variantToDateTime(query.value(QStringLiteral("started_at"))));
-    entry.setConnectedAt(variantToDateTime(query.value(QStringLiteral("connected_at"))));
-    entry.setEndedAt(variantToDateTime(query.value(QStringLiteral("ended_at"))));
+    entry.setDirection(models::callDirectionFromString(query.value(rec.indexOf(QLatin1String("direction"))).toString()));
+    entry.setPeerAddress(query.value(rec.indexOf(QLatin1String("peer_address"))).toString());
+    entry.setPeerName(query.value(rec.indexOf(QLatin1String("peer_name"))).toString());
+    entry.setStatus(models::callStatusFromString(query.value(rec.indexOf(QLatin1String("status"))).toString()));
+    entry.setStartedAt(variantToDateTime(query.value(rec.indexOf(QLatin1String("started_at")))));
+    entry.setConnectedAt(variantToDateTime(query.value(rec.indexOf(QLatin1String("connected_at")))));
+    entry.setEndedAt(variantToDateTime(query.value(rec.indexOf(QLatin1String("ended_at")))));
 
-    const QVariant durationValue = query.value(QStringLiteral("duration_seconds"));
+    const QVariant durationValue = query.value(rec.indexOf(QLatin1String("duration_seconds")));
     entry.setDurationSeconds(durationValue.isValid() && !durationValue.isNull() ? durationValue.toInt() : -1);
 
     return entry;

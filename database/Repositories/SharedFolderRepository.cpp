@@ -2,6 +2,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QUuid>
 #include <QVariant>
 
@@ -16,17 +17,19 @@ SharedFolderRepository::~SharedFolderRepository() = default;
 
 models::SharedFolder SharedFolderRepository::folderFromQuery(const QSqlQuery &query) const
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::SharedFolder folder;
-    folder.setId(query.value(QStringLiteral("id")).toLongLong());
-    folder.setUuid(query.value(QStringLiteral("uuid")).toString());
-    folder.setName(query.value(QStringLiteral("name")).toString());
-    folder.setLocalPath(query.value(QStringLiteral("local_path")).toString());
-    const QVariant ownerId = query.value(QStringLiteral("owner_id"));
+    folder.setId(query.value(rec.indexOf(QLatin1String("id"))).toLongLong());
+    folder.setUuid(query.value(rec.indexOf(QLatin1String("uuid"))).toString());
+    folder.setName(query.value(rec.indexOf(QLatin1String("name"))).toString());
+    folder.setLocalPath(query.value(rec.indexOf(QLatin1String("local_path"))).toString());
+    const QVariant ownerId = query.value(rec.indexOf(QLatin1String("owner_id")));
     folder.setOwnerId(ownerId.isNull() ? 0 : ownerId.toLongLong());
-    folder.setCreatedAt(query.value(QStringLiteral("created_at")).toDateTime());
-    folder.setIsActive(query.value(QStringLiteral("is_active")).toInt() != 0);
-    folder.setOriginMachineId(query.value(QStringLiteral("origin_machine_id")).toString());
-    folder.setExcludePatterns(query.value(QStringLiteral("exclude_patterns")).toString());
+    folder.setCreatedAt(query.value(rec.indexOf(QLatin1String("created_at"))).toDateTime());
+    folder.setIsActive(query.value(rec.indexOf(QLatin1String("is_active"))).toInt() != 0);
+    folder.setOriginMachineId(query.value(rec.indexOf(QLatin1String("origin_machine_id"))).toString());
+    folder.setExcludePatterns(query.value(rec.indexOf(QLatin1String("exclude_patterns"))).toString());
     return folder;
 }
 

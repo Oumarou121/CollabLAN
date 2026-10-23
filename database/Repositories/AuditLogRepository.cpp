@@ -3,6 +3,7 @@
 #include "DatabaseManager.h"
 
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QSqlError>
 #include <QDebug>
 #include <QStringList>
@@ -62,26 +63,28 @@ std::optional<models::AuditLog> AuditLogRepository::insert(const models::AuditLo
 
 models::AuditLog AuditLogRepository::fromRecord(const QSqlQuery &query)
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::AuditLog entry;
-    entry.setId(query.value(QStringLiteral("id")).toLongLong());
-    entry.setEventUuid(query.value(QStringLiteral("event_uuid")).toString());
-    entry.setEventType(query.value(QStringLiteral("event_type")).toString());
-    entry.setDescription(query.value(QStringLiteral("description")).toString());
+    entry.setId(query.value(rec.indexOf(QLatin1String("id"))).toLongLong());
+    entry.setEventUuid(query.value(rec.indexOf(QLatin1String("event_uuid"))).toString());
+    entry.setEventType(query.value(rec.indexOf(QLatin1String("event_type"))).toString());
+    entry.setDescription(query.value(rec.indexOf(QLatin1String("description"))).toString());
 
-    const QVariant userIdValue = query.value(QStringLiteral("user_id"));
+    const QVariant userIdValue = query.value(rec.indexOf(QLatin1String("user_id")));
     if (userIdValue.isValid() && !userIdValue.isNull()) {
         entry.setUserId(userIdValue.toLongLong());
     } else {
         entry.setUserId(std::nullopt);
     }
 
-    entry.setActorLabel(query.value(QStringLiteral("actor_label")).toString());
+    entry.setActorLabel(query.value(rec.indexOf(QLatin1String("actor_label"))).toString());
 
-    QDateTime timestamp = QDateTime::fromString(query.value(QStringLiteral("created_at")).toString(), Qt::ISODateWithMs);
+    QDateTime timestamp = QDateTime::fromString(query.value(rec.indexOf(QLatin1String("created_at"))).toString(), Qt::ISODateWithMs);
     if (!timestamp.isValid()) {
         // Compatibilite avec les entrees ecrites via datetime('now') par
         // SQLite (format "yyyy-MM-dd HH:mm:ss", sans le 'T' ISO).
-        timestamp = QDateTime::fromString(query.value(QStringLiteral("created_at")).toString(),
+        timestamp = QDateTime::fromString(query.value(rec.indexOf(QLatin1String("created_at"))).toString(),
                                            QStringLiteral("yyyy-MM-dd HH:mm:ss"));
         timestamp.setTimeSpec(Qt::UTC);
     }

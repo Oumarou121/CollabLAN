@@ -114,9 +114,11 @@ Item {
             root.selectedId = root.rows[0].id
     }
     function scheduleReload() { if (!root.busy) Qt.callLater(root.reload) }
-    onTypeChanged: root.scheduleReload()
-    onRangeChanged: root.scheduleReload()
-    onActorIdChanged: root.scheduleReload()
+    // Nouveau filtre : relecture, et retour a la premiere tranche de lignes.
+    onTypeChanged: { root.rowsLimit = root.rowsPage; root.scheduleReload() }
+    onRangeChanged: { root.rowsLimit = root.rowsPage; root.scheduleReload() }
+    onActorIdChanged: { root.rowsLimit = root.rowsPage; root.scheduleReload() }
+    onSearchChanged: root.rowsLimit = root.rowsPage
 
     Connections {
         target: root.audit
@@ -185,6 +187,10 @@ Item {
         return null
     }
 
+    // Lignes creees par tranches (jusqu a 200 entrees par lecture).
+    readonly property int rowsPage: 80
+    property int rowsLimit: rowsPage
+
     // Lignes affichees : texte en clair, recherche, separateurs de jour.
     readonly property var rows: {
         const q = root.search.trim().toLowerCase()
@@ -207,7 +213,14 @@ Item {
         if (!root.selected && root.rows.length > 0)
             root.selectedId = root.rows[0].id
     })
-    function dayCount(day) { return root.rows.filter(function(x) { return x.day === day }).length }
+    // Comptes par jour calcules une fois par liste : dayCount() refiltrait
+    // toute la liste pour chaque ligne (cout quadratique sur un long historique).
+    readonly property var dayTotals: {
+        const m = {}
+        for (let i = 0; i < root.rows.length; i++) m[root.rows[i].day] = (m[root.rows[i].day] || 0) + 1
+        return m
+    }
+    function dayCount(day) { return root.dayTotals[day] || 0 }
     function typeCount(t) { return t === "all" ? root.periodEntries.length : root.periodEntries.filter(function(e) { return e.eventType === t }).length }
     function todayCount(t) { return root.todayEntries.filter(function(e) { return e.eventType === t }).length }
 
@@ -775,7 +788,7 @@ Item {
                     }
 
                     Repeater {
-                        model: root.rows
+                        model: root.rows.length > root.rowsLimit ? root.rows.slice(0, root.rowsLimit) : root.rows
                         delegate: ColumnLayout {
                             id: er
                             required property var modelData
@@ -887,6 +900,17 @@ Item {
                                 }
                             }
                         }
+                    }
+
+                    TextLink {
+                        visible: root.rows.length > root.rowsLimit
+                        Layout.topMargin: 10
+                        text: qsTr("Afficher %1 entrées de plus (%2 restantes)")
+                              .arg(Math.min(root.rowsPage, root.rows.length - root.rowsLimit))
+                              .arg(root.rows.length - root.rowsLimit)
+                        arrow: false
+                        fontSize: Theme.fs(12.5)
+                        onClicked: root.rowsLimit += root.rowsPage
                     }
 
                     RowLayout {

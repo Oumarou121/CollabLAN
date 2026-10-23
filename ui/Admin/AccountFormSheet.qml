@@ -43,6 +43,12 @@ SheetModal {
     readonly property bool valid: passField.text.length >= root.minLength && passField.text === confirmField.text
                                   && (root.mode !== "new" || nameField.text.trim().length > 0)
 
+    // Empreinte du mot de passe (PBKDF2) calculee sur le fil de l interface :
+    // le bouton passe en attente, affiche, avant le calcul.
+    property bool working: false
+    Timer { id: submitDelay; interval: 16; onTriggered: { root.submit(); root.working = false } }
+    function submitSoon() { if (root.working) return; root.working = true; submitDelay.start() }
+
     function submit() {
         if (!root.valid || typeof userManagementModel === "undefined" || !userManagementModel) return
         if (root.mode === "new") {
@@ -133,7 +139,7 @@ SheetModal {
                 label: qsTr("Confirmer")
                 password: true
                 error: root.mismatch ? qsTr("Les deux mots de passe ne correspondent pas.") : ""
-                onAccepted: root.submit()
+                onAccepted: root.submitSoon()
             }
         }
         Text {
@@ -167,7 +173,8 @@ SheetModal {
             iconPath: root.mode === "new" ? Icons.userPlus : Icons.lock
             text: root.mode === "new" ? qsTr("Créer le compte") : qsTr("Réinitialiser")
             enabled: root.valid
-            onClicked: root.submit()
+            loading: root.working
+            onClicked: root.submitSoon()
         }
     ]
 }

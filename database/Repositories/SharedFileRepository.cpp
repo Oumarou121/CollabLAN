@@ -2,6 +2,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QVariant>
 
 namespace database {
@@ -15,17 +16,19 @@ SharedFileRepository::~SharedFileRepository() = default;
 
 models::SharedFile SharedFileRepository::fileFromQuery(const QSqlQuery &query) const
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::SharedFile file;
-    file.setId(query.value(QStringLiteral("id")).toLongLong());
-    file.setFolderId(query.value(QStringLiteral("folder_id")).toLongLong());
-    file.setRelativePath(query.value(QStringLiteral("relative_path")).toString());
-    file.setHash(query.value(QStringLiteral("hash")).toString());
-    file.setSize(query.value(QStringLiteral("size")).toLongLong());
-    file.setLastModified(query.value(QStringLiteral("last_modified")).toDateTime());
-    file.setVersion(query.value(QStringLiteral("version")).toInt());
-    file.setDeleted(query.value(QStringLiteral("deleted")).toInt() != 0);
-    file.setPendingDownload(query.value(QStringLiteral("pending_download")).toInt() != 0);
-    file.setSyncedHash(query.value(QStringLiteral("synced_hash")).toString());
+    file.setId(query.value(rec.indexOf(QLatin1String("id"))).toLongLong());
+    file.setFolderId(query.value(rec.indexOf(QLatin1String("folder_id"))).toLongLong());
+    file.setRelativePath(query.value(rec.indexOf(QLatin1String("relative_path"))).toString());
+    file.setHash(query.value(rec.indexOf(QLatin1String("hash"))).toString());
+    file.setSize(query.value(rec.indexOf(QLatin1String("size"))).toLongLong());
+    file.setLastModified(query.value(rec.indexOf(QLatin1String("last_modified"))).toDateTime());
+    file.setVersion(query.value(rec.indexOf(QLatin1String("version"))).toInt());
+    file.setDeleted(query.value(rec.indexOf(QLatin1String("deleted"))).toInt() != 0);
+    file.setPendingDownload(query.value(rec.indexOf(QLatin1String("pending_download"))).toInt() != 0);
+    file.setSyncedHash(query.value(rec.indexOf(QLatin1String("synced_hash"))).toString());
     return file;
 }
 
@@ -175,6 +178,37 @@ QVector<models::SharedFile> SharedFileRepository::getByFolderId(qint64 folderId)
     while (query.next()) {
         files.append(fileFromQuery(query));
     }
+    return files;
+}
+
+QHash<qint64, int> SharedFileRepository::countsByFolder() const
+{
+    QHash<qint64, int> counts;
+    QSqlQuery query(m_db);
+    if (!query.exec(QStringLiteral(
+            "SELECT folder_id, COUNT(*) FROM SharedFiles WHERE deleted = 0 GROUP BY folder_id"))) {
+        m_lastError = query.lastError().text();
+        return counts;
+    }
+    while (query.next())
+        counts.insert(query.value(0).toLongLong(), query.value(1).toInt());
+    return counts;
+}
+
+QVector<models::SharedFile> SharedFileRepository::conflictCandidates(qint64 folderId) const
+{
+    QVector<models::SharedFile> files;
+    QSqlQuery query(m_db);
+    query.prepare(QStringLiteral(
+        "SELECT * FROM SharedFiles WHERE deleted = 0 AND relative_path LIKE '% (%)%' "
+        "AND (:folder_id <= 0 OR folder_id = :folder_id) ORDER BY relative_path ASC"));
+    query.bindValue(QStringLiteral(":folder_id"), folderId);
+    if (!query.exec()) {
+        m_lastError = query.lastError().text();
+        return files;
+    }
+    while (query.next())
+        files.append(fileFromQuery(query));
     return files;
 }
 

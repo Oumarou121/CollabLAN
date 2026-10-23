@@ -2,6 +2,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QVariant>
 #include <QDateTime>
 #include <QUuid>
@@ -203,13 +204,15 @@ bool ServerElectionRepository::bumpEpochIfNewer(int remoteEpoch)
 
 models::ServerElectionLogEntry ServerElectionRepository::logEntryFromQuery(const QSqlQuery &query) const
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::ServerElectionLogEntry entry;
-    entry.setId(query.value(QStringLiteral("id")).toInt());
-    entry.setEvent(query.value(QStringLiteral("event")).toString());
-    entry.setEpoch(query.value(QStringLiteral("epoch")).toInt());
-    entry.setMachineUuid(query.value(QStringLiteral("machine_uuid")).toString());
-    entry.setCreatedAt(QDateTime::fromString(query.value(QStringLiteral("created_at")).toString(), Qt::ISODate));
-    entry.setLogUuid(query.value(QStringLiteral("log_uuid")).toString());
+    entry.setId(query.value(rec.indexOf(QLatin1String("id"))).toInt());
+    entry.setEvent(query.value(rec.indexOf(QLatin1String("event"))).toString());
+    entry.setEpoch(query.value(rec.indexOf(QLatin1String("epoch"))).toInt());
+    entry.setMachineUuid(query.value(rec.indexOf(QLatin1String("machine_uuid"))).toString());
+    entry.setCreatedAt(QDateTime::fromString(query.value(rec.indexOf(QLatin1String("created_at"))).toString(), Qt::ISODate));
+    entry.setLogUuid(query.value(rec.indexOf(QLatin1String("log_uuid"))).toString());
     return entry;
 }
 

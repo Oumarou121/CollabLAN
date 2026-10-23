@@ -33,6 +33,12 @@ SheetModal {
         currentField.text = ""; newField.text = ""; confirmField.text = ""
         root.error = ""; root.done = false
     }
+    // Empreinte du mot de passe (PBKDF2) calculee sur le fil de l interface :
+    // le bouton passe en attente, affiche, avant le calcul.
+    property bool working: false
+    Timer { id: submitDelay; interval: 16; onTriggered: { root.submit(); root.working = false } }
+    function submitSoon() { if (root.working) return; root.working = true; submitDelay.start() }
+
     function submit() {
         if (!root.filled || typeof userManager === "undefined" || !userManager) return
         const msg = userManager.changeOwnPassword(currentField.text, newField.text, confirmField.text)
@@ -77,7 +83,7 @@ SheetModal {
             error: root.errorField === "confirm" ? root.error : ""
             hint: root.errorField === "form" ? "" : qsTr("4 caractères au moins, différent de l'actuel.")
             onTextChanged: if (text.length) root.error = ""
-            onAccepted: root.submit()
+            onAccepted: root.submitSoon()
         }
         Text {
             visible: root.errorField === "form"
@@ -113,7 +119,7 @@ SheetModal {
 
     footer: [
         AppButton { visible: !root.done; variant: "ghost"; text: qsTr("Annuler"); onClicked: root.closeRequested() },
-        AppButton { visible: !root.done; variant: "ink"; iconPath: Icons.key; enabled: root.filled; text: qsTr("Changer le mot de passe"); onClicked: root.submit() },
+        AppButton { visible: !root.done; variant: "ink"; iconPath: Icons.key; enabled: root.filled; loading: root.working; text: qsTr("Changer le mot de passe"); onClicked: root.submitSoon() },
         AppButton { visible: root.done; variant: "ink"; text: qsTr("Fermer"); onClicked: root.closeRequested() }
     ]
 }

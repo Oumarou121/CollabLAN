@@ -2,6 +2,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QVariant>
 
 namespace database {
@@ -15,24 +16,26 @@ TransferRepository::~TransferRepository() = default;
 
 models::Transfer TransferRepository::transferFromQuery(const QSqlQuery &query) const
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::Transfer transfer;
-    transfer.setId(query.value(QStringLiteral("id")).toInt());
+    transfer.setId(query.value(rec.indexOf(QLatin1String("id"))).toInt());
     // sender_uuid/recipient_uuid (migration #017, colonnes sender_id/
     // recipient_id supprimees) : chaine vide si NULL, un poste reseau
     // sans compte utilisateur associe n'a pas d'UUID a restituer.
-    transfer.setSenderUuid(query.value(QStringLiteral("sender_uuid")).toString());
-    transfer.setRecipientUuid(query.value(QStringLiteral("recipient_uuid")).toString());
-    transfer.setFileName(query.value(QStringLiteral("file_name")).toString());
-    transfer.setFileSize(query.value(QStringLiteral("file_size")).toLongLong());
-    transfer.setFilePath(query.value(QStringLiteral("file_path")).toString());
-    transfer.setPeerAddress(query.value(QStringLiteral("peer_address")).toString());
-    transfer.setPeerName(query.value(QStringLiteral("peer_name")).toString());
+    transfer.setSenderUuid(query.value(rec.indexOf(QLatin1String("sender_uuid"))).toString());
+    transfer.setRecipientUuid(query.value(rec.indexOf(QLatin1String("recipient_uuid"))).toString());
+    transfer.setFileName(query.value(rec.indexOf(QLatin1String("file_name"))).toString());
+    transfer.setFileSize(query.value(rec.indexOf(QLatin1String("file_size"))).toLongLong());
+    transfer.setFilePath(query.value(rec.indexOf(QLatin1String("file_path"))).toString());
+    transfer.setPeerAddress(query.value(rec.indexOf(QLatin1String("peer_address"))).toString());
+    transfer.setPeerName(query.value(rec.indexOf(QLatin1String("peer_name"))).toString());
     // peer_machine_id (migration #016) : identifiant le plus fiable du
     // correspondant, present pour la quasi-totalite des transferts LAN via
     // decouverte contrairement a sender_id/recipient_id.
-    transfer.setPeerMachineId(query.value(QStringLiteral("peer_machine_id")).toString());
-    transfer.setStatus(models::transferStatusFromString(query.value(QStringLiteral("status")).toString()));
-    transfer.setCreatedAt(query.value(QStringLiteral("created_at")).toDateTime());
+    transfer.setPeerMachineId(query.value(rec.indexOf(QLatin1String("peer_machine_id"))).toString());
+    transfer.setStatus(models::transferStatusFromString(query.value(rec.indexOf(QLatin1String("status"))).toString()));
+    transfer.setCreatedAt(query.value(rec.indexOf(QLatin1String("created_at"))).toDateTime());
     return transfer;
 }
 

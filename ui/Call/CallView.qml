@@ -112,6 +112,10 @@ Item {
     // Actions
     // ======================================================================
     property string filter: "all"           // "all" | "missed" | "out" | "in"
+    // Journal affiche par tranches (un long historique creait toutes ses lignes d un coup).
+    readonly property int historyPage: 150
+    property int historyLimit: historyPage
+    onFilterChanged: root.historyLimit = root.historyPage
     property string peerSearch: ""
     property string errorText: ""
 
@@ -140,7 +144,14 @@ Item {
         }
         return out
     }
-    function dayCount(day) { return root.historyRows.filter(function(r) { return r.day === day }).length }
+    // Comptes par jour calcules une fois par liste : dayCount() refiltrait
+    // toute la liste pour chaque ligne (cout quadratique sur un long historique).
+    readonly property var dayTotals: {
+        const m = {}
+        for (let i = 0; i < root.historyRows.length; i++) m[root.historyRows[i].day] = (m[root.historyRows[i].day] || 0) + 1
+        return m
+    }
+    function dayCount(day) { return root.dayTotals[day] || 0 }
 
     readonly property var peerRows: {
         const q = root.peerSearch.trim().toLowerCase()
@@ -546,7 +557,7 @@ Item {
                         }
 
                         Repeater {
-                            model: root.historyRows
+                            model: root.historyRows.length > root.historyLimit ? root.historyRows.slice(0, root.historyLimit) : root.historyRows
                             delegate: ColumnLayout {
                                 id: hr
                                 required property var modelData
@@ -630,6 +641,16 @@ Item {
                                     }
                                 }
                             }
+                        }
+                        TextLink {
+                            visible: root.historyRows.length > root.historyLimit
+                            Layout.topMargin: 10
+                            text: qsTr("Afficher %1 appels de plus (%2 restants)")
+                                  .arg(Math.min(root.historyPage, root.historyRows.length - root.historyLimit))
+                                  .arg(root.historyRows.length - root.historyLimit)
+                            arrow: false
+                            fontSize: Theme.fs(12.5)
+                            onClicked: root.historyLimit += root.historyPage
                         }
                         RowLayout {
                             visible: root.calls.length > 0

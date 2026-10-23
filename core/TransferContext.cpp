@@ -14,6 +14,13 @@ namespace core {
 TransferContext::TransferContext(QObject *parent)
     : QObject(parent)
 {
+    // Progression : un signal par bloc recu ou envoye (des centaines par
+    // seconde sur un reseau local rapide), et chaque ecran reconstruisait
+    // sa liste a chacun. Les mises a jour de progression sont regroupees a
+    // 10 par seconde ; debut, fin et echec restent signales tout de suite.
+    m_progressTimer.setSingleShot(true);
+    m_progressTimer.setInterval(100);
+    connect(&m_progressTimer, &QTimer::timeout, this, &TransferContext::activeTransfersChanged);
 }
 
 TransferContext::~TransferContext() = default;
@@ -514,7 +521,8 @@ void TransferContext::onTransferProgress(const QString &transferKey, qint64 byte
     entry[QStringLiteral("percent")] = percentOf(bytesTransferred, totalBytes);
     m_activeTransfers[index] = entry;
 
-    emit activeTransfersChanged();
+    if (!m_progressTimer.isActive())
+        m_progressTimer.start();
 }
 
 void TransferContext::onTransferCompleted(const QString &transferKey, const QString &filePath)

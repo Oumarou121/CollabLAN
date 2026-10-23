@@ -2,6 +2,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QVariant>
 #include <QDateTime>
 #include <QUuid>
@@ -61,16 +62,18 @@ bool SyncLogRepository::append(const models::SyncLogEntry &entry)
 
 models::SyncLogEntry SyncLogRepository::entryFromQuery(const QSqlQuery &query) const
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::SyncLogEntry entry;
-    entry.setEntryUuid(query.value(QStringLiteral("entry_uuid")).toString());
-    entry.setTableName(query.value(QStringLiteral("table_name")).toString());
-    entry.setRecordUuid(query.value(QStringLiteral("record_uuid")).toString());
-    entry.setOperation(query.value(QStringLiteral("operation")).toString());
-    entry.setPayloadJson(query.value(QStringLiteral("payload_json")).toString());
-    entry.setLamportClock(query.value(QStringLiteral("lamport_clock")).toLongLong());
-    entry.setEpoch(query.value(QStringLiteral("epoch")).toInt());
-    entry.setOriginMachineId(query.value(QStringLiteral("origin_machine_id")).toString());
-    entry.setUpdatedAt(QDateTime::fromString(query.value(QStringLiteral("updated_at")).toString(), Qt::ISODate));
+    entry.setEntryUuid(query.value(rec.indexOf(QLatin1String("entry_uuid"))).toString());
+    entry.setTableName(query.value(rec.indexOf(QLatin1String("table_name"))).toString());
+    entry.setRecordUuid(query.value(rec.indexOf(QLatin1String("record_uuid"))).toString());
+    entry.setOperation(query.value(rec.indexOf(QLatin1String("operation"))).toString());
+    entry.setPayloadJson(query.value(rec.indexOf(QLatin1String("payload_json"))).toString());
+    entry.setLamportClock(query.value(rec.indexOf(QLatin1String("lamport_clock"))).toLongLong());
+    entry.setEpoch(query.value(rec.indexOf(QLatin1String("epoch"))).toInt());
+    entry.setOriginMachineId(query.value(rec.indexOf(QLatin1String("origin_machine_id"))).toString());
+    entry.setUpdatedAt(QDateTime::fromString(query.value(rec.indexOf(QLatin1String("updated_at"))).toString(), Qt::ISODate));
     return entry;
 }
 

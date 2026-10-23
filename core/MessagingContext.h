@@ -1,6 +1,7 @@
 #ifndef CORE_MESSAGINGCONTEXT_H
 #define CORE_MESSAGINGCONTEXT_H
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QQmlEngine>
 #include <QVariantList>
@@ -87,6 +88,10 @@ public:
     /// (chaque element est une map conversationId/name/lastMessage/timestamp).
     Q_INVOKABLE QVariantList conversationsList();
 
+    /// Total des messages non lus de l'utilisateur connecte (badge) : somme
+    /// de la liste des conversations (en cache, cf. conversationsList).
+    Q_INVOKABLE int totalUnreadCount();
+
     /// Liste des utilisateurs disponibles pour la creation d'un groupe
     /// (tous les utilisateurs sauf l'utilisateur courant), prete a l'emploi
     /// comme modele QML : chaque element est une map userId/username.
@@ -159,6 +164,15 @@ private slots:
     void onMessageSendFailed(qint64 conversationId, const QString &error);
 
 private:
+    void invalidateConversations();
+    QVariantMap conversationSummary(qint64 conversationId, qint64 currentId);
+
+    QHash<qint64, QVariantMap> m_conversationSummaries;
+    qint64 m_changedConversation = 0;
+
+    QVariantList m_conversationsCache;
+    qint64 m_conversationsCacheUser = 0;
+    QElapsedTimer m_conversationsCacheAge;
     MessagingManager *m_messagingManager = nullptr;
     models::MessageModel *m_messageModel;
     GroupManager *m_groupManager = nullptr;

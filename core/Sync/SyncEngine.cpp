@@ -191,8 +191,10 @@ void SyncEngine::onFolderCreated(const models::SharedFolder &folder)
     watchFolder(folder.id());
 
     // Indexer le contenu initial du dossier pour que les fichiers soient
-    // disponibles pour le resync (folder_resync_request)
-    reindexFolder(folder.id());
+    // disponibles pour le resync (folder_resync_request), sur le fil
+    // d indexation : un gros dossier figeait l interface le temps de lire et
+    // d empreinter chaque fichier.
+    requestReindex(folder.id());
 }
 
 void SyncEngine::onFolderLocalPathProvisioned(qint64 folderId, const QString &localPath)
@@ -215,7 +217,7 @@ void SyncEngine::onFolderLocalPathProvisioned(qint64 folderId, const QString &lo
     // l'etat initial pour un futur resync et rafraichit les fichiers
     // surveilles.
     watchFolder(folderId);
-    reindexFolder(folderId);
+    requestReindex(folderId);
 }
 
 void SyncEngine::onFolderRemoved(qint64 folderId)

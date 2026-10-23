@@ -1,4 +1,6 @@
 #include "SharedFolderContext.h"
+
+#include <QTimer>
 #include "Sync/SafePath.h"
 
 #include <algorithm>
@@ -36,7 +38,7 @@ void SharedFolderContext::setSharedFolderManager(SharedFolderManager *manager)
     // manuellement hors/dans l'ecran pour voir le nouveau compteur.
     if (m_manager) {
         connect(m_manager, &SharedFolderManager::folderShared,
-                this, [this](qint64, int) { refresh(); });
+                this, [this](qint64, int) { scheduleRefresh(); });
         // Rafraîchir l'UI quand un accès est accordé localement (toujours
         // émis), et -- uniquement pour un grant réellement NOUVEAU
         // (isNewGrant, cf. commentaire du signal dans SharedFolderManager.h)
@@ -136,7 +138,7 @@ void SharedFolderContext::setFolderSyncService(core::sync::FolderSyncService *sv
         // l'ecran SharedFolderView, faute de signal ecoute entre-temps.
         connect(m_folderSyncService, &core::sync::FolderSyncService::fileIntegrated,
                 this, [this](const QString &folderUuid, const QString &relativePath, bool /*wasConflict*/) {
-                    refresh();
+                    scheduleRefresh();
                     emit fileReceived(folderUuid, relativePath);
                 });
 
@@ -181,14 +183,31 @@ void SharedFolderContext::refresh()
     const QVector<models::SharedFolder> folders = m_manager->getAccessibleFolders(currentUserId);
     m_folderModel->setFolders(folders);
 
+    // Comptes de tous les dossiers en une requete (auparavant : tous les
+    // fichiers de chaque dossier charges pour les compter).
+    const QHash<qint64, int> allCounts = m_manager->fileCountsByFolder();
     QHash<qint64, int> counts;
     QHash<qint64, bool> conflicts;
     for (const models::SharedFolder &folder : folders) {
-        counts.insert(folder.id(), m_manager->getFiles(folder.id()).size());
+        counts.insert(folder.id(), allCounts.value(folder.id()));
         conflicts.insert(folder.id(), hasConflicts(folder.id()));
     }
     m_folderModel->setFileCounts(counts);
     m_folderModel->setConflicts(conflicts);
+}
+
+void SharedFolderContext::scheduleRefresh()
+{
+    // Une rafale de synchronisation emet un signal par fichier : un seul
+    // rafraichissement par fenetre de 250 ms au lieu d'un par fichier.
+    if (!m_refreshTimer) {
+        m_refreshTimer = new QTimer(this);
+        m_refreshTimer->setSingleShot(true);
+        m_refreshTimer->setInterval(250);
+        connect(m_refreshTimer, &QTimer::timeout, this, &SharedFolderContext::refresh);
+    }
+    if (!m_refreshTimer->isActive())
+        m_refreshTimer->start();
 }
 
 bool SharedFolderContext::createFolder(const QString &name, const QString &localPath,
@@ -229,9 +248,10 @@ bool SharedFolderContext::createFolder(const QString &name, const QString &local
     // Passe par SyncEngine (s'il est disponible) plutot que par le
     // manager directement, afin que les fichiers deja presents soient
     // aussi journalises comme des SyncOperation de type Create.
-    if (m_syncEngine) {
-        m_syncEngine->reindexFolder(folder->id());
-    } else {
+    // SyncEngine indexe deja le nouveau dossier (signal folderCreated, sur le
+    // fil d'indexation) : le refaire ici l'indexait une seconde fois, sur le
+    // fil de l'interface.
+    if (!m_syncEngine) {
         m_manager->shareFolder(folder->id());
     }
     refresh();
@@ -560,7 +580,7 @@ bool SharedFolderContext::updateExcludePatterns(qint64 folderId, const QString &
     const auto folder = m_manager->getFolder(folderId);
     if (folder.has_value() && folder->isLocalOrigin()) {
         if (m_syncEngine) {
-            m_syncEngine->reindexFolder(folderId);
+            m_syncEngine->reindexFolderAsync(folderId);
         } else {
             m_manager->shareFolder(folderId);
         }
@@ -604,70 +624,45 @@ QVariantList SharedFolderContext::syncHistoryForFolder(qint64 folderId, int limi
 
 QVariantList SharedFolderContext::getConflicts(qint64 folderId) const
 {
+    return conflictsFor(folderId, false);
+}
+
+bool SharedFolderContext::hasConflicts(qint64 folderId) const
+{
+    return !conflictsFor(folderId, true).isEmpty();
+}
+
+QVariantList SharedFolderContext::conflictsFor(qint64 folderId, bool firstOnly) const
+{
     QVariantList result;
     if (!m_manager) {
         return result;
     }
 
-    const auto files = m_manager->getFiles(folderId);
-    QSet<QString> activePaths;
-    activePaths.reserve(files.size());
-    for (const auto &file : files) {
-        activePaths.insert(file.relativePath());
-    }
-
-    QRegularExpression conflictRegex(QStringLiteral("^(.+) \\((?:conflit ([^)]+)|([^)]{6}))\\)(\\.[^/\\.]+)?$"));
-
-    for (const auto &file : files) {
-        auto match = conflictRegex.match(file.relativePath());
-        if (match.hasMatch()) {
-            QString basePath = match.captured(1);
-            QString shortId = match.captured(2).isEmpty() ? match.captured(3) : match.captured(2);
-            QString ext = match.captured(4);
-            QString originalPath = basePath + ext;
-
-            if (activePaths.contains(originalPath)) {
-                QVariantMap conflictMap;
-                conflictMap.insert(QStringLiteral("relativePath"), originalPath);
-                conflictMap.insert(QStringLiteral("conflictPath"), file.relativePath());
-                conflictMap.insert(QStringLiteral("shortId"), shortId);
-                result.append(conflictMap);
-            }
+    // Seuls les fichiers nommes comme une copie de conflit sont examines
+    // (requete ciblee) : auparavant tout le dossier etait charge, deux fois
+    // par dossier a chaque rafraichissement.
+    static const QRegularExpression conflictRegex(
+        QStringLiteral("^(.+) \\((?:conflit ([^)]+)|([^)]{6}))\\)(\\.[^/\\.]+)?$"));
+    for (const auto &file : m_manager->conflictCandidates(folderId)) {
+        const auto match = conflictRegex.match(file.relativePath());
+        if (!match.hasMatch()) {
+            continue;
+        }
+        const QString originalPath = match.captured(1) + match.captured(4);
+        if (!m_manager->hasActiveFile(folderId, originalPath)) {
+            continue;
+        }
+        QVariantMap conflictMap;
+        conflictMap.insert(QStringLiteral("relativePath"), originalPath);
+        conflictMap.insert(QStringLiteral("conflictPath"), file.relativePath());
+        conflictMap.insert(QStringLiteral("shortId"), match.captured(2).isEmpty() ? match.captured(3) : match.captured(2));
+        result.append(conflictMap);
+        if (firstOnly) {
+            break;
         }
     }
-
     return result;
-}
-
-bool SharedFolderContext::hasConflicts(qint64 folderId) const
-{
-    if (!m_manager) {
-        return false;
-    }
-
-    const auto files = m_manager->getFiles(folderId);
-    QSet<QString> activePaths;
-    activePaths.reserve(files.size());
-    for (const auto &file : files) {
-        activePaths.insert(file.relativePath());
-    }
-
-    QRegularExpression conflictRegex(QStringLiteral("^(.+) \\((?:conflit ([^)]+)|([^)]{6}))\\)(\\.[^/\\.]+)?$"));
-
-    for (const auto &file : files) {
-        auto match = conflictRegex.match(file.relativePath());
-        if (match.hasMatch()) {
-            QString basePath = match.captured(1);
-            QString ext = match.captured(4);
-            QString originalPath = basePath + ext;
-
-            if (activePaths.contains(originalPath)) {
-                return true;
-            }
-        }
-    }
-
-    return false;
 }
 
 bool SharedFolderContext::resolveConflict(qint64 folderId, const QString &relativePath, const QString &conflictPath, const QString &resolution)
@@ -753,11 +748,10 @@ bool SharedFolderContext::resolveConflict(qint64 folderId, const QString &relati
     }
 
     // Réindexer le dossier pour prendre en compte les changements sur le disque
-    bool indexed = false;
+    // (sur le fil d'indexation ; la vue se met a jour a folderReindexed).
     if (m_syncEngine) {
-        indexed = m_syncEngine->reindexFolder(folderId) > 0;
-    }
-    if (!indexed) {
+        m_syncEngine->reindexFolderAsync(folderId);
+    } else {
         const auto changes = m_manager->shareFolder(folderId);
         if (!changes.has_value()) {
             m_lastErrorString = m_manager->lastErrorString();

@@ -533,6 +533,31 @@ QVector<models::SharedFile> SharedFolderManager::getFiles(qint64 folderId) const
     return m_fileRepository.getByFolderId(folderId);
 }
 
+QHash<qint64, int> SharedFolderManager::fileCountsByFolder() const
+{
+    if (!m_dbManager) {
+        return {};
+    }
+    return m_fileRepository.countsByFolder();
+}
+
+QVector<models::SharedFile> SharedFolderManager::conflictCandidates(qint64 folderId) const
+{
+    if (!m_dbManager) {
+        return {};
+    }
+    return m_fileRepository.conflictCandidates(folderId);
+}
+
+bool SharedFolderManager::hasActiveFile(qint64 folderId, const QString &relativePath) const
+{
+    if (!m_dbManager) {
+        return false;
+    }
+    const auto file = m_fileRepository.findByRelativePath(folderId, relativePath);
+    return file.has_value() && !file->deleted();
+}
+
 std::optional<models::SharedFolder> SharedFolderManager::getFolderByUuid(const QString &uuid) const
 {
     if (!m_dbManager) {

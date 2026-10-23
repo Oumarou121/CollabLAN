@@ -2,6 +2,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QVariant>
 
 namespace database {
@@ -15,13 +16,15 @@ SessionRepository::~SessionRepository() = default;
 
 models::UserSession SessionRepository::sessionFromQuery(const QSqlQuery &query) const
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::UserSession session;
-    session.setId(query.value(QStringLiteral("id")).toInt());
-    session.setUserId(query.value(QStringLiteral("user_id")).toInt());
-    session.setTokenHash(query.value(QStringLiteral("token_hash")).toString());
-    session.setDeviceLabel(query.value(QStringLiteral("device_label")).toString());
-    session.setCreatedAt(QDateTime::fromString(query.value(QStringLiteral("created_at")).toString(), Qt::ISODate));
-    session.setExpiresAt(QDateTime::fromString(query.value(QStringLiteral("expires_at")).toString(), Qt::ISODate));
+    session.setId(query.value(rec.indexOf(QLatin1String("id"))).toInt());
+    session.setUserId(query.value(rec.indexOf(QLatin1String("user_id"))).toInt());
+    session.setTokenHash(query.value(rec.indexOf(QLatin1String("token_hash"))).toString());
+    session.setDeviceLabel(query.value(rec.indexOf(QLatin1String("device_label"))).toString());
+    session.setCreatedAt(QDateTime::fromString(query.value(rec.indexOf(QLatin1String("created_at"))).toString(), Qt::ISODate));
+    session.setExpiresAt(QDateTime::fromString(query.value(rec.indexOf(QLatin1String("expires_at"))).toString(), Qt::ISODate));
     return session;
 }
 

@@ -8,6 +8,7 @@
 #include <QHash>
 #include <QSet>
 #include <QStringList>
+#include <QTimer>
 #include <QDir>
 #include <QDirIterator>
 
@@ -165,6 +166,7 @@ private slots:
     void onTransferFailed(const QString &transferKey, const QString &errorString);
 
 private:
+    QTimer m_progressTimer;
     int indexOfTransfer(const QString &transferKey) const;
     static int percentOf(qint64 bytesTransferred, qint64 totalBytes);
 

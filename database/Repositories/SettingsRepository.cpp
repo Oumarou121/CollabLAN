@@ -2,6 +2,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QVariant>
 
 namespace database {
@@ -15,9 +16,11 @@ SettingsRepository::~SettingsRepository() = default;
 
 models::Settings SettingsRepository::settingsFromQuery(const QSqlQuery &query) const
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::Settings settings;
-    settings.setKey(query.value(QStringLiteral("key")).toString());
-    settings.setValue(query.value(QStringLiteral("value")));
+    settings.setKey(query.value(rec.indexOf(QLatin1String("key"))).toString());
+    settings.setValue(query.value(rec.indexOf(QLatin1String("value"))));
     return settings;
 }
 

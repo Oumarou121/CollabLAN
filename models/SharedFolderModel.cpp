@@ -62,6 +62,18 @@ QVariant SharedFolderModel::data(const QModelIndex &index, int role) const
 
 void SharedFolderModel::setFolders(const QVector<SharedFolder> &folders)
 {
+    // Memes dossiers dans le meme ordre (cas courant d'un rafraichissement) :
+    // simple mise a jour des lignes. Une reinitialisation faisait recreer
+    // toutes les lignes cote QML a chaque rafraichissement.
+    bool sameRows = folders.size() == m_folders.size() && !folders.isEmpty();
+    for (int i = 0; sameRows && i < folders.size(); ++i)
+        sameRows = folders.at(i).id() == m_folders.at(i).id();
+    if (sameRows) {
+        m_folders = folders;
+        emit dataChanged(index(0), index(m_folders.size() - 1));
+        return;
+    }
+
     beginResetModel();
     m_folders = folders;
     endResetModel();

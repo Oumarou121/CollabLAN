@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QHash>
 #include <QVector>
 #include <optional>
 
@@ -108,6 +109,15 @@ public:
 
     /// Fichiers actuellement connus (non supprimes) d'un dossier partage.
     QVector<models::SharedFile> getFiles(qint64 folderId) const;
+
+    /// Nombre de fichiers (non supprimes) par dossier, en une requete.
+    QHash<qint64, int> fileCountsByFolder() const;
+
+    /// Copies de conflit possibles (nom "x (y).ext") ; folderId <= 0 : tous.
+    QVector<models::SharedFile> conflictCandidates(qint64 folderId) const;
+
+    /// Vrai si le fichier existe (non supprime) dans le dossier.
+    bool hasActiveFile(qint64 folderId, const QString &relativePath) const;
 
     /// Recupere un dossier partage par son uuid stable (independant de
     /// l'id local), utilise notamment par core::sync::FolderSyncService

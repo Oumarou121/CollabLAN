@@ -13,6 +13,8 @@
 #include "models/SharedFolderModel.h"
 #include "models/SharedFolderFilterProxy.h"
 
+class QTimer;
+
 namespace core {
 
 /**
@@ -316,6 +318,11 @@ signals:
                                 bool incoming, int fileCount);
 
 private:
+    /// Rafraichissement regroupe (signaux reseau en rafale).
+    void scheduleRefresh();
+    QVariantList conflictsFor(qint64 folderId, bool firstOnly) const;
+
+    QTimer *m_refreshTimer = nullptr;
     models::SharedFolderModel *m_folderModel = nullptr;
     models::SharedFolderFilterProxy *m_folderFilterProxy = nullptr;
     SharedFolderManager *m_manager = nullptr;

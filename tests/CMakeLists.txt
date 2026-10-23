@@ -222,3 +222,7 @@ add_test(NAME test_messages_e2e COMMAND test_messages_e2e)
 add_executable(test_dossiers_e2e UnitTests/test_dossiers_e2e.cpp)
 target_link_libraries(test_dossiers_e2e PRIVATE Qt6::Test Qt6::Widgets app_core)
 add_test(NAME test_dossiers_e2e COMMAND test_dossiers_e2e)
+
+# Banc d'essai des temps de l'interface (hors ctest, lancer a la main).
+add_executable(bench_ui UnitTests/bench_ui.cpp)
+target_link_libraries(bench_ui PRIVATE Qt6::Test Qt6::Widgets Qt6::Sql app_core)

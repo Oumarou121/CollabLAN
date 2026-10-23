@@ -2,6 +2,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QVariant>
 
 namespace database {
@@ -15,16 +16,18 @@ SyncOperationRepository::~SyncOperationRepository() = default;
 
 models::FileSyncOperation SyncOperationRepository::operationFromQuery(const QSqlQuery &query) const
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::FileSyncOperation operation;
-    operation.setId(query.value(QStringLiteral("id")).toLongLong());
-    operation.setType(models::syncChangeTypeFromString(query.value(QStringLiteral("type")).toString()));
-    operation.setFileId(query.value(QStringLiteral("file_id")).toLongLong());
-    operation.setOldRelativePath(query.value(QStringLiteral("old_relative_path")).toString());
-    operation.setVersion(query.value(QStringLiteral("version")).toInt());
-    operation.setMachineId(query.value(QStringLiteral("machine_id")).toString());
-    operation.setCreatedAt(query.value(QStringLiteral("created_at")).toDateTime());
-    operation.setBaseHash(query.value(QStringLiteral("base_hash")).toString());
-    operation.setAuthorUuid(query.value(QStringLiteral("author_uuid")).toString());
+    operation.setId(query.value(rec.indexOf(QLatin1String("id"))).toLongLong());
+    operation.setType(models::syncChangeTypeFromString(query.value(rec.indexOf(QLatin1String("type"))).toString()));
+    operation.setFileId(query.value(rec.indexOf(QLatin1String("file_id"))).toLongLong());
+    operation.setOldRelativePath(query.value(rec.indexOf(QLatin1String("old_relative_path"))).toString());
+    operation.setVersion(query.value(rec.indexOf(QLatin1String("version"))).toInt());
+    operation.setMachineId(query.value(rec.indexOf(QLatin1String("machine_id"))).toString());
+    operation.setCreatedAt(query.value(rec.indexOf(QLatin1String("created_at"))).toDateTime());
+    operation.setBaseHash(query.value(rec.indexOf(QLatin1String("base_hash"))).toString());
+    operation.setAuthorUuid(query.value(rec.indexOf(QLatin1String("author_uuid"))).toString());
     return operation;
 }
 

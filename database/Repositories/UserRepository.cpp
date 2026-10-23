@@ -2,6 +2,7 @@
 
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QVariant>
 #include <QUuid>
 #include <QDateTime>
@@ -26,21 +27,23 @@ UserRepository::~UserRepository() = default;
 
 models::User UserRepository::userFromQuery(const QSqlQuery &query) const
 {
+    // Enregistrement lu une fois par ligne : value(nom) le reconstruisait a chaque colonne.
+    const QSqlRecord rec = query.record();
     models::User user;
-    user.setId(query.value(QStringLiteral("id")).toInt());
-    user.setName(query.value(QStringLiteral("name")).toString());
-    user.setIpAddress(query.value(QStringLiteral("ip_address")).toString());
-    user.setStatus(models::userStatusFromString(query.value(QStringLiteral("status")).toString()));
+    user.setId(query.value(rec.indexOf(QLatin1String("id"))).toInt());
+    user.setName(query.value(rec.indexOf(QLatin1String("name"))).toString());
+    user.setIpAddress(query.value(rec.indexOf(QLatin1String("ip_address"))).toString());
+    user.setStatus(models::userStatusFromString(query.value(rec.indexOf(QLatin1String("status"))).toString()));
     
-    const QString roleStr = query.value(QStringLiteral("role")).toString();
+    const QString roleStr = query.value(rec.indexOf(QLatin1String("role"))).toString();
     const auto role = models::stringToUserRole(roleStr);
     user.setRole(role.value_or(models::UserRole::User));
     
-    user.setPasswordHash(query.value(QStringLiteral("password_hash")).toString());
-    user.setPasswordSalt(query.value(QStringLiteral("password_salt")).toString());
-    user.setCreatedAt(query.value(QStringLiteral("created_at")).toDateTime());
-    user.setUuid(query.value(QStringLiteral("uuid")).toString());
-    user.setUpdatedAt(QDateTime::fromString(query.value(QStringLiteral("updated_at")).toString(), Qt::ISODate));
+    user.setPasswordHash(query.value(rec.indexOf(QLatin1String("password_hash"))).toString());
+    user.setPasswordSalt(query.value(rec.indexOf(QLatin1String("password_salt"))).toString());
+    user.setCreatedAt(query.value(rec.indexOf(QLatin1String("created_at"))).toDateTime());
+    user.setUuid(query.value(rec.indexOf(QLatin1String("uuid"))).toString());
+    user.setUpdatedAt(QDateTime::fromString(query.value(rec.indexOf(QLatin1String("updated_at"))).toString(), Qt::ISODate));
     return user;
 }
 
