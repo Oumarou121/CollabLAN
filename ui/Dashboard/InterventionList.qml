@@ -84,6 +84,13 @@ ColumnLayout {
         font.pixelSize: Theme.fs(12.5)
         wrapMode: Text.WordWrap
     }
+    // Sans element extensible, la colonne (etiree a la hauteur du reseau sur
+    // l'accueil) repartissait la place libre entre le titre et les deux
+    // textes : « Rien à signaler. » flottait au milieu, la consigne en bas.
+    Item {
+        visible: root.rowCount === 0
+        Layout.fillHeight: true
+    }
 
     // ---- Groupes -------------------------------------------------------------
     Flickable {

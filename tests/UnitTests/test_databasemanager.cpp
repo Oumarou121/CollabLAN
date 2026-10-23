@@ -184,7 +184,9 @@ private slots:
         QCOMPARE(embeddedFiles, onDisk.entryList({QStringLiteral("*.sql")}, QDir::Files, QDir::Name));
         QFile last(embedded.filePath(embeddedFiles.last()));
         QVERIFY(last.open(QIODevice::ReadOnly));
-        QVERIFY(last.readAll().contains("CREATE"));
+        // Contenu reel (une migration peut ne faire que des ALTER/UPDATE).
+        const QByteArray sql = last.readAll();
+        QVERIFY(sql.contains("CREATE") || sql.contains("ALTER") || sql.contains("UPDATE"));
     }
 };
 

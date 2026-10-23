@@ -443,6 +443,19 @@ private slots:
         const auto clamped = m_messagingManager->receiveMessage(future);
         QVERIFY(clamped.has_value());
         QVERIFY(clamped->timestamp() <= QDateTime::currentDateTimeUtc().addSecs(1));
+
+        // Horloge de l'emetteur un peu en retard sur la notre : le message,
+        // remis tout de suite, prend l'heure de reception et devient le
+        // dernier de la discussion (apercu de la liste).
+        const QString late = QStringLiteral(
+            "{\"type\":\"message\",\"conversationUuid\":\"%1\",\"senderUuid\":\"%2\",\"messageUuid\":\"%3\","
+            "\"content\":\"horloge en retard\",\"timestamp\":\"%4\"}")
+            .arg(conv->uuid(), users[1].uuid(), QUuid::createUuid().toString(QUuid::WithoutBraces),
+                 QDateTime::currentDateTimeUtc().addSecs(-90).toString(Qt::ISODate));
+        QVERIFY(m_messagingManager->receiveMessage(late).has_value());
+        const auto last = m_messagingManager->getLastMessage(conv->id());
+        QVERIFY(last.has_value());
+        QCOMPARE(last->content(), QStringLiteral("horloge en retard"));
     }
 
     void receiveMessage_survivesApostropheInContent()

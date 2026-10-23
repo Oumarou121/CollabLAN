@@ -472,6 +472,9 @@ Item {
             username: shell.username
             onUsersRequested: shell.navigate("peers")
             onChatRequested: shell.navigate("chat")
+            // Message (fiche, registre), discussion de la liste : sans ce
+            // relais le clic n'avait aucun effet.
+            onConversationRequested: function(conversationId) { shell.openConversation(conversationId) }
             onNewConversationRequested: shell.navigate("chat", { startPanel: "person" })
             onFileTransferRequested: function(openNewTransfer, peer) {
                 shell.navigate("transfer", { autoOpenPanel: openNewTransfer === true,

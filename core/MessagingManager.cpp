@@ -665,11 +665,15 @@ std::optional<models::Message> MessagingManager::receiveMessage(const QString &j
     // Persiste le message recu du reseau (pas de renvoi reseau, contrairement
     // a sendMessage : on ne fait qu'ecrire en base et notifier l'UI).
     // Heure d'envoi transmise par l'emetteur (UTC) ; heure de reception a
-    // defaut (ancien emetteur). Une heure trop en avance sur la notre est
-    // ramenee a maintenant : elle placerait le message apres tous les suivants.
+    // defaut (ancien emetteur). Une heure en avance sur la notre, ou en retard
+    // de moins de 5 minutes, est ramenee a maintenant : un message remis tout
+    // de suite par un poste dont l'horloge differe un peu de la notre se
+    // classait sinon avant nos derniers messages (liste et apercu de la
+    // discussion restes sur notre message). Au-dela, c'est un message mis en
+    // attente pendant une absence : son heure d'envoi est gardee.
     const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
     QDateTime sentAt = QDateTime::fromString(obj.value(QStringLiteral("timestamp")).toString(), Qt::ISODate);
-    if (!sentAt.isValid() || sentAt > nowUtc.addSecs(300))
+    if (!sentAt.isValid() || sentAt > nowUtc.addSecs(-300))
         sentAt = nowUtc;
 
     models::Message draft(0, conversationId, senderId, content);

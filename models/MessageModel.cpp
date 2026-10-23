@@ -88,8 +88,19 @@ QVariantMap MessageModel::get(int row) const
 
 void MessageModel::addMessage(const Message &message)
 {
-    beginInsertRows(QModelIndex(), m_messages.size(), m_messages.size());
-    m_messages.append(message);
+    // Place chronologique, comme a la relecture de la base (heure puis id) :
+    // un message mis en attente pendant une absence arrive apres des messages
+    // plus recents et ne doit pas s'afficher en bas, a la place du dernier.
+    int row = m_messages.size();
+    while (row > 0 && message.timestamp().isValid()) {
+        const Message &previous = m_messages.at(row - 1);
+        if (previous.timestamp() < message.timestamp()
+            || (previous.timestamp() == message.timestamp() && previous.id() <= message.id()))
+            break;
+        --row;
+    }
+    beginInsertRows(QModelIndex(), row, row);
+    m_messages.insert(row, message);
     endInsertRows();
 }
 

@@ -155,8 +155,8 @@ Item {
     function esc(t) { return String(t === undefined || t === null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") }
 
     // Apercu : « Vous : » pour ses messages ; rien devant le message de
-    // l'interlocuteur (le C++ ecrit « Lui : », faux pour une interlocutrice) ;
-    // prenom de l'expediteur dans un groupe.
+    // l'interlocuteur (son nom est sur la ligne ; le C++ ecrit « Lui : »,
+    // faux pour une interlocutrice) ; prenom de l'expediteur dans un groupe.
     function previewOf(text, isGroup) {
         text = text || ""
         if (text.length === 0) return ""
