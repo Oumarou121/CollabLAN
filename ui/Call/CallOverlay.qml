@@ -563,7 +563,9 @@ Item {
     Rectangle {
         id: sheet
         anchors.centerIn: parent
-        width: Math.min(root.sheetMode === "pick" ? 640 : root.sheetMode === "group" ? 560 : root.sheetMode === "add" ? 460 : 400, root.width - 32)
+        // Appel a deux etabli : quatre boutons (micro, presenter, ajouter, raccrocher).
+        width: Math.min(root.sheetMode === "pick" ? 640 : root.sheetMode === "group" ? 560 : root.sheetMode === "add" ? 460
+                        : root.callState === "connected" ? 440 : 400, root.width - 32)
         height: Math.min(root.height - 32,
                          (root.sheetMode === "pick" ? pickCol.implicitHeight
                           : root.sheetMode === "add" ? addCol.implicitHeight
@@ -692,7 +694,7 @@ Item {
             Row {
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: 20
-                spacing: 22
+                spacing: root.callState === "connected" ? 16 : 22
                 CallAction { visible: root.callState === "ringing"; text: qsTr("Refuser"); tone: "danger"; iconPath: Icons.hangup; onClicked: root.call && root.call.hangUp() }
                 CallAction { visible: root.callState === "ringing"; text: qsTr("Répondre"); tone: "accept"; diameter: 64; iconPath: Icons.phoneLine; onClicked: root.call && root.call.acceptCall() }
                 CallAction { visible: root.callState === "calling" || root.callState === "connecting"; text: qsTr("Annuler"); tone: "danger"; diameter: 64; iconPath: Icons.hangup; onClicked: root.call && root.call.hangUp() }
@@ -713,7 +715,9 @@ Item {
                 }
                 CallAction {
                     visible: root.callState === "connected"
-                    text: qsTr("Ajouter une personne")
+                    text: qsTr("Ajouter")
+                    ToolTip.visible: hovered
+                    ToolTip.text: qsTr("Ajouter une personne : l'appel devient un appel de groupe")
                     iconPath: Icons.userPlus
                     enabled: root.canInvite
                     onClicked: root.openAdd()
