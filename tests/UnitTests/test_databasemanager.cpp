@@ -1,5 +1,6 @@
 #include <QtTest>
 #include <QTemporaryDir>
+#include <QDir>
 #include <QFile>
 #include <QSqlQuery>
 #include <QSqlError>
@@ -169,6 +170,21 @@ private slots:
         QVERIFY(!manager.open(invalidDbPath));
         QVERIFY(!manager.isOpen());
         QVERIFY(!manager.lastError().isEmpty());
+    }
+
+    // Les migrations sont embarquees dans l'executable : un poste ou seule
+    // l'application a ete copiee (ni database/Migrations, ni sources) cree
+    // quand meme son schema complet.
+    void migrationsAreEmbeddedInResources()
+    {
+        const QDir embedded(QStringLiteral(":/database/migrations"));
+        const QDir onDisk(QStringLiteral(LOCALINK_SOURCE_DIR "/database/Migrations"));
+        const QStringList embeddedFiles = embedded.entryList({QStringLiteral("*.sql")}, QDir::Files, QDir::Name);
+        QVERIFY(!embeddedFiles.isEmpty());
+        QCOMPARE(embeddedFiles, onDisk.entryList({QStringLiteral("*.sql")}, QDir::Files, QDir::Name));
+        QFile last(embedded.filePath(embeddedFiles.last()));
+        QVERIFY(last.open(QIODevice::ReadOnly));
+        QVERIFY(last.readAll().contains("CREATE"));
     }
 };
 

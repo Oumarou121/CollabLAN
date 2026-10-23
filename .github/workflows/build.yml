@@ -142,9 +142,9 @@ jobs:
 
       # DatabaseManager cherche les migrations SQL à
       # <dossier de l'exécutable>/database/Migrations/*.sql au runtime
-      # (avec un repli sur le chemin source, valable uniquement en dev).
-      # Sans cette copie, la base livrée ne contient aucune table (à part
-      # schema_migrations) et toutes les opérations échouent en silence.
+      # (avec un repli sur le chemin source, valable uniquement en dev, puis
+      # sur la copie embarquée dans l'exécutable, cf. database/CMakeLists.txt).
+      # Cette copie sur disque reste la source prioritaire.
       - name: Bundle DB migrations (Windows/Linux)
         if: runner.os != 'macOS'
         shell: bash
@@ -165,10 +165,38 @@ jobs:
       # --qmldir permet à windeployqt de scanner les imports QML réellement
       # utilisés (ex: QtQuick.Controls) et de déployer les bons plugins,
       # sinon l'appli plante au lancement avec "plugin ... non trouvé".
+      # --no-compiler-runtime : par defaut windeployqt ne depose que
+      # l'installateur vc_redist.x64.exe, que personne ne lance ; le runtime
+      # Visual C++ est copie a cote de l'exe a l'etape suivante.
       - name: Deploy Qt runtime (Windows)
         if: runner.os == 'Windows'
         shell: bash
-        run: windeployqt --release --qmldir ui build/app/LocaLink.exe
+        run: windeployqt --release --no-compiler-runtime --qmldir ui build/app/LocaLink.exe
+
+      # Runtime Visual C++ (msvcp140, vcruntime140, vcruntime140_1...) a cote
+      # de l'exe (deploiement "app-local", prevu par Microsoft). Sans lui,
+      # LocaLink ne demarre pas sur un poste ou ce runtime est absent ou plus
+      # ancien que le compilateur du runner ("VCRUNTIME140_1.dll introuvable",
+      # "point d'entree introuvable dans MSVCP140.dll") -- typiquement un
+      # Windows 10 ancien ; les postes recents l'ont souvent via d'autres logiciels.
+      - name: Copy MSVC runtime DLLs (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $redist = $env:VCToolsRedistDir
+          if (-not $redist -or -not (Test-Path $redist)) {
+            Write-Error "VCToolsRedistDir absent : l'environnement MSVC (msvc-dev-cmd) n'est pas charge."
+            exit 1
+          }
+          $crt = Get-ChildItem (Join-Path $redist "x64") -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
+          if (-not $crt) {
+            Write-Error "Runtime Visual C++ x64 introuvable sous $redist."
+            exit 1
+          }
+          Get-ChildItem $crt.FullName -Filter *.dll | ForEach-Object {
+            Copy-Item $_.FullName -Destination "build/app" -Force
+            Write-Host "Copié : $($_.FullName)"
+          }
 
       # windeployqt ne copie que les DLL Qt : il faut copier les DLL
       # OpenSSL (installées par choco) à côté de l'exécutable, sinon
@@ -232,6 +260,44 @@ jobs:
           New-Item -ItemType Directory -Force -Path "build/app/tls" | Out-Null
           Copy-Item $pluginSrc -Destination "build/app/tls" -Force
           Write-Host "Copié : $pluginSrc"
+
+      # Seul SQLite sert ; les autres pilotes (Oracle, PostgreSQL, Firebird...)
+      # dependent de DLL clientes absentes et alourdissent le paquet.
+      - name: Remove unused SQL drivers (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem "build/app/sqldrivers" -Filter *.dll -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne "qsqlite.dll" } | Remove-Item -Force
+
+      # Chaque DLL importee par l'exe, les DLL et les plugins doit etre dans le
+      # dossier ou faire partie de Windows. Le runtime C++, Qt et OpenSSL
+      # doivent etre DANS le dossier meme si le runner les a dans System32.
+      - name: Verify deployed dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = "build/app"
+          $shipped = @{}
+          Get-ChildItem $out -Recurse -Include *.dll, *.exe | ForEach-Object { $shipped[$_.Name.ToLower()] = $true }
+          $mustShip = '^(msvcp140|vcruntime140|concrt140|qt6|lib(crypto|ssl)|av(codec|format|util)|sw(resample|scale)|d3dcompiler_47)'
+          $missing = [System.Collections.Generic.List[string]]::new()
+          Get-ChildItem $out -Recurse -Include *.dll, *.exe | ForEach-Object {
+            $file = $_
+            dumpbin /nologo /dependents $file.FullName | ForEach-Object {
+              if ($_ -notmatch '^\s+([\w.\-]+\.dll)\s*$') { return }
+              $name = $Matches[1].ToLower()
+              if ($shipped.ContainsKey($name) -or $name -match '^(api|ext)-ms-win-') { return }
+              $inSystem = Test-Path (Join-Path $env:SystemRoot "System32\$name")
+              if ($name -match $mustShip -or -not $inSystem) { $missing.Add("$name (requis par $($file.Name))") }
+            }
+          }
+          if ($missing.Count -gt 0) {
+            $missing | Sort-Object -Unique | ForEach-Object { Write-Host "Manquant : $_" }
+            Write-Error "Dossier de deploiement incomplet."
+            exit 1
+          }
+          Write-Host "Toutes les dependances sont presentes."
 
       - name: Deploy Qt runtime (macOS)
         if: runner.os == 'macOS'

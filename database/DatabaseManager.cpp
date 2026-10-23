@@ -165,6 +165,9 @@ QStringList DatabaseManager::pendingMigrationFiles() const
         // (ex: .../database), independamment du repertoire de l'executable — utile
         // en developpement/tests lances depuis le repertoire de build.
         QFileInfo(QStringLiteral(__FILE__)).dir().filePath(kMigrationsDirName),
+        // Copie embarquee dans l executable (database/CMakeLists.txt) : seule
+        // source sur un poste ou l application a ete copiee sans ses sources.
+        QStringLiteral(":/database/migrations"),
     };
 
     QDir migrationsDir;

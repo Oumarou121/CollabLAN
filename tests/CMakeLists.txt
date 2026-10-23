@@ -8,6 +8,7 @@ add_test(NAME test_settingsmodel COMMAND test_settingsmodel)
 
 add_executable(test_databasemanager UnitTests/test_databasemanager.cpp)
 target_link_libraries(test_databasemanager PRIVATE Qt6::Test database)
+target_compile_definitions(test_databasemanager PRIVATE LOCALINK_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME test_databasemanager COMMAND test_databasemanager)
 
 add_executable(test_discoveryservice UnitTests/test_discoveryservice.cpp)
