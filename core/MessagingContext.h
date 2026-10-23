@@ -164,11 +164,13 @@ private slots:
     void onMessageSendFailed(qint64 conversationId, const QString &error);
 
 private:
-    void invalidateConversations();
+    /// Vide le cache (une conversation, ou toutes si 0) puis previent les ecrans.
+    void notifyConversationsChanged(qint64 conversationId = 0);
+    void invalidateConversations(qint64 conversationId);
+    void onUsersChanged();
     QVariantMap conversationSummary(qint64 conversationId, qint64 currentId);
 
     QHash<qint64, QVariantMap> m_conversationSummaries;
-    qint64 m_changedConversation = 0;
 
     QVariantList m_conversationsCache;
     qint64 m_conversationsCacheUser = 0;

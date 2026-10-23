@@ -14,10 +14,10 @@ MessagingContext::MessagingContext(QObject *parent)
     , m_messageModel(new models::MessageModel(this))
     , m_groupModel(new models::GroupModel(this))
 {
-    // Connexions etablies en premier : le cache est vide avant que les
-    // ecrans ne relisent la liste sur ces memes signaux.
-    connect(this, &MessagingContext::conversationsChanged, this, &MessagingContext::invalidateConversations);
-    connect(this, &MessagingContext::availableUsersChanged, this, &MessagingContext::invalidateConversations);
+    // Le cache des conversations est vide AVANT chaque signal
+    // (notifyConversationsChanged, onUsersChanged) et non par une connexion a
+    // ces signaux : Qt appelle les gestionnaires QML avant les connexions C++,
+    // l'ecran relisait donc l'ancien cache (apercu sur l'avant-dernier message).
 }
 
 MessagingContext::~MessagingContext()
@@ -50,14 +50,14 @@ void MessagingContext::setMessagingManager(MessagingManager *manager)
             connect(m_messagingManager, &MessagingManager::messageRemoved,
                     this, [this](const models::Message &message) {
                         m_messageModel->removeMessage(message.uuid());
-                        emit conversationsChanged();
+                        notifyConversationsChanged();
                     });
             connect(m_messagingManager, &MessagingManager::actionRefused,
                     this, &MessagingContext::actionFailed);
             connect(m_messagingManager, &MessagingManager::messageUpdated,
                     this, [this](const models::Message &message) {
                         m_messageModel->updateMessage(message);
-                        emit conversationsChanged();
+                        notifyConversationsChanged();
                     });
             connect(m_messagingManager, &MessagingManager::messageDeliveryChanged,
                     this, [this](const QString &messageUuid, const QString &status) {
@@ -70,7 +70,7 @@ void MessagingContext::setMessagingManager(MessagingManager *manager)
                     this, [this]() {
                         if (m_messageModel->conversationId() > 0)
                             setConversation(m_messageModel->conversationId());
-                        emit conversationsChanged();
+                        notifyConversationsChanged();
                     }, Qt::QueuedConnection);
         }
 
@@ -94,7 +94,7 @@ void MessagingContext::setGroupManager(GroupManager *manager)
                     this, &MessagingContext::onGroupCreated);
             connect(m_groupManager, &GroupManager::groupRenamed, this, [this]() {
                 loadUserGroups();
-                emit conversationsChanged();
+                notifyConversationsChanged();
             });
             connect(m_groupManager, &GroupManager::groupDeleted,
                     this, [this](const QString &, qint64 conversationId) {
@@ -104,7 +104,7 @@ void MessagingContext::setGroupManager(GroupManager *manager)
                             m_messageModel->clear();
                         }
                         emit conversationRemoved(conversationId);
-                        emit conversationsChanged();
+                        notifyConversationsChanged();
                     });
         }
 
@@ -128,13 +128,13 @@ void MessagingContext::setUserManager(UserManager *manager)
         if (m_userManager) {
             qDebug() << "MessagingContext::setUserManager: connecting to UserManager signals";
             connect(m_userManager, &UserManager::userCreated,
-                    this, &MessagingContext::availableUsersChanged, Qt::QueuedConnection);
+                    this, &MessagingContext::onUsersChanged, Qt::QueuedConnection);
             connect(m_userManager, &UserManager::userUpdated,
-                    this, &MessagingContext::availableUsersChanged, Qt::QueuedConnection);
+                    this, &MessagingContext::onUsersChanged, Qt::QueuedConnection);
             connect(m_userManager, &UserManager::userDeleted,
-                    this, &MessagingContext::availableUsersChanged, Qt::QueuedConnection);
+                    this, &MessagingContext::onUsersChanged, Qt::QueuedConnection);
             connect(m_userManager, &UserManager::usersChanged,
-                    this, &MessagingContext::availableUsersChanged, Qt::QueuedConnection);
+                    this, &MessagingContext::onUsersChanged, Qt::QueuedConnection);
         }
 
         // NE PAS émettre le signal lors de l'initialisation pour éviter les crashs de thread
@@ -275,7 +275,7 @@ QVariantList MessagingContext::conversationsList()
 {
     // Plusieurs ecrans (accueil, barre laterale, discussions) relisent la liste
     // au meme signal : elle n'est reconstruite qu'une fois par changement
-    // (cache vide a chaque conversationsChanged, cf. constructeur), ou apres
+    // (cache vide avant chaque conversationsChanged), ou apres
     // 30 s par prudence. Le resume de chaque conversation (dernier message,
     // non-lus : les lectures couteuses) est garde a part et seule la
     // conversation touchee est relue a la reception, a l'envoi ou a la lecture.
@@ -405,16 +405,27 @@ QVariantMap MessagingContext::conversationSummary(qint64 conversationId, qint64 
     return summary;
 }
 
-void MessagingContext::invalidateConversations()
+void MessagingContext::invalidateConversations(qint64 conversationId)
 {
-    // Conversation designee juste avant le signal (reception, envoi, lecture) :
-    // seul son resume est relu ; sinon (groupes, synchronisation...) tous.
-    if (m_changedConversation > 0)
-        m_conversationSummaries.remove(m_changedConversation);
+    // Conversation designee (reception, envoi, lecture) : seul son resume est
+    // relu ; sinon (groupes, synchronisation, comptes...) tous.
+    if (conversationId > 0)
+        m_conversationSummaries.remove(conversationId);
     else
         m_conversationSummaries.clear();
-    m_changedConversation = 0;
     m_conversationsCacheAge.invalidate();
+}
+
+void MessagingContext::notifyConversationsChanged(qint64 conversationId)
+{
+    invalidateConversations(conversationId);
+    emit conversationsChanged();
+}
+
+void MessagingContext::onUsersChanged()
+{
+    invalidateConversations(0);
+    emit availableUsersChanged();
 }
 
 qint64 MessagingContext::startConversationWith(qint64 otherUserId)
@@ -436,7 +447,7 @@ qint64 MessagingContext::startConversationWith(qint64 otherUserId)
     }
 
     setConversation(conversation->id());
-    emit conversationsChanged();
+    notifyConversationsChanged();
     return conversation->id();
 }
 
@@ -475,7 +486,7 @@ qint64 MessagingContext::createGroup(const QString &name, const QVariantList &me
 void MessagingContext::onGroupCreated(const models::Group &group)
 {
     m_groupModel->addGroup(group);
-    emit conversationsChanged();
+    notifyConversationsChanged();
 }
 
 void MessagingContext::setConversation(qint64 conversationId)
@@ -492,8 +503,7 @@ void MessagingContext::setConversation(qint64 conversationId)
         // après ouverture de la conversation.
         const qint64 currentId = currentUserId();
         if (currentId > 0 && m_messagingManager->markConversationAsRead(conversationId, currentId)) {
-            m_changedConversation = conversationId;
-            emit conversationsChanged();
+            notifyConversationsChanged(conversationId);
         }
     } else {
         m_messageModel->clear();
@@ -595,8 +605,7 @@ void MessagingContext::onMessageReceived(const models::Message &message)
     // apercu (dernier message/horodatage) dans ConversationsView doit se
     // mettre a jour sans que l'utilisateur ait besoin de quitter puis
     // revenir sur l'ecran.
-    m_changedConversation = message.conversationId();
-    emit conversationsChanged();
+    notifyConversationsChanged(message.conversationId());
 }
 
 void MessagingContext::onMessageSent(const models::Message &message)
@@ -605,8 +614,7 @@ void MessagingContext::onMessageSent(const models::Message &message)
     if (message.conversationId() == m_messageModel->conversationId()) {
         m_messageModel->addMessage(message);
     }
-    m_changedConversation = message.conversationId();
-    emit conversationsChanged();
+    notifyConversationsChanged(message.conversationId());
 }
 
 void MessagingContext::onMessageSendFailed(qint64 conversationId, const QString &error)

@@ -19,8 +19,9 @@ namespace core {
  * (Qt Multimedia : QScreenCapture / QWindowCapture vers un QVideoSink).
  *
  * Les images arrivent au rythme de l'ecran ; seule la plus recente est
- * gardee et convertie au plus 10 fois par seconde (frameReady), ce que le
- * partage envoie ensuite par carreaux (network::VoiceService).
+ * transmise, au plus 20 fois par seconde (frameReady), telle quelle : la
+ * conversion et la compression se font sur le fil d'analyse de
+ * network::VoiceService, pas sur celui de l'interface.
  */
 class ScreenCapture : public QObject
 {
@@ -49,7 +50,7 @@ public:
     QString title() const { return m_title; }
 
 signals:
-    void frameReady(const QImage &frame);
+    void frameReady(const QVideoFrame &frame);
     /// La capture a echoue ou s'est arretee (autorisation refusee, fenetre fermee...).
     void failed(const QString &message);
 

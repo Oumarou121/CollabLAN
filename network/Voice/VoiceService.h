@@ -4,6 +4,8 @@
 #include <QObject>
 #include <QHostAddress>
 #include <QImage>
+#include <QThread>
+#include <QVideoFrame>
 #include <QList>
 #include <QPair>
 #include <QTimer>
@@ -12,6 +14,7 @@
 #include <memory>
 
 #include "VoiceSignalingChannel.h"
+#include "ScreenTiles.h"
 
 namespace rtc {
 class DataChannel;
@@ -23,8 +26,8 @@ class SecurityService;
 class VoiceAudioIO;
 class VoiceMixer;
 class OpusVoiceEncoder;
-class ScreenTileEncoder;
-class ScreenCanvas;
+class ScreenEncodeWorker;
+class ScreenDecodeWorker;
 
 /// Etat d'un appel vocal, expose a l'UI (QML) pour piloter l'affichage.
 enum class CallState {
@@ -141,6 +144,8 @@ public:
     void stopPresenting();
     /// Derniere image capturee (envoyee au plus 10 fois par seconde).
     void pushScreenFrame(const QImage &frame);
+    /// Meme chose avec l'image brute de la capture : convertie hors de l'interface.
+    void pushScreenVideoFrame(const QVideoFrame &frame);
     QImage localScreenFrame() const;
     /// Participant qui presente (adresse nulle si personne, ou si c'est vous).
     QHostAddress presenterAddress() const;
@@ -228,6 +233,9 @@ private:
     void sendScreenTiles();
     void updatePresenter();
     void requestScreenRefresh(int linkId);
+    void onScreenPacket(const network::ScreenPacket &packet);
+    void onRemoteImage(const QImage &image, bool slow, int generation);
+    void sendScreenEnd(Peer &peer, bool complete);
     void startAudioWithRetry();
     void scheduleAudioRetry();
     void onAudioRetryTimeout();
@@ -268,19 +276,28 @@ private:
     qint64 m_localVoiceAtMs = 0;
 
     // Partage d'ecran.
-    static constexpr int kScreenTickMs = 100;               // 10 images/s au plus
+    static constexpr int kScreenTickMs = 100;               // reprise des carreaux en retard
     static constexpr std::size_t kScreenBufferLimit = 1u << 20;
+    // Image en mouvement : au-dela, elle est sautee (une plus recente suit)
+    // plutot que de s'accumuler et d'allonger le retard.
+    static constexpr std::size_t kScreenMotionBufferLimit = 384u * 1024u;
     static constexpr int kScreenUnsupportedAfterMs = 6'000;
     bool m_presenting = false;
     qint64 m_presentingSince = 0;
     quint32 m_presentToken = 0;
     QString m_presentTitle;
-    std::unique_ptr<ScreenTileEncoder> m_screenEncoder;
-    QImage m_pendingScreen;
+    // Compression (presentateur) et decompression (spectateur) sur leurs
+    // propres fils : l'interface ne porte plus ce travail.
+    QThread m_encodeThread;
+    QThread m_decodeThread;
+    ScreenEncodeWorker *m_encodeWorker = nullptr;
+    ScreenDecodeWorker *m_decodeWorker = nullptr;
+    ScreenPacket m_screenPacket;
     QTimer m_screenTimer;
-    std::unique_ptr<ScreenCanvas> m_canvas;
+    QImage m_remoteImage;
+    bool m_remoteSlow = false;
+    int m_screenGeneration = 0;
     int m_presenterLinkId = 0;
-    QTimer m_screenNotify;
 };
 
 } // namespace network

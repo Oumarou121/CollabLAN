@@ -5,6 +5,8 @@
 #include <QGuiApplication>
 #include <QSignalSpy>
 
+#include <QVideoFrame>
+
 #include "ScreenCapture.h"
 
 class TestScreenCapture : public QObject
@@ -36,7 +38,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(frames.count() > 0 || failed.count() > 0, 5000);
         if (failed.count() > 0)
             QSKIP(qPrintable(QStringLiteral("Capture refusee : ") + failed.first().at(0).toString()));
-        const QImage image = frames.first().at(0).value<QImage>();
+        const QImage image = frames.first().at(0).value<QVideoFrame>().toImage();
         QVERIFY(!image.isNull());
         QVERIFY(image.width() >= 320);
         capture.stop();

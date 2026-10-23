@@ -27,6 +27,7 @@
 #include "GroupManager.h"
 #include "SharedFolderManager.h"
 #include "MessagingManager.h"
+#include "MessagingContext.h"
 #include "PermissionManager.h"
 #include "UserManager.h"
 #include "Election/ElectionService.h"
@@ -169,6 +170,61 @@ private slots:
         login(b, QStringLiteral("bob"));
         QTRY_VERIFY_WITH_TIMEOUT(hasMessage(*b.app, QStringLiteral("accuse absent")), 10000);
         QTRY_COMPARE_WITH_TIMEOUT(status(*a.app, QStringLiteral("accuse absent")), models::Message::Delivered, 10000);
+    }
+
+    // Liste des discussions (ecran Discussions) : discussion ouverte des deux
+    // cotes, chaque message envoye ou recu doit devenir l'apercu. Bug signale :
+    // l'apercu restait sur l'avant-dernier message tant qu'on ne recliquait
+    // pas sur la discussion.
+    void conversationPreviewFollowsLiveMessages()
+    {
+        m_electionPort = static_cast<quint16>(m_base + 909);
+        Poste s = poste(QStringLiteral("l-serveur"), QStringLiteral("SERVER"), 900, -1);
+        Poste a = poste(QStringLiteral("l-a"), QStringLiteral("CLIENT"), 910, 10);
+        Poste b = poste(QStringLiteral("l-b"), QStringLiteral("CLIENT"), 920, 20);
+        startNetwork(s, {&a, &b}, {QStringLiteral("alice"), QStringLiteral("bob")});
+        login(a, QStringLiteral("alice"));
+        login(b, QStringLiteral("bob"));
+        QTest::qWait(800);
+
+        // Comme main.cpp : un contexte par poste, discussion ouverte.
+        const auto contextFor = [](Application &app) {
+            auto ctx = std::make_unique<core::MessagingContext>();
+            ctx->setMessagingManager(app.messagingManager());
+            ctx->setGroupManager(app.groupManager());
+            ctx->setUserManager(app.userManager());
+            return ctx;
+        };
+        auto ctxA = contextFor(*a.app);
+        auto ctxB = contextFor(*b.app);
+        const qint64 convA = ctxA->startConversationWith(userId(*a.app, QStringLiteral("bob")));
+        QVERIFY(convA > 0);
+        const auto previewOf = [](core::MessagingContext &ctx) {
+            QStringList all;
+            for (const QVariant &v : ctx.conversationsList())
+                all << v.toMap().value(QStringLiteral("lastMessage")).toString();
+            return all.join(QStringLiteral(" | "));
+        };
+        previewOf(*ctxA);
+        previewOf(*ctxB);
+
+        ctxA->sendMessage(QStringLiteral("bonjour bob"));
+        QCOMPARE(previewOf(*ctxA), QStringLiteral("Moi : bonjour bob"));
+        QTRY_COMPARE_WITH_TIMEOUT(previewOf(*ctxB), QStringLiteral("Lui : bonjour bob"), 10000);
+
+        // Bob ouvre la discussion, puis repond : chacun voit le dernier message.
+        const qint64 convB = scalar(*b.app, QStringLiteral("SELECT conversationId FROM Messages WHERE content = 'bonjour bob'")).toLongLong();
+        ctxB->setConversation(convB);
+        for (int i = 1; i <= 3; ++i) {
+            const QString fromBob = QStringLiteral("reponse %1").arg(i);
+            ctxB->sendMessage(fromBob);
+            QCOMPARE(previewOf(*ctxB), QStringLiteral("Moi : ") + fromBob);
+            QTRY_COMPARE_WITH_TIMEOUT(previewOf(*ctxA), QStringLiteral("Lui : ") + fromBob, 10000);
+            const QString fromAlice = QStringLiteral("suite %1").arg(i);
+            ctxA->sendMessage(fromAlice);
+            QCOMPARE(previewOf(*ctxA), QStringLiteral("Moi : ") + fromAlice);
+            QTRY_COMPARE_WITH_TIMEOUT(previewOf(*ctxB), QStringLiteral("Lui : ") + fromAlice, 10000);
+        }
     }
 
     void editAndDeleteReachAbsentRecipient()

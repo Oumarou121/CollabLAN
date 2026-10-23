@@ -10,10 +10,10 @@ CallContext::CallContext(QObject *parent)
     : QObject(parent)
     , m_capture(new ScreenCapture(this))
 {
-    connect(m_capture, &ScreenCapture::frameReady, this, [this](const QImage &frame) {
+    connect(m_capture, &ScreenCapture::frameReady, this, [this](const QVideoFrame &frame) {
         if (!m_voiceService)
             return;
-        m_voiceService->pushScreenFrame(frame);
+        m_voiceService->pushScreenVideoFrame(frame);
         // Apercu de la bande (presentateur) : une image par seconde suffit.
         if (!m_localFrameAge.isValid() || m_localFrameAge.elapsed() > 1000) {
             m_localFrameAge.start();

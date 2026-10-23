@@ -6,6 +6,11 @@
 #include "MessagingManager.h"
 #include "DatabaseManager.h"
 #include "UserManager.h"
+#include "MessagingContext.h"
+#include <QQmlComponent>
+#include <QQmlContext>
+#include <QQmlEngine>
+#include <QUuid>
 
 using core::MessagingManager;
 using core::MessagingManagerError;
@@ -418,6 +423,105 @@ private slots:
 
     // Le destinataire garde l'heure d'ENVOI transmise (message remis en retard),
     // sauf si elle est dans le futur.
+    // Liste des discussions : l'apercu suit le dernier message, envoye ou
+    // recu, pendant que la discussion est ouverte (bug : il restait sur
+    // l'avant-dernier tant qu'on ne recliquait pas sur la discussion).
+    void conversationsList_previewFollowsEachNewMessage()
+    {
+        freshDatabase();
+        QVERIFY(m_userManager->login(QStringLiteral("alice"), QStringLiteral("password1")));
+        m_messagingManager->setUserManager(m_userManager.get());
+        core::MessagingContext context;
+        context.setUserManager(m_userManager.get());
+        context.setMessagingManager(m_messagingManager.get());
+
+        const auto users = m_userManager->allUsers();
+        qint64 alice = 0, bob = 0;
+        QString bobUuid;
+        for (const auto &u : users) {
+            if (u.name() == QStringLiteral("alice")) alice = u.id();
+            if (u.name() == QStringLiteral("bob")) { bob = u.id(); bobUuid = u.uuid(); }
+        }
+        const auto conv = m_messagingManager->getOrCreateConversation(alice, bob);
+        QVERIFY(conv.has_value());
+        context.setConversation(conv->id());            // discussion ouverte
+
+        const auto preview = [&]() {
+            for (const QVariant &v : context.conversationsList()) {
+                const QVariantMap e = v.toMap();
+                if (e.value(QStringLiteral("conversationId")).toLongLong() == conv->id())
+                    return e.value(QStringLiteral("lastMessage")).toString();
+            }
+            return QStringLiteral("<absente>");
+        };
+        const auto receive = [&](const QString &text) {
+            const QString payload = QStringLiteral(
+                "{\"type\":\"message\",\"conversationUuid\":\"%1\",\"senderUuid\":\"%2\",\"messageUuid\":\"%3\","
+                "\"content\":\"%4\",\"timestamp\":\"%5\"}")
+                .arg(conv->uuid(), bobUuid, QUuid::createUuid().toString(QUuid::WithoutBraces), text,
+                     QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+            QVERIFY(m_messagingManager->receiveMessage(payload).has_value());
+        };
+
+        preview();                                      // liste deja lue une fois (cache)
+        context.sendMessage(QStringLiteral("premier"));
+        QCOMPARE(preview(), QStringLiteral("Moi : premier"));
+        context.sendMessage(QStringLiteral("deuxieme"));
+        QCOMPARE(preview(), QStringLiteral("Moi : deuxieme"));
+        receive(QStringLiteral("reponse de bob"));
+        QCOMPARE(preview(), QStringLiteral("Lui : reponse de bob"));
+        context.sendMessage(QStringLiteral("troisieme"));
+        QCOMPARE(preview(), QStringLiteral("Moi : troisieme"));
+        receive(QStringLiteral("encore bob"));
+        QCOMPARE(preview(), QStringLiteral("Lui : encore bob"));
+    }
+
+    // Meme scenario, lu depuis QML comme l'ecran Discussions : Qt appelle les
+    // gestionnaires QML (Connections) AVANT les connexions C++. Le cache
+    // etait vide par une connexion C++ au signal, donc apres la relecture de
+    // l'ecran, qui affichait l'avant-dernier message.
+    void conversationsList_qmlHandlerSeesTheNewMessage()
+    {
+        freshDatabase();
+        QVERIFY(m_userManager->login(QStringLiteral("alice"), QStringLiteral("password1")));
+        m_messagingManager->setUserManager(m_userManager.get());
+        core::MessagingContext context;
+        context.setUserManager(m_userManager.get());
+        context.setMessagingManager(m_messagingManager.get());
+        qint64 alice = 0, bob = 0;
+        for (const auto &u : m_userManager->allUsers()) {
+            if (u.name() == QStringLiteral("alice")) alice = u.id();
+            if (u.name() == QStringLiteral("bob")) bob = u.id();
+        }
+        const auto conv = m_messagingManager->getOrCreateConversation(alice, bob);
+        QVERIFY(conv.has_value());
+        context.setConversation(conv->id());
+
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("ctx"), &context);
+        QQmlComponent component(&engine);
+        component.setData(R"(
+            import QtQml
+            QtObject {
+                property string preview: ""
+                property Connections watcher: Connections {
+                    target: ctx
+                    function onConversationsChanged() {
+                        const list = ctx.conversationsList()
+                        preview = list.length ? list[0].lastMessage : ""
+                    }
+                }
+            })", QUrl());
+        std::unique_ptr<QObject> view(component.create());
+        QVERIFY2(view, qPrintable(component.errorString()));
+
+        context.conversationsList();                    // liste lue une fois (cache)
+        context.sendMessage(QStringLiteral("premier"));
+        QCOMPARE(view->property("preview").toString(), QStringLiteral("Moi : premier"));
+        context.sendMessage(QStringLiteral("deuxieme"));
+        QCOMPARE(view->property("preview").toString(), QStringLiteral("Moi : deuxieme"));
+    }
+
     void receiveMessage_keepsSenderTimestamp()
     {
         freshDatabase();

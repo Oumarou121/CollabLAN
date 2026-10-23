@@ -2,6 +2,7 @@
 #include "VoiceAudioIO.h"
 #include "VoiceCodec.h"
 #include "ScreenTiles.h"
+#include "ScreenWorkers.h"
 #include "NetworkAddress.h"
 #include "Security/SecurityService.h"
 
@@ -129,19 +130,34 @@ VoiceService::VoiceService(SecurityService *securityService, QObject *parent)
     m_audioRetryTimer.setSingleShot(true);
     connect(&m_audioRetryTimer, &QTimer::timeout, this, &VoiceService::onAudioRetryTimeout);
 
-    m_screenEncoder = std::make_unique<ScreenTileEncoder>();
-    m_canvas = std::make_unique<ScreenCanvas>();
+    // Partage d'ecran : chaque image est analysee et compressee sur un fil a
+    // part, puis envoyee des qu'elle est prete ; l'echeance reguliere ne sert
+    // plus qu'a reprendre les carreaux qu'un spectateur lent n'a pas recus.
+    qRegisterMetaType<network::ScreenPacket>();
+    m_encodeWorker = new ScreenEncodeWorker();
+    m_encodeWorker->moveToThread(&m_encodeThread);
+    connect(m_encodeWorker, &ScreenEncodeWorker::packetReady, this, &VoiceService::onScreenPacket,
+            Qt::QueuedConnection);
+    m_encodeThread.setObjectName(QStringLiteral("LocaLink-ScreenEncode"));
+    m_encodeThread.start();
+    m_decodeWorker = new ScreenDecodeWorker();
+    m_decodeWorker->moveToThread(&m_decodeThread);
+    connect(m_decodeWorker, &ScreenDecodeWorker::imageReady, this, &VoiceService::onRemoteImage,
+            Qt::QueuedConnection);
+    m_decodeThread.setObjectName(QStringLiteral("LocaLink-ScreenDecode"));
+    m_decodeThread.start();
     m_screenTimer.setInterval(kScreenTickMs);
     connect(&m_screenTimer, &QTimer::timeout, this, &VoiceService::onScreenTick);
-    // Les carreaux recus sont regroupes : l'ecran n'est redessine qu'au
-    // plus une trentaine de fois par seconde.
-    m_screenNotify.setSingleShot(true);
-    m_screenNotify.setInterval(33);
-    connect(&m_screenNotify, &QTimer::timeout, this, &VoiceService::remoteScreenChanged);
 }
 
 VoiceService::~VoiceService()
 {
+    m_encodeThread.quit();
+    m_decodeThread.quit();
+    m_encodeThread.wait();
+    m_decodeThread.wait();
+    delete m_encodeWorker;
+    delete m_decodeWorker;
     for (auto &entry : m_peers)
         releasePeerConnection(*entry.second);
     m_peers.clear();
@@ -485,9 +501,12 @@ void VoiceService::finishCall(const QString &reason)
     m_presenting = false;
     m_presentTitle.clear();
     m_screenTimer.stop();
-    m_pendingScreen = QImage();
+    m_encodeWorker->reset();
+    m_screenPacket = ScreenPacket();
     m_presenterLinkId = 0;
-    m_canvas->clear();
+    m_remoteImage = QImage();
+    m_remoteSlow = false;
+    QMetaObject::invokeMethod(m_decodeWorker, "clear", Qt::QueuedConnection, Q_ARG(int, ++m_screenGeneration));
     if (hadPresentation)
         emit presentationChanged();
     const bool wasActive = m_state != CallState::Idle;
@@ -1213,8 +1232,8 @@ bool VoiceService::startPresenting(const QString &title)
     m_presentingSince = QDateTime::currentMSecsSinceEpoch();
     m_presentToken = QRandomGenerator::global()->generate();
     m_presentTitle = title;
-    m_screenEncoder = std::make_unique<ScreenTileEncoder>();
-    m_pendingScreen = QImage();
+    m_encodeWorker->reset();
+    m_screenPacket = ScreenPacket();
     for (auto &entry : m_peers) {
         Peer &p = *entry.second;
         p.screenState.reset();
@@ -1236,7 +1255,7 @@ void VoiceService::stopPresenting()
     m_presenting = false;
     m_presentTitle.clear();
     m_screenTimer.stop();
-    m_pendingScreen = QImage();
+    m_encodeWorker->reset();
     for (auto &entry : m_peers) {
         if (entry.second->status == PeerStatus::Joined)
             sendState(*entry.second);
@@ -1248,12 +1267,18 @@ void VoiceService::pushScreenFrame(const QImage &frame)
 {
     // Seule la derniere image compte : elle part a la prochaine echeance.
     if (m_presenting && !frame.isNull())
-        m_pendingScreen = frame;
+        m_encodeWorker->submit(frame);
+}
+
+void VoiceService::pushScreenVideoFrame(const QVideoFrame &frame)
+{
+    if (m_presenting && frame.isValid())
+        m_encodeWorker->submit(frame);
 }
 
 QImage VoiceService::localScreenFrame() const
 {
-    return m_screenEncoder ? m_screenEncoder->frame() : QImage();
+    return m_screenPacket.tiles ? m_screenPacket.tiles->frame() : QImage();
 }
 
 QHostAddress VoiceService::presenterAddress() const
@@ -1270,12 +1295,12 @@ QString VoiceService::presenterTitle() const
 
 QImage VoiceService::remoteScreen() const
 {
-    return m_presenterLinkId != 0 ? m_canvas->image() : QImage();
+    return m_presenterLinkId != 0 ? m_remoteImage : QImage();
 }
 
 bool VoiceService::isRemoteScreenSlow() const
 {
-    return m_presenterLinkId != 0 && m_canvas->lastFrameIncomplete();
+    return m_presenterLinkId != 0 && m_remoteSlow;
 }
 
 void VoiceService::updatePresenter()
@@ -1298,7 +1323,9 @@ void VoiceService::updatePresenter()
     }
     if (best != m_presenterLinkId) {
         m_presenterLinkId = best;
-        m_canvas->clear();
+        m_remoteImage = QImage();
+        m_remoteSlow = false;
+        QMetaObject::invokeMethod(m_decodeWorker, "clear", Qt::QueuedConnection, Q_ARG(int, ++m_screenGeneration));
         if (best != 0)
             requestScreenRefresh(best);
         emit remoteScreenChanged();
@@ -1355,64 +1382,120 @@ void VoiceService::onScreenMessage(int linkId, const QByteArray &message)
         return;
     if (isScreenRefreshRequest(message)) {
         p->screenState.reset();     // tout l'ecran repart a la prochaine echeance
+        if (m_presenting)
+            m_encodeWorker->requestFullEncode();
         return;
     }
     if (linkId != m_presenterLinkId)
         return;
-    const bool wasSlow = m_canvas->lastFrameIncomplete();
-    const bool changed = m_canvas->apply(message);
-    if ((changed || wasSlow != m_canvas->lastFrameIncomplete()) && !m_screenNotify.isActive())
-        m_screenNotify.start();
+    // Decompression sur le fil du decodeur ; l'image revient par onRemoteImage().
+    QMetaObject::invokeMethod(m_decodeWorker, "apply", Qt::QueuedConnection,
+                              Q_ARG(QByteArray, message), Q_ARG(int, m_screenGeneration));
+}
+
+void VoiceService::onRemoteImage(const QImage &image, bool slow, int generation)
+{
+    if (generation != m_screenGeneration || m_presenterLinkId == 0)
+        return;     // image d'un presentateur precedent
+    m_remoteImage = image;
+    m_remoteSlow = slow;
+    emit remoteScreenChanged();
+}
+
+void VoiceService::onScreenPacket(const ScreenPacket &packet)
+{
+    if (!m_presenting)
+        return;
+    m_screenPacket = packet;
+    if (packet.motionEnded) {
+        // Retour au calme : tout l'ecran repart en carreaux nets.
+        for (auto &entry : m_peers)
+            entry.second->screenState.reset();
+    }
+    sendScreenTiles();
+}
+
+void VoiceService::sendScreenEnd(Peer &peer, bool complete)
+{
+    ScreenViewerState &viewer = peer.screenState;
+    if (viewer.lastEndSequence == m_screenPacket.sequence && viewer.lastEndComplete == complete)
+        return;
+    viewer.lastEndSequence = m_screenPacket.sequence;
+    viewer.lastEndComplete = complete;
+    const QByteArray end = screenFrameEndMessage(m_screenPacket.sequence, complete);
+    peer.screen->send(reinterpret_cast<const std::byte *>(end.constData()), static_cast<size_t>(end.size()));
 }
 
 void VoiceService::onScreenTick()
 {
     if (!m_presenting)
         return;
-    if (!m_pendingScreen.isNull()) {
-        m_screenEncoder->setFrame(m_pendingScreen);
-        m_pendingScreen = QImage();
-    }
     sendScreenTiles();
 }
 
 void VoiceService::sendScreenTiles()
 {
-    if (!m_screenEncoder->hasFrame())
+    if (m_screenPacket.isEmpty())
         return;
-    const QSize size = m_screenEncoder->frameSize();
+    const ScreenTileEncoder &frame = *m_screenPacket.tiles;
+    const QSize size = frame.frameSize();
+    const bool motion = !m_screenPacket.motion.isEmpty();
     for (auto &entry : m_peers) {
         Peer &p = *entry.second;
         if (p.status != PeerStatus::Joined || !p.screen || !p.screen->isOpen())
             continue;
         ScreenViewerState &viewer = p.screenState;
-        const QVector<int> pending = m_screenEncoder->pendingTiles(viewer);
-        if (pending.isEmpty())
-            continue;
-        if (viewer.frameSize != size) {
-            viewer.sent.clear();
-            viewer.frameSize = size;
-        }
-        // Un spectateur lent ne recoit que ce que son canal absorbe ; le
-        // reste part aux echeances suivantes, sans ralentir les autres.
-        bool complete = true;
         try {
+            if (motion) {
+                // Une image entiere par echeance ; un spectateur encore occupe
+                // par la precedente saute celle-ci (la suivante arrive vite).
+                if (viewer.lastMotionSequence == m_screenPacket.sequence)
+                    continue;
+                viewer.sent.clear();
+                viewer.frameSize = QSize();
+                const QByteArray &message = m_screenPacket.motion;
+                const bool fits = p.screen->bufferedAmount() <= kScreenMotionBufferLimit
+                                  && static_cast<size_t>(message.size()) <= p.screen->maxMessageSize();
+                if (fits) {
+                    p.screen->send(reinterpret_cast<const std::byte *>(message.constData()),
+                                   static_cast<size_t>(message.size()));
+                    viewer.lastMotionSequence = m_screenPacket.sequence;
+                }
+                sendScreenEnd(p, fits);
+                continue;
+            }
+
+            const QVector<int> pending = frame.pendingTiles(viewer);
+            if (pending.isEmpty()) {
+                // Tout est arrive : le spectateur cesse d'afficher « connexion lente ».
+                if (!viewer.lastEndComplete)
+                    sendScreenEnd(p, true);
+                continue;
+            }
+            if (viewer.frameSize != size) {
+                viewer.sent.clear();
+                viewer.frameSize = size;
+            }
+            // Un spectateur lent ne recoit que ce que son canal absorbe ; le
+            // reste part aux echeances suivantes, sans ralentir les autres.
+            bool complete = true;
             for (int index : pending) {
                 if (p.screen->bufferedAmount() > kScreenBufferLimit) {
                     complete = false;
                     break;
                 }
-                const QByteArray message = m_screenEncoder->tileMessage(index);
+                // Deja compresse par le fil d'analyse, sauf carreau inchange
+                // qu'un retardataire n'a jamais recu (compresse ici, rare).
+                const QByteArray message = m_screenPacket.tiles->tileMessage(index);
                 if (message.isEmpty() || static_cast<size_t>(message.size()) > p.screen->maxMessageSize()) {
-                    viewer.sent.insert(index, m_screenEncoder->tileHash(index));   // carreau impossible a envoyer
+                    viewer.sent.insert(index, frame.tileHash(index));   // carreau impossible a envoyer
                     continue;
                 }
                 p.screen->send(reinterpret_cast<const std::byte *>(message.constData()),
                                static_cast<size_t>(message.size()));
-                viewer.sent.insert(index, m_screenEncoder->tileHash(index));
+                viewer.sent.insert(index, frame.tileHash(index));
             }
-            const QByteArray end = screenFrameEndMessage(m_screenEncoder->sequence(), complete);
-            p.screen->send(reinterpret_cast<const std::byte *>(end.constData()), static_cast<size_t>(end.size()));
+            sendScreenEnd(p, complete);
         } catch (const std::exception &ex) {
             qWarning() << "VoiceService: envoi de l'ecran interrompu -" << ex.what();
         }

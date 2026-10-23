@@ -48,7 +48,7 @@ target_link_libraries(test_messagingservice PRIVATE Qt6::Test Qt6::WebSockets ne
 add_test(NAME test_messagingservice COMMAND test_messagingservice)
 
 add_executable(test_messagingmanager UnitTests/test_messagingmanager.cpp)
-target_link_libraries(test_messagingmanager PRIVATE Qt6::Test core database models)
+target_link_libraries(test_messagingmanager PRIVATE Qt6::Test Qt6::Qml core database models)
 add_test(NAME test_messagingmanager COMMAND test_messagingmanager)
 
 add_executable(test_groupmanager UnitTests/test_groupmanager.cpp)

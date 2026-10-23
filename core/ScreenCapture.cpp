@@ -8,7 +8,7 @@
 namespace core {
 
 namespace {
-constexpr int kCaptureIntervalMs = 100;     // 10 images par seconde au plus
+constexpr int kCaptureIntervalMs = 50;      // 20 images par seconde au plus
 
 QString permissionHint()
 {
@@ -126,10 +126,9 @@ void ScreenCapture::onTick()
 {
     if (!m_latest.isValid())
         return;
-    const QImage image = m_latest.toImage();
+    const QVideoFrame frame = m_latest;
     m_latest = QVideoFrame();
-    if (!image.isNull())
-        emit frameReady(image);
+    emit frameReady(frame);
 }
 
 void ScreenCapture::onError(const QString &message)

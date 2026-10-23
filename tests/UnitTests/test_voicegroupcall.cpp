@@ -331,6 +331,68 @@ private slots:
         QVERIFY(canvas.lastFrameIncomplete());
     }
 
+    // Video plein ecran : chaque image change tout l'ecran. Une image entiere
+    // reduite part a la place des 135 carreaux ; les carreaux nets reviennent
+    // quand l'ecran se calme.
+    void screenMotion_videoSwitchesToWholeFramesAndBack()
+    {
+        network::ScreenFrameAnalyzer analyzer;
+        QImage frame(1920, 1080, QImage::Format_RGB32);
+        frame.fill(Qt::white);
+        network::ScreenPacket packet = analyzer.analyze(frame);
+        QVERIFY(packet.motion.isEmpty());                    // premiere image : carreaux
+
+        for (int i = 0; i < 4; ++i) {
+            frame.fill(QColor::fromHsv((i * 70) % 360, 200, 200));
+            packet = analyzer.analyze(frame);
+            QVERIFY2(!packet.motion.isEmpty(), "tout l'ecran change : mode mouvement");
+            QVERIFY(packet.motion.size() < network::kScreenMotionMaxBytes);
+        }
+        network::ScreenCanvas canvas;
+        QVERIFY(canvas.apply(packet.motion));
+        QCOMPARE(canvas.image().width(), network::kScreenMotionWidth);   // image reduite
+
+        // Ecran immobile quelques images : retour aux carreaux, tout l'ecran a renvoyer.
+        bool ended = false;
+        for (int i = 0; i < network::ScreenFrameAnalyzer::kCalmFramesToLeave + 1 && !ended; ++i) {
+            packet = analyzer.analyze(frame);
+            ended = packet.motionEnded;
+        }
+        QVERIFY(ended);
+        QVERIFY(packet.motion.isEmpty());
+        // Les carreaux nets recouvrent l'image reduite, a la taille d'origine.
+        for (int i = 0; i < packet.tiles->tileCount(); ++i)
+            canvas.apply(packet.tiles->tileMessage(i));
+        QCOMPARE(canvas.image().size(), QSize(1920, 1080));
+
+        // Un simple curseur qui bouge ne declenche pas le mode mouvement.
+        frame.setPixel(10, 10, qRgb(0, 0, 0));
+        QVERIFY(analyzer.analyze(frame).motion.isEmpty());
+    }
+
+    void screenShare_videoReachesViewersAsWholeFrames()
+    {
+        makeStations(2);
+        QVERIFY(voice(0)->call(QHostAddress::LocalHost, station(1)->port));
+        acceptAll({1});
+        expectMesh({0, 1});
+        QVERIFY(voice(0)->startPresenting(QStringLiteral("Écran 1")));
+        QImage frame(1920, 1080, QImage::Format_RGB32);
+        for (int i = 0; i < 12; ++i) {
+            frame.fill(QColor::fromHsv((i * 37) % 360, 220, 230));
+            voice(0)->pushScreenFrame(frame);
+            QTest::qWait(60);
+        }
+        // Les images en mouvement arrivent, reduites a 1280 de large.
+        QTRY_COMPARE_WITH_TIMEOUT(voice(1)->remoteScreen().width(), network::kScreenMotionWidth, 10000);
+        // Puis l'ecran se calme : les carreaux nets ramenent la taille d'origine.
+        for (int i = 0; i < 6; ++i) {
+            voice(0)->pushScreenFrame(frame);
+            QTest::qWait(80);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(voice(1)->remoteScreen().size(), QSize(1920, 1080), 15000);
+    }
+
     void screenShare_viewersSeeThePresentersScreen()
     {
         makeStations(3);

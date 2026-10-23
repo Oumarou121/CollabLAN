@@ -10,7 +10,9 @@ namespace network {
 
 namespace {
 
-enum MessageType : quint8 { TileMessage = 1, FrameEndMessage = 2, RefreshRequest = 3 };
+enum MessageType : quint8 { TileMessage = 1, FrameEndMessage = 2, RefreshRequest = 3, MotionMessage = 4 };
+// type(1) + largeur, hauteur de l'image(2+2).
+constexpr int kMotionHeaderBytes = 1 + 2 * 2;
 // type(1) + largeur, hauteur de l'ecran(2+2) + x, y, w, h du carreau(4x2).
 constexpr int kTileHeaderBytes = 1 + 2 * 6;
 
@@ -95,6 +97,97 @@ QByteArray ScreenTileEncoder::tileMessage(int index)
     return message;
 }
 
+QByteArray screenMotionMessage(const QImage &frame)
+{
+    if (frame.isNull())
+        return QByteArray();
+    // Reduite puis compressee ; encore plus petite si le canal ne la prend pas.
+    int width = qMin(kScreenMotionWidth, frame.width());
+    int quality = kScreenMotionQuality;
+    QByteArray jpeg;
+    QImage image;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        image = frame.width() > width ? frame.scaledToWidth(width, Qt::SmoothTransformation) : frame;
+        jpeg.clear();
+        QBuffer buffer(&jpeg);
+        buffer.open(QIODevice::WriteOnly);
+        image.save(&buffer, "JPG", quality);
+        if (jpeg.size() <= kScreenMotionMaxBytes)
+            break;
+        width = width * 3 / 4;
+        quality -= 15;
+    }
+    QByteArray message(kMotionHeaderBytes, Qt::Uninitialized);
+    char *d = message.data();
+    d[0] = static_cast<char>(MotionMessage);
+    putU16(d + 1, image.width());
+    putU16(d + 3, image.height());
+    message.append(jpeg);
+    return message;
+}
+
+void ScreenFrameAnalyzer::reset()
+{
+    m_previous.clear();
+    m_previousSize = QSize();
+    m_motion = false;
+    m_calmFrames = 0;
+}
+
+ScreenPacket ScreenFrameAnalyzer::analyze(const QImage &capture, bool full)
+{
+    ScreenPacket packet;
+    if (capture.isNull())
+        return packet;
+    auto tiles = std::make_shared<ScreenTileEncoder>();
+    tiles->setFrame(capture);
+    packet.tiles = tiles;
+    packet.sequence = ++m_sequence;
+
+    // Part de l'ecran modifiee depuis la capture precedente.
+    QVector<int> changed;
+    const bool sameSize = m_previousSize == tiles->frameSize() && m_previous.size() == tiles->tileCount();
+    for (int i = 0; i < tiles->tileCount(); ++i) {
+        if (!sameSize || m_previous.at(i) != tiles->tileHash(i))
+            changed.append(i);
+    }
+    const double ratio = tiles->tileCount() > 0 ? double(changed.size()) / tiles->tileCount() : 0.0;
+    m_previous.resize(tiles->tileCount());
+    for (int i = 0; i < tiles->tileCount(); ++i)
+        m_previous[i] = tiles->tileHash(i);
+    m_previousSize = tiles->frameSize();
+
+    // Hysteresis : on entre en mouvement au-dela d'un tiers de l'ecran, on
+    // n'en sort qu'apres quelques images calmes (une video qui marque une
+    // courte pause ne fait pas basculer d'un mode a l'autre).
+    const bool wasMotion = m_motion;
+    if (!m_motion) {
+        m_motion = sameSize && ratio > kEnterMotionRatio;
+        m_calmFrames = 0;
+    } else if (ratio < kLeaveMotionRatio) {
+        if (++m_calmFrames >= kCalmFramesToLeave)
+            m_motion = false;
+    } else {
+        m_calmFrames = 0;
+    }
+
+    if (m_motion) {
+        packet.motion = screenMotionMessage(tiles->frame());
+    } else {
+        packet.motionEnded = wasMotion;
+        // Compression faite ici, hors de l'interface : carreaux modifies (ou
+        // tout l'ecran au retour du mode mouvement).
+        if (packet.motionEnded || full) {
+            for (int i = 0; i < tiles->tileCount(); ++i)
+                tiles->tileMessage(i);
+        } else {
+            for (int i : changed)
+                tiles->tileMessage(i);
+        }
+    }
+    return packet;
+}
+
 QByteArray screenFrameEndMessage(quint32 sequence, bool complete)
 {
     QByteArray message(6, Qt::Uninitialized);
@@ -125,6 +218,18 @@ bool ScreenCanvas::apply(const QByteArray &message)
             m_lastIncomplete = d[5] == 0;
         return false;
     }
+    if (type == MotionMessage) {
+        if (message.size() <= kMotionHeaderBytes)
+            return false;
+        QImage frame;
+        if (!frame.loadFromData(reinterpret_cast<const uchar *>(d + kMotionHeaderBytes),
+                                static_cast<int>(message.size() - kMotionHeaderBytes), "JPG"))
+            return false;
+        // L'image entiere remplace l'ecran (a sa taille reduite) ; l'affichage
+        // l'agrandit. Les carreaux nets la recouvriront au retour au calme.
+        m_image = frame.convertToFormat(QImage::Format_RGB32);
+        return true;
+    }
     if (type != TileMessage || message.size() <= kTileHeaderBytes)
         return false;
 
@@ -140,9 +245,16 @@ bool ScreenCanvas::apply(const QByteArray &message)
         return false;
 
     if (m_image.size() != QSize(frameW, frameH)) {
-        // Nouvel ecran (ou changement de taille) : on repart d'un fond neutre.
-        m_image = QImage(frameW, frameH, QImage::Format_RGB32);
-        m_image.fill(QColor(0x2a, 0x2c, 0x33));
+        // Changement de taille (retour du mode mouvement, autre ecran) : la
+        // derniere image, agrandie, sert de fond le temps que les carreaux
+        // arrivent ; sinon un fond neutre.
+        if (!m_image.isNull()) {
+            m_image = m_image.scaled(frameW, frameH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                          .convertToFormat(QImage::Format_RGB32);
+        } else {
+            m_image = QImage(frameW, frameH, QImage::Format_RGB32);
+            m_image.fill(QColor(0x2a, 0x2c, 0x33));
+        }
     }
     QPainter painter(&m_image);
     painter.drawImage(x, y, tile);
