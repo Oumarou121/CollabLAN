@@ -1609,7 +1609,13 @@ void Application::initialize(quint16 messagingServerPort, const QString &dbFileP
     connect(m_messagingServer, &network::MessagingServer::clientIdentified,
             this, &Application::sendAuthorizedPeersTo);
     connect(m_permissionManager, &core::PermissionManager::machineChanged,
-            this, [this](const models::AuthorizedMachine &) { broadcastAuthorizedPeers(); });
+            this, [this](const models::AuthorizedMachine &) {
+                // Avant la diffusion (qui relit les autorisations) : une machine
+                // deja connectee qui vient d'etre autorisee en est prevenue.
+                if (m_messagingServer && m_messagingServer->isRunning())
+                    m_messagingServer->notifyNewlyAuthorizedClients();
+                broadcastAuthorizedPeers();
+            });
     connect(m_permissionManager, &core::PermissionManager::machineRemoved,
             this, [this](int) { broadcastAuthorizedPeers(); });
 
@@ -2237,6 +2243,17 @@ void Application::handleIncomingPayload(const QString &message, bool relay)
         done.prepare(QStringLiteral("UPDATE AuditLogs SET pending_send = 0 WHERE event_uuid = :uuid"));
         done.bindValue(QStringLiteral(":uuid"), eventUuid);
         done.exec();
+        return;
+    }
+
+    // Le serveur vient d'autoriser ce poste (type "access_granted") : les
+    // envois faits a la connexion avaient ete ignores, on les refait.
+    if (document.isObject()
+        && document.object().value(QStringLiteral("type")).toString() == QStringLiteral("access_granted")) {
+        if (!relay) {
+            qInfo() << "Poste autorise par le serveur : identification et synchronisation relancees";
+            sendIdentifyIfReady();
+        }
         return;
     }
 

@@ -305,6 +305,28 @@ bool MessagingServer::replyToCurrentSender(const QString &message)
     return m_currentSender->sendTextMessage(message) >= 0;
 }
 
+int MessagingServer::notifyNewlyAuthorizedClients()
+{
+    // Machine autorisee alors qu'elle est deja connectee : son identification
+    // et sa demande de synchronisation, envoyees a la connexion, ont ete
+    // ignorees tant qu'elle etait en attente, et rien ne les relancait (les
+    // comptes ne lui arrivaient qu'a la creation d'un nouveau compte). Seul
+    // le passage « en attente » -> « autorisee » est signale : machineChanged
+    // est emis a chaque mise a jour d'une machine, y compris a l'identification.
+    if (!m_permissionManager)
+        return 0;
+    static const QString granted = QStringLiteral("{\"type\":\"access_granted\"}");
+    int notified = 0;
+    for (QWebSocket *client : std::as_const(m_clients)) {
+        const bool wasAuthorized = m_clientAuthorized.value(client, false);
+        if (!wasAuthorized && isClientAuthorized(client)) {
+            client->sendTextMessage(granted);
+            ++notified;
+        }
+    }
+    return notified;
+}
+
 bool MessagingServer::isClientAuthorized(QWebSocket *client)
 {
     if (!client || !m_clients.contains(client))

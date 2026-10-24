@@ -70,6 +70,11 @@ public:
     /// jamais envoyer d'identify avec un userUuid non-vide.
     int sendToFingerprint(const QString &message, const QString &fingerprint);
 
+    /// Previent (« access_granted ») les connexions dont la machine vient de
+    /// passer d'en attente a autorisee ; elles relancent identification et
+    /// synchronisation. Retourne le nombre de connexions prevenues.
+    int notifyNewlyAuthorizedClients();
+
     /// Port d'écoute.
     quint16 port() const;
 

@@ -227,6 +227,38 @@ private slots:
         }
     }
 
+    // Poste connecte AVANT d'etre autorise : ses envois a la connexion
+    // (identification, synchronisation) sont ignores tant qu'il est en
+    // attente. Bug signale : une fois autorise, les comptes deja crees ne lui
+    // arrivaient pas ; il fallait creer un nouveau compte pour debloquer.
+    void accountsReachClientAuthorizedAfterConnecting()
+    {
+        m_electionPort = static_cast<quint16>(m_base + 959);
+        Poste s = poste(QStringLiteral("z-serveur"), QStringLiteral("SERVER"), 950, -1);
+        Poste a = poste(QStringLiteral("z-a"), QStringLiteral("CLIENT"), 960, 10);
+        boot(s);
+        const auto admin = s.app->userManager()->createUser(QStringLiteral("admin"), QStringLiteral("motdepasse"));
+        QVERIFY(admin.has_value());
+        QVERIFY(s.app->userManager()->createUser(QStringLiteral("alice"), QStringLiteral("motdepasse")).has_value());
+
+        // Le poste approuve le serveur et s'y connecte, mais n'est pas encore autorise.
+        boot(a);
+        QVERIFY(a.app->permissionManager()->approveServerCertificate(s.fingerprint, QStringLiteral("127.0.0.1")));
+        QTRY_VERIFY_WITH_TIMEOUT(a.connectedTo(s.port), 20000);
+        QTest::qWait(1500);
+        QCOMPARE(userId(*a.app, QStringLiteral("alice")), -1);   // rien tant qu'il est en attente
+
+        // L'administrateur l'autorise : les comptes existants arrivent, sans
+        // nouvelle connexion ni nouveau compte.
+        QVERIFY(s.app->permissionManager()->authorizeMachineByCertificate(
+            a.fingerprint, a.name, a.name.toUpper(), QStringLiteral("127.0.0.1"), admin->id(), QStringLiteral("essai")));
+        QTRY_VERIFY_WITH_TIMEOUT(userId(*a.app, QStringLiteral("alice")) > 0, 10000);
+        QVERIFY(userId(*a.app, QStringLiteral("admin")) > 0);
+
+        // Et le poste peut alors se connecter avec ce compte.
+        login(a, QStringLiteral("alice"));
+    }
+
     void editAndDeleteReachAbsentRecipient()
     {
         m_electionPort = static_cast<quint16>(m_base + 109);
